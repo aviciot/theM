@@ -84,19 +84,29 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
   - agents.Create and orchestrators.Create now return HTTP 409 for duplicate slug/name (SQLSTATE 23505 → ErrConflict).
 - **Frontend observability page** (`frontend/src/app/admin/observability/page.tsx`): `/admin/observability` table with per-tenant run count (30d), LLM tokens (30d), agent/app quota with color coding. Sidebar entry added.
 
-**HEAD: `50a09e0 fix(rls): close app-pool permission gaps`**
+**HEAD: `1786c6b docs: update CURRENT.md with security hardening complete — HEAD 50a09e0, E2E 9/9`**
 
-**E2E test 14 verified: 9/9 passed** (Agent Create/Delete, Orchestrator Create/Delete, WS reachable, Runs list, Runs stats, Token Create/Delete).
+**E2E test 14 verified: 9/9 passed** (2026-09-05 — Agent Create/Delete, Orchestrator Create/Delete, WS reachable, Runs list, Runs stats, Token Create/Delete).
+
+### Step 28 — Admin CRUD TenantTx migration: ALREADY COMPLETE
+
+Investigation (2026-09-05) confirms that `AgentsHandler`, `OrchestratorsHandler`, and `ApplicationsHandler` already use `BeginTenantTx` via `openSvc` — this migration was completed in a prior session before the Step 28 handover note was written.
+
+**RLS status (verified):** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. All tenant-scoped admin CRUD handlers (agents, apps, orchestrators, MCP servers) use `TenantTx` (RLS-enforced App pool). Defense-in-depth is active.
+
+The following remain on the Admin pool by design (not regressions):
+- `AuditWriter.Write` — audit_logs has INSERT-only RLS for them_app; reads require Admin pool
+- `AuditLogsHandler.List` — SELECT on audit_logs requires Admin pool (INSERT-only RLS for them_app)
+- Action endpoints in AgentsHandler (Discover/Test/SecurityScan) — use `legacyDAL` for cross-tenant/platform-global reads (`GetAgentBySlug("security_scanner")`, unscoped token lookups)
 
 ### Next recommended task for a new session
 
-**Step 28 candidates** (choose one):
+**Step 29 candidates** (choose one):
 
-1. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced App pool). Defense-in-depth — isolation becomes RLS-enforced not just SQL WHERE. MCP servers already use TenantTx as the model. **Now that the app pool permission gaps are fixed, this is safe to attempt.**
+1. **Orchestrator soft-delete → hard-delete** — `DeleteOrchestrator` currently does `UPDATE ... SET enabled=false` which leaves the name in the DB and prevents re-creation with the same name. Change to a real `DELETE FROM them.orchestrators` (already the pattern for agents and applications). Low scope, high correctness value.
 2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
 3. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
-
-**RLS status:** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. Admin CRUD handlers (agents, apps, orchestrators) still use `rlsPools.Admin` (BYPASSRLS) with explicit `WHERE tenant_id` — isolation is SQL-enforced, not RLS-enforced for those paths. This is safe but not defense-in-depth. App pool permission gaps are now closed (migrations 078-080 applied).
+4. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)

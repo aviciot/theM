@@ -747,3 +747,15 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 **Root cause:** The `for await` SSE loop in `useChatConnection.ts` only cleared `busy=false` inside `completed`/`failed` status event branches. If the stream closed without emitting either event (connection race on the very first request), `busy` stayed `true` permanently.
 
 **Fix (commit 7a792c4):** Changed `try/catch` to `try/catch/finally`. `setBusy(false); busyRef.current = false` moved to the `finally` block so it always runs when the stream ends regardless of whether a terminal status event was received.
+
+---
+
+## 2026-09-05 — Orchestrator Delete is soft (UPDATE enabled=false), not hard
+
+**Symptom:** E2E test 14 fails with "Orchestrator created: resource already exists" on repeated runs. The test's cleanup via `DELETE /admin/orchestrators/{name}` succeeds (HTTP 200) but leaves the row in the DB with `enabled=false`. Re-creating with the same name fails with 23505 (unique constraint on `name` + `tenant_id`).
+
+**Root cause:** `DeleteOrchestrator` in `dal/orchestrators.go` does `UPDATE ... SET enabled=false`, not `DELETE`. This is a legacy choice that differs from agents (hard DELETE + component_definitions cleanup) and applications (hard DELETE with CASCADE). Soft-delete preserves the name slot, blocking reuse.
+
+**Fix:** Change `DeleteOrchestrator` to a hard DELETE. No DB schema change needed — there are no tables with FKs pointing at `orchestrators.id` that require cascade behavior (app_orchestrators are a separate table with their own lifecycle). This is Step 29 candidate 1.
+
+**Watch for:** Never assume admin "delete" endpoints free the resource name. Always verify in the DAL whether it's soft or hard delete.
