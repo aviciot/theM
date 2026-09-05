@@ -766,6 +766,7 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestTest_NotFound` | DB returns pgx.ErrNoRows → 404 |
 | `TestSecurityScan_NoScanner` | Scanner agent not in DB → 503 with "Security scanner agent not registered" |
 | `TestSecurityScan_Accepted` | Target + scanner both in DB → 202 with non-empty job_id and correct agent_id |
+| `TestDiscover_CrossTenantTokenNotForwarded` | Cross-tenant agent_id → token query returns ErrNoRows → no Authorization header forwarded to backend |
 
 **Trigger:** any change to `internal/admin/agents.go`, `internal/admin/classify.go`, `internal/admin/scanjob.go`, or `internal/admin/dal/agents.go`
 
@@ -2537,6 +2538,18 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-102 · Audit redaction production-path — `internal/admin/audit_redaction_test.go`
+
+**Purpose:** Calls the actual Update handler end-to-end with a capturing querier and `NewAuditWriterForTest`. Verifies that secret fields are absent from the serialized audit entry written by `AuditWriter.Write` — not just from `changesOf()`. This is a production-path replacement for the changesOf-level simulation in AL-09/10/11.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| AR-01 | `TestAgentUpdate_AuditDoesNotContainRawAuthToken` | Agent Update handler: `auth_token` absent from captured audit entry; `auth_token_changed=true` sentinel present |
+
+**Trigger:** any change to `internal/admin/agents.go`, `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2952,8 +2965,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/observability.go` | S1-101 |
 | `internal/admin/dal/observability.go` | S1-101 |
 | `internal/admin/dal/tenants.go` | S1-94 |
-| `internal/admin/audit_logs.go` | S1-100 + S2-09 (integration) |
-| `internal/admin/dal/audit_logs.go` | S1-100 + S2-09 (integration) |
+| `internal/admin/audit_logs.go` | S1-100 + S1-102 + S2-09 (integration) |
+| `internal/admin/dal/audit_logs.go` | S1-100 + S1-102 + S2-09 (integration) |
+| `internal/admin/audit_redaction_test.go` | S1-102 |
 | `internal/admin/mcp_servers.go` | S1-100 (AL-05a/b) |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
@@ -3041,7 +3055,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 22 |
-| S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
+| S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan + CT-01 cross-tenant) | 9 |
 | S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping) | 69 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
@@ -3098,7 +3112,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
 | S1-100 | Audit Logs handler (AL-01..03, AL-05b..11): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges, AgentInput_AuthTokenRedacted, MCPServerPatch_ProbeTokenRedacted, TenantPatch_ClientSecretRedacted | 10 |
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
-| **S1 total** | | **1103** |
+| S1-102 | Audit redaction production-path (AR-01): AgentUpdate_AuditDoesNotContainRawAuthToken | 1 |
+| **S1 total** | | **1104** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -3109,4 +3124,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1034** |
+| **`go test ./...` total** | | **1035** |
