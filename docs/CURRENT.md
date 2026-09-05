@@ -69,12 +69,13 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 - **Step 24 (c83f8eb subset)** — MCP server audit: `mcp_server.create/update/delete` wired into `AuditWriter`. Test AL-05b.
 - **Step 25 (3fc072c)** — Removed `MCPServersHandler` legacy fallback path. `pools=nil` branch in agents/apps/orchestrators `openSvc` is intentionally kept as the unit-test escape hatch (never reached in production — clearly documented in comments).
 - **Step 26 (c83f8eb)** — Audit log enrichment: `AuditEntry.Changes map[string]any`, `changesOf()` helper, all 4 update handlers (agent/app/mcp_server/tenant) now log request payload in `details` JSONB as `{"actor":"…","changes":{…}}`. Tests AL-06, AL-07, AL-08. `go test ./...` — 1096 tests, 0 failures.
+- **Step 27** — Cross-tenant admin observability: `GET /api/v1/admin/observability/summary` (RequireSuperAdmin, Admin BYPASSRLS pool). New `go/internal/admin/dal/observability.go` (ListObservabilitySummary — one row per tenant: run_count_30d, total_llm_tokens_30d, max_agents, max_apps, agent_count, app_count). New `go/internal/admin/observability.go` (ObservabilityHandler). Wired in `router.go` platform-global group. Tests S1-101 (OBS-1..4). `go test ./...` — 1100 tests, 0 failures.
 
 ### Next recommended task for a new session
 
-**Step 27 candidates** (choose one):
+**Step 28 candidates** (choose one):
 
-1. **Cross-tenant admin observability** — super-admin API endpoint + frontend page: aggregate runs/usage/quota across all tenants. Uses `rlsPools.Admin` (BYPASSRLS). Protected by `RequireSuperAdmin`. Medium scope, high ops value.
+1. **Observability frontend page** — `/admin/observability` page in Next.js consuming `GET /api/v1/admin/observability/summary`. Table with per-tenant stats. Low scope, high ops value (completes Step 27 end-to-end).
 2. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced). Defense-in-depth. MCP servers already use TenantTx as the model.
 3. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
 
@@ -132,6 +133,7 @@ Explicit routers at priority 110–150 still win over the catch-all.
 - `PathRegexp /api/v1/admin/applications/{id}/.+` — all methods (covers provider-keys, runtime, agent-bindings subroutes)
 
 ### Admin — full ownership
+- `GET /api/v1/admin/observability/summary` — cross-tenant aggregate (RequireSuperAdmin, Admin BYPASSRLS pool)
 - `PathPrefix /api/v1/admin/system-agents` — all methods
 - `PathPrefix /api/v1/admin/tokens` — all methods
 - `PathPrefix /api/v1/admin/sessions` — all methods

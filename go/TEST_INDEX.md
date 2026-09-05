@@ -2522,6 +2522,21 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-101 · Observability summary — `internal/admin/observability_test.go`
+
+**Purpose:** `GET /admin/observability/summary` returns a cross-tenant aggregate JSON array using the Admin (BYPASSRLS) pool; DB errors return 500.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| OBS-1 | `TestObservability_Summary_OK` | Single tenant row with run_count, tokens, quota, resource counts → 200 JSON array |
+| OBS-2 | `TestObservability_Summary_Empty` | No tenants → 200 with `[]` |
+| OBS-3 | `TestObservability_Summary_DBError` | DB error → 500 |
+| OBS-4 | `TestObservability_Summary_MultiTenant` | Two tenants returned in order with correct per-tenant quota fields |
+
+**Trigger:** any change to `internal/admin/observability.go`, `internal/admin/dal/observability.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2934,6 +2949,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/managed_apps.go` | S1-92 |
 | `internal/admin/dal/managed_apps.go` | S1-92 |
 | `internal/admin/tenants.go` | S1-94 |
+| `internal/admin/observability.go` | S1-101 |
+| `internal/admin/dal/observability.go` | S1-101 |
 | `internal/admin/dal/tenants.go` | S1-94 |
 | `internal/admin/audit_logs.go` | S1-100 + S2-09 (integration) |
 | `internal/admin/dal/audit_logs.go` | S1-100 + S2-09 (integration) |
@@ -3080,7 +3097,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
 | S1-100 | Audit Logs handler (AL-01..03, AL-05b..08): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges | 7 |
-| **S1 total** | | **1096** |
+| S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
+| **S1 total** | | **1100** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

@@ -201,6 +201,9 @@ func BuildRouter(
 			llmProviders.TenantProviderRoutes(a)
 			systemAgents.Routes(a)
 			tenants.Routes(a)
+			if pools != nil {
+				NewObservabilityHandler(pools).Routes(a)
+			}
 			managedApps.PlatformRoutes(a)
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
