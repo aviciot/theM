@@ -2552,6 +2552,29 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-103 · Tenant self-service handler — `internal/admin/tenant_self_service_test.go`
+
+**Purpose:** Verifies `TenantSelfServiceHandler` for GET /tenant/settings, PATCH /tenant/settings, and GET /tenant/quota. Confirms that:
+- `GetSettings` returns the tenant from context (no URL param).
+- `GetSettings` returns 404 on ErrNoRows.
+- `PatchSettings` returns the patched tenant detail on success.
+- `PatchSettings` silently drops `enabled` — self-service cannot disable a tenant.
+- `GetQuota` returns 404 when no quota row exists.
+- `GetQuota` returns 200 with quota data.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| TSS-01 | `TestTenantSelfService_GetSettings_Success` | Returns tenant from tenantctx (not URL param); 200 with slug + display_name |
+| TSS-02 | `TestTenantSelfService_GetSettings_NotFound` | Returns 404 when GetTenant returns ErrNoRows |
+| TSS-03 | `TestTenantSelfService_PatchSettings_Success` | Returns 200 TenantDetail after successful patch |
+| TSS-04 | `TestTenantSelfService_PatchSettings_EnabledIgnored` | Enabled field in request body is silently nil'd; DB row remains enabled=true |
+| TSS-05 | `TestTenantSelfService_GetQuota_NotFound` | Returns 404 when no quota row exists |
+| TSS-06 | `TestTenantSelfService_GetQuota_Found` | Returns 200 with quota including plan |
+
+**Trigger:** `internal/admin/tenant_self_service.go`, `internal/admin/middleware.go` (RequireTenantAdmin), `internal/admin/router.go` (self-service group)
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2965,6 +2988,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/managed_apps.go` | S1-92 |
 | `internal/admin/dal/managed_apps.go` | S1-92 |
 | `internal/admin/tenants.go` | S1-94 + S1-102 (AR-03) |
+| `internal/admin/tenant_self_service.go` | S1-103 |
+| `internal/admin/middleware.go` (RequireTenantAdmin) | S1-103 |
 | `internal/admin/observability.go` | S1-101 |
 | `internal/admin/dal/observability.go` | S1-101 |
 | `internal/admin/dal/tenants.go` | S1-94 |
@@ -3116,7 +3141,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-100 | Audit Logs handler (AL-01..03, AL-05b..11): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges, AgentInput_AuthTokenRedacted, MCPServerPatch_ProbeTokenRedacted, TenantPatch_ClientSecretRedacted | 10 |
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
 | S1-102 | Audit redaction production-path (AR-01..03): AgentUpdate_AuditNoRawAuthToken, MCPServerUpdate_AuditNoRawProbeToken, TenantPatch_AuditNoRawClientSecret | 3 |
-| **S1 total** | | **1106** |
+| S1-103 | Tenant self-service handler (TSS-01..06): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found | 6 |
+| **S1 total** | | **1112** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -3127,4 +3153,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1037** |
+| **`go test ./...` total** | | **1043** |

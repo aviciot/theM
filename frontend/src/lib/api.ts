@@ -536,6 +536,14 @@ export const themApi = {
   upsertTenantQuota: (id: string, quota: Omit<TenantQuota, 'tenant_id'>) =>
     api.put<TenantQuota>('/admin/tenants/' + id + '/quota', quota),
 
+  // Tenant self-service (admin/super_admin — own tenant only, no ID in URL)
+  getTenantSettings: () =>
+    api.get<TenantRecord>('/tenant/settings'),
+  patchTenantSettings: (patch: Pick<TenantPatch, 'display_name' | 'email_domain' | 'idp_config'>) =>
+    api.patch<TenantRecord>('/tenant/settings', patch),
+  getTenantSelfQuota: () =>
+    api.get<TenantQuota>('/tenant/quota'),
+
   // Managed App catalog (platform-level)
   listManagedApps: () =>
     api.get<ManagedApp[]>('/admin/managed-apps'),

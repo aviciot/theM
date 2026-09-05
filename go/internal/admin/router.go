@@ -220,6 +220,18 @@ func BuildRouter(
 		})
 	})
 
+	// Tenant self-service routes — available to admin OR super_admin.
+	// Reads tenant from JWT claims; no tenant ID in URL.
+	selfSvc := NewTenantSelfServiceHandler(dbq, auditWriter)
+	r.Group(func(selfGroup chi.Router) {
+		if jwtMiddleware != nil {
+			selfGroup.Use(jwtMiddleware)
+		}
+		selfGroup.Use(RequireTenantAdmin(logger))
+		selfGroup.Use(AdminTenantMiddleware())
+		selfSvc.Routes(selfGroup)
+	})
+
 	// Debug proxy — authenticated, forwards HTTP requests server-side to avoid
 	// CORS restrictions when the browser debugs an agent pipeline directly.
 	if jwtMiddleware != nil {

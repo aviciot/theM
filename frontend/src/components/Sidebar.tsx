@@ -20,6 +20,7 @@ const ADMIN_NAV = [
   { href: '/admin/managed-apps',   icon: 'extension',      label: 'Managed Apps' },
   { href: '/admin/observability', icon: 'monitoring',    label: 'Observability' },
   { href: '/admin/audit-logs',   icon: 'receipt_long',  label: 'Audit Logs' },
+  { href: '/tenant/settings',     icon: 'manage_accounts', label: 'My Tenant' },
   { href: '/admin/settings',      icon: 'settings',      label: 'Settings' },
 ];
 

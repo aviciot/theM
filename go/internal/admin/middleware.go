@@ -129,6 +129,38 @@ func AdminTenantMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
+// RequireTenantAdmin returns middleware that allows admin OR super_admin roles.
+// Less restrictive than RequireSuperAdmin — intended for tenant self-service routes.
+func RequireTenantAdmin(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := auth.ClaimsFromCtx(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			allowed := false
+			for _, role := range claims.Roles {
+				if role == "admin" || role == "super_admin" {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				writeError(w, http.StatusForbidden, "admin role required")
+				return
+			}
+			if logger != nil {
+				logger.Debug("tenant: authorized",
+					"user", claims.Username,
+					"path", r.URL.Path,
+					"method", r.Method)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // writeJSON marshals v as JSON and writes it with the given status code.
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
