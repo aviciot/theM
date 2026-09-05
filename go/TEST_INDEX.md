@@ -2540,13 +2540,15 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ### S1-102 · Audit redaction production-path — `internal/admin/audit_redaction_test.go`
 
-**Purpose:** Calls the actual Update handler end-to-end with a capturing querier and `NewAuditWriterForTest`. Verifies that secret fields are absent from the serialized audit entry written by `AuditWriter.Write` — not just from `changesOf()`. This is a production-path replacement for the changesOf-level simulation in AL-09/10/11.
+**Purpose:** Calls the actual Update/Patch handler end-to-end with a capturing querier and `NewAuditWriterForTest`. Verifies that secret fields are absent from the serialized audit entry written by `AuditWriter.Write` — not just from `changesOf()`. This is a production-path replacement for the changesOf-level simulation in AL-09/10/11.
 
 | Test ID | Test | What it proves |
 |---|---|---|
 | AR-01 | `TestAgentUpdate_AuditDoesNotContainRawAuthToken` | Agent Update handler: `auth_token` absent from captured audit entry; `auth_token_changed=true` sentinel present |
+| AR-02 | `TestMCPServerUpdate_AuditDoesNotContainRawProbeToken` | MCP server Update handler: `probe_token` absent from captured audit entry; `probe_token_changed=true` sentinel present |
+| AR-03 | `TestTenantPatch_AuditDoesNotContainRawClientSecret` | Tenant Patch handler: `idp_config.client_secret` absent from captured audit entry; `client_secret_changed=true` sentinel present |
 
-**Trigger:** any change to `internal/admin/agents.go`, `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`
+**Trigger:** any change to `internal/admin/agents.go`, `internal/admin/mcp_servers.go`, `internal/admin/tenants.go`, `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`
 
 ---
 
@@ -2813,7 +2815,8 @@ Tests skip gracefully when prerequisites (roles, RLS enabled on tables) aren't m
 | `TestRLS10_FreshConnectionFailClosed` | Fresh them_app connection is fail-closed (MaxConns=1) | A1 + RLS on agents |
 | `TestRLS11_GUCResetsAfterCommit` | GUC resets to '' after commit; reused connection is fail-closed | A1 + RLS on agents |
 | `TestRLSPoolsInterface` | NewPools connects; App+Admin non-nil; NewAdminQuerier non-nil | THEM_DB_URL_APP + THEM_DB_URL_ADMIN |
-| `TestRLS_TwoTenantFullIsolation` | Full two-tenant isolation: each tenant sees only own rows in mcp_servers, orchestrators, applications, app_mcp_credentials; cross-tenant INSERT blocked by WITH CHECK | A1 + Phase B/C/D migrations deployed |
+| `TestRLS_TwoTenantFullIsolation` | Full two-tenant isolation: each tenant sees only own rows across 24 table checks; cross-tenant INSERT blocked by WITH CHECK; audit_logs/middleware_audit/middleware_jobs excluded from SELECT loop (INSERT-only for them_app by design) | A1 + Phase B/C/D migrations deployed |
+| `TestRLS_CatalogVerification` | CV-01..05: ≥28 RLS-enabled tables; all have FORCE RLS; them_app NOBYPASSRLS; them_admin BYPASSRLS; no policy-less RLS tables | All RLS migrations deployed |
 
 **Run command:**
 ```bash
@@ -2961,14 +2964,14 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 + S1-71 + S1-92 |
 | `internal/admin/managed_apps.go` | S1-92 |
 | `internal/admin/dal/managed_apps.go` | S1-92 |
-| `internal/admin/tenants.go` | S1-94 |
+| `internal/admin/tenants.go` | S1-94 + S1-102 (AR-03) |
 | `internal/admin/observability.go` | S1-101 |
 | `internal/admin/dal/observability.go` | S1-101 |
 | `internal/admin/dal/tenants.go` | S1-94 |
 | `internal/admin/audit_logs.go` | S1-100 + S1-102 + S2-09 (integration) |
 | `internal/admin/dal/audit_logs.go` | S1-100 + S1-102 + S2-09 (integration) |
 | `internal/admin/audit_redaction_test.go` | S1-102 |
-| `internal/admin/mcp_servers.go` | S1-100 (AL-05a/b) |
+| `internal/admin/mcp_servers.go` | S1-100 (AL-05a/b) + S1-102 (AR-02) |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -3112,16 +3115,16 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
 | S1-100 | Audit Logs handler (AL-01..03, AL-05b..11): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges, AgentInput_AuthTokenRedacted, MCPServerPatch_ProbeTokenRedacted, TenantPatch_ClientSecretRedacted | 10 |
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
-| S1-102 | Audit redaction production-path (AR-01): AgentUpdate_AuditDoesNotContainRawAuthToken | 1 |
-| **S1 total** | | **1104** |
+| S1-102 | Audit redaction production-path (AR-01..03): AgentUpdate_AuditNoRawAuthToken, MCPServerUpdate_AuditNoRawProbeToken, TenantPatch_AuditNoRawClientSecret | 3 |
+| **S1 total** | | **1106** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | S2-04 | admin tokens + sessions integration | 11 |
 | S2-05 | admin/dal llm_providers integration | 11 |
-| S2-08 | RLS integration (role attrs + GUC isolation): RLS-30, RLS-31, RLS-31b, RLS-32, RLS-33, RLS-08, RLS-10, RLS-11, PoolsInterface | 9 |
+| S2-08 | RLS integration (role attrs + GUC isolation + full two-tenant isolation + catalog): RLS-30, RLS-31, RLS-31b, RLS-32, RLS-33, RLS-08, RLS-10, RLS-11, PoolsInterface, TwoTenantFullIsolation, CatalogVerification | 11 |
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1035** |
+| **`go test ./...` total** | | **1037** |

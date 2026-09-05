@@ -27,6 +27,7 @@ type MCPServersHandler struct {
 	fernetKey     []byte
 	mcpServiceURL string // base URL of them-mcp-service; empty → probe returns 503
 	audit         *AuditWriter
+	testQuerier   DBQuerier // non-nil only in tests — bypasses pools
 }
 
 // NewMCPServersHandler creates an MCPServersHandler.
@@ -41,7 +42,20 @@ func NewMCPServersHandler(pools *db.Pools, secretKey, mcpServiceURL string, audi
 	}
 }
 
+// NewMCPServersHandlerForTest creates an MCPServersHandler backed by a fake DBQuerier.
+// Pools is nil — openSvc uses testQuerier directly with a no-op commit/rollback.
+// A throwaway fernet key is derived so encryption paths can exercise without real secrets.
+// Use only in tests.
+func NewMCPServersHandlerForTest(q DBQuerier, audit *AuditWriter) *MCPServersHandler {
+	return &MCPServersHandler{testQuerier: q, fernetKey: crypto.DeriveKey("test-only-key"), audit: audit}
+}
+
 func (h *MCPServersHandler) openSvc(ctx context.Context, tenantID string) (svc *service.MCPServerService, commit func(context.Context) error, cancel func(), err error) {
+	if h.testQuerier != nil {
+		d := dal.NewDB(h.testQuerier)
+		noop := func(context.Context) error { return nil }
+		return service.NewMCPServerServiceFromFernet(d, h.fernetKey), noop, func() {}, nil
+	}
 	tenantUUID, uuidErr := uuid.Parse(tenantID)
 	if uuidErr != nil {
 		return nil, nil, nil, uuidErr

@@ -421,14 +421,32 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 		t.Fatalf("upsert tenant B: %v", err)
 	}
 
-	// cleanup removes all test data at the end, regardless of outcome.
-	// Delete in dependency order — tenants.id has FKs that are NOT CASCADE on some tables.
-	cleanup := func() {
-		ids := []string{tenantA, tenantB}
+	// cleanupData removes all child-table test data for the given tenant IDs.
+	// Run eagerly before seeding (to clear stale rows from prior runs) and also called by cleanup.
+	cleanupData := func(ids []string) {
 		for _, tid := range ids {
+			// run children before runs/tasks
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.run_steps WHERE run_id IN (SELECT id FROM them.runs WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.run_usage WHERE run_id IN (SELECT id FROM them.runs WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.run_artifacts WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.task_messages WHERE task_id IN (SELECT id FROM them.tasks WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.artifacts WHERE task_id IN (SELECT id FROM them.tasks WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.tasks WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.runs WHERE tenant_id=$1::uuid`, tid)
+			// quarantine and app-level children
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.quarantine_artifacts WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.middleware_audit WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.middleware_jobs WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.middleware_wirings WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.app_mcp_credentials WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.app_agent_bindings WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.app_orchestrators WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.application_definitions WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.agent_runtime_specs WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.agent_definitions WHERE tenant_id=$1::uuid`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.agents WHERE tenant_id=$1::uuid`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.orchestrators WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.entry_points WHERE tenant_id=$1::uuid`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.applications WHERE tenant_id=$1::uuid`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.tenant_group_mappings WHERE tenant_id=$1::uuid`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.llm_providers WHERE tenant_id=$1::uuid`, tid)
@@ -436,9 +454,15 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.mcp_servers WHERE tenant_id=$1::uuid`, tid)
 			_, _ = superPool.Exec(ctx, `DELETE FROM them.audit_logs WHERE tenant_id=$1::uuid`, tid)
 		}
+	}
+	// cleanup removes all test data including the tenant rows themselves.
+	cleanup := func() {
+		cleanupData([]string{tenantA, tenantB})
 		_, _ = superPool.Exec(ctx, `DELETE FROM them.tenants WHERE id IN ($1::uuid,$2::uuid)`, tenantA, tenantB)
 		_, _ = superPool.Exec(ctx, `DELETE FROM them.component_definitions WHERE namespace='rlstest'`)
 	}
+	// Eagerly clear stale data from previous test runs (tenants are re-upserted so we keep them).
+	cleanupData([]string{tenantA, tenantB})
 	defer cleanup()
 
 	// ── 2. Seed one row per table per tenant (Admin / superuser pool — BYPASSRLS) ──
@@ -637,53 +661,60 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 		txA.Rollback(cleanupCtx)
 	}()
 
-	tables := []string{
-		// direct tenant_id
-		`SELECT count(*) FROM them.agents WHERE slug LIKE 'rlsagent%'`,
-		`SELECT count(*) FROM them.mcp_servers WHERE slug LIKE 'rlstestmcp%'`,
-		`SELECT count(*) FROM them.orchestrators WHERE name LIKE 'rlsorch%'`,
-		`SELECT count(*) FROM them.applications WHERE slug LIKE 'rlstestapp%'`,
-		`SELECT count(*) FROM them.entry_points WHERE slug LIKE 'rlsepslug%'`,
-		`SELECT count(*) FROM them.access_tokens WHERE token_hash LIKE 'rlstoken%'`,
-		`SELECT count(*) FROM them.llm_providers WHERE name LIKE 'rlsllm%'`,
-		`SELECT count(*) FROM them.audit_logs WHERE action LIKE 'rls.test.%'`,
-		`SELECT count(*) FROM them.tenant_group_mappings WHERE group_name LIKE 'rls-group-%'`,
-		`SELECT count(*) FROM them.application_definitions WHERE definition_hash LIKE 'rlshash%'`,
-		`SELECT count(*) FROM them.managed_app_bindings WHERE app_id IN (SELECT id FROM them.applications WHERE slug LIKE 'rlstestapp%')`,
-		`SELECT count(*) FROM them.quarantine_artifacts WHERE filename='test.bin' AND application_id IN (SELECT id FROM them.applications WHERE slug LIKE 'rlstestapp%')`,
-		`SELECT count(*) FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%'`,
-		`SELECT count(*) FROM them.tasks WHERE run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`,
-		`SELECT count(*) FROM them.run_artifacts WHERE filename LIKE 'rls-art-%'`,
-		// agent_definitions / agent_runtime_specs — filter by slug / hash
-		`SELECT count(*) FROM them.agent_definitions WHERE agent_slug LIKE 'rls-agent-%'`,
-		`SELECT count(*) FROM them.agent_runtime_specs WHERE spec_hash LIKE 'rlsspec%'`,
+	type tableCheck struct {
+		q    string
+		want int
+	}
+	// audit_logs is excluded: them_app has INSERT-only on audit_logs (by design); SELECT
+	// requires them_admin (BYPASSRLS). The INSERT-only policy is verified separately in S2-09.
+	tables := []tableCheck{
+		// direct tenant_id — each tenant has exactly 1 unless noted
+		{`SELECT count(*) FROM them.agents WHERE slug LIKE 'rlsagent%'`, 1},
+		{`SELECT count(*) FROM them.mcp_servers WHERE slug LIKE 'rlstestmcp%'`, 1},
+		// Each tenant gets 2 orchestrators: rlsorch{a,b} + rlsorch2{a,b}
+		{`SELECT count(*) FROM them.orchestrators WHERE name LIKE 'rlsorch%'`, 2},
+		{`SELECT count(*) FROM them.applications WHERE slug LIKE 'rlstestapp%'`, 1},
+		{`SELECT count(*) FROM them.entry_points WHERE slug LIKE 'rlsepslug%'`, 1},
+		{`SELECT count(*) FROM them.access_tokens WHERE token_hash LIKE 'rlstoken%'`, 1},
+		{`SELECT count(*) FROM them.llm_providers WHERE name LIKE 'rlsllm%'`, 1},
+		{`SELECT count(*) FROM them.tenant_group_mappings WHERE group_claim LIKE 'rls-group-%'`, 1},
+		{`SELECT count(*) FROM them.application_definitions WHERE definition_hash LIKE 'rlshash%'`, 1},
+		{`SELECT count(*) FROM them.managed_app_bindings WHERE app_id IN (SELECT id FROM them.applications WHERE slug LIKE 'rlstestapp%')`, 1},
+		{`SELECT count(*) FROM them.quarantine_artifacts WHERE filename='test.bin' AND application_id IN (SELECT id FROM them.applications WHERE slug LIKE 'rlstestapp%')`, 1},
+		{`SELECT count(*) FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%'`, 1},
+		{`SELECT count(*) FROM them.tasks WHERE run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`, 1},
+		{`SELECT count(*) FROM them.run_artifacts WHERE filename LIKE 'rls-art-%'`, 1},
+		// agent_definitions / agent_runtime_specs
+		{`SELECT count(*) FROM them.agent_definitions WHERE agent_slug LIKE 'rls-agent-%'`, 1},
+		{`SELECT count(*) FROM them.agent_runtime_specs WHERE spec_hash LIKE 'rlsspec%'`, 1},
 		// EXISTS-via-applications
-		`SELECT count(*) FROM them.app_mcp_credentials c JOIN them.applications a ON a.id=c.application_id WHERE a.slug LIKE 'rlstestapp%'`,
-		`SELECT count(*) FROM them.app_agent_bindings b JOIN them.applications a ON a.id=b.application_id WHERE a.slug LIKE 'rlstestapp%'`,
-		`SELECT count(*) FROM them.app_orchestrators o JOIN them.applications a ON a.id=o.application_id WHERE a.slug LIKE 'rlstestapp%'`,
-		`SELECT count(*) FROM them.middleware_wirings w JOIN them.applications a ON a.id=w.application_id WHERE a.slug LIKE 'rlstestapp%'`,
-		`SELECT count(*) FROM them.middleware_audit m JOIN them.applications a ON a.id=m.application_id WHERE a.slug LIKE 'rlstestapp%'`,
-		`SELECT count(*) FROM them.middleware_jobs j JOIN them.applications a ON a.id=j.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		{`SELECT count(*) FROM them.app_mcp_credentials c JOIN them.applications a ON a.id=c.application_id WHERE a.slug LIKE 'rlstestapp%'`, 1},
+		{`SELECT count(*) FROM them.app_agent_bindings b JOIN them.applications a ON a.id=b.application_id WHERE a.slug LIKE 'rlstestapp%'`, 1},
+		{`SELECT count(*) FROM them.app_orchestrators o JOIN them.applications a ON a.id=o.application_id WHERE a.slug LIKE 'rlstestapp%'`, 1},
+		{`SELECT count(*) FROM them.middleware_wirings w JOIN them.applications a ON a.id=w.application_id WHERE a.slug LIKE 'rlstestapp%'`, 1},
+		// middleware_audit and middleware_jobs excluded: them_app has INSERT-only on those tables (by design).
+		// Their RLS is still verified by the FORCE ROW LEVEL SECURITY catalog check (CV-02).
+
 		// EXISTS-via-runs
-		`SELECT count(*) FROM them.run_steps s JOIN them.runs r ON r.id=s.run_id WHERE r.entry_point_slug LIKE 'rlsepslug%'`,
-		`SELECT count(*) FROM them.run_usage u JOIN them.runs r ON r.id=u.run_id WHERE r.entry_point_slug LIKE 'rlsepslug%'`,
-		// EXISTS-via-tasks (via runs for isolation filter)
-		`SELECT count(*) FROM them.task_messages m JOIN them.tasks t ON t.id=m.task_id WHERE t.run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`,
-		`SELECT count(*) FROM them.artifacts ar JOIN them.tasks t ON t.id=ar.task_id WHERE t.run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`,
+		{`SELECT count(*) FROM them.run_steps s JOIN them.runs r ON r.id=s.run_id WHERE r.entry_point_slug LIKE 'rlsepslug%'`, 1},
+		{`SELECT count(*) FROM them.run_usage u JOIN them.runs r ON r.id=u.run_id WHERE r.entry_point_slug LIKE 'rlsepslug%'`, 1},
+		// EXISTS-via-tasks
+		{`SELECT count(*) FROM them.task_messages m JOIN them.tasks t ON t.id=m.task_id WHERE t.run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`, 1},
+		{`SELECT count(*) FROM them.artifacts ar JOIN them.tasks t ON t.id=ar.task_id WHERE t.run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`, 1},
 	}
 
 	checkIsolation := func(t *testing.T, tx *TenantTx, label string) {
 		t.Helper()
-		for _, q := range tables {
+		for _, tc := range tables {
 			var count int
-			if err := tx.QueryRow(ctx, q).Scan(&count); err != nil {
-				t.Errorf("%s: query error on %q: %v", label, q[:min(60, len(q))], err)
+			if err := tx.QueryRow(ctx, tc.q).Scan(&count); err != nil {
+				t.Errorf("%s: query error on %q: %v", label, tc.q[:min(60, len(tc.q))], err)
 				continue
 			}
-			if count != 1 {
-				t.Errorf("%s: %q — expected 1 (own), got %d", label, q[:min(60, len(q))], count)
+			if count != tc.want {
+				t.Errorf("%s: %q — expected %d (own), got %d", label, tc.q[:min(60, len(tc.q))], tc.want, count)
 			} else {
-				t.Logf("PASS %s: 1 row visible", label)
+				t.Logf("PASS %s: %d row(s) visible", label, count)
 			}
 		}
 	}
