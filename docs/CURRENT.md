@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-05 (Step 30 complete — tenant self-service API + frontend)
+# Last updated: 2026-09-05 (Step 31 complete — api_rpm + monthly_llm_tokens quota enforcement)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+1c2bc3a  feat(quota): Step 31 — enforce api_requests_per_minute + monthly_llm_tokens
+a2b0274  docs: update CURRENT.md — Step 30 complete, HEAD bfc98a2
 bfc98a2  feat(tenant): Step 30 — tenant self-service API + frontend settings page
 e455fae  fix(e2e): test_14 delete orchestrator by name, not UUID
 f787894  feat(orch): Step 29 — hard-delete orchestrator; free name on delete
-537fcb3  test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests
-d9cde37  docs(step28): Step 28 already complete — TenantTx migration was done; update CURRENT.md
 ```
 
 ---
@@ -59,7 +59,7 @@ Completed:
 
 ⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
-Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
+All quota fields now enforced: `max_concurrent_runs`, `runs_per_minute`, `monthly_runs`, `api_requests_per_minute`, `monthly_llm_tokens`. `max_agents`, `max_apps`, `max_mcp_servers`, `max_users` enforced at Create time.
 
 ### Completed steps (this session)
 
@@ -116,13 +116,22 @@ New `/api/v1/tenant/` route group accessible to `admin` OR `super_admin` roles (
 - Frontend: `/tenant/settings` page (General + Quota tabs); "My Tenant" Sidebar nav item
 - `go test ./...` — 1043 pass, 0 fail
 
+### Step 31 — Quota enforcement: COMPLETE (1c2bc3a)
+
+`api_requests_per_minute` and `monthly_llm_tokens` are now enforced at run Admit time.
+- `api_requests_per_minute` → Redis INCR `rl:them:{tenant}:api:{minute}` TTL 90s → 429 ErrAPIRateLimited
+- `monthly_llm_tokens` → DB SUM `total_tokens_in + total_tokens_out` from `them.runs` current month → 429 ErrMonthlyLLMTokensExceeded; fail-open on DB error
+- `SumMonthlyTokens` DAL method added to `dal/runs.go`
+- `MonthlyTokenCounter` interface + `WithTokenCounter` on `quota.Enforcer`
+- 8 new unit tests (QE-10..17). `go test ./...` — 1051 pass, 0 fail.
+
 ### Next recommended task for a new session
 
-**Step 31 candidates** (choose one):
+**Step 32 candidates** (choose one):
 
-1. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently tracked in DB but not enforced at runtime.
-2. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
-3. **Member self-service** — allow tenant members to view their own membership, role, and team assignments.
+1. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
+2. **Member self-service** — allow tenant members to view their own membership, role, and team assignments via `/api/v1/me/` endpoints.
+3. **Quota enforcement UI** — show current usage vs. quota limits on the tenant settings page.
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
