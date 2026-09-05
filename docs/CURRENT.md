@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 24 COMPLETE — MCP server audit; RLS closure done)
+# Last updated: 2026-09-04 (Steps 24-26 COMPLETE — MCP audit, dead code removal, audit enrichment)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,6 +10,9 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+c83f8eb  feat(audit): Step 26 — enrich update audit entries with changes JSONB field
+3fc072c  refactor(admin): Step 25 — remove MCPServers legacy fallback; clarify test-only legacy paths
+31d17a1  docs(audit): Step 24 complete — update CURRENT.md with RLS status and Step 25 candidates
 9a9fc45  feat(audit): Step 24 — wire mcp_server.create/update/delete into AuditWriter
 ea1039a  docs(rls): Step H2 complete — CURRENT.md and HANDOVER.md
 b0cdb79  test(rls): Step H2 — expand integration tests to 27 tables + catalog verification
@@ -61,20 +64,23 @@ Completed:
 
 Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
+### Completed steps (this session)
+
+- **Step 24 (c83f8eb subset)** — MCP server audit: `mcp_server.create/update/delete` wired into `AuditWriter`. Test AL-05b.
+- **Step 25 (3fc072c)** — Removed `MCPServersHandler` legacy fallback path. `pools=nil` branch in agents/apps/orchestrators `openSvc` is intentionally kept as the unit-test escape hatch (never reached in production — clearly documented in comments).
+- **Step 26 (c83f8eb)** — Audit log enrichment: `AuditEntry.Changes map[string]any`, `changesOf()` helper, all 4 update handlers (agent/app/mcp_server/tenant) now log request payload in `details` JSONB as `{"actor":"…","changes":{…}}`. Tests AL-06, AL-07, AL-08. `go test ./...` — 1096 tests, 0 failures.
+
 ### Next recommended task for a new session
 
-**Step 24 complete** — MCP server audit wiring done (`mcp_server.create/update/delete`).
+**Step 27 candidates** (choose one):
 
-**Step 25 candidates** (choose one):
+1. **Cross-tenant admin observability** — super-admin API endpoint + frontend page: aggregate runs/usage/quota across all tenants. Uses `rlsPools.Admin` (BYPASSRLS). Protected by `RequireSuperAdmin`. Medium scope, high ops value.
+2. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced). Defense-in-depth. MCP servers already use TenantTx as the model.
+3. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
 
-1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
-2. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
-3. **Audit log enrichment** — add before/after diff on Update operations (SELECT-before-UPDATE in DAL, store `changes` JSONB). Bounded scope.
-4. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced). Defense-in-depth. MCP servers already use TenantTx as the model.
+**RLS status:** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. Admin CRUD handlers (agents, apps, orchestrators) still use `rlsPools.Admin` (BYPASSRLS) with explicit `WHERE tenant_id` — isolation is SQL-enforced, not RLS-enforced for those paths. This is safe but not defense-in-depth.
 
-**RLS status:** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. Admin CRUD handlers (agents, apps, orchestrators) still use `rlsPools.Admin` (BYPASSRLS) with explicit `WHERE tenant_id` — isolation is SQL-enforced, not RLS-enforced for those paths. This is safe but not defense-in-depth. Full TenantTx migration for admin handlers is Step 25 candidate #4.
-
-Recommended: **Step 25 = Audit log enrichment** (bounded scope, high audit value) or **Admin CRUD TenantTx migration** (completes defense-in-depth).
+Recommended: **Step 27 = Cross-tenant admin observability** (high ops value, self-contained).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
