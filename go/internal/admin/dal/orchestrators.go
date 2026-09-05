@@ -114,9 +114,10 @@ func (d *DB) UpdateOrchestrator(ctx context.Context, tenantID, name string, in O
 	)
 }
 
-// DeleteOrchestrator soft-deletes an orchestrator by setting enabled=false, scoped to the tenant.
+// DeleteOrchestrator hard-deletes an orchestrator, scoped to the tenant.
+// Hard-delete (not soft-delete) so the name is freed for immediate reuse.
 func (d *DB) DeleteOrchestrator(ctx context.Context, tenantID, name string) error {
 	return d.q.Exec(ctx,
-		`UPDATE them.orchestrators SET enabled=false, updated_at=now() WHERE name=$1 AND tenant_id=$2::uuid`,
+		`DELETE FROM them.orchestrators WHERE name=$1 AND tenant_id=$2::uuid`,
 		name, tenantID)
 }
