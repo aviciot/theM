@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-05 (RLS fully closed — two-tenant integration test fixed, AR-02/AR-03 handler-path redaction tests added)
+# Last updated: 2026-09-05 (Step 30 complete — tenant self-service API + frontend)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+bfc98a2  feat(tenant): Step 30 — tenant self-service API + frontend settings page
+e455fae  fix(e2e): test_14 delete orchestrator by name, not UUID
+f787894  feat(orch): Step 29 — hard-delete orchestrator; free name on delete
 537fcb3  test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests
 d9cde37  docs(step28): Step 28 already complete — TenantTx migration was done; update CURRENT.md
-1786c6b  docs: update CURRENT.md with security hardening complete — HEAD 50a09e0, E2E 9/9
-50a09e0  fix(rls): close app-pool permission gaps — auth_service join, tenant_quotas grant
-cfb4798  docs(tests): update TEST_INDEX.md for security fix — S1-36 +1, new S1-102
 ```
 
 ---
@@ -106,13 +106,23 @@ The following remain on the Admin pool by design (not regressions):
 - `AuditLogsHandler.List` — SELECT on audit_logs requires Admin pool (INSERT-only RLS for them_app)
 - Action endpoints in AgentsHandler (Discover/Test/SecurityScan) — use `legacyDAL` for cross-tenant/platform-global reads (`GetAgentBySlug("security_scanner")`, unscoped token lookups)
 
+### Step 30 — Tenant self-service: COMPLETE (bfc98a2)
+
+New `/api/v1/tenant/` route group accessible to `admin` OR `super_admin` roles (not super_admin-only).
+- `GET /tenant/settings` — returns caller's own tenant (ID from JWT via tenantctx — never from URL)
+- `PATCH /tenant/settings` — edit display_name/email_domain/idp_config; slug and enabled are read-only for self-service
+- `GET /tenant/quota` — view own quota
+- `RequireTenantAdmin` middleware added to `middleware.go`
+- Frontend: `/tenant/settings` page (General + Quota tabs); "My Tenant" Sidebar nav item
+- `go test ./...` — 1043 pass, 0 fail
+
 ### Next recommended task for a new session
 
-**Step 30 candidates** (choose one):
+**Step 31 candidates** (choose one):
 
-1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
-2. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
-3. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
+1. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently tracked in DB but not enforced at runtime.
+2. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
+3. **Member self-service** — allow tenant members to view their own membership, role, and team assignments.
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
