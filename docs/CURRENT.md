@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-05 (Steps 24-27 + security fixes COMPLETE — audit secret redaction, migration 079)
+# Last updated: 2026-09-05 (Security hardening complete — cross-tenant token fix, quota grant, RLS app pool fixes)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -76,18 +76,27 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
   - `TenantIDPConfig.ClientSecret`: handler now deletes nested `idp_config.client_secret`, adds `client_secret_changed=true` sentinel.
   - Tests AL-09, AL-10, AL-11 cover all three redaction paths. S1-100: 7→10 tests. `go test ./...` — 1103 tests, 0 failures.
 - **Migration 079** (`db/079_component_definitions_grant.sql`): Restores `GRANT INSERT, DELETE ON them.component_definitions TO them_app`. Migration 078 over-revoked these — Agent Create (CTE insert) and Delete (explicit DELETE) run via TenantTx (them_app role) and would have broken with 078 applied. Must apply 078+079 together.
+- **Security fix — cross-tenant token exfiltration** (`go/internal/admin/dal/agents.go`, `go/internal/admin/agents.go`): Added `GetAgentTokenEncryptedForTenant(ctx, id, tenantID)` which filters by both `id AND tenant_id`. The Discover handler now uses the tenant-scoped lookup. Test CT-01 covers the cross-tenant check.
+- **Production-path audit redaction tests** (`go/internal/admin/audit_redaction_test.go`, `audit_logs.go`): Added `NewAuditWriterForTest(q DBQuerier)` constructor; test AR-01 verifies that auth_token does not appear in audit JSONB, only `auth_token_changed=true` sentinel.
+- **App pool permission gaps closed** (`db/080_grant_tenant_quotas_to_app.sql`, DAL fixes): See LESSONS.md for full root cause. Summary:
+  - Removed `LEFT JOIN auth_service.users` from `agentSelectCols` and `agent_definitions` queries — `them_app` cannot cross into `auth_service` schema.
+  - Migration 080: `GRANT SELECT ON them.tenant_quotas TO them_app` — required by `checkResourceQuota` in Create paths.
+  - agents.Create and orchestrators.Create now return HTTP 409 for duplicate slug/name (SQLSTATE 23505 → ErrConflict).
+- **Frontend observability page** (`frontend/src/app/admin/observability/page.tsx`): `/admin/observability` table with per-tenant run count (30d), LLM tokens (30d), agent/app quota with color coding. Sidebar entry added.
+
+**HEAD: `50a09e0 fix(rls): close app-pool permission gaps`**
+
+**E2E test 14 verified: 9/9 passed** (Agent Create/Delete, Orchestrator Create/Delete, WS reachable, Runs list, Runs stats, Token Create/Delete).
 
 ### Next recommended task for a new session
 
 **Step 28 candidates** (choose one):
 
-1. **Observability frontend page** — `/admin/observability` page in Next.js consuming `GET /api/v1/admin/observability/summary`. Table with per-tenant stats. Low scope, high ops value (completes Step 27 end-to-end).
-2. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced). Defense-in-depth. MCP servers already use TenantTx as the model.
-3. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
+1. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced App pool). Defense-in-depth — isolation becomes RLS-enforced not just SQL WHERE. MCP servers already use TenantTx as the model. **Now that the app pool permission gaps are fixed, this is safe to attempt.**
+2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
+3. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
 
-**RLS status:** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. Admin CRUD handlers (agents, apps, orchestrators) still use `rlsPools.Admin` (BYPASSRLS) with explicit `WHERE tenant_id` — isolation is SQL-enforced, not RLS-enforced for those paths. This is safe but not defense-in-depth.
-
-Recommended: **Step 27 = Cross-tenant admin observability** (high ops value, self-contained).
+**RLS status:** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. Admin CRUD handlers (agents, apps, orchestrators) still use `rlsPools.Admin` (BYPASSRLS) with explicit `WHERE tenant_id` — isolation is SQL-enforced, not RLS-enforced for those paths. This is safe but not defense-in-depth. App pool permission gaps are now closed (migrations 078-080 applied).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
