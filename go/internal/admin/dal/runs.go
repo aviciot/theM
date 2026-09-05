@@ -169,6 +169,19 @@ func (d *DB) CountActiveRuns(ctx context.Context, tenantID string) (int, error) 
 	return n, err
 }
 
+// SumMonthlyTokens returns total LLM tokens (input + output) consumed by tenantID
+// in the current calendar month. Used by quota enforcement for monthly_llm_tokens.
+// Returns 0 when no runs exist for the month.
+func (d *DB) SumMonthlyTokens(ctx context.Context, tenantID string) (int64, error) {
+	const q = `SELECT COALESCE(SUM(total_tokens_in + total_tokens_out), 0)::bigint
+	           FROM them.runs
+	           WHERE tenant_id = $1::uuid
+	             AND date_trunc('month', created_at AT TIME ZONE 'UTC') = date_trunc('month', now() AT TIME ZONE 'UTC')`
+	var n int64
+	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
+	return n, err
+}
+
 // GetRunDetail returns a run with its steps, usage rows, and child runs.
 func (d *DB) GetRunDetail(ctx context.Context, tenantID, runID string) (RunDetail, error) {
 	run, err := d.GetRun(ctx, tenantID, runID)

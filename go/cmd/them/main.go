@@ -256,10 +256,10 @@ func run() error {
 	// Reuses the same RateLimitClient already constructed above for per-token RL.
 	quotaDB := dal.NewDB(admin.NewPgxQuerier(rlsPools.Admin))
 	quotaRedis := cache.NewRateLimitClient(redisCache.Client())
-	quotaEnf := quota.New(quotaDB, quotaRedis)
+	quotaEnf := quota.New(quotaDB, quotaRedis).WithTokenCounter(quotaDB)
 	quotaAdapter := &tenantQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
 	execLifecycle.WithQuotaEnforcer(quotaAdapter)
-	log.Info("quota enforcer wired (max_concurrent_runs + runs_per_minute)")
+	log.Info("quota enforcer wired (max_concurrent_runs + runs_per_minute + api_rpm + monthly_llm_tokens)")
 
 	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
 	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,
@@ -502,9 +502,11 @@ func (a *tenantQuotaAdapter) CheckQuota(ctx context.Context, tenantID string) er
 		return nil
 	}
 	qe := quota.Quota{
-		MaxConcurrentRuns: q.MaxConcurrentRuns,
-		RunsPerMinute:     q.RunsPerMinute,
-		MonthlyRuns:       q.MonthlyRuns,
+		MaxConcurrentRuns:    q.MaxConcurrentRuns,
+		RunsPerMinute:        q.RunsPerMinute,
+		MonthlyRuns:          q.MonthlyRuns,
+		APIRequestsPerMinute: q.APIRequestsPerMinute,
+		MonthlyLLMTokens:     q.MonthlyLLMTokens,
 	}
 	enforceErr := a.enforcer.Check(ctx, tenantID, qe)
 	switch {
@@ -514,6 +516,10 @@ func (a *tenantQuotaAdapter) CheckQuota(ctx context.Context, tenantID string) er
 		return execution.ErrQuotaRunsPerMinute
 	case errors.Is(enforceErr, quota.ErrMonthlyRunsExceeded):
 		return execution.ErrQuotaMonthlyRuns
+	case errors.Is(enforceErr, quota.ErrAPIRateLimited):
+		return execution.ErrQuotaAPIRPM
+	case errors.Is(enforceErr, quota.ErrMonthlyLLMTokensExceeded):
+		return execution.ErrQuotaMonthlyLLMTokens
 	default:
 		return enforceErr
 	}

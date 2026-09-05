@@ -53,6 +53,14 @@ var ErrQuotaRunsPerMinute = errors.New("quota: runs per minute exceeded")
 // monthly_runs is exceeded. Lifecycle maps it to AdmitErrQuotaMonthlyRuns.
 var ErrQuotaMonthlyRuns = errors.New("quota: monthly run limit exceeded")
 
+// ErrQuotaAPIRPM is the sentinel returned by QuotaEnforcer when
+// api_requests_per_minute is exceeded. Lifecycle maps it to AdmitErrQuotaAPIRPM.
+var ErrQuotaAPIRPM = errors.New("quota: api requests per minute exceeded")
+
+// ErrQuotaMonthlyLLMTokens is the sentinel returned by QuotaEnforcer when
+// monthly_llm_tokens is exceeded. Lifecycle maps it to AdmitErrQuotaMonthlyLLMTokens.
+var ErrQuotaMonthlyLLMTokens = errors.New("quota: monthly LLM token limit exceeded")
+
 // Lifecycle executes the shared admission-and-run-start pipeline used by the WS,
 // SSE, and A2A protocol handlers. It is constructed once at server startup and
 // shared across all handlers via dependency injection.
@@ -215,6 +223,10 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 				return nil, admitErr(AdmitErrQuotaRunsPerMinute)
 			case errors.Is(qErr, ErrQuotaMonthlyRuns):
 				return nil, admitErr(AdmitErrQuotaMonthlyRuns)
+			case errors.Is(qErr, ErrQuotaAPIRPM):
+				return nil, admitErr(AdmitErrQuotaAPIRPM)
+			case errors.Is(qErr, ErrQuotaMonthlyLLMTokens):
+				return nil, admitErr(AdmitErrQuotaMonthlyLLMTokens)
 			default:
 				lc.logger.Warn("execution: quota check failed", "tenant_id", resolvedCfg.TenantID, "error", qErr)
 				return nil, admitErr(AdmitErrInternal)

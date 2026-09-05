@@ -33,6 +33,10 @@ const (
 	AdmitErrQuotaRunsPerMinute
 	// AdmitErrQuotaMonthlyRuns — tenant monthly_runs quota exceeded.
 	AdmitErrQuotaMonthlyRuns
+	// AdmitErrQuotaAPIRPM — tenant api_requests_per_minute quota exceeded.
+	AdmitErrQuotaAPIRPM
+	// AdmitErrQuotaMonthlyLLMTokens — tenant monthly_llm_tokens quota exceeded.
+	AdmitErrQuotaMonthlyLLMTokens
 )
 
 // AdmitError is the typed error returned by Lifecycle.Admit on failure.
@@ -68,6 +72,10 @@ func (e *AdmitError) Error() string {
 		return "run rate limit exceeded"
 	case AdmitErrQuotaMonthlyRuns:
 		return "monthly run limit exceeded"
+	case AdmitErrQuotaAPIRPM:
+		return "api rate limit exceeded"
+	case AdmitErrQuotaMonthlyLLMTokens:
+		return "monthly token limit exceeded"
 	default:
 		return "internal error"
 	}
@@ -87,7 +95,7 @@ func httpStatusForKind(k AdmitErrorKind) int {
 		return 401
 	case AdmitErrForbidden:
 		return 403
-	case AdmitErrCapExceeded, AdmitErrRateLimited, AdmitErrQuotaConcurrentRuns, AdmitErrQuotaRunsPerMinute, AdmitErrQuotaMonthlyRuns:
+	case AdmitErrCapExceeded, AdmitErrRateLimited, AdmitErrQuotaConcurrentRuns, AdmitErrQuotaRunsPerMinute, AdmitErrQuotaMonthlyRuns, AdmitErrQuotaAPIRPM, AdmitErrQuotaMonthlyLLMTokens:
 		return 429
 	case AdmitErrQueueFull, AdmitErrDBUnavailable:
 		return 503

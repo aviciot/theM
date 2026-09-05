@@ -650,6 +650,7 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestLifecycle_QuotaRunsPerMinuteExceeded` | LC-QE-02: QuotaEnforcer returns ErrQuotaRunsPerMinute → AdmitErrQuotaRunsPerMinute (429); gate.Check never called |
 | `TestLifecycle_QuotaMonthlyRunsExceeded` | LC-QE-04: QuotaEnforcer returns ErrQuotaMonthlyRuns → AdmitErrQuotaMonthlyRuns (429); gate.Check never called |
 | `TestLifecycle_NilQuotaEnforcer` | LC-QE-03: no quota enforcer wired → quota check skipped; run admitted normally |
+| (QE-10..17 paths) | New api_rpm + monthly_llm_tokens sentinels covered by quota enforcer unit tests (S1-95); Lifecycle simply maps them with the same switch pattern |
 
 **Trigger:** any change to `internal/execution/lifecycle.go`, `internal/execution/errors.go`, `internal/execution/request.go`, or `internal/quota/enforcer.go`
 
@@ -2460,7 +2461,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ### S1-95 · Quota enforcer — `internal/quota/enforcer_test.go`
 
-**Purpose:** Unit tests for `quota.Enforcer.Check` — the per-tenant run limit checker. Covers all three enforcement paths (concurrent runs via DB COUNT, runs/min via Redis INCR, monthly runs via Redis INCR) and the nil-limit / DB-error cases.
+**Purpose:** Unit tests for `quota.Enforcer.Check` — the per-tenant run limit checker. Covers all five enforcement paths (concurrent runs via DB COUNT, runs/min via Redis INCR, monthly runs via Redis INCR, api_requests_per_minute via Redis INCR, monthly_llm_tokens via DB SUM) and the nil-limit / DB-error / fail-open cases.
 
 | Test | What it proves |
 |---|---|
@@ -2473,8 +2474,16 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | `TestEnforcer_MonthlyNilLimit` (QE-07) | MonthlyRuns nil → no enforcement; always passes |
 | `TestEnforcer_MonthlyBelowLimit` (QE-08) | Monthly INCR returns 500 < limit (1000) → passes |
 | `TestEnforcer_MonthlyExceeded` (QE-09) | Monthly INCR returns 1001 > limit (1000) → ErrMonthlyRunsExceeded |
+| `TestEnforcer_APIRPMNilLimit` (QE-10) | APIRequestsPerMinute nil → no enforcement |
+| `TestEnforcer_APIRPMBelowLimit` (QE-11) | Redis INCR returns 5 < limit (10) → passes |
+| `TestEnforcer_APIRPMExceeded` (QE-12) | Redis INCR returns 11 > limit (10) → ErrAPIRateLimited |
+| `TestEnforcer_MonthlyLLMTokensNilLimit` (QE-13) | MonthlyLLMTokens nil → no enforcement |
+| `TestEnforcer_MonthlyLLMTokensBelowLimit` (QE-14) | DB SUM returns 5000 < limit (10000) → passes |
+| `TestEnforcer_MonthlyLLMTokensExceeded` (QE-15) | DB SUM returns 10000 >= limit (10000) → ErrMonthlyLLMTokensExceeded |
+| `TestEnforcer_MonthlyLLMTokensDBError` (QE-16) | DB error on SUM → fail-open (nil returned) |
+| `TestEnforcer_MonthlyLLMTokensNoCounter` (QE-17) | No token counter wired → fail-open even with limit set |
 
-**Trigger:** any change to `internal/quota/enforcer.go` or `internal/admin/dal/runs.go` (CountActiveRuns)
+**Trigger:** any change to `internal/quota/enforcer.go`, `internal/admin/dal/runs.go` (CountActiveRuns, SumMonthlyTokens)
 
 ---
 
@@ -3133,7 +3142,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..04): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe | 4 |
 | S1-94 | Tenant CRUD + PATCH + quota + members + email domain + group mappings handler (TN-01..25 + GM-01..07): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole, AddMember_QuotaNilLimit_Allows, AddMember_QuotaUnderLimit_Allows, AddMember_QuotaAtLimit_Rejects, Patch_EmailDomain, Patch_EmailDomain_Clear, List_WithEmailDomain, ListGroupMappings_Empty, ListGroupMappings_Populated, UpsertGroupMapping_Success, UpsertGroupMapping_MissingGroupClaim, UpsertGroupMapping_InvalidRole, DeleteGroupMapping_Success, DeleteGroupMapping_NotFound | 35 |
-| S1-95 | quota enforcer (QE-01..09): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded | 9 |
+| S1-95 | quota enforcer (QE-01..17): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded, APIRPMNilLimit, APIRPMBelowLimit, APIRPMExceeded, MonthlyLLMTokensNilLimit, MonthlyLLMTokensBelowLimit, MonthlyLLMTokensExceeded, MonthlyLLMTokensDBError, MonthlyLLMTokensNoCounter | 17 |
 | S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
@@ -3153,4 +3162,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1043** |
+| **`go test ./...` total** | | **1051** |
