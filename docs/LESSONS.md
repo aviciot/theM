@@ -3,6 +3,25 @@
 
 ---
 
+## 2026-09-05 — All tenant-scoped admin Create endpoints return 500 (transaction aborted)
+
+**Symptom:** `GET /admin/agents` returns 200; `POST /admin/agents` returns 500 with no structured log output. Response time ~10ms (DB contact made). Similarly for orchestrators, applications, MCP servers.
+**Root cause 1:** `agentSelectCols` in `dal/agents.go` had `LEFT JOIN auth_service.users u ON u.id = a.created_by`. `them_app` (the App pool / RLS role) has no USAGE grant on the `auth_service` schema. Every List/Get call via the App pool returned `ERROR: permission denied for schema auth_service` — PostgreSQL aborts the transaction. This caused all GET requests through the TenantTx path to fail with HTTP 500.
+**Root cause 2:** `checkResourceQuota` (called by agents/apps/mcp Create) runs `SELECT FROM them.tenant_quotas`. `them_app` had no SELECT grant on `tenant_quotas`. PostgreSQL returned permission denied, aborting the transaction. The subsequent INSERT (`CreateAgent` CTE) then fails with SQLSTATE 25P02 "transaction is aborted". `checkResourceQuota` is fail-open on errors, so the quota denial was swallowed, but the aborted TX killed the real INSERT.
+**Fix:** (1) Removed `LEFT JOIN auth_service.users` from `agentSelectCols` and `agent_definitions.go` queries — `them_app` must never cross into `auth_service` schema. `CreatedByUsername` field is now empty (omitempty, UI shows `—`). (2) Added migration 080 to `GRANT SELECT ON them.tenant_quotas TO them_app`.
+**Watch for:** Any new query run via the App pool (TenantTx / `them_app` role) must not JOIN into `auth_service.*` — that schema is auth-admin only. Any new table that the App pool needs to read must have an explicit GRANT. When adding quota checks or cross-table reads to a service that runs inside TenantTx, verify `them_app` has SELECT on the target table before deploying.
+
+---
+
+## 2026-09-05 — Cross-tenant agent token exfiltration via agents/discover
+
+**Symptom:** A tenant with an `agent_id` in their request body could cause the bridge to fetch a token from a different tenant's agent and forward it to a user-controlled endpoint via `Authorization: Bearer <stolen_token>`.
+**Root cause:** `GetAgentTokenEncrypted` in the legacy DAL queried `agents` by `id` only, with no `tenant_id` filter. Any authenticated user who knew another tenant's agent UUID could extract its decrypted token.
+**Fix:** Added `GetAgentTokenEncryptedForTenant(ctx, id, tenantID)` that filters by both `id` AND `tenant_id`. The Discover handler now uses this tenant-scoped lookup; if the agent doesn't belong to the requesting tenant, no token is returned. Test `TestDiscover_CrossTenantTokenNotForwarded` verifies the Authorization header is empty when the lookup returns no rows.
+**Watch for:** Any place that fetches a secret (token, key, credential) by a single ID must include the tenant's `tenant_id` in the WHERE clause when the secret is tenant-scoped.
+
+---
+
 ## 2026-09-02 — them-go-worker panic: nil pointer in FileGate.quarantineAndEnqueue
 
 **Symptom:** Run hangs, never completes. Temporal logs show "activity Heartbeat timeout". Worker logs show `panic: runtime error: invalid memory address or nil pointer dereference` at `gate.go:171` inside `quarantineAndEnqueue`. Worker restarts, run stays stuck in `running`.

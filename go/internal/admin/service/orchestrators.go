@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aviciot/them/internal/admin/dal"
 )
@@ -48,6 +51,10 @@ func (s *OrchService) Create(ctx context.Context, tenantID string, in dal.Orches
 
 	id, err := s.dal.CreateOrchestrator(ctx, tenantID, in, enabled)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return "", ErrConflict
+		}
 		return "", err
 	}
 	s.invalidate(ctx, in.Name)

@@ -6,6 +6,8 @@ import (
 )
 
 // agentSelectCols is the column list shared by ListAgents and GetAgent queries.
+// Note: no JOIN to auth_service.users — them_app (RLS pool) lacks USAGE on that schema.
+// CreatedByUsername is not populated; the field is omitempty in the API response.
 const agentSelectCols = `
 	SELECT a.id::text, a.slug, a.display_name, a.description, a.transport,
 	       COALESCE(a.endpoint_url, ''),
@@ -15,11 +17,10 @@ const agentSelectCols = `
 	       a.skills, a.supports_streaming, a.supports_push, a.icon, a.category,
 	       a.card_fetched_at::text, a.last_scan_at::text, a.last_scan_result,
 	       ars.definition_id::text,
-	       a.created_by, COALESCE(u.username, ''),
+	       a.created_by,
 	       to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 	FROM them.agents a
-	LEFT JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id
-	LEFT JOIN auth_service.users u ON u.id = a.created_by`
+	LEFT JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id`
 
 // scanAgent scans one agent row from r into an Agent value.
 // r must have been positioned by a preceding Next() call (multi-row) or
@@ -38,7 +39,7 @@ func scanAgent(r RowScanner) (Agent, error) {
 		&skills, &a.SupportsStreaming, &a.SupportsPush, &a.Icon, &a.Category,
 		&cardFetchedAt, &lastScanAt, &lastScanResult,
 		&definitionID,
-		&a.CreatedBy, &a.CreatedByUsername, &a.CreatedAt,
+		&a.CreatedBy, &a.CreatedAt,
 	); err != nil {
 		return a, err
 	}

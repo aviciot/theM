@@ -58,11 +58,10 @@ func (d *DB) GetAgentDefinition(ctx context.Context, tenantID, id string) (Agent
 		       COALESCE(ad.display_name, ad.agent_slug) AS display_name,
 		       ad.revision, ad.status,
 		       ad.definition, ad.definition_hash,
-		       ad.owner_id, COALESCE(u.username, '') AS owner_username,
+		       ad.owner_id,
 		       to_char(ad.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
 		       to_char(ad.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
 		  FROM them.agent_definitions ad
-		  LEFT JOIN auth_service.users u ON u.id = ad.owner_id
 		 WHERE ad.id=$2::uuid AND ad.tenant_id=$1::uuid`
 
 	var def AgentDefinition
@@ -77,7 +76,6 @@ func (d *DB) GetAgentDefinition(ctx context.Context, tenantID, id string) (Agent
 		&def.Definition,
 		&def.DefinitionHash,
 		&def.OwnerID,
-		&def.OwnerUsername,
 		&def.CreatedAt,
 		&def.UpdatedAt,
 	); err != nil {
@@ -95,11 +93,10 @@ func (d *DB) ListAgentDefinitions(ctx context.Context, tenantID string) ([]Agent
 		       COALESCE(ad.display_name, ad.agent_slug) AS display_name,
 		       ad.revision, ad.status,
 		       NULL::jsonb AS definition, ad.definition_hash,
-		       ad.owner_id, COALESCE(u.username, '') AS owner_username,
+		       ad.owner_id,
 		       to_char(ad.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
 		       to_char(ad.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
 		  FROM them.agent_definitions ad
-		  LEFT JOIN auth_service.users u ON u.id = ad.owner_id
 		 WHERE ad.tenant_id=$1::uuid
 		 ORDER BY ad.updated_at DESC`
 
@@ -122,7 +119,6 @@ func (d *DB) ListAgentDefinitions(ctx context.Context, tenantID string) ([]Agent
 			&def.Definition,
 			&def.DefinitionHash,
 			&def.OwnerID,
-			&def.OwnerUsername,
 			&def.CreatedAt,
 			&def.UpdatedAt,
 		); err != nil {
