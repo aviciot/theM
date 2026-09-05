@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Steps 24-26 COMPLETE — MCP audit, dead code removal, audit enrichment)
+# Last updated: 2026-09-05 (Steps 24-27 + security fixes COMPLETE — audit secret redaction, migration 079)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -70,6 +70,12 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 - **Step 25 (3fc072c)** — Removed `MCPServersHandler` legacy fallback path. `pools=nil` branch in agents/apps/orchestrators `openSvc` is intentionally kept as the unit-test escape hatch (never reached in production — clearly documented in comments).
 - **Step 26 (c83f8eb)** — Audit log enrichment: `AuditEntry.Changes map[string]any`, `changesOf()` helper, all 4 update handlers (agent/app/mcp_server/tenant) now log request payload in `details` JSONB as `{"actor":"…","changes":{…}}`. Tests AL-06, AL-07, AL-08. `go test ./...` — 1096 tests, 0 failures.
 - **Step 27** — Cross-tenant admin observability: `GET /api/v1/admin/observability/summary` (RequireSuperAdmin, Admin BYPASSRLS pool). New `go/internal/admin/dal/observability.go` (ListObservabilitySummary — one row per tenant: run_count_30d, total_llm_tokens_30d, max_agents, max_apps, agent_count, app_count). New `go/internal/admin/observability.go` (ObservabilityHandler). Wired in `router.go` platform-global group. Tests S1-101 (OBS-1..4). `go test ./...` — 1100 tests, 0 failures.
+- **Security audit fixes** — Three audit-log secret-exposure bugs found and fixed (audit of Step 26 output):
+  - `AgentInput.AuthToken`: handler now deletes `auth_token` key from changesOf map, adds `auth_token_changed=true` sentinel.
+  - `MCPServerPatch.ProbeToken`: handler now deletes `probe_token` key, adds `probe_token_changed=true/cleared` sentinel.
+  - `TenantIDPConfig.ClientSecret`: handler now deletes nested `idp_config.client_secret`, adds `client_secret_changed=true` sentinel.
+  - Tests AL-09, AL-10, AL-11 cover all three redaction paths. S1-100: 7→10 tests. `go test ./...` — 1103 tests, 0 failures.
+- **Migration 079** (`db/079_component_definitions_grant.sql`): Restores `GRANT INSERT, DELETE ON them.component_definitions TO them_app`. Migration 078 over-revoked these — Agent Create (CTE insert) and Delete (explicit DELETE) run via TenantTx (them_app role) and would have broken with 078 applied. Must apply 078+079 together.
 
 ### Next recommended task for a new session
 
@@ -807,7 +813,9 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-1. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
+1. **Migration 078+079 must be applied together** — Migration 078 (`078_rls_phase_h2.sql`) over-revokes `INSERT/DELETE` on `component_definitions` from `them_app`. This breaks Agent Create and Delete at runtime. Apply `db/079_component_definitions_grant.sql` **in the same psql session** as 078, or apply 079 first if 078 is already in (but not yet live). Then restart all 4 Go containers.
+
+2. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
 
 2. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
 

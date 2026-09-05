@@ -195,10 +195,23 @@ func (h *MCPServersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	changes := changesOf(patch)
+	// Redact probe_token — it must never be logged. Record a sentinel instead.
+	if patch.ProbeToken != nil {
+		if changes == nil {
+			changes = map[string]any{}
+		}
+		delete(changes, "probe_token")
+		if *patch.ProbeToken == "" {
+			changes["probe_token_changed"] = "cleared"
+		} else {
+			changes["probe_token_changed"] = true
+		}
+	}
 	h.audit.Write(r.Context(), dal.AuditEntry{
 		TenantID: tenantID, UserID: userIDPtr(r),
 		Action: "mcp_server.update", EntityType: "mcp_server", EntityID: id, Actor: actorFromRequest(r),
-		Changes: changesOf(patch),
+		Changes: changes,
 	})
 	writeJSON(w, http.StatusOK, out)
 }

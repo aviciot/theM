@@ -195,7 +195,7 @@ type AgentInput struct {
 	Description      string   `json:"description"`
 	Transport        string   `json:"transport"`
 	EndpointURL      string   `json:"endpoint_url,omitempty"`
-	AuthToken        string   `json:"auth_token,omitempty"`
+	AuthToken        string   `json:"auth_token,omitempty"` // plaintext; encrypted before storage; redacted in audit via handler
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 	MaxConcurrency   int      `json:"max_concurrency"`
 	MaxRetries       int      `json:"max_retries"`

@@ -41,7 +41,7 @@ type MCPServerCreate struct {
 	URL         string `json:"url"`
 	AuthType    string `json:"auth_type"`
 	Enabled     *bool  `json:"enabled"`
-	ProbeToken  string `json:"probe_token,omitempty"` // plaintext; encrypted before storage
+	ProbeToken  string `json:"probe_token,omitempty"` // plaintext; encrypted before storage; redacted in audit via handler
 }
 
 // MCPServerPatch is the PATCH request body. Nil pointer = field absent.
@@ -53,7 +53,7 @@ type MCPServerPatch struct {
 	URL         *string `json:"url"`
 	AuthType    *string `json:"auth_type"`
 	Enabled     *bool   `json:"enabled"`
-	ProbeToken  *string `json:"probe_token"` // nil = unchanged; "" = clear; non-empty = update
+	ProbeToken  *string `json:"probe_token"` // nil=unchanged, ""=clear, non-empty=update; redacted in audit via handler
 }
 
 // MCPCredentialSet is the request body for PUT .../mcp-credentials/{server_id}.

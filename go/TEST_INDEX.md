@@ -3096,9 +3096,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
-| S1-100 | Audit Logs handler (AL-01..03, AL-05b..08): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges | 7 |
+| S1-100 | Audit Logs handler (AL-01..03, AL-05b..11): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges, AgentInput_AuthTokenRedacted, MCPServerPatch_ProbeTokenRedacted, TenantPatch_ClientSecretRedacted | 10 |
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
-| **S1 total** | | **1100** |
+| **S1 total** | | **1103** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

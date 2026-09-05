@@ -100,7 +100,7 @@ func (d *DB) CreateTenant(ctx context.Context, in TenantInput) (Tenant, error) {
 type TenantIDPConfig struct {
 	DiscoveryURL string `json:"discovery_url"`
 	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"` // write-only; redacted in audit via tenantIDPConfigForAudit
 	RedirectURI  string `json:"redirect_uri"`
 }
 

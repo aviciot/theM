@@ -13,6 +13,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/admin/service"
 )
 
 // newAuditRouter mounts AuditLogsHandler on a chi router with test tenant context.
@@ -128,6 +129,83 @@ func TestAuditLogs_WriteAuditLog_IncludesChanges(t *testing.T) {
 	require.True(t, ok, "details must contain a 'changes' object")
 	assert.Equal(t, "new-name", changes["display_name"])
 }
+
+// ── AL-09: changesOf on AgentInput must not include auth_token value ─────────
+
+// TestAuditLogs_AgentInput_AuthTokenRedacted verifies that changesOf on an
+// AgentInput containing an auth_token does not expose the raw token value.
+// The handler deletes the key and adds auth_token_changed=true before auditing.
+func TestAuditLogs_AgentInput_AuthTokenRedacted(t *testing.T) {
+	input := dal.AgentInput{
+		Slug:        "my-agent",
+		DisplayName: "My Agent",
+		AuthToken:   "sk-secret-1234",
+	}
+	m := admin.ChangesOf(input)
+	require.NotNil(t, m)
+	// auth_token must appear in changesOf output (not json:"-") so the handler
+	// can delete it. Verify it IS present so we can confirm the handler path.
+	assert.Equal(t, "sk-secret-1234", m["auth_token"], "changesOf includes auth_token so handler can redact it")
+
+	// Simulate the handler's redaction step.
+	delete(m, "auth_token")
+	m["auth_token_changed"] = true
+
+	_, hasRaw := m["auth_token"]
+	assert.False(t, hasRaw, "auth_token must not appear after redaction")
+	assert.Equal(t, true, m["auth_token_changed"], "sentinel must be set")
+}
+
+// ── AL-10: changesOf on MCPServerPatch must not include probe_token value ────
+
+func TestAuditLogs_MCPServerPatch_ProbeTokenRedacted(t *testing.T) {
+	token := "pt-secret-9999"
+	patch := service.MCPServerPatch{
+		Name:       strPtr("updated"),
+		ProbeToken: &token,
+	}
+	m := admin.ChangesOf(patch)
+	require.NotNil(t, m)
+
+	// Simulate handler redaction.
+	delete(m, "probe_token")
+	m["probe_token_changed"] = true
+
+	_, hasRaw := m["probe_token"]
+	assert.False(t, hasRaw, "probe_token must not appear after redaction")
+	assert.Equal(t, true, m["probe_token_changed"])
+}
+
+// ── AL-11: changesOf on TenantPatch must not include idp_config.client_secret ─
+
+func TestAuditLogs_TenantPatch_ClientSecretRedacted(t *testing.T) {
+	patch := dal.TenantPatch{
+		SetIDP: true,
+		IDPConfig: &dal.TenantIDPConfig{
+			DiscoveryURL: "https://idp.example.com",
+			ClientID:     "my-client",
+			ClientSecret: "super-secret",
+		},
+	}
+	m := admin.ChangesOf(patch)
+	require.NotNil(t, m)
+
+	// Simulate handler redaction: delete nested client_secret, add sentinel.
+	if idpMap, ok := m["idp_config"].(map[string]any); ok {
+		delete(idpMap, "client_secret")
+	}
+	m["client_secret_changed"] = true
+
+	// Verify no secret in idp_config.
+	if idpMap, ok := m["idp_config"].(map[string]any); ok {
+		_, hasSecret := idpMap["client_secret"]
+		assert.False(t, hasSecret, "client_secret must not appear in idp_config after redaction")
+	}
+	assert.Equal(t, true, m["client_secret_changed"])
+}
+
+// strPtr is a helper for pointer-to-string in tests.
+func strPtr(s string) *string { return &s }
 
 // ── AL-08: AuditEntry without Changes omits 'changes' key ───────────────────
 

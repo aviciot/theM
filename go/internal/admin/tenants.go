@@ -126,10 +126,23 @@ func (h *TenantsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	changes := changesOf(in)
+	// Redact client_secret from the audit map — it must never be logged.
+	// Record a boolean sentinel instead so the audit trail shows the field was touched.
+	if in.SetIDP && in.IDPConfig != nil && in.IDPConfig.ClientSecret != "" {
+		if changes == nil {
+			changes = map[string]any{}
+		}
+		// Remove the nested idp_config.client_secret key that changesOf serialised.
+		if idpMap, ok := changes["idp_config"].(map[string]any); ok {
+			delete(idpMap, "client_secret")
+		}
+		changes["client_secret_changed"] = true
+	}
 	h.audit.Write(r.Context(), dal.AuditEntry{
 		TenantID: id, UserID: userIDPtr(r),
 		Action: "tenant.patch", EntityType: "tenant", EntityID: id, Actor: actorFromRequest(r),
-		Changes: changesOf(in),
+		Changes: changes,
 	})
 	writeJSON(w, http.StatusOK, detail)
 }

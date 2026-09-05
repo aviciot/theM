@@ -198,10 +198,19 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	changes := changesOf(input)
+	// Redact auth_token — it must never be logged. Record a sentinel instead.
+	if input.AuthToken != "" {
+		if changes == nil {
+			changes = map[string]any{}
+		}
+		delete(changes, "auth_token")
+		changes["auth_token_changed"] = true
+	}
 	h.audit.Write(r.Context(), dal.AuditEntry{
 		TenantID: tenantID, UserID: userIDPtr(r),
 		Action: "agent.update", EntityType: "agent", EntityID: id, Actor: actorFromRequest(r),
-		Changes: changesOf(input),
+		Changes: changes,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
