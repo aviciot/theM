@@ -267,14 +267,14 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve auth token.
+	// Resolve auth token — tenant-scoped to prevent cross-tenant token extraction.
+	// A caller may supply an agent_id they don't own; the tenant_id filter ensures
+	// we never decrypt and forward a token belonging to a different tenant.
 	authToken := req.AuthToken
 	if authToken == "" && req.AgentID != "" {
-		agent, err := h.legacyDAL.GetAgentByID(r.Context(), req.AgentID)
-		if err == nil && agent.AuthTokenSet {
-			// We need the raw encrypted token. GetAgentByID doesn't return it.
-			// Use the dedicated method.
-			encrypted, err2 := h.legacyDAL.GetAgentTokenEncrypted(r.Context(), req.AgentID)
+		tenantID, tenantErr := tenantctx.TenantIDFromCtx(r.Context())
+		if tenantErr == nil {
+			encrypted, err2 := h.legacyDAL.GetAgentTokenEncryptedForTenant(r.Context(), req.AgentID, tenantID)
 			if err2 == nil && encrypted != "" {
 				decrypted, err3 := crypto.DecryptStored(h.fernetKey, encrypted)
 				if err3 == nil {

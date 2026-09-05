@@ -404,3 +404,56 @@ func TestSecurityScan_Accepted(t *testing.T) {
 	// agent_id must match the requested id.
 	assert.Equal(t, "eeeeeeee-0000-0000-0000-000000000001", resp["agent_id"])
 }
+
+// ── TestDiscover_CrossTenantTokenNotForwarded ─────────────────────────────────
+//
+// Security regression test: a caller supplies an agent_id that belongs to a
+// different tenant. The DAL query includes AND tenant_id = $2, so it returns
+// pgx.ErrNoRows. Discover must fall through with no Authorization header.
+
+// crossTenantQuerier simulates the DB returning ErrNoRows for the tenant-scoped
+// token lookup (GetAgentTokenEncryptedForTenant sees wrong tenant_id).
+type crossTenantQuerier struct{}
+
+func (q *crossTenantQuerier) Query(_ context.Context, _ string, _ ...any) (admin.RowScanner, error) {
+	return newFakeRows(nil), nil
+}
+func (q *crossTenantQuerier) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	// All QueryRow calls (agent existence check + token fetch) return no rows —
+	// simulating a cross-tenant agent_id that doesn't exist in the caller's tenant.
+	return &fakeRow{err: pgx.ErrNoRows}
+}
+func (q *crossTenantQuerier) Exec(_ context.Context, _ string, _ ...any) error { return nil }
+func (q *crossTenantQuerier) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	return &fakeRow{err: pgx.ErrNoRows}
+}
+
+func TestDiscover_CrossTenantTokenNotForwarded(t *testing.T) {
+	// authHeader captures any Authorization header sent by Discover to the backend.
+	var authHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		// Return a minimal valid agent card so Discover reports ok:true.
+		card := map[string]any{"name": "Other Tenant Agent"}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(card) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	// The caller belongs to testTenantID (injected by withTestTenant).
+	// The agent_id supplied here belongs to a different tenant in production;
+	// crossTenantQuerier simulates that by returning ErrNoRows for the
+	// tenant-scoped token query.
+	body, _ := json.Marshal(map[string]any{
+		"endpoint_url": srv.URL,
+		"agent_id":     "11111111-2222-3333-4444-555555555555", // not in caller's tenant
+	})
+	w := serveAgentActions(t, &crossTenantQuerier{}, http.MethodPost, "/agents/discover", body)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["ok"], "discover should succeed (card is public)")
+	// Critical: no auth token must have been forwarded to the attacker-controlled endpoint.
+	assert.Empty(t, authHeader, "Authorization header must not be forwarded when token lookup returns no rows")
+}

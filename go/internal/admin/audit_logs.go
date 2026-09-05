@@ -81,12 +81,25 @@ func (h *AuditLogsHandler) List(w http.ResponseWriter, r *http.Request) {
 // AuditWriter writes audit log entries synchronously after successful operations.
 // It uses the admin pool (BYPASSRLS) so it bypasses the INSERT-only RLS on audit_logs.
 type AuditWriter struct {
-	pools *db.Pools
+	pools       *db.Pools
+	testQuerier DBQuerier // non-nil only in tests (set by NewAuditWriterForTest)
 }
 
 // NewAuditWriter creates an AuditWriter. Pass nil pools in tests — writes are no-ops.
 func NewAuditWriter(pools *db.Pools) *AuditWriter {
 	return &AuditWriter{pools: pools}
+}
+
+// NewAuditWriterForTest creates an AuditWriter backed by the given querier.
+// It exercises the real Write → WriteAuditLog code path without a live pool,
+// allowing tests to capture and inspect written audit entries via a mock querier.
+func NewAuditWriterForTest(q DBQuerier) *AuditWriter {
+	return &AuditWriter{testQuerier: q}
+}
+
+func (aw *AuditWriter) writeViaTestQuerier(ctx context.Context, e dal.AuditEntry) {
+	adb := dal.NewDB(aw.testQuerier)
+	_ = adb.WriteAuditLog(ctx, e)
 }
 
 // ChangesOf converts any JSON-serializable value into a map[string]any suitable
@@ -110,7 +123,14 @@ func changesOf(v any) map[string]any {
 // On failure it logs a warning and increments them_audit_write_errors_total.
 // It never changes the HTTP response — audit failures must not affect the primary operation.
 func (aw *AuditWriter) Write(ctx context.Context, e dal.AuditEntry) {
-	if aw == nil || aw.pools == nil {
+	if aw == nil {
+		return
+	}
+	if aw.testQuerier != nil {
+		aw.writeViaTestQuerier(ctx, e)
+		return
+	}
+	if aw.pools == nil {
 		return
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

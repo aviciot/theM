@@ -275,3 +275,20 @@ func (d *DB) GetAgentTokenEncrypted(ctx context.Context, id string) (string, err
 	}
 	return *enc, nil
 }
+
+// GetAgentTokenEncryptedForTenant returns the encrypted auth token for an agent
+// that belongs to the given tenant. Returns ("", pgx.ErrNoRows) if the agent
+// does not exist in that tenant (prevents cross-tenant token extraction).
+func (d *DB) GetAgentTokenEncryptedForTenant(ctx context.Context, id, tenantID string) (string, error) {
+	var enc *string
+	err := d.q.QueryRow(ctx,
+		`SELECT auth_token_encrypted FROM them.agents WHERE id = $1::uuid AND tenant_id = $2::uuid`, id, tenantID,
+	).Scan(&enc)
+	if err != nil {
+		return "", err
+	}
+	if enc == nil {
+		return "", nil
+	}
+	return *enc, nil
+}
