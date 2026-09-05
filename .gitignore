@@ -42,3 +42,16 @@ Thumbs.db
 
 # Claude worktrees (local only)
 .claude/worktrees/
+
+# Go build artifacts (compiled binaries, test binaries, build output)
+go/them
+go/worker
+go/dag-worker
+go/agent-runtime
+go/middleware-worker
+go/agentgen.test
+go/build_out.txt
+go/test_out.txt
+
+# Frontend TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
