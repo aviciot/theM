@@ -1,10 +1,11 @@
-# Handover — Multi-Tenancy (Steps 19–23 + H2 complete, Step 24 next)
-**Date:** 2026-09-04
+# Handover — Multi-Tenancy (Steps 19–23 + H2 complete; RLS CLOSED; Step 29 next)
+**Date:** 2026-09-05
 **Branch:** main
-**HEAD:** b0cdb79 (test(rls): Step H2 — expand integration tests to 27 tables + catalog verification)
-**Steps complete:** 1 → 23 + H2 (RLS closure — 28 tables, full superuser removal)
-**Unit tests:** all packages pass, 0 failures (S1 total: 1092)
-**RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete
+**HEAD:** 537fcb3 (test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests)
+**Steps complete:** 1 → 23 + H2 (RLS closure — 28 tables, full superuser removal) + RLS verification complete
+**Unit tests:** all packages pass, 0 failures (S1 total: 1106, `go test ./...` total: 1037)
+**Integration tests:** `go test -tags=integration ./internal/db/...` — all pass (TwoTenantFullIsolation, CatalogVerification CV-01..05)
+**RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete and verified
 
 ---
 
@@ -74,30 +75,35 @@
 | Step 22 | Audit log UI — GET /admin/audit-logs (admin pool, BYPASSRLS); paginated frontend page; 3 tests AL-01..03 | Complete | 557b9dd |
 | Step 23 | Audit write path — AuditWriter (3s timeout, fail-open); agent/app/tenant create+update+delete wired; them_audit_write_errors_total metric; AL-04 integration test | Complete | 10628a3 |
 | Step H2 | RLS closure — migration 078 (4 remaining tables); required DB pools config; full superuser removal from cmd/them+worker+dag-worker; 27-table integration test + catalog verification | Complete | b0cdb79 |
+| RLS verify | Fix TestRLS_TwoTenantFullIsolation (audit_logs/middleware SELECT exclusion, orchestrators count fix, eager cleanupData); add AR-02 (MCP probe_token) + AR-03 (tenant client_secret) handler-path redaction tests | Complete | 537fcb3 |
 
 ---
 
 ## Current pause point — tenant roadmap status
 
-**Steps 1–23 + H2 are complete. RLS is fully closed — all 28 them-schema tables have FORCE ROW LEVEL SECURITY enabled.**
+**Steps 1–23 + H2 are complete. RLS is fully closed — verified 2026-09-05.**
 
-### RLS closure summary (Step H2)
+All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant full isolation test passes (24 table checks per tenant). Cross-tenant INSERT blocked by WITH CHECK. Catalog verification CV-01..05 passes. Handler-path audit redaction verified end-to-end for agent auth_token (AR-01), MCP probe_token (AR-02), tenant client_secret (AR-03).
+
+### RLS closure summary (Step H2 + verification)
 
 - **Migration 078** (`db/078_rls_phase_h2.sql`): application_definitions, managed_app_bindings, quarantine_artifacts (direct isolation), component_definitions (split policy: SELECT own+NULL, DML revoked from them_app).
 - **Config validation**: `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` required at startup; binaries fail fast if absent.
 - **Superuser removal**: All 3 Go binaries (cmd/them, cmd/worker, cmd/dag-worker) use `rlsPools.Admin` for all tenant data paths. `database.Pool()` retained only for health check pinger.
 - **Docker-compose**: Both env vars injected into all 4 Go service environments.
-- **Integration tests**: `TestRLS_TwoTenantFullIsolation` covers 27 tables. `TestRLS_CatalogVerification` (CV-01..05) asserts catalog invariants.
+- **Integration tests (verified 2026-09-05)**: `TestRLS_TwoTenantFullIsolation` covers 24 tenant-scoped tables per tenant (audit_logs, middleware_audit, middleware_jobs excluded from SELECT loop — INSERT-only for them_app by design). `TestRLS_CatalogVerification` (CV-01..05) asserts catalog invariants. Eager `cleanupData()` prevents stale-row accumulation across test reruns.
+- **AR-02/AR-03 handler-path redaction**: `NewMCPServersHandlerForTest` added; tests verify probe_token and client_secret are never written to audit JSONB.
 
 ⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
-### Next recommended: Step 24
+### Next recommended: Step 29
 
-**Step 24 = MCP server audit** (smallest scope, completes audit coverage):
-- Wire `mcp_server.create/update/delete` into `AuditWriter` (same pattern as agents/apps/tenants).
-- Add 3 new AL-* tests.
+**Step 29 candidates (pick one):**
 
-Alternatives: tenant self-service provisioning (medium), cross-tenant observability dashboard (medium), audit log enrichment (before/after diff on Update operations).
+1. **Orchestrator soft-delete → hard-delete** — `DeleteOrchestrator` currently does `UPDATE ... SET enabled=false` which blocks name reuse. Change to `DELETE FROM them.orchestrators`. Low scope, high correctness value.
+2. **Tenant self-service provisioning** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
+3. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
+4. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
 
 ---
 

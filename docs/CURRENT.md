@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-05 (Security hardening complete — cross-tenant token fix, quota grant, RLS app pool fixes)
+# Last updated: 2026-09-05 (RLS fully closed — two-tenant integration test fixed, AR-02/AR-03 handler-path redaction tests added)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,14 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-c83f8eb  feat(audit): Step 26 — enrich update audit entries with changes JSONB field
-3fc072c  refactor(admin): Step 25 — remove MCPServers legacy fallback; clarify test-only legacy paths
-31d17a1  docs(audit): Step 24 complete — update CURRENT.md with RLS status and Step 25 candidates
-9a9fc45  feat(audit): Step 24 — wire mcp_server.create/update/delete into AuditWriter
-ea1039a  docs(rls): Step H2 complete — CURRENT.md and HANDOVER.md
-b0cdb79  test(rls): Step H2 — expand integration tests to 27 tables + catalog verification
-0c96931  feat(rls): Step H2 — enforce required DB pools; replace all superuser pool() calls with rlsPools.Admin
-8649daa  feat(rls): Step H2 — migration 078, apply RLS to application_definitions, managed_app_bindings, quarantine_artifacts, component_definitions
+537fcb3  test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests
+d9cde37  docs(step28): Step 28 already complete — TenantTx migration was done; update CURRENT.md
+1786c6b  docs: update CURRENT.md with security hardening complete — HEAD 50a09e0, E2E 9/9
+50a09e0  fix(rls): close app-pool permission gaps — auth_service join, tenant_quotas grant
+cfb4798  docs(tests): update TEST_INDEX.md for security fix — S1-36 +1, new S1-102
 ```
 
 ---
@@ -84,9 +81,11 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
   - agents.Create and orchestrators.Create now return HTTP 409 for duplicate slug/name (SQLSTATE 23505 → ErrConflict).
 - **Frontend observability page** (`frontend/src/app/admin/observability/page.tsx`): `/admin/observability` table with per-tenant run count (30d), LLM tokens (30d), agent/app quota with color coding. Sidebar entry added.
 
-**HEAD: `1786c6b docs: update CURRENT.md with security hardening complete — HEAD 50a09e0, E2E 9/9`**
+**HEAD: `537fcb3 test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests`**
 
 **E2E test 14 verified: 9/9 passed** (2026-09-05 — Agent Create/Delete, Orchestrator Create/Delete, WS reachable, Runs list, Runs stats, Token Create/Delete).
+
+**RLS CLOSED** (2026-09-05): Two-tenant isolation integration test passes (24 table checks per tenant, cross-tenant INSERT rejected). Catalog verification passes (CV-01..05). AR-02 and AR-03 handler-path redaction tests added. `go test ./...` — 1037 pass, 0 fail. `go test -tags=integration ./internal/db/...` — all pass.
 
 ### Step 28 — Admin CRUD TenantTx migration: ALREADY COMPLETE
 
