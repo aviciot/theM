@@ -88,6 +88,7 @@ export type {
   ManagedAppBinding,
   ManagedAppBindingInput,
   AuditLog,
+  TenantObservabilitySummary,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -145,6 +146,8 @@ import type {
   ManagedAppDetail,
   ManagedAppBinding,
   ManagedAppBindingInput,
+  AuditLog,
+  TenantObservabilitySummary,
 } from './apiTypes';
 
 export const themApi = {
@@ -548,4 +551,8 @@ export const themApi = {
   // Audit logs
   getAuditLogs: (limit = 50, offset = 0) =>
     api.get<AuditLog[]>(`/admin/audit-logs?limit=${limit}&offset=${offset}`),
+
+  // Observability
+  getObservabilitySummary: () =>
+    api.get<TenantObservabilitySummary[]>('/admin/observability/summary'),
 };

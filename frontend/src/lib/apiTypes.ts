@@ -871,6 +871,17 @@ export interface ManagedAppBindingInput {
   enabled?: boolean;
 }
 
+export interface TenantObservabilitySummary {
+  tenant_id: string;
+  display_name: string;
+  run_count_30d: number;
+  total_llm_tokens_30d: number;
+  max_agents: number | null;
+  max_apps: number | null;
+  agent_count: number;
+  app_count: number;
+}
+
 export interface AuditLog {
   id: number;
   user_id?: number;
