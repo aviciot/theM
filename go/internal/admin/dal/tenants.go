@@ -454,7 +454,14 @@ func (d *DB) DeleteGroupMapping(ctx context.Context, tenantID, mappingID string)
 // DeleteTenant deletes a tenant by ID. Fails with pgx.ErrNoRows if not found,
 // or a FK violation error if the tenant still has dependent data (ON DELETE RESTRICT).
 // The bootstrap tenant (is_bootstrap=true) cannot be deleted.
+// Membership rows in auth_service.tenant_memberships are cleaned up first
+// (they have no FK to them.tenants because the tables are in separate schemas).
 func (d *DB) DeleteTenant(ctx context.Context, id string) error {
+	// Clean up cross-schema memberships that have no CASCADE.
+	const delMembers = `DELETE FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`
+	if err := d.q.Exec(ctx, delMembers, id); err != nil {
+		return err
+	}
 	const q = `DELETE FROM them.tenants WHERE id = $1::uuid AND is_bootstrap = false RETURNING id`
 	var returned string
 	return d.q.ExecReturning(ctx, q, id).Scan(&returned)
