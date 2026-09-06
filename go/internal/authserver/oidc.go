@@ -338,12 +338,19 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve tenant role from group claims (if any). Falls back to "" which
-	// UpsertOIDCUser interprets as the default "viewer" role.
+	// Resolve tenant membership role from group claims (if any). Falls back to ""
+	// which UpsertOIDCUser interprets as the default "viewer" role.
+	// super_admin is rejected here as a defence-in-depth measure — UpsertOIDCUser
+	// also rejects it, but rejecting early produces a clear audit log entry.
 	role := ""
 	if len(claims.Groups) > 0 {
 		if mapped, found, grpErr := h.oidcStore.GetGroupRole(r.Context(), tenantUUID, claims.Groups); grpErr == nil && found {
-			role = mapped
+			if mapped == "super_admin" {
+				h.log.Warn("oidc callback: group mapping returned super_admin — rejected, defaulting to viewer",
+					"tenant", slug, "email", claims.Email)
+			} else {
+				role = mapped
+			}
 		}
 		// Non-fatal: group lookup failure or no match → default role used.
 	}
@@ -361,7 +368,7 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	refresh, err := h.signer.IssueRefreshToken(user.ID)
+	refresh, err := h.signer.IssueRefreshToken(user.ID, tenantUUID)
 	if err != nil {
 		h.log.Error("oidc callback: refresh token issue failed", "tenant", slug)
 		writeErr(w, http.StatusInternalServerError, "internal error")

@@ -759,3 +759,25 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 **Fix:** Change `DeleteOrchestrator` to a hard DELETE. No DB schema change needed — there are no tables with FKs pointing at `orchestrators.id` that require cascade behavior (app_orchestrators are a separate table with their own lifecycle). This is Step 29 candidate 1.
 
 **Watch for:** Never assume admin "delete" endpoints free the resource name. Always verify in the DAL whether it's soft or hard delete.
+
+---
+
+## OIDC Role Separation — Platform Role vs Membership Role (2026-09-06)
+
+`UpsertOIDCUser` previously used the group-mapping `role` as both:
+1. The key to look up `auth_service.roles WHERE name = role` (platform role → users.role_id)
+2. The value stored in `tenant_memberships.role` (tenant role)
+
+This is wrong because `auth_service.roles` only has `super_admin/developer/analyst/viewer` (platform roles), not `admin/member/viewer` (tenant membership roles). Looking up `"admin"` in `auth_service.roles` returned no rows, causing a 500 cascade to last-resort fallback.
+
+**Fix:** Platform role for all OIDC users is always `"viewer"` (hard-coded constant). Group mapping result goes only to `tenant_memberships.role`. `validMemberRoles` map rejects `super_admin` before it reaches the DB.
+
+**Watch for:** If a new role type is added, always check whether it's a platform role (`auth_service.roles`) or a tenant role (`tenant_memberships.role`) — they are independent enumerations.
+
+## Refresh Token Must Carry Tenant ID (2026-09-06)
+
+A refresh token that carries only `user_id` always picks the first membership row on refresh, silently losing the tenant selected at login for multi-membership users.
+
+**Fix:** `IssueRefreshToken(userID, tenantID)` — tenant embedded in claims. `Refresh()` calls `issuePairByTenantID` when present, re-validating the specific membership row (membership may have been revoked). Old tokens without `tenant_id` fall back to first-row for backwards compatibility.
+
+**Watch for:** Any new token issuance path (e.g., OAuth device flow) must also embed `tenant_id` in the refresh token.

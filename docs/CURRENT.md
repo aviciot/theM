@@ -146,6 +146,24 @@ Three fixes applied across two commits (80924a1 + closure commit):
 
 Live smoke test (2026-09-06): create user → login → JWT has correct `tenant_id` and membership role → super_admin route returns 403 (correct).
 
+### Pre-Step-34 Auth Hardening — COMPLETE (2026-09-06)
+
+Two auth correctness/security fixes applied before Step 34:
+
+**Fix 1 — OIDC role separation** (`go/internal/authserver/oidc_store.go`, `oidc.go`):
+- `UpsertOIDCUser` was using the group-mapping `role` for both `auth_service.roles` platform lookup AND `tenant_memberships.role`. This caused a 500 when "admin" (a valid tenant role) was looked up as a platform role.
+- Fix: platform role for all OIDC users is always `"viewer"` (hard-coded). Membership role uses `validMemberRoles` guard. `super_admin` rejected at two layers: OIDCCallback (app layer) and `UpsertOIDCUser` (guard).
+- Migration 081: DB CHECK constraint on `them.tenant_group_mappings.role` restricts to `('admin','member','viewer')`.
+
+**Fix 2 — Refresh preserves tenant** (`go/internal/authserver/jwt.go`, `service.go`, `store.go`, `pgx.go`):
+- `refreshClaims` now carries `TenantID`. `IssueRefreshToken(userID, tenantID)` signature updated everywhere.
+- `Refresh()` calls new `issuePairByTenantID` when tenant_id present in refresh claims — re-validates the specific membership row (catches revoked memberships).
+- `GetTenantMembershipByID` added to Store interface + pgx implementation.
+
+**Tests**: OIDC-28 (admin group mapping platform role stays viewer), OIDC-29 (super_admin mapping rejected), OIDC-30 (refresh preserves tenant B in multi-membership scenario). 1053 → 1056 tests. `go test ./...` — 0 failures.
+
+**Docs**: MULTITENANT_PLAN.md updated (refresh limitation → complete, escalation risk → closed), SCHEMA.md migration 081, LESSONS.md two new entries.
+
 ### Next recommended task
 
 **Step 34 — Role-based dashboard nav + route guards** (see `docs/MULTITENANT_PLAN.md` Gap 2):

@@ -613,6 +613,7 @@ Key relationships:
 | `db/078_rls_phase_h2.sql` | RLS Phase H2: FORCE RLS on 4 remaining tables — `application_definitions`, `managed_app_bindings`, `quarantine_artifacts` (direct tenant_id), `component_definitions` (split: SELECT own+NULL, DML revoked from `them_app`). All 28 them-schema tables now have RLS. |
 | `db/079_component_definitions_grant.sql` | Restore `GRANT INSERT, DELETE ON them.component_definitions TO them_app` — 078 over-revoked (Agent Create CTE + Delete run via TenantTx). Apply 078+079 together. |
 | `db/080_grant_tenant_quotas_to_app.sql` | `GRANT SELECT ON them.tenant_quotas TO them_app` — required by `checkResourceQuota` in Create paths (quota check runs in TenantTx). |
+| `db/081_tenant_group_mappings_safe_roles.sql` | ADD CHECK on `them.tenant_group_mappings.role` restricting values to `('admin','member','viewer')` — closes OIDC privilege escalation via `super_admin` group mappings. |
 
 ---
 

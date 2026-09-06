@@ -109,7 +109,8 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 }
 
 // Refresh validates a refresh token and issues a fresh pair. The token must be of
-// type "refresh" and must not be blacklisted.
+// type "refresh" and must not be blacklisted. If the refresh token carries a
+// tenantID (issued after the fix), the same tenant is re-validated and preserved.
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
 	if refreshToken == "" {
 		return nil, ErrNotAuthenticated
@@ -127,6 +128,11 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Preserve the tenant from the refresh token when present (new tokens only).
+	// Old tokens without tenant_id fall back to first membership row.
+	if claims.TenantID != "" {
+		return s.issuePairByTenantID(ctx, user, claims.TenantID)
 	}
 	return s.issuePair(ctx, user, "")
 }
@@ -234,7 +240,7 @@ func (s *Service) issuePair(ctx context.Context, user *userRecord, tenantSlug st
 	if err != nil {
 		return nil, err
 	}
-	refresh, err := s.signer.IssueRefreshToken(user.ID)
+	refresh, err := s.signer.IssueRefreshToken(user.ID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,6 +250,34 @@ func (s *Service) issuePair(ctx context.Context, user *userRecord, tenantSlug st
 	}
 	if err := s.store.TouchLastLogin(ctx, user.ID); err != nil {
 		s.log.Warn("login: failed to update last_login_at", "user_id", user.ID, "error", err)
+	}
+
+	return &TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: expiresIn}, nil
+}
+
+// issuePairByTenantID re-validates a specific tenant membership by UUID and issues
+// a fresh pair. Used by Refresh to preserve the tenant selected at login.
+func (s *Service) issuePairByTenantID(ctx context.Context, user *userRecord, tenantID string) (*TokenPair, error) {
+	_, memberRole, err := s.store.GetTenantMembershipByID(ctx, user.ID, tenantID)
+	if errors.Is(err, ErrNoMembership) {
+		s.log.Warn("refresh blocked: tenant membership revoked", "user_id", user.ID, "tenant_id", tenantID)
+		return nil, ErrNoTenantMembership
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	access, expiresIn, err := s.signer.IssueAccessToken(user.ID, user.Username, user.Name, memberRole, tenantID, user.TokenExpiry)
+	if err != nil {
+		return nil, err
+	}
+	refresh, err := s.signer.IssueRefreshToken(user.ID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.store.InsertSession(ctx, user.ID, hashToken(access), time.Now().Add(time.Duration(expiresIn)*time.Second)); err != nil {
+		s.log.Warn("refresh: failed to record session", "user_id", user.ID, "error", err)
 	}
 
 	return &TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: expiresIn}, nil

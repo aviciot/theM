@@ -46,6 +46,14 @@ func (s *twoTenantStore) GetTenantMembership(_ context.Context, userID int64, _ 
 	return m.tenantID, m.role, nil
 }
 
+func (s *twoTenantStore) GetTenantMembershipByID(_ context.Context, userID int64, tenantID string) (string, string, error) {
+	m, ok := s.membershipsByID[userID]
+	if !ok || m.tenantID != tenantID {
+		return "", "", ErrNoMembership
+	}
+	return m.tenantID, m.role, nil
+}
+
 func newTwoTenantService(t *testing.T) (*Service, *twoTenantStore) {
 	t.Helper()
 	store := newTwoTenantStore()

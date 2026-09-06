@@ -91,11 +91,24 @@ func (s *pgxOIDCStore) GetTenantIDPConfig(ctx context.Context, slug string) (str
 	return tenantID, &cfg, nil
 }
 
+// validMemberRoles is the set of allowed tenant membership roles for OIDC users.
+// super_admin is intentionally excluded — OIDC group mappings must not elevate
+// a user to platform super_admin via UpsertOIDCUser.
+var validMemberRoles = map[string]bool{
+	"admin":  true,
+	"member": true,
+	"viewer": true,
+}
+
 func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name, role string) (*userRecord, error) {
-	// Use the supplied role (may come from group mapping); fall back to "viewer".
-	if role == "" {
+	// Validate and default the membership role. super_admin or unknown → viewer.
+	if !validMemberRoles[role] {
 		role = "viewer"
 	}
+
+	// Platform role for OIDC users is always "viewer" — group mappings only
+	// control the tenant membership role, never the platform role.
+	const platformRole = "viewer"
 
 	// Wrap all queries in a single transaction for atomicity.
 	// A concurrent OIDC login for the same email could otherwise interleave
@@ -108,25 +121,18 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 	defer cancel()
 	defer func() { _ = pgTx.Rollback(cleanupCtx) }()
 
-	// Look up the role ID for the given role name.
+	// Look up the role ID for the platform role ("viewer" — never the tenant role).
 	var roleID int
 	var roleDashboard string
 	err = pgTx.QueryRow(ctx,
 		`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE name = $1 LIMIT 1`,
-		role,
+		platformRole,
 	).Scan(&roleID, &roleDashboard)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Fallback to "viewer" if the requested role doesn't exist.
+		// Last-resort: any role.
 		if err2 := pgTx.QueryRow(ctx,
-			`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE name = 'viewer' LIMIT 1`,
-		).Scan(&roleID, &roleDashboard); errors.Is(err2, pgx.ErrNoRows) {
-			// Last-resort: any role.
-			if err3 := pgTx.QueryRow(ctx,
-				`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles ORDER BY id LIMIT 1`,
-			).Scan(&roleID, &roleDashboard); err3 != nil {
-				return nil, err3
-			}
-		} else if err2 != nil {
+			`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles ORDER BY id LIMIT 1`,
+		).Scan(&roleID, &roleDashboard); err2 != nil {
 			return nil, err2
 		}
 	} else if err != nil {
@@ -144,7 +150,7 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 	}
 
 	var userID int64
-	var username2, name2, roleStr, dashAccess string
+	var username2, name2 string
 	// ON CONFLICT (email) handles idempotent upsert. The username unique constraint
 	// is satisfied on first insert; subsequent logins match via email.
 	err = pgTx.QueryRow(ctx, `
@@ -161,23 +167,24 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 		return nil, err
 	}
 
-	// Re-read the role details (dashboard_access may differ from what we had).
+	// Re-read the platform role name + dashboard_access (we looked up by ID above).
+	var roleStr, dashAccess string
 	if err := pgTx.QueryRow(ctx,
 		`SELECT name, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE id = $1`,
 		roleID,
 	).Scan(&roleStr, &dashAccess); err != nil {
-		roleStr, dashAccess = role, "none"
+		roleStr, dashAccess = platformRole, "none"
 	}
 
-	// Upsert tenant membership. Role stored in the membership is the canonical
-	// per-tenant role going forward.
+	// Upsert tenant membership using the validated tenant membership role (not the
+	// platform role). This is the canonical per-tenant role going forward.
 	var memberRole string
 	err = pgTx.QueryRow(ctx, `
 		INSERT INTO auth_service.tenant_memberships (user_id, tenant_id, role)
 		VALUES ($1, $2::uuid, $3)
 		ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role
 		RETURNING role`,
-		userID, tenantID, roleStr,
+		userID, tenantID, role,
 	).Scan(&memberRole)
 	if err != nil {
 		return nil, err

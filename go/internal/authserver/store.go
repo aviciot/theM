@@ -59,6 +59,11 @@ type Store interface {
 	// Returns ErrNoMembership when no matching row exists.
 	GetTenantMembership(ctx context.Context, userID int64, tenantSlug string) (tenantID, role string, err error)
 
+	// GetTenantMembershipByID returns the tenant_id and role for a specific tenant UUID.
+	// Used by Refresh to re-validate the tenant selected at login.
+	// Returns ErrNoMembership when the membership has been revoked.
+	GetTenantMembershipByID(ctx context.Context, userID int64, tenantID string) (tenantID2, role string, err error)
+
 	// TouchLastLogin sets users.last_login_at = now for the given user. Best
 	// effort — errors are logged by the caller but do not fail login.
 	TouchLastLogin(ctx context.Context, id int64) error

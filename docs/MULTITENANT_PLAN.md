@@ -30,7 +30,7 @@ The-M supports multiple isolated tenants (companies/customers) on a single insta
 | Tenant-scoped dashboard | ❌ Not built | Frontend shows all data; no role-aware nav or route guards |
 | Tenant provisioning UX | ❌ Not built | Multi-step manual process; no guided wizard |
 | SSO / OIDC frontend wiring | ⚠️ Partial | Backend done; missing Keycloak test IdP + login page email-first flow |
-| Multi-tenant refresh (tenant preserved) | ⚠️ Known limitation | Refresh picks first membership row; selected tenant not preserved across refresh |
+| Multi-tenant refresh (tenant preserved) | ✅ Complete | Refresh token carries tenant_id; issuePairByTenantID re-validates membership; OIDC callback also preserves tenant (OIDC-30) |
 | Live two-tenant API E2E test | ❌ Not built | UM-13/14 are unit tests (fakeStore); no live test across auth→bridge→RLS |
 | Tenant onboarding flow | ❌ Not built | No guided "set up your first app" flow for new tenant admins |
 
@@ -127,7 +127,7 @@ Live smoke test: create user → assign to tenant A → login → JWT has `tenan
 | **36** | Tenant onboarding (first-login guidance) | Small | After 35 |
 | **37** | SSO frontend wiring + Keycloak test IdP | Small–Medium | After 36 (backend already done) |
 | **38** | Live two-tenant API E2E test | Small | Can be done any time after 33 |
-| **—** | Group mapping super_admin guardrail | Small | Security hardening; schedule with Step 37 |
+| **—** | Group mapping super_admin guardrail | Small | ✅ COMPLETE (2026-09-06) — migration 081, validMemberRoles guard, OIDCCallback rejection |
 
 ---
 
@@ -135,9 +135,9 @@ Live smoke test: create user → assign to tenant A → login → JWT has `tenan
 
 **Multi-membership support:** The DB schema allows one user in multiple tenants (`UNIQUE(user_id, tenant_id)` permits multiple rows per user, one per tenant). `issuePair()` picks the first row when no `tenant_slug` is given at login. To log into a specific tenant: `POST /api/v1/auth/login` with `{"tenant_slug":"acme"}`. The frontend does not yet expose this field.
 
-**Refresh does not preserve tenant selection:** Refresh tokens carry only `user_id`. `Refresh()` calls `issuePair(ctx, user, "")` — always picks the first membership row, ignoring the tenant originally selected at login. Users with multiple memberships must re-login to switch tenants. This is a documented limitation; tenant-switch UX is deferred.
+**Refresh preserves tenant selection:** Refresh tokens carry `tenant_id` in claims. `Refresh()` calls `issuePairByTenantID` when the claim is present, re-validating the specific membership row. Old tokens without `tenant_id` fall back to first-row behaviour for backwards compatibility. OIDC callback also embeds the tenant UUID in the refresh token it issues.
 
-**OIDC group mapping privilege escalation risk:** `them.tenant_group_mappings.role` has a DB CHECK that allows `'super_admin'` as a value. If a super_admin creates a group mapping with `role='super_admin'`, all OIDC users in that IdP group get platform `super_admin` via `UpsertOIDCUser` (which resolves `auth_service.roles WHERE name = role`). Current mitigation: only super_admin can write group mappings (API-layer enforcement). Future guardrail (Step 37): tighten the CHECK to `('admin','member','viewer')` only.
+**OIDC group mapping privilege escalation — closed:** `them.tenant_group_mappings.role` is now constrained by a DB CHECK (`('admin','member','viewer')` — migration 081). App-layer rejection in OIDCCallback and `validMemberRoles` guard in `UpsertOIDCUser` provide defence-in-depth. Platform role for OIDC users is always `"viewer"` regardless of group mapping.
 
 **UM-13/14 are unit tests, not live RLS tests:** They use a fakeStore (in-memory, no DB, no RLS). The real live two-tenant RLS test is `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`). A live auth→bridge→RLS HTTP E2E test does not yet exist (Gap 6, Step 38).
 

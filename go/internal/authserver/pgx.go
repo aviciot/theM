@@ -101,6 +101,23 @@ func (s *pgxStore) GetTenantMembership(ctx context.Context, userID int64, tenant
 	return tenantID, role, nil
 }
 
+func (s *pgxStore) GetTenantMembershipByID(ctx context.Context, userID int64, tenantID string) (string, string, error) {
+	const q = `
+		SELECT tenant_id::text, role
+		FROM   auth_service.tenant_memberships
+		WHERE  user_id = $1 AND tenant_id = $2::uuid
+		LIMIT  1`
+	var tid, role string
+	err := s.pool.QueryRow(ctx, q, userID, tenantID).Scan(&tid, &role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", ErrNoMembership
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return tid, role, nil
+}
+
 func (s *pgxStore) TouchLastLogin(ctx context.Context, id int64) error {
 	const q = `UPDATE auth_service.users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1`
 	_, err := s.pool.Exec(ctx, q, id)

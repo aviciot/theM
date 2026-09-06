@@ -68,6 +68,14 @@ func (f *fakeStore) GetTenantMembership(_ context.Context, userID int64, tenantS
 	return m.tenantID, m.role, nil
 }
 
+func (f *fakeStore) GetTenantMembershipByID(_ context.Context, userID int64, tenantID string) (string, string, error) {
+	m, ok := f.memberships[userID]
+	if !ok || m.tenantID != tenantID {
+		return "", "", ErrNoMembership
+	}
+	return m.tenantID, m.role, nil
+}
+
 func (f *fakeStore) GetUserByLogin(_ context.Context, login string) (*userRecord, error) {
 	if u, ok := f.byLogin[login]; ok {
 		return u, nil

@@ -324,6 +324,9 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestOIDCCallback_GroupsMatchedRoleOverridden` (OIDC-25) | id_token includes groups claim matching a tenant group mapping → UpsertOIDCUser called with mapped role (not "viewer") |
 | `TestOIDCCallback_GroupsUnmatchedDefaultRole` (OIDC-26) | groups present but none match any mapping → UpsertOIDCUser called with "viewer" |
 | `TestOIDCCallback_NoGroupsDefaultRole` (OIDC-27) | id_token has no groups claim → UpsertOIDCUser called with "viewer" even when mappings are configured |
+| `TestOIDCRoles_OIDC28_AdminGroupMapping_PlatformRoleIsViewer` (OIDC-28) | group mapping "admin" passes validMemberRoles; UpsertOIDCUser always looks up "viewer" in auth_service.roles (platform role separation) |
+| `TestOIDCRoles_OIDC29_SuperAdminMapping_Rejected` (OIDC-29) | "super_admin" from group mapping rejected by validMemberRoles guard and by OIDCCallback before UpsertOIDCUser is called |
+| `TestOIDCRoles_OIDC30_RefreshPreservesTenantB` (OIDC-30) | issuePairByTenantID + Refresh: refresh token carries tenant B UUID; new access token scoped to tenant B with correct membership role |
 | `TestUserMgmt_ListUsers_Empty` (UM-01) | GET /api/v1/admin/users returns [] when store is empty |
 | `TestUserMgmt_CreateUser` (UM-02) | POST creates user; 201 + body; user stored |
 | `TestUserMgmt_CreateUser_Conflict` (UM-03) | duplicate username → 409 |
@@ -340,7 +343,7 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestTenantLogin_RefreshCarriesTenant` (UM-14) | refresh issues new access token still carrying correct tenant_id and membership role |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
-handlers, router, oidc, oidc_store, oidc_jwks, user_mgmt_handlers, tenant_login) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
+handlers, router, oidc, oidc_store, oidc_jwks, oidc_roles, user_mgmt_handlers, tenant_login) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
 
 ---
 
@@ -3176,4 +3179,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1053** |
+| **`go test ./...` total** | | **1056** |

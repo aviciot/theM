@@ -50,7 +50,7 @@ func TestRoleExpiryOverride(t *testing.T) {
 
 func TestRefreshTokenType(t *testing.T) {
 	s := newTestSigner()
-	tok, err := s.IssueRefreshToken(7)
+	tok, err := s.IssueRefreshToken(7, testTenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +60,9 @@ func TestRefreshTokenType(t *testing.T) {
 	}
 	if claims.Type != "refresh" || claims.Sub != "7" {
 		t.Fatalf("unexpected refresh claims: %+v", claims)
+	}
+	if claims.TenantID != testTenantID {
+		t.Errorf("refresh token must carry tenant_id %q, got %q", testTenantID, claims.TenantID)
 	}
 }
 

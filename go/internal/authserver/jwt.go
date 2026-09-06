@@ -37,10 +37,11 @@ type accessClaims struct {
 
 // refreshClaims is the payload of a refresh token.
 type refreshClaims struct {
-	Sub  string `json:"sub"`
-	Exp  int64  `json:"exp"`
-	Iat  int64  `json:"iat"`
-	Type string `json:"type"`
+	Sub      string `json:"sub"`
+	TenantID string `json:"tenant_id,omitempty"`
+	Exp      int64  `json:"exp"`
+	Iat      int64  `json:"iat"`
+	Type     string `json:"type"`
 }
 
 // jwtHeader is the fixed HS256 header.
@@ -119,14 +120,16 @@ func (s *tokenSigner) IssueAccessToken(userID int64, username, name, role, tenan
 	return tok, int(ttl.Seconds()), nil
 }
 
-// IssueRefreshToken mints a signed refresh token.
-func (s *tokenSigner) IssueRefreshToken(userID int64) (string, error) {
+// IssueRefreshToken mints a signed refresh token embedding the tenantID so that
+// Refresh() can re-validate the specific membership row the user had at login.
+func (s *tokenSigner) IssueRefreshToken(userID int64, tenantID string) (string, error) {
 	now := s.now().UTC()
 	claims := refreshClaims{
-		Sub:  strconv.FormatInt(userID, 10),
-		Exp:  now.Add(s.refreshExpiry).Unix(),
-		Iat:  now.Unix(),
-		Type: "refresh",
+		Sub:      strconv.FormatInt(userID, 10),
+		TenantID: tenantID,
+		Exp:      now.Add(s.refreshExpiry).Unix(),
+		Iat:      now.Unix(),
+		Type:     "refresh",
 	}
 	return s.sign(claims)
 }
