@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
+import ProvisionWizard from './ProvisionWizard';
 
 const ACCENT = '#818cf8';
 const ACCENT_BORDER = 'rgba(129,140,248,0.4)';
@@ -300,51 +301,6 @@ function TenantPanel({ tenant, onClose, onPatched }: {
 
 // ── Create modal ───────────────────────────────────────────────────────────────
 
-function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (t: TenantRecord) => void }) {
-  const [slug, setSlug] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!slug || !displayName) { setErr('Both fields required'); return; }
-    setSaving(true); setErr('');
-    try {
-      const t = await themApi.createTenant({ slug, display_name: displayName });
-      onCreated(t);
-    } catch (ex) { setErr((ex as Error).message || 'Error creating tenant'); }
-    finally { setSaving(false); }
-  }
-
-  const inp: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', background: 'var(--tm-inset)', border: '1px solid var(--tm-filter-border)', color: 'var(--tm-card-text)', outline: 'none', boxSizing: 'border-box' };
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.55)' }} onClick={onClose}>
-      <div style={{ background: 'var(--tm-sidebar)', borderRadius: '16px', padding: '28px', width: '400px', border: '1px solid rgba(255,255,255,.1)' }} onClick={e => e.stopPropagation()}>
-        <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--tm-card-text)', margin: '0 0 20px 0' }}>New Tenant</h2>
-        <form onSubmit={submit}>
-          <div style={{ marginBottom: '14px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text-muted)', display: 'block', marginBottom: '5px' }}>Slug</label>
-            <input value={slug} onChange={e => setSlug(e.target.value)} style={inp} placeholder="acme-corp" />
-            <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', margin: '4px 0 0 0' }}>Lowercase letters, numbers, hyphens, underscores (max 64 chars)</p>
-          </div>
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text-muted)', display: 'block', marginBottom: '5px' }}>Display Name</label>
-            <input value={displayName} onChange={e => setDisplayName(e.target.value)} style={inp} placeholder="Acme Corp" />
-          </div>
-          {err && <p style={{ fontSize: '12px', color: '#f87171', margin: '0 0 14px 0' }}>{err}</p>}
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose} style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,.12)', color: 'var(--tm-card-text-muted)', cursor: 'pointer' }}>Cancel</button>
-            <button type="submit" disabled={saving} style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}>
-              {saving ? 'Creating…' : 'Create Tenant'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -428,7 +384,7 @@ export default function TenantsPage() {
         </div>
 
         {selected && <TenantPanel tenant={selected} onClose={() => setSelected(null)} onPatched={handlePatched} />}
-        {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
+        {showCreate && <ProvisionWizard onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
       </main>
     </>
   );
