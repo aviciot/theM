@@ -5,6 +5,90 @@ import ChromaGrid from '@/components/ChromaGrid';
 import { C, glass, APP_CARD_STYLES } from '../constants';
 import { AppCard, useDashAppStatuses } from './AppCard';
 import type { AppLiveness } from '../types';
+import { useAuthStore } from '@/stores/authStore';
+
+// ── Onboarding banner (shown when no applications exist) ──────────────────────
+
+function GetStartedBanner({ onNew }: { onNew: () => void }) {
+  const user = useAuthStore(s => s.user);
+  const isSuperAdmin = user?.role === 'super_admin';
+
+  const steps = [
+    {
+      icon: 'apps',
+      title: 'Create an Application',
+      body: 'An Application is the deployable unit — it holds entry points (WebSocket, SSE, A2A) that your users connect to.',
+    },
+    {
+      icon: 'smart_toy',
+      title: 'Configure Agents & Orchestrators',
+      body: 'Bind an AI agent or canvas workflow to your application. Set the LLM provider, API key, and runtime parameters.',
+    },
+    {
+      icon: 'link',
+      title: 'Share the Entry Point',
+      body: 'Copy the generated WebSocket or A2A URL and hand it to your client. Use the Playground to test before going live.',
+    },
+  ];
+
+  return (
+    <div style={{ gridColumn: '1 / -1', padding: '16px 0 48px' }}>
+      {/* Hero */}
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(0,209,255,0.04) 100%)',
+        border: '1px solid rgba(99,102,241,0.2)', borderRadius: 20,
+        padding: '40px 48px', marginBottom: 32, textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🚀</div>
+        <h3 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: '0 0 10px 0', letterSpacing: '-0.02em' }}>
+          {isSuperAdmin ? 'No applications yet — create your first one' : 'Welcome — let\'s set up your first application'}
+        </h3>
+        <p style={{ fontSize: 14, color: C.textMuted, margin: '0 0 28px 0', maxWidth: 520, marginLeft: 'auto', marginRight: 'auto' }}>
+          {isSuperAdmin
+            ? 'Applications are the deployable tenant units on this platform. Each one gets its own entry points, agents, and runtime configuration.'
+            : 'An application connects your users to an AI agent or workflow. Follow the steps below to deploy your first one.'}
+        </p>
+        <button
+          onClick={onNew}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '13px 28px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: '#00d1ff', color: '#000', fontSize: 15, fontWeight: 700,
+            boxShadow: '0 0 24px rgba(0,209,255,0.4)',
+          }}
+        >
+          <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
+          Create Application
+        </button>
+      </div>
+
+      {/* Three-step guide */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+        {steps.map((s, i) => (
+          <div key={i} style={{
+            background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+            borderRadius: 14, padding: '24px 22px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#818cf8' }}>{s.icon}</span>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(129,140,248,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Step {i + 1}
+              </span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 6 }}>{s.title}</div>
+            <div style={{ fontSize: 13, color: C.textMuted, lineHeight: 1.55 }}>{s.body}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function ListView({
   list, loading, onNew, onEdit, onRuntime, onMCPCredentials, onMonitor, onToggle, onDelete, onReload,
@@ -184,21 +268,7 @@ export function ListView({
         )}
 
         {!loading && list.length === 0 && (
-          <div
-            className="app-deploy-card"
-            onClick={onNew}
-            style={{
-              borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)',
-              background: 'rgba(99,102,241,0.02)',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease',
-            }}
-          >
-            <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="material-icons" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8' }}>New Application</div>
-          </div>
+          <GetStartedBanner onNew={onNew} />
         )}
 
         {!loading && list.map((app) => {
