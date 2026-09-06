@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy (Steps 1–33 + pre-Step-34 auth hardening complete; Step 34 next)
+# Handover — Multi-Tenancy (Steps 1–34 complete; Step 35 next)
 **Date:** 2026-09-06
 **Branch:** main
-**HEAD:** 7920bf2 (fix(auth): OIDC role separation + refresh tenant preservation)
-**Steps complete:** 1 → 23 + H2 (RLS) + 29 + 30 + 31 + 32 + 33 (tenant login chain + contract alignment) + pre-Step-34 auth hardening
+**HEAD:** 82a8f22 (feat(frontend): Step 34 — role-based nav + super_admin route guards)
+**Steps complete:** 1 → 23 + H2 (RLS) + 29 + 30 + 31 + 32 + 33 + 34
 **Unit tests:** all packages pass, 0 failures (`go test ./...` — 1056 pass, S1-40: 83 tests + OIDC-28/29/30)
 **Integration tests:** `go test -tags=integration ./internal/db/...` — all pass (TwoTenantFullIsolation, CatalogVerification CV-01..05)
 **RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete and verified
@@ -83,12 +83,13 @@
 | Step 33 | Tenant login chain alignment: CreateUser role/tenant_role contract fixed; /me returns JWT membership role (not DB global role); regression tests UM-13 (two-tenant isolation) + UM-14 (refresh carries tenant) | Complete | 5b2e283 |
 | Pre-34 auth sync | Docs sync — OIDC status corrected, Steps 29–33 history, migration 078–080, escalation risk documented | Complete | dc21381 |
 | Pre-34 auth hardening | OIDC role separation (platform=viewer always; super_admin rejected at app+DB layer; migration 081); refresh preserves tenant (TenantID in refreshClaims; issuePairByTenantID; GetTenantMembershipByID); tests OIDC-28/29/30 | Complete | 7920bf2 |
+| Step 34 | Role-based nav + super_admin route guards: Sidebar SUPER_ADMIN_NAV split; useRequireSuperAdmin hook; tenants/users/observability pages guarded | Complete | 82a8f22 |
 
 ---
 
 ## Current pause point — tenant roadmap status
 
-**Steps 1–23 + H2 + 29–33 are complete. Step 34 is next.**
+**Steps 1–23 + H2 + 29–34 are complete. Step 35 is next.**
 
 All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant full isolation test passes (24 table checks per tenant). Cross-tenant INSERT blocked by WITH CHECK. Catalog verification CV-01..05 passes. Handler-path audit redaction verified end-to-end for agent auth_token (AR-01), MCP probe_token (AR-02), tenant client_secret (AR-03).
 
@@ -103,31 +104,17 @@ All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant ful
 
 ⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
-### Next recommended: Step 34 — Role-based nav + frontend route guards
+### Step 34 — Role-based nav + frontend route guards: COMPLETE (82a8f22)
 
-**Frontend only. No new Go work. No new DB schema. Backend authorization must not change.**
+What was built:
+- `frontend/src/hooks/useRequireSuperAdmin.ts`: hook reads `user.role` from authStore; redirects to `/admin/applications` if not `super_admin`.
+- `frontend/src/components/Sidebar.tsx`: `SUPER_ADMIN_NAV` array added (Tenants/Users/Managed Apps/Observability); rendered only when `role === 'super_admin'`.
+- Guards applied to: `admin/tenants/page.tsx`, `admin/users/page.tsx`, `admin/observability/page.tsx`.
+- `tsc --noEmit`: zero new errors.
 
-#### Scope
-1. Read JWT `role` claim from `/api/auth/me` response (already called on load).
-2. `frontend/src/components/Sidebar.tsx`: hide Tenants, Users, Observability nav items when `role !== "super_admin"`. Tenant admins see: Applications, Runs, MCP Servers, My Tenant, Agent Builder. Super admins see all.
-3. Add a `useRequireSuperAdmin()` hook (or inline guard) — if `role !== "super_admin"`, redirect to `/admin/applications`. Apply to exactly these three pages:
-   - `frontend/src/app/admin/tenants/page.tsx`
-   - `frontend/src/app/admin/users/page.tsx`
-   - `frontend/src/app/admin/observability/page.tsx`
-4. **Do NOT remove backend `RequireSuperAdmin` checks** — guards are UX only; backend authorization is the real control.
-5. TypeScript must pass (`tsc --noEmit`) with zero new errors.
+### Next recommended: Step 35 — Tenant provisioning wizard
 
-#### Acceptance criteria
-- [ ] Tenant admin (role="admin") logs in → Sidebar shows no Tenants/Users/Observability links
-- [ ] Navigating directly to `/admin/users` as tenant admin → redirected to `/admin/applications`
-- [ ] Super admin logs in → Sidebar unchanged, all pages accessible
-- [ ] `tsc --noEmit` — zero new errors
-- [ ] No Go code changed, no `go test` required (frontend-only step)
-
-#### Key files to read first
-- `frontend/src/components/Sidebar.tsx` (check existing nav structure and ADMIN_NAV shape)
-- `frontend/src/hooks/useAuth.ts` or wherever `/api/auth/me` is called — find how `role` is already exposed
-- `frontend/src/app/admin/tenants/page.tsx`, `users/page.tsx`, `observability/page.tsx`
+See `docs/MULTITENANT_PLAN.md` Build Order table. Frontend-focused; may need a small Go endpoint if provisioning needs atomic setup.
 
 Steps 35–38: see `docs/MULTITENANT_PLAN.md` Build Order table.
 

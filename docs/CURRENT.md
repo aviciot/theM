@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-06 (Step 34 handover — OIDC role separation + refresh tenant preservation complete)
+# Last updated: 2026-09-06 (Step 34 complete — role-based nav + super_admin route guards)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+82a8f22  feat(frontend): Step 34 — role-based nav + super_admin route guards
 7920bf2  fix(auth): OIDC role separation + refresh tenant preservation
 dc21381  docs: pre-Step-34 architecture sync — OIDC status, Steps 29–33 history, migration 078–080, escalation risk
 5b2e283  fix(auth): Step 33 closure — contract alignment, /me role fix, two-tenant regression tests
 80924a1  fix(users): Step 33 — fix CreateUser role mapping + verify tenant login chain
-9b5c320  feat(users): Step 32 — user management API + frontend page
 ```
 
 ---
@@ -165,30 +165,19 @@ Two auth correctness/security fixes applied before Step 34:
 
 **Docs updated in same commit (7920bf2)**: MULTITENANT_PLAN.md (escalation risk closed, refresh limitation closed), SCHEMA.md (migration 081 entry + inline table description corrected), LESSONS.md (two new entries).
 
-### Next recommended task
+### Step 34 — Role-based nav + frontend route guards: COMPLETE (82a8f22)
 
-**Step 34 — Role-based dashboard nav + route guards** (see `docs/MULTITENANT_PLAN.md` Gap 2):
+**Frontend only. No Go changes. No DB changes.**
 
-**Frontend only. No new Go work. No new DB schema. Do NOT touch backend `RequireSuperAdmin` checks.**
+What was built:
+- `frontend/src/hooks/useRequireSuperAdmin.ts`: new hook — reads `user.role` from authStore, redirects to `/admin/applications` if not `super_admin`.
+- `frontend/src/components/Sidebar.tsx`: `ADMIN_NAV` split into two arrays — common items for all admins, and `SUPER_ADMIN_NAV` (Tenants/Users/Managed Apps/Observability) rendered only when `role === 'super_admin'`.
+- `frontend/src/app/admin/tenants/page.tsx`, `users/page.tsx`, `observability/page.tsx`: each calls `useRequireSuperAdmin()` at top — direct-navigation guard.
+- `tsc --noEmit`: zero new errors (one pre-existing error in `services/page.tsx` unchanged).
 
-Scope:
-1. Read JWT `role` claim from `/api/auth/me` response (already called on load).
-2. `frontend/src/components/Sidebar.tsx`: hide Tenants, Users, Observability items when `role !== "super_admin"`.
-3. Add route guard (hook or inline) — redirect to `/admin/applications` if not super_admin. Apply to:
-   - `frontend/src/app/admin/tenants/page.tsx`
-   - `frontend/src/app/admin/users/page.tsx`
-   - `frontend/src/app/admin/observability/page.tsx`
-4. `tsc --noEmit` must pass with zero new errors.
-
-Acceptance criteria:
-- Tenant admin sees no Tenants/Users/Observability in Sidebar
-- Direct navigation to `/admin/users` as tenant admin → redirected to `/admin/applications`
-- Super admin nav unchanged
-- Zero `tsc` errors
-
-Steps 34–38 roadmap (see MULTITENANT_PLAN.md Build Order table):
-- **34** — Role-based nav + frontend route guards (Medium) — **Next**
-- **35** — Tenant provisioning wizard (Medium) — After 34
+Steps 35–38 roadmap (see MULTITENANT_PLAN.md Build Order table):
+- **34** — Role-based nav + frontend route guards — COMPLETE (82a8f22)
+- **35** — Tenant provisioning wizard (Medium) — **Next**
 - **36** — Tenant onboarding first-login guidance (Small) — After 35
 - **37** — SSO frontend wiring + Keycloak test IdP (Small–Medium; backend already complete) — After 36
 - **38** — Live two-tenant auth→bridge→RLS HTTP E2E test (Small) — still pending; any time after Step 33
