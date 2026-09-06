@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-06 (Step 34 complete — role-based nav + super_admin route guards)
+# Last updated: 2026-09-06 (Step 34.5 complete — router split, tenant admin access)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+26ee921  fix(auth): Step 34.5 — router split, tenant admin access to tenant-scoped routes
+34687ad  feat(frontend): Step 36 — Get started onboarding banner on /admin/applications
+c95976d  feat(frontend): Step 35 — 4-step tenant provisioning wizard
 82a8f22  feat(frontend): Step 34 — role-based nav + super_admin route guards
 7920bf2  fix(auth): OIDC role separation + refresh tenant preservation
-dc21381  docs: pre-Step-34 architecture sync — OIDC status, Steps 29–33 history, migration 078–080, escalation risk
-5b2e283  fix(auth): Step 33 closure — contract alignment, /me role fix, two-tenant regression tests
-80924a1  fix(users): Step 33 — fix CreateUser role mapping + verify tenant login chain
 ```
 
 ---
@@ -173,24 +173,44 @@ What was built:
 - `frontend/src/hooks/useRequireSuperAdmin.ts`: new hook — reads `user.role` from authStore, redirects to `/admin/applications` if not `super_admin`.
 - `frontend/src/components/Sidebar.tsx`: `ADMIN_NAV` split into two arrays — common items for all admins, and `SUPER_ADMIN_NAV` (Tenants/Users/Managed Apps/Observability) rendered only when `role === 'super_admin'`.
 - `frontend/src/app/admin/tenants/page.tsx`, `users/page.tsx`, `observability/page.tsx`: each calls `useRequireSuperAdmin()` at top — direct-navigation guard.
-- `tsc --noEmit`: zero new errors (one pre-existing error in `services/page.tsx` unchanged).
 
-Steps 35–38 roadmap (see MULTITENANT_PLAN.md Build Order table):
-- **34** — Role-based nav + frontend route guards — COMPLETE (82a8f22)
-- **35** — Tenant provisioning wizard — COMPLETE (c95976d)
-- **36** — Tenant onboarding first-login guidance (Small) — **Next**
-- **37** — SSO frontend wiring + Keycloak test IdP (Small–Medium; backend already complete) — After 36
-- **38** — Live two-tenant auth→bridge→RLS HTTP E2E test (Small) — still pending; any time after Step 33
-- **—** — Group mapping super_admin guardrail (migration 081): file exists; apply to live DB before enabling OIDC groups
+### Step 35 — Tenant provisioning wizard: COMPLETE (c95976d)
+
+4-step wizard on `/admin/tenants`: tenant → admin user → quota → done. `onCreated(t)` called after Step 1 so tenant appears in list immediately. Steps 2/3 are skippable. Skipped steps listed in amber warning on Step 4.
+
+### Step 36 — Tenant onboarding banner: COMPLETE (34687ad)
+
+`GetStartedBanner` on `/admin/applications` empty state. Role-aware headline + 3-step guide + "Create Application" CTA. Replaces the minimal dashed card.
+
+### Step 34.5 — Router split (tenant admin access): COMPLETE (26ee921)
+
+**Critical bug fix.** All `/admin` routes were under `RequireSuperAdmin` — tenant admins (role=admin) received 403 on Applications, Agents, Orchestrators, MCP Servers, Runs, Audit Logs. Steps 34 and 36 were visually correct but functionally broken.
+
+`BuildRouter` split into two authorization tiers within a shared JWT group:
+- **Tenant-scoped** (`RequireTenantAdmin` + `AdminTenantMiddleware`): agents, orchs, apps, tokens, MCP, agent-defs, audit logs, runs — accessible by `admin` AND `super_admin`
+- **Platform-global** (`RequireSuperAdmin` only): tenants, users, llm-providers, monitoring, observability, sessions
+
+RLS isolation preserved — `AdminTenantMiddleware` still sets `app.tenant_id` GUC on every tenant-scoped request.
+
+6 new tests (TH-13–18): admin JWT → 200 on agents/apps/orchs/runs; admin JWT → 403 on llm-providers; member JWT → 403 on agents. **1062 tests, 0 failures.**
+
+### Next task: Step 37 — SSO: tenant-admin IdP form + Keycloak test IdP
+
+See `docs/MULTITENANT_PLAN.md` Gap 4 and `docs/sso-access-audit.md` for full scope.
+
+Three pieces:
+1. **`/tenant/settings` SSO form** — add "SSO / Identity Provider" section to `frontend/src/app/tenant/settings/page.tsx`. Fields: `discovery_url`, `client_id`, `client_secret` (write-only — show "configured" placeholder if `idp_configured=true`), `redirect_uri`. Save → `PATCH /tenant/settings` with `idp_config`. Clear → `idp_config: null`. Extend `themApi.patchTenantSettings` to accept `idp_config`.
+2. **Keycloak test IdP** — add `them-keycloak` service to `docker-compose.dev.yml` (`quay.io/keycloak/keycloak`, profile `sso`). Pre-configured realm export in `keycloak/`. Traefik route at `/auth/keycloak/` (internal only).
+3. **E2E SSO smoke test** — configure tenant IdP via both paths (tenant-admin and super-admin), login via OIDC, verify JWT has correct `tenant_id` and role.
+
+Backend is already complete (no Go changes needed for the write path). Login page email-first flow is already wired. Step 37 is frontend + Docker only (except the E2E test).
+
+**⚠️ Production blocker Step 37-S** (separate, do before any production OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints.
 
 Key reminders:
-- Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
-- UM-13/14 are unit tests (fakeStore) — NOT live RLS tests. Live RLS test: `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`) — tests DB isolation only.
-- Live auth→bridge→RLS HTTP E2E (full stack, two tenants) is Step 38 — **not yet built**.
-- OIDC backend is COMPLETE (Steps 5/8/9/17/18). Gap 4 is frontend email-first flow + Keycloak IdP only (Step 37).
-- Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — created in commit 7920bf2 but **not verified applied to live DB**.
-- Refresh tokens without `tenant_id` (issued before 7920bf2) use legacy first-row fallback — multi-membership users need re-login.
-- E2E test: `TOKEN=$(docker exec them-auth-go curl -s -X POST http://172.24.0.10:8088/auth/api/v1/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))") && ADMIN_JWT="$TOKEN" python3.12 scripts/tests/run_tests.py 14`
+- Get JWT: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
+- Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.
+- Working demo checklist (see MULTITENANT_PLAN.md) — "Alice creates an application" now works end-to-end after Step 34.5.
 
 ### Known blockers / pre-conditions
 
