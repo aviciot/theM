@@ -84,12 +84,13 @@
 | Pre-34 auth sync | Docs sync — OIDC status corrected, Steps 29–33 history, migration 078–080, escalation risk documented | Complete | dc21381 |
 | Pre-34 auth hardening | OIDC role separation (platform=viewer always; super_admin rejected at app+DB layer; migration 081); refresh preserves tenant (TenantID in refreshClaims; issuePairByTenantID; GetTenantMembershipByID); tests OIDC-28/29/30 | Complete | 7920bf2 |
 | Step 34 | Role-based nav + super_admin route guards: Sidebar SUPER_ADMIN_NAV split; useRequireSuperAdmin hook; tenants/users/observability pages guarded | Complete | 82a8f22 |
+| Step 35 | Tenant provisioning wizard: 4-step modal (tenant → admin user → quota → done); ProvisionWizard.tsx extracted; skippable steps 2+3; skipped-step warnings on done screen | Complete | c95976d |
 
 ---
 
 ## Current pause point — tenant roadmap status
 
-**Steps 1–23 + H2 + 29–34 are complete. Step 35 is next.**
+**Steps 1–23 + H2 + 29–35 are complete. Step 36 is next.**
 
 All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant full isolation test passes (24 table checks per tenant). Cross-tenant INSERT blocked by WITH CHECK. Catalog verification CV-01..05 passes. Handler-path audit redaction verified end-to-end for agent auth_token (AR-01), MCP probe_token (AR-02), tenant client_secret (AR-03).
 
@@ -112,11 +113,22 @@ What was built:
 - Guards applied to: `admin/tenants/page.tsx`, `admin/users/page.tsx`, `admin/observability/page.tsx`.
 - `tsc --noEmit`: zero new errors.
 
-### Next recommended: Step 35 — Tenant provisioning wizard
+### Step 35 — Tenant provisioning wizard: COMPLETE (c95976d)
 
-See `docs/MULTITENANT_PLAN.md` Build Order table. Frontend-focused; may need a small Go endpoint if provisioning needs atomic setup.
+What was built:
+- `frontend/src/app/admin/tenants/ProvisionWizard.tsx` (new, 312 lines): 4-step guided wizard replacing the simple CreateModal.
+  - Step 1 — Tenant: slug + display_name (required; calls `createTenant`)
+  - Step 2 — Admin user: username/name/email/password, tenant_role=admin (skippable; calls `createUser`)
+  - Step 3 — Quota: plan + 9 limit fields (skippable; calls `upsertTenantQuota`)
+  - Step 4 — Done: summary with amber warnings for skipped steps
+- `frontend/src/app/admin/tenants/page.tsx`: imports `ProvisionWizard`, removed inline `CreateModal`.
+- `tsc --noEmit`: zero new errors.
 
-Steps 35–38: see `docs/MULTITENANT_PLAN.md` Build Order table.
+### Next recommended: Step 36 — Tenant onboarding (first-login guidance)
+
+"Get started" banner on `/admin/applications` when `applications.length === 0`. Frontend only. Small scope (~half a day).
+
+Steps 36–38: see `docs/MULTITENANT_PLAN.md` Build Order table.
 
 Key facts for the new session:
 - UM-13/14 are **unit tests** (fakeStore, no real DB/RLS) — not live two-tenant E2E

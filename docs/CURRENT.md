@@ -177,8 +177,8 @@ What was built:
 
 Steps 35–38 roadmap (see MULTITENANT_PLAN.md Build Order table):
 - **34** — Role-based nav + frontend route guards — COMPLETE (82a8f22)
-- **35** — Tenant provisioning wizard (Medium) — **Next**
-- **36** — Tenant onboarding first-login guidance (Small) — After 35
+- **35** — Tenant provisioning wizard — COMPLETE (c95976d)
+- **36** — Tenant onboarding first-login guidance (Small) — **Next**
 - **37** — SSO frontend wiring + Keycloak test IdP (Small–Medium; backend already complete) — After 36
 - **38** — Live two-tenant auth→bridge→RLS HTTP E2E test (Small) — still pending; any time after Step 33
 - **—** — Group mapping super_admin guardrail (migration 081): file exists; apply to live DB before enabling OIDC groups
