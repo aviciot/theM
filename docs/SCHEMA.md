@@ -550,7 +550,7 @@ OIDC group claim → tenant role mapping. Migration: `db/059_tenant_group_mappin
 | id | UUID PK | Stable mapping identifier |
 | tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE | Owning tenant |
 | group_claim | TEXT NOT NULL | Exact value from the OIDC `groups` claim (e.g. `"OktaAdmins"`, `"EntraID-Admin"`) |
-| role | TEXT NOT NULL CHECK (viewer\|member\|admin\|super_admin) | Tenant role assigned when this group matches |
+| role | TEXT NOT NULL CHECK (admin\|member\|viewer) | Tenant role assigned when this group matches. `super_admin` is explicitly forbidden at DB and app layers (migration 081). |
 | priority | INT NOT NULL DEFAULT 0 | Lower integer = higher priority. Ties broken by group_claim ASC. |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |
@@ -560,7 +560,7 @@ OIDC group claim → tenant role mapping. Migration: `db/059_tenant_group_mappin
 
 The OIDC callback resolves the role by querying `WHERE tenant_id = $1 AND group_claim = ANY($2) ORDER BY priority ASC, group_claim ASC LIMIT 1`. Non-fatal: no match → default "viewer" role used.
 
-⚠️ **Privilege escalation risk:** The CHECK constraint allows `'super_admin'` as a role value. If a super_admin creates a mapping with `role='super_admin'`, all OIDC users matching that group claim will be granted platform super_admin (via `UpsertOIDCUser` resolving `auth_service.roles WHERE name = role`). Current mitigation: only super_admin can write group mappings (API-layer `RequireSuperAdmin`). Planned guardrail (Step 37): tighten CHECK to `('admin','member','viewer')` only.
+**Security:** `super_admin` is blocked at three layers: DB CHECK (`admin|member|viewer` only, migration 081), `validMemberRoles` guard in `UpsertOIDCUser`, and explicit rejection in `OIDCCallback` before `UpsertOIDCUser` is called. Platform role for all OIDC users is always `"viewer"` regardless of group mapping — group mappings only affect tenant membership role.
 
 ---
 

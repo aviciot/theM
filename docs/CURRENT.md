@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-06 (pre-Step-34 architecture sync — MULTITENANT_PLAN corrected, all docs current)
+# Last updated: 2026-09-06 (Step 34 handover — OIDC role separation + refresh tenant preservation complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+7920bf2  fix(auth): OIDC role separation + refresh tenant preservation
+dc21381  docs: pre-Step-34 architecture sync — OIDC status, Steps 29–33 history, migration 078–080, escalation risk
 5b2e283  fix(auth): Step 33 closure — contract alignment, /me role fix, two-tenant regression tests
 80924a1  fix(users): Step 33 — fix CreateUser role mapping + verify tenant login chain
-47461f7  docs: add MULTITENANT_PLAN.md — vision, gaps, and build order for Steps 33–37
 9b5c320  feat(users): Step 32 — user management API + frontend page
-1c2bc3a  feat(quota): Step 31 — enforce api_requests_per_minute + monthly_llm_tokens
 ```
 
 ---
@@ -146,48 +146,61 @@ Three fixes applied across two commits (80924a1 + closure commit):
 
 Live smoke test (2026-09-06): create user → login → JWT has correct `tenant_id` and membership role → super_admin route returns 403 (correct).
 
-### Pre-Step-34 Auth Hardening — COMPLETE (2026-09-06)
+### Pre-Step-34 Auth Hardening — COMPLETE (2026-09-06, 7920bf2)
 
 Two auth correctness/security fixes applied before Step 34:
 
 **Fix 1 — OIDC role separation** (`go/internal/authserver/oidc_store.go`, `oidc.go`):
-- `UpsertOIDCUser` was using the group-mapping `role` for both `auth_service.roles` platform lookup AND `tenant_memberships.role`. This caused a 500 when "admin" (a valid tenant role) was looked up as a platform role.
-- Fix: platform role for all OIDC users is always `"viewer"` (hard-coded). Membership role uses `validMemberRoles` guard. `super_admin` rejected at two layers: OIDCCallback (app layer) and `UpsertOIDCUser` (guard).
-- Migration 081: DB CHECK constraint on `them.tenant_group_mappings.role` restricts to `('admin','member','viewer')`.
+- `UpsertOIDCUser` was using the group-mapping `role` for both `auth_service.roles` platform lookup AND `tenant_memberships.role`. If "admin" was mapped as a group role, the code tried to look up a platform role named "admin" (doesn't exist) — 500 error. If "super_admin" was mapped, it would have granted platform super_admin to OIDC users.
+- Fix: platform role for all OIDC users is always `"viewer"` (hard-coded; no group mapping can change it). Membership role uses `validMemberRoles` guard. `super_admin` rejected at three layers: OIDCCallback (app layer), `UpsertOIDCUser` guard, and DB CHECK.
+- Migration `db/081_tenant_group_mappings_safe_roles.sql`: CHECK on `them.tenant_group_mappings.role` restricted to `('admin','member','viewer')`. **⚠️ Migration 081 has NOT been verified as applied to the live DB — apply before enabling OIDC group mapping features.**
 
 **Fix 2 — Refresh preserves tenant** (`go/internal/authserver/jwt.go`, `service.go`, `store.go`, `pgx.go`):
-- `refreshClaims` now carries `TenantID`. `IssueRefreshToken(userID, tenantID)` signature updated everywhere.
-- `Refresh()` calls new `issuePairByTenantID` when tenant_id present in refresh claims — re-validates the specific membership row (catches revoked memberships).
+- `refreshClaims` now carries `TenantID`. `IssueRefreshToken(userID, tenantID)` signature updated everywhere (login + OIDC callback).
+- `Refresh()` calls new `issuePairByTenantID` when `tenant_id` is present in refresh claims — re-validates the specific membership row (catches revoked memberships mid-session).
 - `GetTenantMembershipByID` added to Store interface + pgx implementation.
+- **⚠️ Backwards compatibility:** Refresh tokens issued before this commit (7920bf2) carry no `tenant_id`. These tokens use the legacy `issuePair(ctx, user, "")` fallback (picks first membership row). Affected multi-membership users must re-login to get a tenant-preserving refresh token. Single-tenant users are unaffected.
 
-**Tests**: OIDC-28 (admin group mapping platform role stays viewer), OIDC-29 (super_admin mapping rejected), OIDC-30 (refresh preserves tenant B in multi-membership scenario). 1053 → 1056 tests. `go test ./...` — 0 failures.
+**Tests**: OIDC-28 (admin group → platform role stays viewer), OIDC-29 (super_admin group → rejected, falls back to viewer), OIDC-30 (refresh for multi-membership user preserves tenant B). 1053 → 1056 tests. `go test ./...` — 0 failures.
 
-**Docs**: MULTITENANT_PLAN.md updated (refresh limitation → complete, escalation risk → closed), SCHEMA.md migration 081, LESSONS.md two new entries.
+**Docs updated in same commit (7920bf2)**: MULTITENANT_PLAN.md (escalation risk closed, refresh limitation closed), SCHEMA.md (migration 081 entry + inline table description corrected), LESSONS.md (two new entries).
 
 ### Next recommended task
 
 **Step 34 — Role-based dashboard nav + route guards** (see `docs/MULTITENANT_PLAN.md` Gap 2):
 
-Frontend only. No new Go work. No new DB schema.
+**Frontend only. No new Go work. No new DB schema. Do NOT touch backend `RequireSuperAdmin` checks.**
 
-1. Read JWT `role` claim from `/api/auth/me` response (already called on load via `useAuth` or equivalent).
-2. `frontend/src/components/Sidebar.tsx`: hide Tenants/Users/Observability items for non-super_admin.
-3. Add `useRequireSuperAdmin()` hook (or inline guard) — redirect to `/admin/applications` if role ≠ `super_admin`.
-4. Apply guard to: `frontend/src/app/admin/tenants/page.tsx`, `frontend/src/app/admin/users/page.tsx`, `frontend/src/app/admin/observability/page.tsx`.
-5. **Do NOT remove backend `RequireSuperAdmin` checks** — frontend guards are UX only.
+Scope:
+1. Read JWT `role` claim from `/api/auth/me` response (already called on load).
+2. `frontend/src/components/Sidebar.tsx`: hide Tenants, Users, Observability items when `role !== "super_admin"`.
+3. Add route guard (hook or inline) — redirect to `/admin/applications` if not super_admin. Apply to:
+   - `frontend/src/app/admin/tenants/page.tsx`
+   - `frontend/src/app/admin/users/page.tsx`
+   - `frontend/src/app/admin/observability/page.tsx`
+4. `tsc --noEmit` must pass with zero new errors.
+
+Acceptance criteria:
+- Tenant admin sees no Tenants/Users/Observability in Sidebar
+- Direct navigation to `/admin/users` as tenant admin → redirected to `/admin/applications`
+- Super admin nav unchanged
+- Zero `tsc` errors
 
 Steps 34–38 roadmap (see MULTITENANT_PLAN.md Build Order table):
 - **34** — Role-based nav + frontend route guards (Medium) — **Next**
 - **35** — Tenant provisioning wizard (Medium) — After 34
 - **36** — Tenant onboarding first-login guidance (Small) — After 35
 - **37** — SSO frontend wiring + Keycloak test IdP (Small–Medium; backend already complete) — After 36
-- **38** — Live two-tenant API E2E test (Small) — any time after Step 33
-- **—** — Group mapping super_admin guardrail: tighten `db/059` CHECK to `('admin','member','viewer')` — schedule with Step 37
+- **38** — Live two-tenant auth→bridge→RLS HTTP E2E test (Small) — still pending; any time after Step 33
+- **—** — Group mapping super_admin guardrail (migration 081): file exists; apply to live DB before enabling OIDC groups
 
 Key reminders:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
-- UM-13/14 are unit tests (fakeStore) — NOT live RLS tests. Live RLS test: `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`)
-- OIDC backend is COMPLETE (Steps 5/8/9/17/18). Gap 4 is frontend + Keycloak IdP only.
+- UM-13/14 are unit tests (fakeStore) — NOT live RLS tests. Live RLS test: `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`) — tests DB isolation only.
+- Live auth→bridge→RLS HTTP E2E (full stack, two tenants) is Step 38 — **not yet built**.
+- OIDC backend is COMPLETE (Steps 5/8/9/17/18). Gap 4 is frontend email-first flow + Keycloak IdP only (Step 37).
+- Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — created in commit 7920bf2 but **not verified applied to live DB**.
+- Refresh tokens without `tenant_id` (issued before 7920bf2) use legacy first-row fallback — multi-membership users need re-login.
 - E2E test: `TOKEN=$(docker exec them-auth-go curl -s -X POST http://172.24.0.10:8088/auth/api/v1/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))") && ADMIN_JWT="$TOKEN" python3.12 scripts/tests/run_tests.py 14`
 
 ### Known blockers / pre-conditions

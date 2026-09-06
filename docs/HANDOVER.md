@@ -1,9 +1,9 @@
-# Handover — Multi-Tenancy (Steps 1–33 complete; Step 34 next)
+# Handover — Multi-Tenancy (Steps 1–33 + pre-Step-34 auth hardening complete; Step 34 next)
 **Date:** 2026-09-06
 **Branch:** main
-**HEAD:** 5b2e283 (fix(auth): Step 33 closure — contract alignment, /me role fix, two-tenant regression tests)
-**Steps complete:** 1 → 23 + H2 (RLS) + 29 + 30 + 31 + 32 + 33 (tenant login chain + contract alignment)
-**Unit tests:** all packages pass, 0 failures (`go test ./...` — 1053 pass, S1-40: 83 tests)
+**HEAD:** 7920bf2 (fix(auth): OIDC role separation + refresh tenant preservation)
+**Steps complete:** 1 → 23 + H2 (RLS) + 29 + 30 + 31 + 32 + 33 (tenant login chain + contract alignment) + pre-Step-34 auth hardening
+**Unit tests:** all packages pass, 0 failures (`go test ./...` — 1056 pass, S1-40: 83 tests + OIDC-28/29/30)
 **Integration tests:** `go test -tags=integration ./internal/db/...` — all pass (TwoTenantFullIsolation, CatalogVerification CV-01..05)
 **RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete and verified
 
@@ -81,6 +81,8 @@
 | Step 31 | Quota enforcement for api_requests_per_minute (Redis INCR) + monthly_llm_tokens (DB SUM); 8 new unit tests QE-10..17 | Complete | 1c2bc3a |
 | Step 32 | User management API + frontend page: full CRUD GET/POST/PATCH/DELETE /api/v1/admin/users, reset-password, list-tenants; bcrypt + tenant membership; 12 tests UM-01..12 | Complete | 9b5c320 |
 | Step 33 | Tenant login chain alignment: CreateUser role/tenant_role contract fixed; /me returns JWT membership role (not DB global role); regression tests UM-13 (two-tenant isolation) + UM-14 (refresh carries tenant) | Complete | 5b2e283 |
+| Pre-34 auth sync | Docs sync — OIDC status corrected, Steps 29–33 history, migration 078–080, escalation risk documented | Complete | dc21381 |
+| Pre-34 auth hardening | OIDC role separation (platform=viewer always; super_admin rejected at app+DB layer; migration 081); refresh preserves tenant (TenantID in refreshClaims; issuePairByTenantID; GetTenantMembershipByID); tests OIDC-28/29/30 | Complete | 7920bf2 |
 
 ---
 
@@ -103,21 +105,40 @@ All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant ful
 
 ### Next recommended: Step 34 — Role-based nav + frontend route guards
 
-**Frontend only. No new Go work. No new DB schema.**
+**Frontend only. No new Go work. No new DB schema. Backend authorization must not change.**
 
-1. Read JWT `role` from `/api/auth/me` response.
-2. `frontend/src/components/Sidebar.tsx`: hide Tenants/Users/Observability for non-super_admin.
-3. Add `useRequireSuperAdmin()` hook — redirect to `/admin/applications` if not super_admin.
-4. Apply to: `/admin/tenants/page.tsx`, `/admin/users/page.tsx`, `/admin/observability/page.tsx`.
-5. **Do NOT remove backend `RequireSuperAdmin` checks** — frontend guards are UX only.
+#### Scope
+1. Read JWT `role` claim from `/api/auth/me` response (already called on load).
+2. `frontend/src/components/Sidebar.tsx`: hide Tenants, Users, Observability nav items when `role !== "super_admin"`. Tenant admins see: Applications, Runs, MCP Servers, My Tenant, Agent Builder. Super admins see all.
+3. Add a `useRequireSuperAdmin()` hook (or inline guard) — if `role !== "super_admin"`, redirect to `/admin/applications`. Apply to exactly these three pages:
+   - `frontend/src/app/admin/tenants/page.tsx`
+   - `frontend/src/app/admin/users/page.tsx`
+   - `frontend/src/app/admin/observability/page.tsx`
+4. **Do NOT remove backend `RequireSuperAdmin` checks** — guards are UX only; backend authorization is the real control.
+5. TypeScript must pass (`tsc --noEmit`) with zero new errors.
+
+#### Acceptance criteria
+- [ ] Tenant admin (role="admin") logs in → Sidebar shows no Tenants/Users/Observability links
+- [ ] Navigating directly to `/admin/users` as tenant admin → redirected to `/admin/applications`
+- [ ] Super admin logs in → Sidebar unchanged, all pages accessible
+- [ ] `tsc --noEmit` — zero new errors
+- [ ] No Go code changed, no `go test` required (frontend-only step)
+
+#### Key files to read first
+- `frontend/src/components/Sidebar.tsx` (check existing nav structure and ADMIN_NAV shape)
+- `frontend/src/hooks/useAuth.ts` or wherever `/api/auth/me` is called — find how `role` is already exposed
+- `frontend/src/app/admin/tenants/page.tsx`, `users/page.tsx`, `observability/page.tsx`
 
 Steps 35–38: see `docs/MULTITENANT_PLAN.md` Build Order table.
 
 Key facts for the new session:
 - UM-13/14 are **unit tests** (fakeStore, no real DB/RLS) — not live two-tenant E2E
+- Live two-tenant E2E test: `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`) — tests DB isolation only, not the HTTP stack. The full auth→bridge→RLS→response HTTP path test is Step 38 (still pending).
 - OIDC backend is **COMPLETE** — `oidc.go`, `oidc_jwks.go`, `oidc_store.go` all built (Steps 5/8/9/17/18). Gap is frontend email-first flow + Keycloak test IdP (Step 37).
-- `tenant_group_mappings.role` CHECK allows `'super_admin'` — escalation risk. Current mitigation: API-layer enforcement. Guardrail (restrict to `('admin','member','viewer')`) deferred to Step 37.
-- Migrations applied through 080 — see `docs/SCHEMA.md`.
+- `tenant_group_mappings.role` CHECK now restricted to `('admin','member','viewer')` — migration 081 created. **Migration 081 has NOT been verified as applied to the live DB** — apply before enabling OIDC group mapping.
+- Refresh tokens issued BEFORE commit 7920bf2 do not carry `tenant_id`. These tokens will use the legacy `issuePair(ctx, user, "")` fallback (first-row behavior). Affected users must re-login to get a tenant-preserving refresh token.
+- Migrations applied and verified through 080. Migration 081 exists as a file (`db/081_tenant_group_mappings_safe_roles.sql`) but its live DB application is **unverified** — check before deploying.
+- See `docs/SCHEMA.md` for full migration table.
 
 ---
 
