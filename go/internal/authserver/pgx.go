@@ -3,6 +3,7 @@ package authserver
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -185,4 +186,187 @@ func (s *pgxStore) LookupTenantByEmailDomain(ctx context.Context, domain string)
 
 func (s *pgxStore) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
+}
+
+// ── User management queries ───────────────────────────────────────────────────
+
+const managedUserSelect = `
+	SELECT u.id, u.username, u.name, COALESCE(u.email, '') AS email,
+	       r.name AS role, u.active, u.created_at, u.last_login_at,
+	       COALESCE(tm.tenant_id::text, '') AS tenant_id,
+	       COALESCE(t.slug, '') AS tenant_slug,
+	       COALESCE(tm.role, '') AS tenant_role
+	FROM auth_service.users u
+	JOIN auth_service.roles r ON u.role_id = r.id
+	LEFT JOIN auth_service.tenant_memberships tm ON tm.user_id = u.id
+	LEFT JOIN them.tenants t ON t.id = tm.tenant_id
+`
+
+func scanManagedUser(row pgx.Row) (*ManagedUser, error) {
+	var u ManagedUser
+	var lastLogin *time.Time
+	err := row.Scan(
+		&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &u.Active,
+		&u.CreatedAt, &lastLogin, &u.TenantID, &u.TenantSlug, &u.TenantRole,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	u.LastLoginAt = lastLogin
+	return &u, nil
+}
+
+func (s *pgxStore) ListUsers(ctx context.Context) ([]ManagedUser, error) {
+	const q = managedUserSelect + `ORDER BY u.id ASC`
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ManagedUser
+	for rows.Next() {
+		var u ManagedUser
+		var lastLogin *time.Time
+		if err := rows.Scan(
+			&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &u.Active,
+			&u.CreatedAt, &lastLogin, &u.TenantID, &u.TenantSlug, &u.TenantRole,
+		); err != nil {
+			return nil, err
+		}
+		u.LastLoginAt = lastLogin
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []ManagedUser{}
+	}
+	return out, nil
+}
+
+func (s *pgxStore) GetManagedUser(ctx context.Context, id int64) (*ManagedUser, error) {
+	const q = managedUserSelect + `WHERE u.id = $1`
+	return scanManagedUser(s.pool.QueryRow(ctx, q, id))
+}
+
+func (s *pgxStore) CreateUser(ctx context.Context, in UserCreateInput) (*ManagedUser, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	const insertUser = `
+		INSERT INTO auth_service.users (username, name, email, role_id, password_hash, active)
+		SELECT $1, $2, NULLIF($3,''), r.id, $4, true
+		FROM auth_service.roles r WHERE r.name = $5
+		RETURNING id`
+	var newID int64
+	err = tx.QueryRow(ctx, insertUser, in.Username, in.Name, in.Email, in.PasswordHash, in.RoleName).Scan(&newID)
+	if err != nil {
+		// Unique constraint violation → conflict.
+		if isUniqueViolation(err) {
+			return nil, ErrUserConflict
+		}
+		return nil, err
+	}
+
+	if in.TenantID != "" && in.TenantRole != "" {
+		const insertMembership = `
+			INSERT INTO auth_service.tenant_memberships (user_id, tenant_id, role)
+			VALUES ($1, $2::uuid, $3)
+			ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role`
+		if _, err := tx.Exec(ctx, insertMembership, newID, in.TenantID, in.TenantRole); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.GetManagedUser(ctx, newID)
+}
+
+func (s *pgxStore) UpdateUser(ctx context.Context, id int64, in UserUpdateInput) (*ManagedUser, error) {
+	if in.Name == nil && in.Email == nil && in.Active == nil {
+		return s.GetManagedUser(ctx, id)
+	}
+	const q = `
+		UPDATE auth_service.users
+		SET name         = COALESCE($2, name),
+		    email        = CASE WHEN $3::text IS NULL THEN email ELSE NULLIF($3,'') END,
+		    active       = COALESCE($4, active),
+		    updated_at   = CURRENT_TIMESTAMP
+		WHERE id = $1`
+	tag, err := s.pool.Exec(ctx, q, id, in.Name, in.Email, in.Active)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrUserConflict
+		}
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrUserNotFound
+	}
+	return s.GetManagedUser(ctx, id)
+}
+
+func (s *pgxStore) DeleteUser(ctx context.Context, id int64) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM auth_service.users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func (s *pgxStore) ResetPassword(ctx context.Context, id int64, newHash string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE auth_service.users SET password_hash=$2, updated_at=CURRENT_TIMESTAMP WHERE id=$1`,
+		id, newHash,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func (s *pgxStore) ListTenants(ctx context.Context) ([]TenantSummary, error) {
+	const q = `SELECT id::text, slug, display_name FROM them.tenants WHERE enabled=true ORDER BY slug ASC`
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantSummary
+	for rows.Next() {
+		var t TenantSummary
+		if err := rows.Scan(&t.ID, &t.Slug, &t.DisplayName); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []TenantSummary{}
+	}
+	return out, nil
+}
+
+// isUniqueViolation reports whether err is a PostgreSQL unique_violation (23505).
+func isUniqueViolation(err error) bool {
+	return strings.Contains(err.Error(), "23505") ||
+		strings.Contains(err.Error(), "unique_violation") ||
+		strings.Contains(err.Error(), "duplicate key")
 }

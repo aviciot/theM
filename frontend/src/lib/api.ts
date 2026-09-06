@@ -89,6 +89,10 @@ export type {
   ManagedAppBindingInput,
   AuditLog,
   TenantObservabilitySummary,
+  ManagedUser,
+  UserCreateInput,
+  UserUpdateInput,
+  TenantSummary,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -148,7 +152,31 @@ import type {
   ManagedAppBindingInput,
   AuditLog,
   TenantObservabilitySummary,
+  ManagedUser,
+  UserCreateInput,
+  UserUpdateInput,
+  TenantSummary,
 } from './apiTypes';
+
+// ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
+const authAdmin = {
+  get: <T>(path: string): Promise<T> =>
+    fetch(`/api/auth-admin/${path}`).then(r => r.json()),
+  post: <T>(path: string, body?: unknown): Promise<T> =>
+    fetch(`/api/auth-admin/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }).then(r => r.json()),
+  patch: <T>(path: string, body: unknown): Promise<T> =>
+    fetch(`/api/auth-admin/${path}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json()),
+  delete: (path: string): Promise<void> =>
+    fetch(`/api/auth-admin/${path}`, { method: 'DELETE' }).then(() => undefined),
+};
 
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
@@ -563,4 +591,14 @@ export const themApi = {
   // Observability
   getObservabilitySummary: () =>
     api.get<TenantObservabilitySummary[]>('/admin/observability/summary'),
+
+  // User management (Step 32 — routes to them-auth-go via /api/auth-admin)
+  listUsers: () => authAdmin.get<ManagedUser[]>('users'),
+  getUser: (id: number) => authAdmin.get<ManagedUser>(`users/${id}`),
+  createUser: (input: UserCreateInput) => authAdmin.post<ManagedUser>('users', input),
+  updateUser: (id: number, input: UserUpdateInput) => authAdmin.patch<ManagedUser>(`users/${id}`, input),
+  deleteUser: (id: number) => authAdmin.delete(`users/${id}`),
+  resetUserPassword: (id: number, password: string) =>
+    authAdmin.post<{ message: string }>(`users/${id}/reset-password`, { password }),
+  listTenantsForUsers: () => authAdmin.get<TenantSummary[]>('tenants'),
 };

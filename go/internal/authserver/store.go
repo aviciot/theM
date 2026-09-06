@@ -9,6 +9,12 @@ import (
 // ErrUserNotFound is returned when no active user matches the lookup criteria.
 var ErrUserNotFound = errors.New("authserver: user not found")
 
+// ErrUserConflict is returned when a username or email is already taken.
+var ErrUserConflict = errors.New("authserver: username or email already exists")
+
+// ErrEWrongTokenType sentinel re-used for admin context (token not access type).
+// Existing ErrWrongTokenType in jwt.go covers this case.
+
 // ErrNoMembership is returned when a user has no row in tenant_memberships.
 // This blocks login: every user must belong to at least one tenant.
 var ErrNoMembership = errors.New("authserver: user has no tenant membership")
@@ -78,4 +84,66 @@ type Store interface {
 
 	// Ping checks database reachability for readiness probes.
 	Ping(ctx context.Context) error
+
+	// ── User management (super_admin only) ───────────────────────────────────
+
+	// ListUsers returns all users with their current tenant membership (if any).
+	// Results are ordered by id ascending.
+	ListUsers(ctx context.Context) ([]ManagedUser, error)
+	// GetManagedUser returns a single user by id.
+	GetManagedUser(ctx context.Context, id int64) (*ManagedUser, error)
+	// CreateUser inserts a new user and optionally assigns a tenant membership.
+	// The password is expected to already be bcrypt-hashed.
+	CreateUser(ctx context.Context, in UserCreateInput) (*ManagedUser, error)
+	// UpdateUser patches mutable fields (name, email, active) for the given user id.
+	UpdateUser(ctx context.Context, id int64, in UserUpdateInput) (*ManagedUser, error)
+	// DeleteUser removes the user (hard delete — also cascades sessions/memberships).
+	DeleteUser(ctx context.Context, id int64) error
+	// ResetPassword replaces the bcrypt hash for the given user.
+	// The new hash is expected to already be bcrypt-hashed.
+	ResetPassword(ctx context.Context, id int64, newHash string) error
+	// ListTenants returns id+slug+display_name for all tenants (for the assignment UI).
+	ListTenants(ctx context.Context) ([]TenantSummary, error)
+}
+
+// ManagedUser is the public view of a user returned by admin endpoints.
+// PasswordHash is NEVER included.
+type ManagedUser struct {
+	ID          int64      `json:"id"`
+	Username    string     `json:"username"`
+	Name        string     `json:"name"`
+	Email       string     `json:"email,omitempty"`
+	Role        string     `json:"role"`
+	Active      bool       `json:"active"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+	TenantID    string     `json:"tenant_id,omitempty"`
+	TenantSlug  string     `json:"tenant_slug,omitempty"`
+	TenantRole  string     `json:"tenant_role,omitempty"`
+}
+
+// UserCreateInput carries validated fields for creating a new user.
+// Password must be bcrypt-hashed by the caller before passing here.
+type UserCreateInput struct {
+	Username     string
+	Name         string
+	Email        string
+	PasswordHash string
+	RoleName     string // e.g. "super_admin", "viewer" — looked up by name
+	TenantID     string // UUID; empty = no membership row
+	TenantRole   string // e.g. "admin", "member"
+}
+
+// UserUpdateInput carries the patchable fields. nil = leave unchanged.
+type UserUpdateInput struct {
+	Name   *string
+	Email  *string
+	Active *bool
+}
+
+// TenantSummary is a lightweight tenant descriptor for dropdown UIs.
+type TenantSummary struct {
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
 }

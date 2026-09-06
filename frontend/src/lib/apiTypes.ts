@@ -891,3 +891,41 @@ export interface AuditLog {
   details: Record<string, unknown>;
   created_at: string;
 }
+
+// ── User management (Step 32) ─────────────────────────────────────────────────
+
+export interface ManagedUser {
+  id: number;
+  username: string;
+  name: string;
+  email?: string;
+  role: string;
+  active: boolean;
+  created_at: string;
+  last_login_at?: string;
+  tenant_id?: string;
+  tenant_slug?: string;
+  tenant_role?: string;
+}
+
+export interface UserCreateInput {
+  username: string;
+  name: string;
+  password: string;
+  email?: string;
+  role?: string;
+  tenant_id?: string;
+  tenant_role?: string;
+}
+
+export interface UserUpdateInput {
+  name?: string;
+  email?: string;
+  active?: boolean;
+}
+
+export interface TenantSummary {
+  id: string;
+  slug: string;
+  display_name: string;
+}

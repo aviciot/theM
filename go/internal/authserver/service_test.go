@@ -122,6 +122,26 @@ func (f *fakeStore) LookupTenantByEmailDomain(_ context.Context, domain string) 
 	return r, nil
 }
 
+// ── User management stubs (satisfy Store interface; tested in user_mgmt_handlers_test.go) ──
+
+func (f *fakeStore) ListUsers(_ context.Context) ([]ManagedUser, error) { return []ManagedUser{}, nil }
+func (f *fakeStore) GetManagedUser(_ context.Context, _ int64) (*ManagedUser, error) {
+	return nil, ErrUserNotFound
+}
+func (f *fakeStore) CreateUser(_ context.Context, _ UserCreateInput) (*ManagedUser, error) {
+	return nil, ErrUserNotFound
+}
+func (f *fakeStore) UpdateUser(_ context.Context, _ int64, _ UserUpdateInput) (*ManagedUser, error) {
+	return nil, ErrUserNotFound
+}
+func (f *fakeStore) DeleteUser(_ context.Context, _ int64) error   { return ErrUserNotFound }
+func (f *fakeStore) ResetPassword(_ context.Context, _ int64, _ string) error {
+	return ErrUserNotFound
+}
+func (f *fakeStore) ListTenants(_ context.Context) ([]TenantSummary, error) {
+	return []TenantSummary{}, nil
+}
+
 func testService(t *testing.T) (*Service, *fakeStore) {
 	t.Helper()
 	store := newFakeStore()

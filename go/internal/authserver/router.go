@@ -20,12 +20,25 @@ type healthChecker interface {
 // external routing parity is preserved. Health endpoints are registered at
 // /health, /health/live, /health/ready, and mirrored under /auth.
 func NewRouter(h *Handlers, oidc *OIDCHandlers, hc healthChecker, version string) http.Handler {
+	return newRouter(h, oidc, nil, hc, version)
+}
+
+// NewRouterWithAdmin is like NewRouter but also mounts the super_admin user
+// management routes at /api/v1/admin (and the /auth mirror).
+func NewRouterWithAdmin(h *Handlers, oidc *OIDCHandlers, um *UserMgmtHandlers, hc healthChecker, version string) http.Handler {
+	return newRouter(h, oidc, um, hc, version)
+}
+
+func newRouter(h *Handlers, oidc *OIDCHandlers, um *UserMgmtHandlers, hc healthChecker, version string) http.Handler {
 	r := chi.NewRouter()
 
 	registerHealth(r, hc, version)
 	registerAuth(r, h, "/api/v1/auth")
 	if oidc != nil {
 		registerOIDC(r, oidc)
+	}
+	if um != nil {
+		RegisterUserMgmt(r, um, "/api/v1/admin")
 	}
 
 	// Traefik mirror: the Python service mounted the same routers under /auth.
@@ -34,6 +47,9 @@ func NewRouter(h *Handlers, oidc *OIDCHandlers, hc healthChecker, version string
 		registerAuth(sub, h, "/api/v1/auth")
 		if oidc != nil {
 			registerOIDC(sub, oidc)
+		}
+		if um != nil {
+			RegisterUserMgmt(sub, um, "/api/v1/admin")
 		}
 	})
 

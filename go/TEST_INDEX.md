@@ -324,9 +324,21 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestOIDCCallback_GroupsMatchedRoleOverridden` (OIDC-25) | id_token includes groups claim matching a tenant group mapping → UpsertOIDCUser called with mapped role (not "viewer") |
 | `TestOIDCCallback_GroupsUnmatchedDefaultRole` (OIDC-26) | groups present but none match any mapping → UpsertOIDCUser called with "viewer" |
 | `TestOIDCCallback_NoGroupsDefaultRole` (OIDC-27) | id_token has no groups claim → UpsertOIDCUser called with "viewer" even when mappings are configured |
+| `TestUserMgmt_ListUsers_Empty` (UM-01) | GET /api/v1/admin/users returns [] when store is empty |
+| `TestUserMgmt_CreateUser` (UM-02) | POST creates user; 201 + body; user stored |
+| `TestUserMgmt_CreateUser_Conflict` (UM-03) | duplicate username → 409 |
+| `TestUserMgmt_CreateUser_MissingFields` (UM-04) | missing required fields → 400 |
+| `TestUserMgmt_GetUser` (UM-05) | GET /users/{id} returns seeded user |
+| `TestUserMgmt_GetUser_NotFound` (UM-06) | unknown id → 404 |
+| `TestUserMgmt_UpdateUser` (UM-07) | PATCH updates name; response reflects new value |
+| `TestUserMgmt_DeleteUser` (UM-08) | DELETE removes user; 204; gone from store |
+| `TestUserMgmt_ResetPassword` (UM-09) | POST /users/{id}/reset-password → 200 |
+| `TestUserMgmt_ListTenants` (UM-10) | GET /api/v1/admin/tenants returns seeded tenant |
+| `TestUserMgmt_NoToken_Unauthorized` (UM-11) | no Authorization header → 401 |
+| `TestUserMgmt_NonSuperAdmin_Forbidden` (UM-12) | viewer token → 403 |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
-handlers, router, oidc, oidc_store, oidc_jwks) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
+handlers, router, oidc, oidc_store, oidc_jwks, user_mgmt_handlers) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
 
 ---
 
@@ -3093,7 +3105,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 22 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan + CT-01 cross-tenant) | 9 |
-| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping) | 69 |
+| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping + Step 32 user management) | 81 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
