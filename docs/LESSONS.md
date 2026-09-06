@@ -781,3 +781,13 @@ A refresh token that carries only `user_id` always picks the first membership ro
 **Fix:** `IssueRefreshToken(userID, tenantID)` — tenant embedded in claims. `Refresh()` calls `issuePairByTenantID` when present, re-validating the specific membership row (membership may have been revoked). Old tokens without `tenant_id` fall back to first-row for backwards compatibility.
 
 **Watch for:** Any new token issuance path (e.g., OAuth device flow) must also embed `tenant_id` in the refresh token.
+
+## ON CONFLICT Target Must Match an Actual Unique Constraint (2026-09-06)
+
+`UpsertEntryPoint` in `dal/publish.go` used `ON CONFLICT (tenant_id, slug)` but the DB only has a unique constraint on `(application_id, slug)` (`uq_entry_points_app_slug`). Postgres rejects any ON CONFLICT clause that doesn't reference an existing unique or exclusion constraint — the error is a generic runtime DB error, not a duplicate key violation.
+
+This caused every `Publish Definition` call to return HTTP 500 silently (the error was not logged before the fix).
+
+**Fix:** Changed to `ON CONFLICT (application_id, slug)` to match the actual constraint. The semantic is also correct: slugs are unique per-application, not per-tenant-globally.
+
+**Watch for:** When writing ON CONFLICT clauses, always verify the column set matches an existing unique index in the DB schema (`\d table_name` in psql). Unit tests with fake DALs won't catch this — only integration tests hitting real Postgres will.

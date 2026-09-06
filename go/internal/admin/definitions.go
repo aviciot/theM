@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -231,6 +232,7 @@ func (h *DefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		if writeServiceError(w, err) {
 			return
 		}
+		slog.Error("publish definition failed", "app_id", appID, "def_id", defID, "err", err)
 		writeError(w, http.StatusInternalServerError, "publish definition")
 		return
 	}

@@ -227,8 +227,7 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 			 $13, $14, $15,
 			 $16, $17, $18,
 			 true)
-		ON CONFLICT (tenant_id, slug) DO UPDATE SET
-			application_id           = EXCLUDED.application_id,
+		ON CONFLICT (application_id, slug) DO UPDATE SET
 			entry_point_type         = EXCLUDED.entry_point_type,
 			app_orchestrator_id      = EXCLUDED.app_orchestrator_id,
 			access_policy            = EXCLUDED.access_policy,
