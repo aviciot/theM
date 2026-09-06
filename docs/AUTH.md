@@ -1,5 +1,5 @@
 # Authentication — the-M
-# Last updated: 2026-08-15
+# Last updated: 2026-09-06
 # Source of truth: go/internal/authserver/, go/internal/auth/
 
 ---
@@ -31,12 +31,25 @@ Browser → Next.js API route (/api/auth/*) → them-auth-go:8703 → auth_servi
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/v1/auth/login` | Username+password → JWT pair + Set-Cookie |
-| GET | `/api/v1/auth/me` | Verify access token → user profile |
-| POST | `/api/v1/auth/refresh` | Refresh token → new JWT pair |
+| GET | `/api/v1/auth/me` | Verify access token → user profile (role = membership role from JWT) |
+| POST | `/api/v1/auth/refresh` | Refresh token → new JWT pair (re-queries tenant_memberships) |
 | POST | `/api/v1/auth/logout` | Blacklist access token + clear cookies |
 | POST | `/api/v1/auth/verify` | Service-to-service JWT validation |
 | GET | `/api/v1/auth/validate` | Traefik forwardAuth compatible |
+| GET | `/api/v1/auth/tenant-lookup?email=` | Domain → tenant lookup (public, no auth) |
 | GET | `/health` | Compose healthcheck |
+
+### User management endpoints (super_admin only)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/admin/users` | List all users with tenant membership info |
+| POST | `/api/v1/admin/users` | Create user + optional tenant membership |
+| GET | `/api/v1/admin/users/{id}` | Get single user |
+| PATCH | `/api/v1/admin/users/{id}` | Update name / email / active |
+| DELETE | `/api/v1/admin/users/{id}` | Hard delete (cascades memberships) |
+| POST | `/api/v1/admin/users/{id}/reset-password` | Set new password |
+| GET | `/api/v1/admin/tenants` | List tenants (for user assignment dropdowns) |
 
 ### JWT claims (access token)
 
@@ -46,6 +59,7 @@ Browser → Next.js API route (/api/auth/*) → them-auth-go:8703 → auth_servi
   "username": "admin",
   "name": "Administrator",
   "role": "super_admin",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
   "permissions": [],
   "exp": 1234567890,
   "iat": 1234567890,
@@ -53,7 +67,34 @@ Browser → Next.js API route (/api/auth/*) → them-auth-go:8703 → auth_servi
 }
 ```
 
-`tenant_id` is NOT present in user JWTs — Go admin routes handle this via `AdminTenantMiddleware`.
+`role` carries the **membership role** from `auth_service.tenant_memberships` (admin/member/viewer for tenant users; super_admin for bootstrap admin). `tenant_id` is always present — login is blocked if the user has no membership row.
+
+### Two-role model
+
+Every user has two roles that serve different purposes:
+
+| Role type | Source | Field in JWT | Values |
+|---|---|---|---|
+| Platform role | `auth_service.roles.name` via `users.role_id` | — (not in JWT) | super_admin, developer, analyst, viewer |
+| Membership role | `auth_service.tenant_memberships.role` | `role` claim | super_admin, admin, member, viewer |
+
+At login, `issuePair()` always queries `tenant_memberships` and puts the **membership role** in the JWT `role` claim. The platform role is stored in the DB but not currently included in the token. The bridge uses the JWT `role` claim for all access control decisions (RequireSuperAdmin, RequireTenantAdmin).
+
+When creating a user via `POST /api/v1/admin/users`:
+- `role` field → platform role (`auth_service.roles.name`). Default: `"viewer"`.
+- `tenant_role` field → membership role written to `tenant_memberships.role`. Default: `"member"`.
+
+### Single-vs-multiple tenant membership
+
+Current design: **one active membership per user** per tenant (`UNIQUE(user_id, tenant_id)` in `tenant_memberships`). A user may theoretically have memberships in multiple tenants; at login, `issuePair()` picks the first row unless `tenant_slug` is provided in the login request.
+
+To log into a specific tenant: `POST /api/v1/auth/login` with `{"tenant_slug": "acme"}`. The frontend does not yet expose this field.
+
+Multi-tenant-per-user (consultant use case) is deferred to a later step.
+
+### Refresh token behavior
+
+Refresh tokens carry only `user_id` (no tenant or role claim). On refresh, `issuePair()` re-queries `tenant_memberships` and issues a fresh access token with the current membership role and tenant_id. If the user's membership changes between refresh cycles, the next refresh picks up the new membership automatically.
 
 ### AdminTenantMiddleware
 
@@ -62,19 +103,20 @@ All Go admin routes use `AdminTenantMiddleware` (not `BearerTenantMiddleware`).
 Behavior:
 1. Reads JWT claims from context (set by HS256 middleware)
 2. If `claims.TenantID` is non-empty: use it
-3. If empty (all UI super_admin users): fall back to bootstrap tenant `00000000-0000-0000-0000-000000000001`
+3. If empty: fall back to bootstrap tenant `00000000-0000-0000-0000-000000000001`
 
-This means UI admin users always resolve to the bootstrap tenant. Machine tokens (below) carry their own tenant.
+This means UI admin users always resolve to their JWT tenant. Machine tokens (below) carry their own tenant.
 
 ### Database
 
 Auth data lives in the `auth_service` schema (separate from `them` schema):
-- `auth_service.users` — credentials, bcrypt password hash, role
+- `auth_service.users` — credentials, bcrypt password hash, role_id
 - `auth_service.roles` — role definitions + token_expiry
+- `auth_service.tenant_memberships` — user_id → tenant_id + role (UNIQUE per user+tenant)
 - `auth_service.user_sessions` — refresh token tracking
 - `auth_service.blacklisted_tokens` — logout/revocation records
 
-**Never query `auth_service.*` tables directly from bridge code.** Python bridge uses `app/services/auth_client.py` (HTTP to them-auth-go). Go bridge uses `go/internal/auth/`.
+**Never query `auth_service.*` tables directly from bridge code.** Go bridge uses `go/internal/auth/`.
 
 ---
 
@@ -117,22 +159,18 @@ Used by:
 
 | Cookie | Content | HttpOnly | SameSite |
 |---|---|---|---|
-| `them_access_token` | HS256 access JWT | yes | Lax |
-| `them_refresh_token` | HS256 refresh JWT | yes | Lax |
+| `them_access_token` | HS256 access JWT | yes | Strict |
+| `them_refresh_token` | HS256 refresh JWT | yes | Strict |
 
 ---
 
-## 4. Auth CRUD not yet migrated
+## 4. Auth CRUD migration status
 
-`them-auth-service` (Python) is **removed from deployment** as of August 2026.
-`them-auth-go` handles only the UI-facing session auth (login/me/refresh/logout).
-
-The following admin CRUD from the old Python service is **not yet implemented** in Go and is therefore **not currently exposed**:
-- Users CRUD
-- Roles CRUD
-- Teams CRUD
-- Permissions
-- API keys
-- MCP tokens
-
-These are future Go migration targets. The source code remains in `auth_service/` for reference.
+| Capability | Status |
+|---|---|
+| Login / me / refresh / logout | ✅ Go (`them-auth-go`) |
+| Users CRUD + tenant assignment | ✅ Go (`them-auth-go`, Step 32) |
+| Tenant lookup by email domain | ✅ Go (`them-auth-go`) |
+| Roles CRUD | ❌ Not exposed (data seeded via SQL) |
+| Teams CRUD | ❌ Not migrated |
+| API keys / MCP tokens | ❌ Not migrated |

@@ -1,3 +1,4 @@
+# HISTORICAL — last updated 2026-08-31. For current state see docs/CURRENT.md
 # the-M — Current Status
 # Last updated: 2026-08-31
 # HEAD: 4a6241b

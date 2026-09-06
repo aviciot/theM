@@ -152,7 +152,7 @@ func (s *Service) Me(ctx context.Context, accessToken string) (*PublicUser, erro
 		Email:    user.Email,
 		Name:     user.Name,
 		Username: user.Username,
-		Role:     user.Role,
+		Role:     claims.Role, // membership role from JWT — matches what bridge enforces
 		TenantID: claims.TenantID,
 	}, nil
 }

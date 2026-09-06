@@ -20,7 +20,8 @@ One line per doc. Read this first, then open only what you need.
 
 | File | Subject | Update when |
 |---|---|---|
-| `docs/AUTH.md` | Auth service contract, JWT claims, AdminTenantMiddleware, machine tokens | Auth flow changes |
+| `docs/AUTH.md` | Auth service contract, JWT claims, two-role model, refresh, user CRUD endpoints | Auth flow changes |
+| `docs/MULTITENANT_PLAN.md` | Multi-tenant roadmap, gap status, build order (Steps 33–37) | Multi-tenant work |
 | `docs/SCHEMA.md` | All `them.*` tables — columns, FKs, rationale | DB table or column changes |
 | `docs/REDIS.md` | Every Redis key pattern, TTL, owner, pub/sub channels | Redis key added or renamed |
 | `docs/A2A_REFERENCE.md` | A2A SDK v1.1.0 — Part types, AgentCard/Skill fields, wire format | A2A SDK version change |
@@ -70,7 +71,7 @@ cd go && go test ./...
 
 | Question | Read |
 |---|---|
-| What's running right now? | `docs/STATUS.md` |
+| What's running right now? | `docs/CURRENT.md` (STATUS.md is historical — last updated 2026-08-31) |
 | What's the next task? | `docs/CURRENT.md` |
 | How does the LLM agentic loop work? | `docs/CURRENT.md` + `docs/implementation-status.md` |
 | How does auth work? | `docs/AUTH.md` |

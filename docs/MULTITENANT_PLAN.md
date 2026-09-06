@@ -1,5 +1,5 @@
 # Multi-Tenant Plan — the-M
-# Last updated: 2026-09-06
+# Last updated: 2026-09-06 (Step 33 fully complete)
 
 ## Executive Summary
 
@@ -21,7 +21,7 @@ The-M supports multiple isolated tenants (companies/customers) on a single insta
 | User management UI | ✅ Complete | `/admin/users` page — create, assign to tenant, reset password |
 | JWT tenant_id claim | ✅ Complete | Populated from `tenant_memberships` at login |
 | RLS activated from JWT | ✅ Complete | Bridge sets `app.tenant_id` GUC via TenantTx on every request |
-| Tenant login (verify it works) | ⚠️ Unverified | JWT has tenant_id, but no end-to-end test with a non-super_admin user |
+| Tenant login (verify it works) | ✅ Complete | Fixed CreateUser role contract, /me returns JWT role, regression tests UM-13/14 added |
 | Tenant-scoped dashboard | ❌ Not built | Frontend shows all data; no role-based view filtering |
 | Tenant provisioning UX | ❌ Not built | Multi-step manual process; no guided flow for super_admin |
 | SSO / OIDC | ❌ Not built | Username+password works; external IdP not integrated |
@@ -31,18 +31,14 @@ The-M supports multiple isolated tenants (companies/customers) on a single insta
 
 ## Gaps — Ranked by Importance
 
-### Gap 1 — Tenant Login Verification (small)
+### Gap 1 — Tenant Login Verification — **COMPLETE** (2026-09-06)
 
-**What:** Confirm a non-super_admin user created via `/admin/users` can log in, get a tenant-scoped JWT, and have RLS correctly restrict their DB access.
+Fixed and verified end-to-end. Gaps found and resolved:
+1. `CreateUser` was passing `req.Role` (tenant membership role) as `RoleName` (platform role) — broke user creation for non-platform roles like `"admin"`. Fixed: `role` → `RoleName`, `tenant_role` → `TenantRole`.
+2. `Me()` was returning `user.Role` (global DB role) instead of `claims.Role` (JWT membership role). Fixed.
+3. Added regression tests UM-13 (two-tenant isolation + /me role) and UM-14 (refresh carries tenant).
 
-**Why it matters:** Everything else depends on this. If the JWT → GUC → RLS chain is broken for regular users, no amount of UI work will produce real isolation.
-
-**What to build:**
-- Write an integration test: create user → assign to tenant → login → verify JWT has `tenant_id` → verify a DB query through the bridge returns only that tenant's data
-- Fix any gaps found (likely: `them-auth-go` login handler may not query `tenant_memberships` at all, or may not include `tenant_id` in the token claims)
-- Files: `go/internal/authserver/handlers.go` (login handler), `go/internal/authserver/pgx.go` (`GetTenantMembership`), token claims struct
-
-**Scope:** Small (1–2 days). Pure backend verification + fix.
+Live smoke test: create user → assign to tenant A → login → JWT has `tenant_id=tenantA, role=admin` → bridge returns 403 on super_admin routes (correct).
 
 ---
 
@@ -121,7 +117,7 @@ No single guided flow. Easy to miss a step.
 
 | Step | Name | Rationale |
 |---|---|---|
-| **33** | Tenant login verification + fix | Must confirm the chain works before any UX work has meaning |
+| **33** | Tenant login verification + fix | ✅ COMPLETE (2026-09-06) |
 | **34** | Tenant-scoped dashboard (role-based nav) | Makes multi-tenant visible and testable from the UI |
 | **35** | Tenant provisioning wizard | Unblocks super_admin workflow; needed before real customer demos |
 | **36** | Tenant onboarding flow | Small; improves first-login UX once login works |

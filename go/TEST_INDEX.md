@@ -336,9 +336,11 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestUserMgmt_ListTenants` (UM-10) | GET /api/v1/admin/tenants returns seeded tenant |
 | `TestUserMgmt_NoToken_Unauthorized` (UM-11) | no Authorization header → 401 |
 | `TestUserMgmt_NonSuperAdmin_Forbidden` (UM-12) | viewer token → 403 |
+| `TestTenantLogin_TwoTenantIsolation` (UM-13) | two users in different tenants each get JWT scoped to their tenant; no-membership user blocked; /me returns membership role |
+| `TestTenantLogin_RefreshCarriesTenant` (UM-14) | refresh issues new access token still carrying correct tenant_id and membership role |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
-handlers, router, oidc, oidc_store, oidc_jwks, user_mgmt_handlers) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
+handlers, router, oidc, oidc_store, oidc_jwks, user_mgmt_handlers, tenant_login) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
 
 ---
 
@@ -3105,7 +3107,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 22 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan + CT-01 cross-tenant) | 9 |
-| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping + Step 32 user management) | 81 |
+| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping + Step 32 user management + Step 33 two-tenant regression) | 83 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
@@ -3174,4 +3176,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1051** |
+| **`go test ./...` total** | | **1053** |

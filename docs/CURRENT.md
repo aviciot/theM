@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-06 (Step 33 complete — tenant login chain verified + fix)
+# Last updated: 2026-09-06 (Step 33 FULLY COMPLETE — contract fix, /me role, regression tests, doc sync)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -129,24 +129,31 @@ New `/api/v1/tenant/` route group accessible to `admin` OR `super_admin` roles (
 
 Full user CRUD API + frontend page. `POST /api/v1/admin/users` creates user with bcrypt password + tenant membership assignment. 12 new tests (UM-01–UM-12).
 
-**Bug fixed in Step 33:** `createUserRequest.Role` was being passed as `RoleName` (maps to `auth_service.roles` — must be super_admin/developer/analyst/viewer). Fix: `RoleName` is always `"viewer"` for new tenant users; `req.Role` (the tenant membership role: admin/member/viewer) goes to `TenantRole`.
+### Step 33 — Tenant login chain: FULLY COMPLETE
 
-### Step 33 — Tenant login chain verification: COMPLETE
+Three fixes applied across two commits (80924a1 + closure commit):
 
-Live smoke test confirmed:
-- Create user via `/api/v1/admin/users` with `role:"admin"` + `tenant_id` → user created, membership inserted
-- User logs in → JWT contains correct `tenant_id` from `auth_service.tenant_memberships`
-- JWT `role` claim carries the **membership** role (admin), not the global `auth_service.roles` name
-- Tenant user calling super_admin route → 403 (correct, RLS + role gate both working)
-- RLS chain: JWT tenant_id → bridge sets `app.tenant_id` GUC → all queries scoped to tenant
+1. **CreateUser role contract**: `role` field → `RoleName` (platform role in `auth_service.roles`: super_admin/developer/analyst/viewer). `tenant_role` field → `TenantRole` (membership role: admin/member/viewer). Previous code discarded `tenant_role` and used `role` as membership role — broke when frontend sent both fields.
+
+2. **`/me` returns JWT membership role**: `Me()` was returning `user.Role` (global DB role from `auth_service.users`). Fixed to return `claims.Role` (membership role from the JWT — what the bridge actually enforces).
+
+3. **Regression tests** (`go/internal/authserver/tenant_login_test.go`):
+   - UM-13: `TestTenantLogin_TwoTenantIsolation` — two users in different tenants, no-membership user blocked, /me returns membership role
+   - UM-14: `TestTenantLogin_RefreshCarriesTenant` — refreshed token carries correct tenant_id and role
+   - S1-40: 81 → 83 tests. Total: 1051 → 1053.
+
+4. **Doc sync**: AUTH.md corrected (JWT claims example, two-role model, refresh behavior, user CRUD endpoints, migration status); STATUS.md marked historical; MULTITENANT_PLAN.md Gap 1 closed; INDEX.md updated.
+
+Live smoke test (2026-09-06): create user → login → JWT has correct `tenant_id` and membership role → super_admin route returns 403 (correct).
 
 ### Next recommended task
 
 **Step 34 — Role-based dashboard nav** (see `docs/MULTITENANT_PLAN.md`):
-- Read JWT role from frontend session
-- Hide super_admin nav items (Tenants, Users, Observability) from non-super_admin users
-- Guard `/admin/tenants`, `/admin/users`, `/admin/observability` pages — redirect to `/admin/applications`
-- Frontend only, no new Go work
+- Read JWT `role` from frontend session cookie (decode the JWT payload client-side, or use `/auth/me` response)
+- In `Sidebar.tsx`: show/hide nav items based on role — `super_admin` sees Tenants/Users/Observability; `admin`/`member`/`viewer` do not
+- Guard pages `/admin/tenants`, `/admin/users`, `/admin/observability` — redirect non-super_admin to `/admin/applications`
+- Frontend only — no new Go work, no new DB schema
+- Key files: `frontend/src/components/Sidebar.tsx`, `frontend/src/lib/api.ts` (auth context), individual page files
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
