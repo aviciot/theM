@@ -284,6 +284,35 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  them-keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: them-keycloak
+    profiles: [sso]
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}
+      - KC_HTTP_RELATIVE_PATH=/auth/keycloak
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    networks:
+      - them-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-keycloak.rule=PathPrefix(`/auth/keycloak`)"
+      - "traefik.http.routers.them-keycloak.entrypoints=web"
+      - "traefik.http.routers.them-keycloak.priority=130"
+      - "traefik.http.routers.them-keycloak.service=them-keycloak-svc"
+      - "traefik.http.services.them-keycloak-svc.loadbalancer.server.port=8080"
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   them-dag-worker:
     build:
       context: .
@@ -341,3 +370,5 @@ volumes:
     name: them-clamav-db
   minio-data:
     name: them-minio-data
+  keycloak-data:
+    name: them-keycloak-data

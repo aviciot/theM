@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type TenantRecord, type TenantQuota } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantQuota, type IDPConfig } from '@/lib/api';
 
 const ACCENT = '#818cf8';
 
@@ -45,7 +45,17 @@ export default function TenantSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'general' | 'quota'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'quota'>('general');
+
+  // SSO tab state
+  const [idpDiscoveryUrl, setIdpDiscoveryUrl] = useState('');
+  const [idpClientId, setIdpClientId] = useState('');
+  const [idpClientSecret, setIdpClientSecret] = useState('');
+  const [idpRedirectUri, setIdpRedirectUri] = useState('');
+  const [idpSecretChanged, setIdpSecretChanged] = useState(false);
+  const [savingSso, setSavingSso] = useState(false);
+  const [saveMsgSso, setSaveMsgSso] = useState<{ ok: boolean; text: string } | null>(null);
+  const [clearingSso, setClearingSso] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -77,6 +87,53 @@ export default function TenantSettingsPage() {
       setSaveMsg({ ok: false, text: 'Failed to save settings.' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveSso(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tenant) return;
+    setSavingSso(true);
+    setSaveMsgSso(null);
+    try {
+      const idpConfig: IDPConfig = {
+        discovery_url: idpDiscoveryUrl.trim(),
+        client_id: idpClientId.trim(),
+        redirect_uri: idpRedirectUri.trim(),
+      };
+      if (idpSecretChanged && idpClientSecret) {
+        idpConfig.client_secret = idpClientSecret;
+      }
+      const updated = await themApi.patchTenantSettings({ idp_config: idpConfig });
+      setTenant(updated);
+      setIdpSecretChanged(false);
+      setIdpClientSecret('');
+      setSaveMsgSso({ ok: true, text: 'SSO configuration saved.' });
+    } catch {
+      setSaveMsgSso({ ok: false, text: 'Failed to save SSO configuration.' });
+    } finally {
+      setSavingSso(false);
+    }
+  }
+
+  async function handleClearSso() {
+    if (!tenant) return;
+    if (!window.confirm('Clear SSO configuration? Users will no longer be able to log in via SSO for this tenant.')) return;
+    setClearingSso(true);
+    setSaveMsgSso(null);
+    try {
+      const updated = await themApi.patchTenantSettings({ idp_config: null });
+      setTenant(updated);
+      setIdpDiscoveryUrl('');
+      setIdpClientId('');
+      setIdpClientSecret('');
+      setIdpRedirectUri('');
+      setIdpSecretChanged(false);
+      setSaveMsgSso({ ok: true, text: 'SSO configuration cleared.' });
+    } catch {
+      setSaveMsgSso({ ok: false, text: 'Failed to clear SSO configuration.' });
+    } finally {
+      setClearingSso(false);
     }
   }
 
@@ -130,6 +187,7 @@ export default function TenantSettingsPage() {
                 {/* Tabs */}
                 <div style={{ display: 'flex', gap: '4px', marginBottom: '24px' }}>
                   <button style={tabStyle(activeTab === 'general')} onClick={() => setActiveTab('general')}>General</button>
+                  <button style={tabStyle(activeTab === 'sso')} onClick={() => setActiveTab('sso')}>SSO / Identity Provider</button>
                   <button style={tabStyle(activeTab === 'quota')} onClick={() => setActiveTab('quota')}>Quota &amp; Limits</button>
                 </div>
 
@@ -208,6 +266,123 @@ export default function TenantSettingsPage() {
                       }}>
                         {saving ? 'Saving…' : 'Save changes'}
                       </button>
+                    </form>
+                  </div>
+                )}
+
+                {/* SSO tab */}
+                {activeTab === 'sso' && (
+                  <div style={{ background: 'var(--tm-card)', border: '1px solid var(--tm-border)', borderRadius: '12px', padding: '28px' }}>
+                    <div style={{ marginBottom: '20px' }}>
+                      <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', margin: 0 }}>
+                        Configure an OIDC Identity Provider so users can log in via SSO. The client secret is write-only and never returned by the API.
+                      </p>
+                      <div style={{ marginTop: '12px' }}>
+                        <span style={{
+                          display: 'inline-block', fontSize: '12px', fontWeight: 600,
+                          padding: '3px 10px', borderRadius: '10px',
+                          background: tenant.idp_configured ? `${ACCENT}18` : 'rgba(255,255,255,.05)',
+                          color: tenant.idp_configured ? ACCENT : 'var(--tm-card-text-muted)',
+                          border: `1px solid ${tenant.idp_configured ? `${ACCENT}40` : 'var(--tm-border)'}`,
+                        }}>
+                          {tenant.idp_configured ? 'SSO configured' : 'SSO not configured'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleSaveSso}>
+                      <Field label="Discovery URL">
+                        <input
+                          style={inputStyle}
+                          value={idpDiscoveryUrl}
+                          onChange={e => setIdpDiscoveryUrl(e.target.value)}
+                          placeholder="https://idp.example.com/realms/my-realm"
+                          required
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          OIDC provider well-known discovery document base URL (without /.well-known/openid-configuration).
+                        </p>
+                      </Field>
+
+                      <Field label="Client ID">
+                        <input
+                          style={inputStyle}
+                          value={idpClientId}
+                          onChange={e => setIdpClientId(e.target.value)}
+                          placeholder="my-client-id"
+                          required
+                        />
+                      </Field>
+
+                      <Field label="Client Secret">
+                        <input
+                          type="password"
+                          style={inputStyle}
+                          value={idpClientSecret}
+                          onChange={e => { setIdpClientSecret(e.target.value); setIdpSecretChanged(true); }}
+                          onFocus={() => setIdpSecretChanged(true)}
+                          placeholder={tenant.idp_configured && !idpSecretChanged ? '••••••••••••••••' : 'Enter client secret'}
+                          autoComplete="new-password"
+                        />
+                        {tenant.idp_configured && !idpSecretChanged && (
+                          <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                            A secret is already configured. Leave blank to keep the existing secret, or type a new one to replace it.
+                          </p>
+                        )}
+                      </Field>
+
+                      <Field label="Redirect URI">
+                        <input
+                          style={inputStyle}
+                          value={idpRedirectUri}
+                          onChange={e => setIdpRedirectUri(e.target.value)}
+                          placeholder="http://localhost:8088/auth/api/v1/auth/oidc/callback"
+                          required
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          Must match the redirect URI registered in your IdP.
+                        </p>
+                      </Field>
+
+                      {saveMsgSso && (
+                        <div style={{
+                          padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px',
+                          background: saveMsgSso.ok ? 'rgba(52,211,153,.1)' : 'rgba(248,113,113,.1)',
+                          border: `1px solid ${saveMsgSso.ok ? 'rgba(52,211,153,.25)' : 'rgba(248,113,113,.25)'}`,
+                          color: saveMsgSso.ok ? '#34d399' : '#f87171',
+                        }}>
+                          {saveMsgSso.text}
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <button type="submit" disabled={savingSso} style={{
+                          padding: '9px 20px', borderRadius: '8px', border: 'none',
+                          background: ACCENT, color: '#fff', fontWeight: 600, fontSize: '13px',
+                          cursor: savingSso ? 'not-allowed' : 'pointer', opacity: savingSso ? 0.6 : 1,
+                          transition: 'opacity .15s',
+                        }}>
+                          {savingSso ? 'Saving…' : 'Save SSO config'}
+                        </button>
+
+                        {tenant.idp_configured && (
+                          <button
+                            type="button"
+                            onClick={handleClearSso}
+                            disabled={clearingSso}
+                            style={{
+                              padding: '9px 20px', borderRadius: '8px',
+                              border: '1px solid rgba(248,113,113,.35)',
+                              background: 'rgba(248,113,113,.08)', color: '#f87171',
+                              fontWeight: 600, fontSize: '13px',
+                              cursor: clearingSso ? 'not-allowed' : 'pointer',
+                              opacity: clearingSso ? 0.6 : 1, transition: 'opacity .15s',
+                            }}
+                          >
+                            {clearingSso ? 'Clearing…' : 'Clear SSO config'}
+                          </button>
+                        )}
+                      </div>
                     </form>
                   </div>
                 )}
