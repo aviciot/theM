@@ -29,19 +29,6 @@
       ],
       "webOrigins": [
         "http://localhost:8088"
-      ],
-      "defaultClientScopes": [
-        "web-origins",
-        "acr",
-        "roles",
-        "profile",
-        "email"
-      ],
-      "optionalClientScopes": [
-        "address",
-        "phone",
-        "offline_access",
-        "microprofile-jwt"
       ]
     }
   ],
@@ -59,25 +46,7 @@
           "value": "testpass",
           "temporary": false
         }
-      ],
-      "realmRoles": [
-        "default-roles-them"
       ]
     }
-  ],
-  "roles": {
-    "realm": [
-      {
-        "name": "default-roles-them",
-        "composite": true,
-        "composites": {
-          "realm": ["offline_access", "uma_authorization"],
-          "client": {}
-        }
-      }
-    ]
-  },
-  "scopeMappings": [],
-  "clientScopeMappings": {},
-  "defaultRoles": ["default-roles-them"]
+  ]
 }
