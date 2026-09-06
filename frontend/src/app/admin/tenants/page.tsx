@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 
 const ACCENT = '#818cf8';
 const ACCENT_BORDER = 'rgba(129,140,248,0.4)';
@@ -348,6 +349,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function TenantsPage() {
+  useRequireSuperAdmin();
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi } from '@/lib/api';
 import type { TenantObservabilitySummary } from '@/lib/api';
+import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ function KpiTile({ label, value, sub }: { label: string; value: string | number;
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ObservabilityPage() {
+  useRequireSuperAdmin();
   const [rows, setRows] = useState<TenantObservabilitySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

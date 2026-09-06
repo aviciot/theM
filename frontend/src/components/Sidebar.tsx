@@ -16,13 +16,16 @@ const ADMIN_NAV = [
   { href: '/admin/tokens',        icon: 'key',           label: 'Access Tokens' },
   { href: '/admin/playground',    icon: 'science',       label: 'Playground' },
   { href: '/admin/services',      icon: 'monitor_heart', label: 'Services' },
-  { href: '/admin/tenants',        icon: 'domain',         label: 'Tenants' },
-  { href: '/admin/users',          icon: 'group',          label: 'Users' },
-  { href: '/admin/managed-apps',   icon: 'extension',      label: 'Managed Apps' },
-  { href: '/admin/observability', icon: 'monitoring',    label: 'Observability' },
   { href: '/admin/audit-logs',   icon: 'receipt_long',  label: 'Audit Logs' },
   { href: '/tenant/settings',     icon: 'manage_accounts', label: 'My Tenant' },
   { href: '/admin/settings',      icon: 'settings',      label: 'Settings' },
+];
+
+const SUPER_ADMIN_NAV = [
+  { href: '/admin/tenants',       icon: 'domain',         label: 'Tenants' },
+  { href: '/admin/users',         icon: 'group',          label: 'Users' },
+  { href: '/admin/managed-apps',  icon: 'extension',      label: 'Managed Apps' },
+  { href: '/admin/observability', icon: 'monitoring',     label: 'Observability' },
 ];
 
 export default function Sidebar() {
@@ -97,6 +100,23 @@ export default function Sidebar() {
                 Admin
               </p>
               {ADMIN_NAV.map(({ href, icon, label }) => (
+                <Link key={href} href={href} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '8px 12px', borderRadius: '0 24px 24px 0',
+                  marginBottom: '2px', textDecoration: 'none', fontSize: '14px',
+                  transition: 'all .15s',
+                  background: isActive(href) ? 'var(--tm-accent-bg)' : 'transparent',
+                  color: isActive(href) ? 'var(--tm-accent)' : 'rgba(255,255,255,.45)',
+                  fontWeight: isActive(href) ? 600 : 400,
+                }}
+                  onMouseEnter={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = '#e8eaed'; }}
+                  onMouseLeave={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.45)'; }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>{icon}</span>
+                  {label}
+                </Link>
+              ))}
+              {user?.role === 'super_admin' && SUPER_ADMIN_NAV.map(({ href, icon, label }) => (
                 <Link key={href} href={href} style={{
                   display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '8px 12px', borderRadius: '0 24px 24px 0',

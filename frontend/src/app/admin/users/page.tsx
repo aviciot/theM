@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { themApi, type ManagedUser, type TenantSummary, type UserCreateInput, type UserUpdateInput } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 
 const ACCENT = '#818cf8';
 
@@ -281,6 +282,7 @@ function UserPanel({ user, onClose, onUpdated, onDeleted }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
+  useRequireSuperAdmin();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
   const [loading, setLoading] = useState(true);
