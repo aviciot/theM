@@ -47,10 +47,11 @@ function TenantCard({ tenant, selected, onClick }: { tenant: TenantRecord; selec
 
 const PLANS: QuotaPlan[] = ['trial', 'starter', 'pro', 'enterprise'];
 
-function TenantPanel({ tenant, onClose, onPatched }: {
+function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   tenant: TenantRecord;
   onClose: () => void;
   onPatched: (t: TenantRecord) => void;
+  onDeleted: (id: string) => void;
 }) {
   const [tab, setTab] = useState<'general' | 'idp' | 'quota'>('general');
   const [displayName, setDisplayName] = useState(tenant.display_name);
@@ -58,6 +59,8 @@ function TenantPanel({ tenant, onClose, onPatched }: {
   const [emailDomain, setEmailDomain] = useState(tenant.email_domain ?? '');
   const [genSaving, setGenSaving] = useState(false);
   const [genMsg, setGenMsg] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [discoveryURL, setDiscoveryURL] = useState('');
   const [clientID, setClientID] = useState('');
@@ -88,7 +91,17 @@ function TenantPanel({ tenant, onClose, onPatched }: {
     setIdpMsg('');
     setQuota(emptyQuota());
     setQuotaMsg('');
+    setDeleteConfirm(false);
   }, [tenant.id]);
+
+  async function deleteTenantHandler() {
+    setDeleting(true); setGenMsg('');
+    try {
+      await themApi.deleteTenant(tenant.id);
+      onDeleted(tenant.id);
+    } catch (e) { setGenMsg((e as Error).message || 'Error deleting tenant'); }
+    finally { setDeleting(false); setDeleteConfirm(false); }
+  }
 
   useEffect(() => {
     if (tab !== 'quota') return;
@@ -225,6 +238,34 @@ function TenantPanel({ tenant, onClose, onPatched }: {
               {genSaving ? 'Saving…' : 'Save'}
             </button>
             {genMsg && <p style={{ fontSize: '12px', color: genMsg === 'Saved' ? '#34d399' : '#f87171', marginTop: '8px' }}>{genMsg}</p>}
+
+            {!tenant.is_bootstrap && (
+              <div style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid rgba(248,113,113,.15)' }}>
+                <p style={{ fontSize: '12px', fontWeight: 600, color: '#f87171', margin: '0 0 10px 0' }}>Danger Zone</p>
+                {!deleteConfirm ? (
+                  <button onClick={() => setDeleteConfirm(true)} style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.25)', color: '#f87171', cursor: 'pointer' }}>
+                    Delete Tenant
+                  </button>
+                ) : (
+                  <div style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.2)', borderRadius: '8px', padding: '14px' }}>
+                    <p style={{ fontSize: '13px', color: '#f87171', margin: '0 0 12px 0', fontWeight: 600 }}>
+                      Delete <strong>{tenant.display_name}</strong>? This cannot be undone.
+                    </p>
+                    <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: '0 0 12px 0' }}>
+                      The tenant must have no applications, agents, or users first.
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button onClick={() => setDeleteConfirm(false)} disabled={deleting} style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,.12)', color: 'var(--tm-card-text-muted)', cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                      <button onClick={deleteTenantHandler} disabled={deleting} style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'rgba(248,113,113,.15)', border: '1px solid rgba(248,113,113,.3)', color: '#f87171', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.6 : 1 }}>
+                        {deleting ? 'Deleting…' : 'Yes, delete'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 
@@ -330,6 +371,10 @@ export default function TenantsPage() {
     setSelected(created);
     setShowCreate(false);
   }
+  function handleDeleted(id: string) {
+    setTenants(prev => prev.filter(t => t.id !== id));
+    setSelected(null);
+  }
 
   return (
     <>
@@ -383,7 +428,7 @@ export default function TenantsPage() {
           )}
         </div>
 
-        {selected && <TenantPanel tenant={selected} onClose={() => setSelected(null)} onPatched={handlePatched} />}
+        {selected && <TenantPanel tenant={selected} onClose={() => setSelected(null)} onPatched={handlePatched} onDeleted={handleDeleted} />}
         {showCreate && <ProvisionWizard onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
       </main>
     </>

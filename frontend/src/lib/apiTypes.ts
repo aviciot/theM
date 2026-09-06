@@ -787,6 +787,7 @@ export interface TenantRecord {
   slug: string;
   display_name: string;
   enabled: boolean;
+  is_bootstrap: boolean;
   idp_configured: boolean;
   email_domain?: string | null;
   created_at: string;

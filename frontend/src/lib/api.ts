@@ -559,6 +559,8 @@ export const themApi = {
     api.post<TenantRecord>('/admin/tenants', input),
   patchTenant: (id: string, patch: TenantPatch) =>
     api.patch<TenantRecord>('/admin/tenants/' + id, patch),
+  deleteTenant: (id: string) =>
+    api.delete<void>('/admin/tenants/' + id),
   getTenantQuota: (id: string) =>
     api.get<TenantQuota>('/admin/tenants/' + id + '/quota'),
   upsertTenantQuota: (id: string, quota: Omit<TenantQuota, 'tenant_id'>) =>

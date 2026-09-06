@@ -2475,6 +2475,8 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | `TestTenants_UpsertGroupMapping_InvalidRole` (GM-05) | PUT with role not in {viewer,member,admin,super_admin} → 400 |
 | `TestTenants_DeleteGroupMapping_Success` (GM-06) | DELETE /tenants/{id}/group-mappings/{mapping_id} → 204 |
 | `TestTenants_DeleteGroupMapping_NotFound` (GM-07) | DELETE missing mapping → 404 |
+| `TestTenants_Delete_Success` (TN-26) | DELETE /tenants/{id} non-bootstrap tenant → 204 |
+| `TestTenants_Delete_NotFound` (TN-27) | DELETE /tenants/{id} missing or bootstrap → 404 |
 
 **Trigger:** `internal/admin/tenants.go`, `internal/admin/dal/tenants.go`
 
@@ -3163,7 +3165,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..04): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe | 4 |
-| S1-94 | Tenant CRUD + PATCH + quota + members + email domain + group mappings handler (TN-01..25 + GM-01..07): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole, AddMember_QuotaNilLimit_Allows, AddMember_QuotaUnderLimit_Allows, AddMember_QuotaAtLimit_Rejects, Patch_EmailDomain, Patch_EmailDomain_Clear, List_WithEmailDomain, ListGroupMappings_Empty, ListGroupMappings_Populated, UpsertGroupMapping_Success, UpsertGroupMapping_MissingGroupClaim, UpsertGroupMapping_InvalidRole, DeleteGroupMapping_Success, DeleteGroupMapping_NotFound | 35 |
+| S1-94 | Tenant CRUD + PATCH + quota + members + email domain + group mappings + delete handler (TN-01..27 + GM-01..07): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole, AddMember_QuotaNilLimit_Allows, AddMember_QuotaUnderLimit_Allows, AddMember_QuotaAtLimit_Rejects, Patch_EmailDomain, Patch_EmailDomain_Clear, List_WithEmailDomain, ListGroupMappings_Empty, ListGroupMappings_Populated, UpsertGroupMapping_Success, UpsertGroupMapping_MissingGroupClaim, UpsertGroupMapping_InvalidRole, DeleteGroupMapping_Success, DeleteGroupMapping_NotFound, Delete_Success, Delete_NotFound | 37 |
 | S1-95 | quota enforcer (QE-01..17): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded, APIRPMNilLimit, APIRPMBelowLimit, APIRPMExceeded, MonthlyLLMTokensNilLimit, MonthlyLLMTokensBelowLimit, MonthlyLLMTokensExceeded, MonthlyLLMTokensDBError, MonthlyLLMTokensNoCounter | 17 |
 | S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
@@ -3173,7 +3175,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
 | S1-102 | Audit redaction production-path (AR-01..03): AgentUpdate_AuditNoRawAuthToken, MCPServerUpdate_AuditNoRawProbeToken, TenantPatch_AuditNoRawClientSecret | 3 |
 | S1-103 | Tenant self-service handler (TSS-01..06): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found | 6 |
-| **S1 total** | | **1112** |
+| **S1 total** | | **1114** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -3185,4 +3187,4 @@ If a test is added without updating this index, the PR should not be merged.
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1071** |
+| **`go test ./...` total** | | **1073** |

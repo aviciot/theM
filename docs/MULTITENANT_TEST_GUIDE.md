@@ -35,14 +35,13 @@ All containers should show `healthy` or `running`.
 
 ### Step 1.3 — Provision a new tenant
 
-1. Click **Create Tenant** (or **New Tenant**).
-2. Fill in:
-   - **Name:** `Acme Corp`
-   - **Slug:** `acme` (auto-generated or typed manually)
-3. Complete the provisioning wizard steps (quota, admin user, etc.).
-4. **Expected after wizard:**
-   - Tenant `acme` appears in the list.
-   - A tenant-admin user is created (note the credentials the wizard shows).
+1. Click **New Tenant** (top-right button).
+2. A 4-step wizard opens:
+   - **Step 1 — Tenant identity:** Enter slug `acme`, display name `Acme Corp`. Click **Create Tenant →**.
+   - **Step 2 — Admin user:** Enter username, display name, and password for the tenant admin (e.g., `acme-admin` / `Acme Admin` / `changeme123`). Click **Create User →** (or Skip).
+   - **Step 3 — Quota:** Leave all fields blank (unlimited) or set limits. Click **Save Quota →** (or Skip).
+   - **Step 4 — Done:** Green checkmark shown. Click **Done**.
+3. **Expected:** Tenant `acme` appears in the list. Clicking it opens the tenant detail panel (General / Identity Provider / Quotas tabs).
 
 ### Step 1.4 — Verify tenant isolation (DB check, optional)
 
@@ -52,6 +51,19 @@ docker exec -it them-postgres psql -U them -d them \
 ```
 
 **Expected:** Two rows — `default` and `acme`.
+
+---
+
+### Step 1.5 — Delete a tenant (cleanup / re-run)
+
+When you want to re-run the test from scratch, delete the `acme` tenant:
+
+1. Click the `acme` card to open its detail panel.
+2. In the **General** tab, scroll down to **Danger Zone**.
+3. Click **Delete Tenant**, then confirm with **Yes, delete**.
+4. **Expected:** Tenant disappears from the list. Panel closes.
+
+> **Note:** Delete fails if the tenant still has applications, agents, or users. Remove them first (or skip to re-provision a fresh tenant with a different slug).
 
 ---
 

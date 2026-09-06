@@ -30,6 +30,7 @@ type tenantFakeRow struct {
 	slug        string
 	displayName string
 	enabled     bool
+	isBootstrap bool
 	emailDomain *string // nil = no domain
 	err         error   // when non-nil, Scan returns this
 }
@@ -38,8 +39,8 @@ func (r *tenantFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	// Columns: id, slug, display_name, enabled, email_domain, created_at, updated_at
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.emailDomain, testNow, testNow}
+	// Columns: id, slug, display_name, enabled, is_bootstrap, email_domain, created_at, updated_at
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.emailDomain, testNow, testNow}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
@@ -153,13 +154,14 @@ func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.Si
 	return &tenantFakeRow{err: pgx.ErrNoRows}
 }
 
-// tenantDetailFakeRow simulates the 8-column RETURNING from PatchTenant.
-// Columns: id, slug, display_name, enabled, idp_configured, email_domain, created_at, updated_at
+// tenantDetailFakeRow simulates the 9-column RETURNING from PatchTenant.
+// Columns: id, slug, display_name, enabled, is_bootstrap, idp_configured, email_domain, created_at, updated_at
 type tenantDetailFakeRow struct {
 	id            string
 	slug          string
 	displayName   string
 	enabled       bool
+	isBootstrap   bool
 	idpConfigured bool
 	emailDomain   *string
 	err           error
@@ -169,7 +171,7 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.idpConfigured, r.emailDomain, testNow, testNow}
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.emailDomain, testNow, testNow}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
@@ -1072,6 +1074,34 @@ func TestGroupMappings_Delete_NotFound(t *testing.T) {
 	r := newTenantRouter(db)
 
 	req := httptest.NewRequest(http.MethodDelete, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings/nonexistent", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── TN-26: DeleteTenant returns 204 on success ───────────────────────────────
+
+func TestTenants_Delete_Success(t *testing.T) {
+	db := &tenantDB{
+		createRow: &tenantFakeRow{id: "00000000-0000-0000-0000-000000000002", slug: "acme", displayName: "Acme Corp", enabled: false},
+	}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tenants/00000000-0000-0000-0000-000000000002", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// ── TN-27: DeleteTenant returns 404 when tenant not found or is bootstrap ────
+
+func TestTenants_Delete_NotFound(t *testing.T) {
+	db := &tenantDB{} // ExecReturning returns pgx.ErrNoRows → 404
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tenants/00000000-0000-0000-0000-000000000099", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

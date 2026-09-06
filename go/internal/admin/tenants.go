@@ -30,6 +30,7 @@ func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Post("/tenants", h.Create)
 	r.Get("/tenants/{id}", h.Get)
 	r.Patch("/tenants/{id}", h.Patch)
+	r.Delete("/tenants/{id}", h.DeleteTenant)
 	r.Get("/tenants/{id}/quota", h.GetQuota)
 	r.Put("/tenants/{id}/quota", h.UpsertQuota)
 	r.Get("/tenants/{id}/members", h.ListMembers)
@@ -311,6 +312,30 @@ func (h *TenantsHandler) UpsertGroupMapping(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// DeleteTenant handles DELETE /api/v1/admin/tenants/{id}.
+// The bootstrap tenant and any tenant with dependent data cannot be deleted.
+func (h *TenantsHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	err := h.db.DeleteTenant(r.Context(), id)
+	if dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "tenant not found or cannot be deleted")
+		return
+	}
+	if dal.IsForeignKeyViolation(err) {
+		writeError(w, http.StatusConflict, "tenant has dependent resources — delete applications, agents, and users first")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // DeleteGroupMapping handles DELETE /api/v1/admin/tenants/{id}/group-mappings/{mapping_id}.
