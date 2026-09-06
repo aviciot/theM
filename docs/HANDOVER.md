@@ -128,7 +128,28 @@ What was built:
 
 "Get started" banner on `/admin/applications` when `applications.length === 0`. Frontend only. Small scope (~half a day).
 
-Steps 36–38: see `docs/MULTITENANT_PLAN.md` Build Order table.
+### Step 37 — SSO: corrected scope (2026-09-06 audit — see docs/sso-access-audit.md)
+
+**What was already done before Step 37:**
+- Login page email-first flow: email blur → tenant-lookup → SSO button → OIDC redirect — **already complete** in `frontend/src/app/login/page.tsx`
+- Super-admin IdP config UI: `/admin/tenants` TenantPanel "Identity Provider" tab — complete (Step 10)
+
+**Access model — hybrid (backend already supports both paths, no Go changes needed):**
+- `PATCH /admin/tenants/{id}` (`RequireSuperAdmin`) — platform admin configures any tenant's IdP
+- `PATCH /tenant/settings` (`RequireTenantAdmin`) — tenant admin configures own IdP; JWT-scoped, cannot escape own tenant
+
+**What Step 37 must build:**
+1. `/tenant/settings` SSO form — discovery_url, client_id, client_secret (write-only input), redirect_uri; Save + Clear buttons; wired to `PATCH /tenant/settings` via `themApi.patchTenantSettings` (extend to pass `idp_config`)
+2. Keycloak test IdP — `docker-compose.dev.yml` `them-keycloak` service (profile `sso`); realm export in `keycloak/`
+3. E2E smoke — configure via both paths, log in via OIDC, verify JWT claims
+
+**What Step 37 must NOT do:** rebuild login page; add SSO to Provision Wizard; encrypt client_secret.
+
+**⚠️ Production-readiness blocker — Step 37-S (separate step, before any production OIDC):**
+`client_secret` is stored as plaintext JSONB in `them.tenants`. Mitigated (never returned, audit-redacted, privileged DB access) but not acceptable for production.
+Design: AES-GCM encrypt before write in `PatchTenant`; decrypt in `GetTenantIDPConfig` before OAuth2 exchange. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints + data migration. **Block production OIDC deployment on this.**
+
+Steps 36–38 + 37-S: see `docs/MULTITENANT_PLAN.md` Build Order table.
 
 Key facts for the new session:
 - UM-13/14 are **unit tests** (fakeStore, no real DB/RLS) — not live two-tenant E2E

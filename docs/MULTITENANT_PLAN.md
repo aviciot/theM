@@ -27,9 +27,9 @@ The-M supports multiple isolated tenants (companies/customers) on a single insta
 | OIDC backend flow | ✅ Complete | Steps 5/8/9/17/18 — PKCE, RS256 JWKS, group mappings, HS256 JWT issuance |
 | Email-domain → tenant routing | ✅ Complete | `GET /auth/tenant-lookup?email=` live; `tenants.email_domain` indexed |
 | OIDC group claims → tenant role | ✅ Complete | `them.tenant_group_mappings`; `GetGroupRole` in OIDCCallback |
-| Tenant-scoped dashboard | ❌ Not built | Frontend shows all data; no role-aware nav or route guards |
-| Tenant provisioning UX | ❌ Not built | Multi-step manual process; no guided wizard |
-| SSO / OIDC frontend wiring | ⚠️ Partial | Backend done; missing Keycloak test IdP + login page email-first flow |
+| Tenant-scoped dashboard | ✅ Complete | Role-based nav (Step 34); super_admin route guards on tenants/users/observability |
+| Tenant provisioning UX | ✅ Complete | 4-step wizard: tenant → admin user → quota → done (Step 35) |
+| SSO / OIDC frontend wiring | ⚠️ Partial | Login page email-first flow done; super-admin IdP config UI done; **tenant-admin self-service IdP form missing** (Step 37); Keycloak test IdP not yet in Docker |
 | Multi-tenant refresh (tenant preserved) | ✅ Complete | Refresh token carries tenant_id; issuePairByTenantID re-validates membership; OIDC callback also preserves tenant (OIDC-30) |
 | Live two-tenant API E2E test | ❌ Not built | UM-13/14 are unit tests (fakeStore); no live test across auth→bridge→RLS |
 | Tenant onboarding flow | ❌ Not built | No guided "set up your first app" flow for new tenant admins |
@@ -81,15 +81,46 @@ Live smoke test: create user → assign to tenant A → login → JWT has `tenan
 
 ### Gap 4 — SSO / OIDC Frontend Wiring (small–medium) — Step 37
 
-**What:** The backend OIDC flow is COMPLETE (Steps 5, 8, 9, 17, 18). What's missing:
-- A Keycloak test IdP in Docker (`--profile sso`) for local end-to-end testing
-- The login page email-first flow: enter email → call `GET /auth/api/v1/auth/tenant-lookup?email=` → if `idp_configured=true`, redirect to `/auth/oidc/start?tenant={slug}`; otherwise show password form
+**Audit date:** 2026-09-06 — see `docs/sso-access-audit.md` for full findings.
 
-**What to build:**
-- `docker-compose.dev.yml`: add `them-keycloak` service (profile `sso`) — `quay.io/keycloak/keycloak`, pre-configured realm export in `keycloak/`
-- `frontend/src/app/login/page.tsx`: email-first flow (tenant-lookup endpoint already exists at `/auth/api/v1/auth/tenant-lookup`)
+**What was already complete before Step 37:**
+- Login page email-first flow: email blur → tenant-lookup → `showSSO` flag → "SSO Login" button → `window.location.href = /api/auth/oidc/start?tenant={slug}` — **already wired in `frontend/src/app/login/page.tsx`**
+- Backend OIDC flow: PKCE, RS256/JWKS, group-claim mapping, HS256 JWT issuance — complete (Steps 5, 8, 9, 17, 18)
+- Super-admin IdP config UI: `/admin/tenants` TenantPanel "Identity Provider" tab — complete (Step 10)
 
-**Scope:** Small–medium (1–2 days). Backend requires no changes.
+**Access model (hybrid — both paths use same DB call, different auth levels):**
+- `PATCH /admin/tenants/{id}` — `RequireSuperAdmin` — platform admin configures any tenant's IdP
+- `PATCH /tenant/settings` — `RequireTenantAdmin` — tenant admin configures own IdP (JWT-scoped, cannot escape their tenant)
+- Both paths accept `idp_config`; backend enforces scope; no Go changes needed
+
+**What Step 37 must build:**
+1. **`/tenant/settings` SSO form** — add "SSO / Identity Provider" section to `frontend/src/app/tenant/settings/page.tsx`:
+   - Fields: `discovery_url`, `client_id`, `redirect_uri` (text), `client_secret` (write-only password input — show "already configured" placeholder when `idp_configured=true`)
+   - Save button → `PATCH /tenant/settings` with `idp_config`; Clear button → sends `idp_config: null`
+   - Uses `themApi.patchTenantSettings` (extend to accept `idp_config` field)
+2. **Keycloak test IdP** — `docker-compose.dev.yml`: `them-keycloak` service (`quay.io/keycloak/keycloak`, profile `sso`), pre-configured realm export in `keycloak/`; Traefik route at `/auth/keycloak/` (internal only)
+3. **End-to-end SSO smoke test** — configure tenant IdP via both paths (tenant-admin self-service and super-admin override), log in via OIDC flow, verify JWT contains correct `tenant_id` and role
+
+**What Step 37 must NOT do:**
+- Rebuild the login page (already done)
+- Add SSO config to the Provision Wizard (optional advanced config; done post-provisioning)
+- Encrypt `client_secret` at rest (see production-readiness blocker below)
+
+**⚠️ Production-readiness blocker (NOT in Step 37 scope):**
+`client_secret` is stored as **plaintext** in `them.tenants.idp_config` JSONB. Mitigations in place:
+- Never returned in any GET response or audit log (write-only; audit redacted to `client_secret_changed=true`)
+- DB access requires privileged credentials
+- Precedent: LLM keys in `applications.provider_keys` are AES-GCM encrypted before DB write
+
+**Encryption design (Step 37-S — do before any production OIDC deployment):**
+- Add `THEM_IDP_ENCRYPTION_KEY` env var (or derive from existing `secrets.local` HMAC seed)
+- `PatchTenant` encrypts `client_secret` before JSON marshal → write
+- `GetTenantIDPConfig` in `oidc_store.go` decrypts after read, before OAuth2 code exchange
+- Data migration: one-time script to re-encrypt any existing plaintext rows
+- Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints
+- **Block any production OIDC enablement on this step being complete**
+
+**Scope:** Medium (2–3 days). No Go changes for the IdP config write path.
 
 ---
 
@@ -122,10 +153,11 @@ Live smoke test: create user → assign to tenant A → login → JWT has `tenan
 | Step | Name | Scope | Status |
 |---|---|---|---|
 | **33** | Tenant login chain + contract alignment | Small | ✅ COMPLETE (2026-09-06, 5b2e283) |
-| **34** | Role-based nav + frontend route guards | Medium | **Next** |
-| **35** | Tenant provisioning wizard | Medium | After 34 |
-| **36** | Tenant onboarding (first-login guidance) | Small | After 35 |
-| **37** | SSO frontend wiring + Keycloak test IdP | Small–Medium | After 36 (backend already done) |
+| **34** | Role-based nav + frontend route guards | Medium | ✅ COMPLETE (2026-09-06, 82a8f22) |
+| **35** | Tenant provisioning wizard | Medium | ✅ COMPLETE (2026-09-06, c95976d) |
+| **36** | Tenant onboarding (first-login guidance) | Small | **Next** |
+| **37** | SSO: tenant-admin self-service IdP form + Keycloak test IdP + E2E smoke | Medium | After 36 |
+| **37-S** | client_secret encryption at rest (production-readiness blocker) | Small–Medium | Before any production OIDC deployment |
 | **38** | Live two-tenant API E2E test | Small | Can be done any time after 33 |
 | **—** | Group mapping super_admin guardrail | Small | ✅ COMPLETE (2026-09-06) — migration 081, validMemberRoles guard, OIDCCallback rejection |
 
