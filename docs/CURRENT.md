@@ -211,7 +211,28 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 Discovery URL: `http://localhost:8088/auth/keycloak/realms/them`
 Run smoke test: `python3 scripts/tests/test_37_sso.py`
 
-### Next recommended task: Step 37-S — encrypt client_secret at DB layer
+### Step 37-S — Encrypt IdP client_secret at rest: COMPLETE (db7ddc3)
+
+**Go only. No DB changes. No frontend changes.**
+
+What was built:
+- `go/internal/idpcrypto/idpcrypto.go`: AES-256-GCM Encrypt/Decrypt. Ciphertext format: `enc:<hex(nonce||ct)>`. Nil key → pass-through. Legacy plaintext (no `enc:` prefix) decrypts unchanged. 9 tests (IDP-1..9).
+- `go/internal/admin/dal/dal.go`: `DB.WithIDPKey(key []byte)` — returns shallow copy with encryption key set; `DB.IDPEncrypt(s)` helper.
+- `go/internal/admin/dal/tenants.go`: `PatchTenant` encrypts `client_secret` before `json.Marshal` when key is set.
+- `go/internal/authserver/oidc_store.go`: `NewPgxOIDCStoreWithKey(pool, key)` constructor; `GetTenantIDPConfig` decrypts after unmarshal. Legacy plaintext passes through.
+- `go/internal/authserver/config.go`: `IDPEncryptionKey` field; `ParseKey` validation at startup (fail-fast on malformed key).
+- `go/internal/config/config.go`: Same field + validation for the bridge.
+- `go/internal/admin/router.go`: `BuildRouter` gains `idpKey []byte` parameter.
+- `go/internal/admin/tenants.go`, `tenant_self_service.go`: constructors gain `idpKey []byte`; call `.WithIDPKey(idpKey)`.
+- `go/cmd/auth-server/main.go`, `go/cmd/them/main.go`: parse `IDP_ENCRYPTION_KEY` → pass to oidcStore / BuildRouter.
+- `docker-compose.yml`: `IDP_ENCRYPTION_KEY=${THE_M_IDP_ENCRYPTION_KEY:-}` in `them-auth-go` and `them-go-bridge`.
+- `generate-env.sh`, `generate-env.ps1`: derive `THE_M_IDP_ENCRYPTION_KEY` from `secrets.local` using `Derive-Secret "idp-encryption-key"`.
+
+**Deployment note:** Run `./generate-env.sh` (or `.ps1`) to get `THE_M_IDP_ENCRYPTION_KEY` in `.env`, then rebuild and restart `them-auth-go` and `them-go-bridge`. Existing plaintext secrets continue to work (pass-through) — re-save each tenant's IdP config to encrypt them.
+
+**49 packages pass, 0 failures.** (S1-IDP: 9 new tests)
+
+### Next recommended task
 
 **⚠️ Production blocker Step 37-S** (separate, do before any production OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints.
 

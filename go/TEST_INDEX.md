@@ -3028,6 +3028,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/audit_redaction_test.go` | S1-102 |
 | `internal/admin/mcp_servers.go` | S1-100 (AL-05a/b) + S1-102 (AR-02) |
 | `internal/crypto/fernet.go` | S1-26 |
+| `internal/idpcrypto/idpcrypto.go` | S1-IDP |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
 | `internal/ratelimit/limiter.go` | S1-16 |
@@ -3183,4 +3184,5 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1062** |
+| S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
+| **`go test ./...` total** | | **1071** |
