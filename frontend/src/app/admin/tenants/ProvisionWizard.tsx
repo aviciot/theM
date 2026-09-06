@@ -103,7 +103,8 @@ function Step2User({ tenant, onDone, onSkip }: {
   onDone: () => void;
   onSkip: () => void;
 }) {
-  const [username, setUsername] = useState('');
+  const suggested = `${tenant.slug}-admin`;
+  const [username, setUsername] = useState(suggested);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -122,7 +123,12 @@ function Step2User({ tenant, onDone, onSkip }: {
     try {
       await themApi.createUser(input);
       onDone();
-    } catch (ex) { setErr((ex as Error).message || 'Error creating user'); }
+    } catch (ex) {
+      const msg = (ex as Error).message || '';
+      setErr(msg.toLowerCase().includes('unique') || msg.toLowerCase().includes('duplicate') || msg.toLowerCase().includes('conflict') || msg.toLowerCase().includes('already')
+        ? `Username "${username}" is already taken — choose a different one`
+        : 'Error creating user');
+    }
     finally { setSaving(false); }
   }
 
@@ -135,7 +141,10 @@ function Step2User({ tenant, onDone, onSkip }: {
       </p>
       <div style={fieldWrap}>
         <label style={label}>Username</label>
-        <input value={username} onChange={e => setUsername(e.target.value)} style={inp} placeholder="alice" autoFocus />
+        <input value={username} onChange={e => setUsername(e.target.value)} style={inp} placeholder={suggested} autoFocus />
+        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', margin: '4px 0 0 0' }}>
+          Must be unique across the platform. Suggested: <code style={{ background: 'var(--tm-inset)', padding: '1px 4px', borderRadius: '3px' }}>{suggested}</code>
+        </p>
       </div>
       <div style={fieldWrap}>
         <label style={label}>Display Name</label>
