@@ -560,6 +560,8 @@ OIDC group claim → tenant role mapping. Migration: `db/059_tenant_group_mappin
 
 The OIDC callback resolves the role by querying `WHERE tenant_id = $1 AND group_claim = ANY($2) ORDER BY priority ASC, group_claim ASC LIMIT 1`. Non-fatal: no match → default "viewer" role used.
 
+⚠️ **Privilege escalation risk:** The CHECK constraint allows `'super_admin'` as a role value. If a super_admin creates a mapping with `role='super_admin'`, all OIDC users matching that group claim will be granted platform super_admin (via `UpsertOIDCUser` resolving `auth_service.roles WHERE name = role`). Current mitigation: only super_admin can write group mappings (API-layer `RequireSuperAdmin`). Planned guardrail (Step 37): tighten CHECK to `('admin','member','viewer')` only.
+
 ---
 
 ## auth_service schema (read-only reference)
@@ -608,6 +610,9 @@ Key relationships:
 | `db/075_rls_phase_e.sql` | RLS Phase E: enable RLS on `runs`, `tasks`, `run_artifacts` (direct tenant_id policies) |
 | `db/076_rls_phase_f.sql` | RLS Phase F: enable RLS on `run_steps`, `run_usage`, `artifacts`, `task_messages`, `middleware_audit` (EXISTS-based via parent) |
 | `db/077_rls_phase_g.sql` | RLS Phase G: enable RLS on `llm_providers` (split policy: own+NULL for SELECT), `middleware_jobs` (EXISTS via applications), `audit_logs` |
+| `db/078_rls_phase_h2.sql` | RLS Phase H2: FORCE RLS on 4 remaining tables — `application_definitions`, `managed_app_bindings`, `quarantine_artifacts` (direct tenant_id), `component_definitions` (split: SELECT own+NULL, DML revoked from `them_app`). All 28 them-schema tables now have RLS. |
+| `db/079_component_definitions_grant.sql` | Restore `GRANT INSERT, DELETE ON them.component_definitions TO them_app` — 078 over-revoked (Agent Create CTE + Delete run via TenantTx). Apply 078+079 together. |
+| `db/080_grant_tenant_quotas_to_app.sql` | `GRANT SELECT ON them.tenant_quotas TO them_app` — required by `checkResourceQuota` in Create paths (quota check runs in TenantTx). |
 
 ---
 

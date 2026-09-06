@@ -1,9 +1,11 @@
 # Multi-Tenant Plan — the-M
-# Last updated: 2026-09-06 (Step 33 fully complete)
+# Last updated: 2026-09-06 (pre-Step-34 architecture sync)
 
 ## Executive Summary
 
-The-M supports multiple isolated tenants (companies/customers) on a single instance. Data isolation is enforced at the DB layer via Row-Level Security — no application-layer filtering is trusted. The infrastructure layer (RLS, quota, user management) is now complete. What remains is the **experience layer**: tenant users need to be able to log in and see only their data, the frontend needs to render a tenant-scoped view, and super_admins need a guided provisioning flow.
+The-M supports multiple isolated tenants (companies/customers) on a single instance. Data isolation is enforced at the DB layer via Row-Level Security — no application-layer filtering is trusted. The infrastructure layer (RLS, quota, user management, OIDC backend) is now complete. What remains is the **experience layer**: role-aware frontend nav, a guided provisioning flow, and wiring the existing OIDC backend to a test IdP + login page.
+
+**OIDC clarification:** The OIDC authorization-code flow with PKCE, RS256 id_token verification, JWKS key caching, group-claim→role mapping, and HS256 JWT issuance are all implemented (Steps 5, 8, 9, 17, 18). Gap 4 is frontend-only: connect the login page email-first flow to the tenant-lookup endpoint and add a Keycloak test IdP in Docker.
 
 ---
 
@@ -13,125 +15,133 @@ The-M supports multiple isolated tenants (companies/customers) on a single insta
 |---|---|---|
 | DB row-level security (RLS) | ✅ Complete | All 28 tables, FORCE RLS, two-pool architecture |
 | Tenant model + quotas | ✅ Complete | `them.tenants`, `them.tenant_quotas` |
-| Quota enforcement at run-admit | ✅ Complete | 5 limits enforced: concurrent, RPM, monthly runs, API RPM, token budget |
+| Quota enforcement at run-admit | ✅ Complete | 5 limits: concurrent, RPM, monthly runs, API RPM, token budget |
 | Quota enforcement at create | ✅ Complete | max_agents, max_apps, max_mcp_servers, max_users |
 | Tenant self-service API | ✅ Complete | `GET/PATCH /tenant/settings`, `GET /tenant/quota` |
 | Tenant self-service UI | ✅ Complete | `/tenant/settings` page (General + Quota tabs) |
 | User management API | ✅ Complete | `GET/POST/PATCH/DELETE /api/v1/admin/users` (super_admin only) |
 | User management UI | ✅ Complete | `/admin/users` page — create, assign to tenant, reset password |
-| JWT tenant_id claim | ✅ Complete | Populated from `tenant_memberships` at login |
+| JWT tenant_id claim | ✅ Complete | Populated from `tenant_memberships` at login; login blocked if no membership |
 | RLS activated from JWT | ✅ Complete | Bridge sets `app.tenant_id` GUC via TenantTx on every request |
-| Tenant login (verify it works) | ✅ Complete | Fixed CreateUser role contract, /me returns JWT role, regression tests UM-13/14 added |
-| Tenant-scoped dashboard | ❌ Not built | Frontend shows all data; no role-based view filtering |
-| Tenant provisioning UX | ❌ Not built | Multi-step manual process; no guided flow for super_admin |
-| SSO / OIDC | ❌ Not built | Username+password works; external IdP not integrated |
+| Tenant login chain | ✅ Complete | CreateUser contract fixed, /me returns JWT role, UM-13/14 regression tests |
+| OIDC backend flow | ✅ Complete | Steps 5/8/9/17/18 — PKCE, RS256 JWKS, group mappings, HS256 JWT issuance |
+| Email-domain → tenant routing | ✅ Complete | `GET /auth/tenant-lookup?email=` live; `tenants.email_domain` indexed |
+| OIDC group claims → tenant role | ✅ Complete | `them.tenant_group_mappings`; `GetGroupRole` in OIDCCallback |
+| Tenant-scoped dashboard | ❌ Not built | Frontend shows all data; no role-aware nav or route guards |
+| Tenant provisioning UX | ❌ Not built | Multi-step manual process; no guided wizard |
+| SSO / OIDC frontend wiring | ⚠️ Partial | Backend done; missing Keycloak test IdP + login page email-first flow |
+| Multi-tenant refresh (tenant preserved) | ⚠️ Known limitation | Refresh picks first membership row; selected tenant not preserved across refresh |
+| Live two-tenant API E2E test | ❌ Not built | UM-13/14 are unit tests (fakeStore); no live test across auth→bridge→RLS |
 | Tenant onboarding flow | ❌ Not built | No guided "set up your first app" flow for new tenant admins |
 
 ---
 
 ## Gaps — Ranked by Importance
 
-### Gap 1 — Tenant Login Verification — **COMPLETE** (2026-09-06)
+### Gap 1 — Tenant Login Chain — **COMPLETE** (2026-09-06)
 
-Fixed and verified end-to-end. Gaps found and resolved:
-1. `CreateUser` was passing `req.Role` (tenant membership role) as `RoleName` (platform role) — broke user creation for non-platform roles like `"admin"`. Fixed: `role` → `RoleName`, `tenant_role` → `TenantRole`.
-2. `Me()` was returning `user.Role` (global DB role) instead of `claims.Role` (JWT membership role). Fixed.
-3. Added regression tests UM-13 (two-tenant isolation + /me role) and UM-14 (refresh carries tenant).
+Fixed and verified end-to-end across commits 80924a1 + 5b2e283:
+1. `CreateUser`: `role` → `RoleName` (platform: super_admin/developer/analyst/viewer); `tenant_role` → `TenantRole` (membership: admin/member/viewer).
+2. `Me()` returns `claims.Role` (JWT membership role) instead of `user.Role` (global DB role).
+3. Regression tests UM-13 (two-tenant isolation + /me role) and UM-14 (refresh carries tenant) added.
 
 Live smoke test: create user → assign to tenant A → login → JWT has `tenant_id=tenantA, role=admin` → bridge returns 403 on super_admin routes (correct).
 
 ---
 
-### Gap 2 — Tenant-Scoped Dashboard (medium)
+### Gap 2 — Tenant-Scoped Dashboard (medium) — Step 34
 
-**What:** The frontend is built entirely for super_admin. A tenant admin or member logging in sees the super_admin nav (Tenants, Users, Observability) and all platform data. They need to see only:
-- Their own applications, agents, runs, MCP servers
-- Their own tenant settings (already built — `/tenant/settings`)
-- No cross-tenant admin UI
+**What:** The frontend nav is built entirely for super_admin. A tenant admin logging in sees Tenants/Users/Observability nav items they cannot use and will get 403 errors on those routes.
 
-**Why it matters:** Without this, multi-tenant is backend-only. A real customer logging in sees a confusing UI with admin controls they can't use and data that's already correctly filtered by RLS (the data is right, the nav is wrong).
+**Why it matters:** RLS already isolates the data correctly. The nav is a UX problem, not a security problem — but it makes multi-tenant untestable from the UI.
 
 **What to build:**
-- Read JWT role from the frontend session cookie
-- In `Sidebar.tsx`: show/hide nav items based on role (`super_admin` sees Tenants/Users/Observability; `admin`/`member`/`viewer` do not)
-- Guard admin pages (`/admin/tenants`, `/admin/users`, `/admin/observability`) — redirect non-super_admin to `/admin/applications`
-- Add a "My Tenant" landing page or redirect tenant users to their relevant section
-- Files: `frontend/src/components/Sidebar.tsx`, `frontend/src/lib/auth.ts` (role reading), individual page auth guards
+- Read JWT `role` from `/api/auth/me` response (already called on page load)
+- `Sidebar.tsx`: hide Tenants/Users/Observability for non-super_admin
+- Frontend route guards on `/admin/tenants`, `/admin/users`, `/admin/observability` — redirect non-super_admin to `/admin/applications`
+- **Do NOT remove backend `RequireSuperAdmin` checks** — frontend guards are UX only; backend authorization remains mandatory
 
-**Scope:** Medium (2–3 days). Purely frontend — no new Go work.
+**Files:** `frontend/src/components/Sidebar.tsx`, `frontend/src/hooks/useAuth.ts` (or existing auth util), 3 admin page files.
+
+**Scope:** Medium (1–2 days). Purely frontend — no new Go work.
 
 ---
 
-### Gap 3 — Tenant Provisioning UX (medium)
+### Gap 3 — Tenant Provisioning Wizard (medium) — Step 35
 
-**What:** Creating a new tenant customer currently requires:
-1. POST `/api/v1/admin/tenants` (create tenant)
-2. POST `/api/v1/admin/users` (create user, assign tenant)
-3. PATCH `/api/v1/admin/tenants/{id}/quota` (set quota)
-
-No single guided flow. Easy to miss a step.
-
-**Why it matters:** Super_admins onboarding new customers need a reliable, fast path. Errors (user with no tenant, tenant with no users) create broken states.
+**What:** Creating a new tenant customer currently requires 3 separate API calls. No guided flow.
 
 **What to build:**
-- "New Tenant" wizard modal on `/admin/tenants` page: Step 1 (tenant name + slug + email domain) → Step 2 (initial admin user credentials) → Step 3 (quota defaults) → Confirm → creates all three in one flow
-- Backend: a single `POST /api/v1/admin/tenants/provision` endpoint that creates tenant + user + quota atomically in a transaction (or the frontend calls the 3 existing endpoints in sequence — simpler)
-- Files: `frontend/src/app/admin/tenants/page.tsx` (add wizard modal), optionally `go/internal/admin/tenants.go` (provision endpoint)
+- "New Tenant" wizard modal on `/admin/tenants`: tenant → user → quota → confirm
+- Frontend calls the 3 existing endpoints in sequence (simpler than a new atomic backend endpoint)
 
-**Scope:** Medium (1–2 days). Frontend wizard + optional Go atomic endpoint.
+**Scope:** Medium (1–2 days).
 
 ---
 
-### Gap 4 — SSO / OIDC (large)
+### Gap 4 — SSO / OIDC Frontend Wiring (small–medium) — Step 37
 
-**What:** Enterprise customers authenticate via their company IdP (Google Workspace, Azure AD, Okta, Keycloak). The login page needs email-domain detection → IdP redirect → OIDC callback → issue tenant-scoped JWT.
-
-**Why it matters:** Enterprise customers will not create individual username/password accounts. SSO is a commercial requirement, but it's NOT needed for initial multi-tenant demo or for customers comfortable with username/password.
+**What:** The backend OIDC flow is COMPLETE (Steps 5, 8, 9, 17, 18). What's missing:
+- A Keycloak test IdP in Docker (`--profile sso`) for local end-to-end testing
+- The login page email-first flow: enter email → call `GET /auth/api/v1/auth/tenant-lookup?email=` → if `idp_configured=true`, redirect to `/auth/oidc/start?tenant={slug}`; otherwise show password form
 
 **What to build:**
-- `them.tenant_idp_configs` table (or use existing `idp_config` JSONB on `them.tenants`): maps email domain → OIDC provider URL + client_id + client_secret
-- Login page: email input → domain lookup → redirect to IdP or show password form
-- OIDC callback handler in `them-auth-go`: exchange code → validate ID token → upsert user → issue the-M JWT with tenant_id
-- Test IdP: Keycloak in Docker (`docker-compose.dev.yml` profile `sso`)
-- Files: `go/internal/authserver/oidc.go` (new), `go/cmd/auth-server/main.go`, `frontend/src/app/login/page.tsx`
+- `docker-compose.dev.yml`: add `them-keycloak` service (profile `sso`) — `quay.io/keycloak/keycloak`, pre-configured realm export in `keycloak/`
+- `frontend/src/app/login/page.tsx`: email-first flow (tenant-lookup endpoint already exists at `/auth/api/v1/auth/tenant-lookup`)
 
-**Scope:** Large (5–7 days). Requires Keycloak setup, OIDC flow, DB changes, frontend login page redesign.
+**Scope:** Small–medium (1–2 days). Backend requires no changes.
 
 ---
 
-### Gap 5 — Tenant Onboarding Flow (small)
+### Gap 5 — Tenant Onboarding Flow (small) — Step 36
 
-**What:** A brand-new tenant admin logs in for the first time and sees an empty dashboard. They need to: set an LLM API key, create their first application, create their first entry point. Currently nothing guides them.
+**What:** New tenant admin logs in to empty dashboard with no guidance.
 
-**Why it matters:** Without onboarding guidance, tenant admins hit a blank screen and don't know what to do first.
+**What to build:** "Get started" banner on `/admin/applications` when `applications.length === 0`. Frontend only.
 
-**What to build:**
-- "Get started" banner on `/admin/applications` when `applications.length === 0` with 3-step checklist: 1. Set LLM key → 2. Create app → 3. Connect entry point
-- No new backend needed — all the APIs exist
-
-**Scope:** Small (0.5 days). Frontend only.
+**Scope:** Small (0.5 days).
 
 ---
 
-## Proposed Build Order
+### Gap 6 — Live Two-Tenant API E2E Test (small) — Step 38
 
-| Step | Name | Rationale |
-|---|---|---|
-| **33** | Tenant login verification + fix | ✅ COMPLETE (2026-09-06) |
-| **34** | Tenant-scoped dashboard (role-based nav) | Makes multi-tenant visible and testable from the UI |
-| **35** | Tenant provisioning wizard | Unblocks super_admin workflow; needed before real customer demos |
-| **36** | Tenant onboarding flow | Small; improves first-login UX once login works |
-| **37** | SSO / OIDC (Keycloak) | Large; defer until Steps 33–36 are proven |
+**What:** UM-13/14 use a fakeStore (no DB, no RLS). `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`) tests DB-level isolation only, not the HTTP stack. No test covers the full path: login → JWT → bridge API → RLS → response.
+
+**What to build:** A Python test script (using urllib — curl blocked by shell permissions) that:
+1. Logs in as super_admin, creates tenant A + user A and tenant B + user B
+2. Logs in as user A, creates an application
+3. Logs in as user B, verifies the application is NOT visible (empty list)
+4. Verifies user B gets 403 on super_admin routes
+
+**Scope:** Small (0.5–1 day).
+
+---
+
+## Build Order
+
+| Step | Name | Scope | Status |
+|---|---|---|---|
+| **33** | Tenant login chain + contract alignment | Small | ✅ COMPLETE (2026-09-06, 5b2e283) |
+| **34** | Role-based nav + frontend route guards | Medium | **Next** |
+| **35** | Tenant provisioning wizard | Medium | After 34 |
+| **36** | Tenant onboarding (first-login guidance) | Small | After 35 |
+| **37** | SSO frontend wiring + Keycloak test IdP | Small–Medium | After 36 (backend already done) |
+| **38** | Live two-tenant API E2E test | Small | Can be done any time after 33 |
+| **—** | Group mapping super_admin guardrail | Small | Security hardening; schedule with Step 37 |
 
 ---
 
 ## Key Design Decisions
 
-**One user = one tenant (current):** `tenant_memberships` has `UNIQUE(user_id, tenant_id)` — one membership per user. This is the right constraint for now. Multi-tenant-per-user (e.g. a consultant) would require a tenant-switch UX and is deferred.
+**Multi-membership support:** The DB schema allows one user in multiple tenants (`UNIQUE(user_id, tenant_id)` permits multiple rows per user, one per tenant). `issuePair()` picks the first row when no `tenant_slug` is given at login. To log into a specific tenant: `POST /api/v1/auth/login` with `{"tenant_slug":"acme"}`. The frontend does not yet expose this field.
 
-**Username/password first, SSO later:** Steps 33–36 use bcrypt passwords (already working). SSO is Gap 4 and requires Keycloak. No dependency between them — both paths issue the same JWT format.
+**Refresh does not preserve tenant selection:** Refresh tokens carry only `user_id`. `Refresh()` calls `issuePair(ctx, user, "")` — always picks the first membership row, ignoring the tenant originally selected at login. Users with multiple memberships must re-login to switch tenants. This is a documented limitation; tenant-switch UX is deferred.
 
-**RLS is the isolation guarantee:** The application layer does NOT filter by tenant_id in queries — it sets a PG GUC (`app.tenant_id`) and lets RLS policies enforce isolation. This means a bug in the frontend nav (Gap 2) leaks no data — it's a UX problem, not a security problem.
+**OIDC group mapping privilege escalation risk:** `them.tenant_group_mappings.role` has a DB CHECK that allows `'super_admin'` as a value. If a super_admin creates a group mapping with `role='super_admin'`, all OIDC users in that IdP group get platform `super_admin` via `UpsertOIDCUser` (which resolves `auth_service.roles WHERE name = role`). Current mitigation: only super_admin can write group mappings (API-layer enforcement). Future guardrail (Step 37): tighten the CHECK to `('admin','member','viewer')` only.
+
+**UM-13/14 are unit tests, not live RLS tests:** They use a fakeStore (in-memory, no DB, no RLS). The real live two-tenant RLS test is `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`). A live auth→bridge→RLS HTTP E2E test does not yet exist (Gap 6, Step 38).
+
+**RLS is the isolation guarantee:** The application layer does NOT filter by tenant_id in queries — it sets a PG GUC (`app.tenant_id`) and lets RLS policies enforce isolation. A bug in the frontend nav (Gap 2) leaks no data — it's a UX problem, not a security problem.
 
 **Tenant_id always from JWT, never URL/header:** `AdminTenantMiddleware` reads tenant_id from JWT claims only. This invariant must never be violated in new code.
 
@@ -141,12 +151,13 @@ No single guided flow. Easy to miss a step.
 
 After Steps 33–35 are complete, the following must work:
 
-- [ ] Super_admin logs in at `/login` → sees full admin nav (Tenants, Users, Observability)
+- [ ] Super_admin logs in → sees full admin nav (Tenants, Users, Observability)
 - [ ] Super_admin creates tenant "Acme Corp" via New Tenant wizard
 - [ ] Super_admin creates user `alice@acme.com`, assigns to "Acme Corp" as `admin`
-- [ ] Alice logs in → JWT contains `tenant_id = <acme-uuid>`
-- [ ] Alice sees only her tenant's nav (Applications, Runs, MCP, My Tenant — no Tenants/Users/Observability)
-- [ ] Alice creates an application → it's created under Acme's tenant_id
-- [ ] Super_admin logs in → sees Acme's application in observability summary
-- [ ] Bob from a different tenant logs in → cannot see Acme's application (RLS blocks it)
-- [ ] Alice's runs are quota-gated by Acme's quota limits, not the platform default
+- [ ] Alice logs in → JWT contains `tenant_id = <acme-uuid>`, `role = "admin"`
+- [ ] Alice sees tenant-scoped nav (Applications, Runs, MCP, My Tenant — no Tenants/Users/Observability)
+- [ ] Navigating directly to `/admin/users` as Alice → redirected to `/admin/applications`
+- [ ] Alice creates an application → created under Acme's tenant_id (RLS scopes it)
+- [ ] Super_admin sees Acme's application in observability summary
+- [ ] Bob (different tenant) logs in → cannot see Acme's application (RLS blocks it)
+- [ ] Alice's runs are quota-gated by Acme's quota limits

@@ -1,9 +1,9 @@
-# Handover — Multi-Tenancy (Steps 19–23 + H2 complete; RLS CLOSED; Step 29 next)
-**Date:** 2026-09-05
+# Handover — Multi-Tenancy (Steps 1–33 complete; Step 34 next)
+**Date:** 2026-09-06
 **Branch:** main
-**HEAD:** 537fcb3 (test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests)
-**Steps complete:** 1 → 23 + H2 (RLS closure — 28 tables, full superuser removal) + RLS verification complete
-**Unit tests:** all packages pass, 0 failures (S1 total: 1106, `go test ./...` total: 1037)
+**HEAD:** 5b2e283 (fix(auth): Step 33 closure — contract alignment, /me role fix, two-tenant regression tests)
+**Steps complete:** 1 → 23 + H2 (RLS) + 29 + 30 + 31 + 32 + 33 (tenant login chain + contract alignment)
+**Unit tests:** all packages pass, 0 failures (`go test ./...` — 1053 pass, S1-40: 83 tests)
 **Integration tests:** `go test -tags=integration ./internal/db/...` — all pass (TwoTenantFullIsolation, CatalogVerification CV-01..05)
 **RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete and verified
 
@@ -76,12 +76,17 @@
 | Step 23 | Audit write path — AuditWriter (3s timeout, fail-open); agent/app/tenant create+update+delete wired; them_audit_write_errors_total metric; AL-04 integration test | Complete | 10628a3 |
 | Step H2 | RLS closure — migration 078 (4 remaining tables); required DB pools config; full superuser removal from cmd/them+worker+dag-worker; 27-table integration test + catalog verification | Complete | b0cdb79 |
 | RLS verify | Fix TestRLS_TwoTenantFullIsolation (audit_logs/middleware SELECT exclusion, orchestrators count fix, eager cleanupData); add AR-02 (MCP probe_token) + AR-03 (tenant client_secret) handler-path redaction tests | Complete | 537fcb3 |
+| Step 29 | Orchestrator hard-delete: DELETE FROM (not UPDATE enabled=false); name freed immediately for reuse; E2E test 14 cleanup fixed to use orchestrator name | Complete | f787894 |
+| Step 30 | Tenant self-service API + frontend settings page (`/tenant/settings`): GET/PATCH /tenant/settings, GET /tenant/quota; RequireTenantAdmin middleware; "My Tenant" sidebar | Complete | bfc98a2 |
+| Step 31 | Quota enforcement for api_requests_per_minute (Redis INCR) + monthly_llm_tokens (DB SUM); 8 new unit tests QE-10..17 | Complete | 1c2bc3a |
+| Step 32 | User management API + frontend page: full CRUD GET/POST/PATCH/DELETE /api/v1/admin/users, reset-password, list-tenants; bcrypt + tenant membership; 12 tests UM-01..12 | Complete | 9b5c320 |
+| Step 33 | Tenant login chain alignment: CreateUser role/tenant_role contract fixed; /me returns JWT membership role (not DB global role); regression tests UM-13 (two-tenant isolation) + UM-14 (refresh carries tenant) | Complete | 5b2e283 |
 
 ---
 
 ## Current pause point — tenant roadmap status
 
-**Steps 1–23 + H2 are complete. RLS is fully closed — verified 2026-09-05.**
+**Steps 1–23 + H2 + 29–33 are complete. Step 34 is next.**
 
 All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant full isolation test passes (24 table checks per tenant). Cross-tenant INSERT blocked by WITH CHECK. Catalog verification CV-01..05 passes. Handler-path audit redaction verified end-to-end for agent auth_token (AR-01), MCP probe_token (AR-02), tenant client_secret (AR-03).
 
@@ -96,14 +101,23 @@ All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant ful
 
 ⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
-### Next recommended: Step 29
+### Next recommended: Step 34 — Role-based nav + frontend route guards
 
-**Step 29 candidates (pick one):**
+**Frontend only. No new Go work. No new DB schema.**
 
-1. **Orchestrator soft-delete → hard-delete** — `DeleteOrchestrator` currently does `UPDATE ... SET enabled=false` which blocks name reuse. Change to `DELETE FROM them.orchestrators`. Low scope, high correctness value.
-2. **Tenant self-service provisioning** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
-3. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
-4. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
+1. Read JWT `role` from `/api/auth/me` response.
+2. `frontend/src/components/Sidebar.tsx`: hide Tenants/Users/Observability for non-super_admin.
+3. Add `useRequireSuperAdmin()` hook — redirect to `/admin/applications` if not super_admin.
+4. Apply to: `/admin/tenants/page.tsx`, `/admin/users/page.tsx`, `/admin/observability/page.tsx`.
+5. **Do NOT remove backend `RequireSuperAdmin` checks** — frontend guards are UX only.
+
+Steps 35–38: see `docs/MULTITENANT_PLAN.md` Build Order table.
+
+Key facts for the new session:
+- UM-13/14 are **unit tests** (fakeStore, no real DB/RLS) — not live two-tenant E2E
+- OIDC backend is **COMPLETE** — `oidc.go`, `oidc_jwks.go`, `oidc_store.go` all built (Steps 5/8/9/17/18). Gap is frontend email-first flow + Keycloak test IdP (Step 37).
+- `tenant_group_mappings.role` CHECK allows `'super_admin'` — escalation risk. Current mitigation: API-layer enforcement. Guardrail (restrict to `('admin','member','viewer')`) deferred to Step 37.
+- Migrations applied through 080 — see `docs/SCHEMA.md`.
 
 ---
 

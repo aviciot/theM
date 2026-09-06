@@ -1,5 +1,5 @@
 # Documentation Index — the-M
-# Last updated: 2026-08-21
+# Last updated: 2026-09-06
 
 One line per doc. Read this first, then open only what you need.
 **Code beats docs.** If they diverge, fix the doc — stale docs are a bug.
@@ -11,8 +11,9 @@ One line per doc. Read this first, then open only what you need.
 | File | Read when |
 |---|---|
 | `CLAUDE.md` | Every session — always read first |
-| `docs/STATUS.md` | Start of session — current containers, migration state, known blockers |
 | `docs/CURRENT.md` | Start of session — current HEAD, next task, hard constraints |
+| `docs/HANDOVER.md` | Start of new session after a context handover — completed steps, standing constraints |
+| `docs/STATUS.md` | ⚠️ HISTORICAL — last updated 2026-08-31. Current state is in `docs/CURRENT.md` |
 
 ---
 
@@ -71,7 +72,7 @@ cd go && go test ./...
 
 | Question | Read |
 |---|---|
-| What's running right now? | `docs/CURRENT.md` (STATUS.md is historical — last updated 2026-08-31) |
+| What's running right now? | `docs/CURRENT.md` — STATUS.md is historical |
 | What's the next task? | `docs/CURRENT.md` |
 | How does the LLM agentic loop work? | `docs/CURRENT.md` + `docs/implementation-status.md` |
 | How does auth work? | `docs/AUTH.md` |

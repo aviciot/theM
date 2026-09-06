@@ -164,13 +164,60 @@ Used by:
 
 ---
 
-## 4. Auth CRUD migration status
+## 4. OIDC / SSO flow
+
+**Status: Backend COMPLETE (Steps 5, 8, 9, 17, 18). Frontend wiring pending (Step 37).**
+
+The full authorization-code flow with PKCE is implemented in `go/internal/authserver/`:
+
+| File | Purpose |
+|---|---|
+| `oidc.go` | `OIDCHandlers.Start` + `OIDCCallback` — PKCE, HMAC state, code exchange, JWT issuance |
+| `oidc_jwks.go` | RS256 id_token verification; JWKS key caching with rotation awareness |
+| `oidc_store.go` | `GetTenantIDPConfig`, `UpsertOIDCUser`, `GetGroupRole` |
+
+### Login flow
+
+```
+1. GET /auth/oidc/start?tenant={slug}
+   → generate PKCE code_verifier + S256 challenge
+   → HMAC-sign state (slug + nonce), set cookie
+   → redirect to IdP /authorize
+
+2. GET /auth/oidc/callback?code=&state=
+   → verify HMAC state, read PKCE cookie
+   → exchange code with IdP → id_token
+   → verify RS256 signature via JWKS
+   → UpsertOIDCUser (upsert user + tenant_membership)
+   → GetGroupRole: lookup them.tenant_group_mappings for role
+   → issuePair → HS256 JWT pair (same cookie format as password login)
+   → Set-Cookie them_access_token + them_refresh_token
+   → redirect to /
+```
+
+### Email-first tenant discovery
+
+`GET /api/v1/auth/tenant-lookup?email=alice@acme.com`
+
+Returns `{"tenant_slug":"acme","idp_configured":true}` or `{"idp_configured":false}`.
+
+Frontend should call this on email entry: if `idp_configured=true`, redirect to `/auth/oidc/start?tenant={slug}`; otherwise show password form.
+
+### Group mapping privilege escalation
+
+`them.tenant_group_mappings.role` CHECK allows `'super_admin'`. If mapped, `UpsertOIDCUser` resolves `auth_service.roles WHERE name = role` — sets platform super_admin. Only super_admin can write mappings (API-layer mitigation). Guardrail (Step 37): tighten CHECK to `('admin','member','viewer')`.
+
+---
+
+## 5. Auth CRUD migration status
 
 | Capability | Status |
 |---|---|
 | Login / me / refresh / logout | ✅ Go (`them-auth-go`) |
 | Users CRUD + tenant assignment | ✅ Go (`them-auth-go`, Step 32) |
-| Tenant lookup by email domain | ✅ Go (`them-auth-go`) |
+| Tenant lookup by email domain | ✅ Go (`them-auth-go`, Step 17) |
+| OIDC backend (PKCE, RS256, group mappings) | ✅ Go (`them-auth-go`, Steps 5/8/9/17/18) |
+| OIDC frontend wiring + Keycloak test IdP | ⚠️ Partial (Step 37) |
 | Roles CRUD | ❌ Not exposed (data seeded via SQL) |
 | Teams CRUD | ❌ Not migrated |
 | API keys / MCP tokens | ❌ Not migrated |

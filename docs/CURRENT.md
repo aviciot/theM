@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-06 (Step 33 FULLY COMPLETE — contract fix, /me role, regression tests, doc sync)
+# Last updated: 2026-09-06 (pre-Step-34 architecture sync — MULTITENANT_PLAN corrected, all docs current)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+5b2e283  fix(auth): Step 33 closure — contract alignment, /me role fix, two-tenant regression tests
+80924a1  fix(users): Step 33 — fix CreateUser role mapping + verify tenant login chain
+47461f7  docs: add MULTITENANT_PLAN.md — vision, gaps, and build order for Steps 33–37
+9b5c320  feat(users): Step 32 — user management API + frontend page
 1c2bc3a  feat(quota): Step 31 — enforce api_requests_per_minute + monthly_llm_tokens
-a2b0274  docs: update CURRENT.md — Step 30 complete, HEAD bfc98a2
-bfc98a2  feat(tenant): Step 30 — tenant self-service API + frontend settings page
-e455fae  fix(e2e): test_14 delete orchestrator by name, not UUID
-f787894  feat(orch): Step 29 — hard-delete orchestrator; free name on delete
 ```
 
 ---
@@ -148,15 +148,28 @@ Live smoke test (2026-09-06): create user → login → JWT has correct `tenant_
 
 ### Next recommended task
 
-**Step 34 — Role-based dashboard nav** (see `docs/MULTITENANT_PLAN.md`):
-- Read JWT `role` from frontend session cookie (decode the JWT payload client-side, or use `/auth/me` response)
-- In `Sidebar.tsx`: show/hide nav items based on role — `super_admin` sees Tenants/Users/Observability; `admin`/`member`/`viewer` do not
-- Guard pages `/admin/tenants`, `/admin/users`, `/admin/observability` — redirect non-super_admin to `/admin/applications`
-- Frontend only — no new Go work, no new DB schema
-- Key files: `frontend/src/components/Sidebar.tsx`, `frontend/src/lib/api.ts` (auth context), individual page files
+**Step 34 — Role-based dashboard nav + route guards** (see `docs/MULTITENANT_PLAN.md` Gap 2):
 
-Key reminder:
+Frontend only. No new Go work. No new DB schema.
+
+1. Read JWT `role` claim from `/api/auth/me` response (already called on load via `useAuth` or equivalent).
+2. `frontend/src/components/Sidebar.tsx`: hide Tenants/Users/Observability items for non-super_admin.
+3. Add `useRequireSuperAdmin()` hook (or inline guard) — redirect to `/admin/applications` if role ≠ `super_admin`.
+4. Apply guard to: `frontend/src/app/admin/tenants/page.tsx`, `frontend/src/app/admin/users/page.tsx`, `frontend/src/app/admin/observability/page.tsx`.
+5. **Do NOT remove backend `RequireSuperAdmin` checks** — frontend guards are UX only.
+
+Steps 34–38 roadmap (see MULTITENANT_PLAN.md Build Order table):
+- **34** — Role-based nav + frontend route guards (Medium) — **Next**
+- **35** — Tenant provisioning wizard (Medium) — After 34
+- **36** — Tenant onboarding first-login guidance (Small) — After 35
+- **37** — SSO frontend wiring + Keycloak test IdP (Small–Medium; backend already complete) — After 36
+- **38** — Live two-tenant API E2E test (Small) — any time after Step 33
+- **—** — Group mapping super_admin guardrail: tighten `db/059` CHECK to `('admin','member','viewer')` — schedule with Step 37
+
+Key reminders:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
+- UM-13/14 are unit tests (fakeStore) — NOT live RLS tests. Live RLS test: `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`)
+- OIDC backend is COMPLETE (Steps 5/8/9/17/18). Gap 4 is frontend + Keycloak IdP only.
 - E2E test: `TOKEN=$(docker exec them-auth-go curl -s -X POST http://172.24.0.10:8088/auth/api/v1/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))") && ADMIN_JWT="$TOKEN" python3.12 scripts/tests/run_tests.py 14`
 
 ### Known blockers / pre-conditions
