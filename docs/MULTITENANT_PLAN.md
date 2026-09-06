@@ -155,8 +155,8 @@ Live smoke test: create user → assign to tenant A → login → JWT has `tenan
 | **33** | Tenant login chain + contract alignment | Small | ✅ COMPLETE (2026-09-06, 5b2e283) |
 | **34** | Role-based nav + frontend route guards | Medium | ✅ COMPLETE (2026-09-06, 82a8f22) |
 | **35** | Tenant provisioning wizard | Medium | ✅ COMPLETE (2026-09-06, c95976d) |
-| **36** | Tenant onboarding (first-login guidance) | Small | **Next** |
-| **37** | SSO: tenant-admin self-service IdP form + Keycloak test IdP + E2E smoke | Medium | After 36 |
+| **36** | Tenant onboarding (first-login guidance) | Small | ✅ COMPLETE (2026-09-06, 34687ad) |
+| **37** | SSO: tenant-admin self-service IdP form + Keycloak test IdP + E2E smoke | Medium | **Next** |
 | **37-S** | client_secret encryption at rest (production-readiness blocker) | Small–Medium | Before any production OIDC deployment |
 | **38** | Live two-tenant API E2E test | Small | Can be done any time after 33 |
 | **—** | Group mapping super_admin guardrail | Small | ✅ COMPLETE (2026-09-06) — migration 081, validMemberRoles guard, OIDCCallback rejection |

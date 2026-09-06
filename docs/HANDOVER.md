@@ -85,12 +85,13 @@
 | Pre-34 auth hardening | OIDC role separation (platform=viewer always; super_admin rejected at app+DB layer; migration 081); refresh preserves tenant (TenantID in refreshClaims; issuePairByTenantID; GetTenantMembershipByID); tests OIDC-28/29/30 | Complete | 7920bf2 |
 | Step 34 | Role-based nav + super_admin route guards: Sidebar SUPER_ADMIN_NAV split; useRequireSuperAdmin hook; tenants/users/observability pages guarded | Complete | 82a8f22 |
 | Step 35 | Tenant provisioning wizard: 4-step modal (tenant → admin user → quota → done); ProvisionWizard.tsx extracted; skippable steps 2+3; skipped-step warnings on done screen | Complete | c95976d |
+| Step 36 | Tenant onboarding banner: GetStartedBanner on empty applications page; role-aware headline; 3-step guide; replaces minimal dashed card | Complete | 34687ad |
 
 ---
 
 ## Current pause point — tenant roadmap status
 
-**Steps 1–23 + H2 + 29–35 are complete. Step 36 is next.**
+**Steps 1–23 + H2 + 29–36 are complete. Step 37 is next.**
 
 All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant full isolation test passes (24 table checks per tenant). Cross-tenant INSERT blocked by WITH CHECK. Catalog verification CV-01..05 passes. Handler-path audit redaction verified end-to-end for agent auth_token (AR-01), MCP probe_token (AR-02), tenant client_secret (AR-03).
 
@@ -124,9 +125,9 @@ What was built:
 - `frontend/src/app/admin/tenants/page.tsx`: imports `ProvisionWizard`, removed inline `CreateModal`.
 - `tsc --noEmit`: zero new errors.
 
-### Next recommended: Step 36 — Tenant onboarding (first-login guidance)
+### Step 36 — Tenant onboarding banner: COMPLETE (34687ad)
 
-"Get started" banner on `/admin/applications` when `applications.length === 0`. Frontend only. Small scope (~half a day).
+`GetStartedBanner` component added to `frontend/src/app/admin/applications/components/ListView.tsx`. Shown when `!loading && list.length === 0`. Role-aware headline (super_admin vs tenant admin); three-step guide (Create App → Configure Agents → Share Entry Point); primary "Create Application" CTA. Replaces the minimal dashed card. No new API calls, no Go changes. tsc: zero new errors.
 
 ### Step 37 — SSO: corrected scope (2026-09-06 audit — see docs/sso-access-audit.md)
 
