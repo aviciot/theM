@@ -289,7 +289,6 @@ export default function ProvisionWizard({ onClose, onCreated }: {
 
   function handleTenantCreated(t: TenantRecord) {
     setTenant(t);
-    onCreated(t);
     setStep(2);
   }
 
@@ -299,13 +298,18 @@ export default function ProvisionWizard({ onClose, onCreated }: {
   function handleQuotaDone() { setStep(4); }
   function handleQuotaSkip() { setSkipped(s => ({ ...s, quota: true })); setStep(4); }
 
+  function handleDone() {
+    if (tenant) onCreated(tenant);
+    onClose();
+  }
+
   return (
     <div style={overlay} onClick={onClose}>
       <div style={modal} onClick={e => e.stopPropagation()}>
         {step === 1 && <Step1Tenant onDone={handleTenantCreated} onClose={onClose} />}
         {step === 2 && tenant && <Step2User tenant={tenant} onDone={handleUserDone} onSkip={handleUserSkip} />}
         {step === 3 && tenant && <Step3Quota tenant={tenant} onDone={handleQuotaDone} onSkip={handleQuotaSkip} />}
-        {step === 4 && tenant && <Step4Done tenant={tenant} skipped={skipped} onClose={onClose} />}
+        {step === 4 && tenant && <Step4Done tenant={tenant} skipped={skipped} onClose={handleDone} />}
       </div>
     </div>
   );
