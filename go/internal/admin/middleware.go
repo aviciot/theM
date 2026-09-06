@@ -1,6 +1,7 @@
 // Package admin provides REST API handlers for administrative operations:
 // managing agents, orchestrators, applications, entry points, and runs.
-// All admin endpoints require JWT authentication with the super_admin role.
+// Tenant-scoped endpoints require admin or super_admin role; platform-global
+// endpoints (tenants, llm-providers, observability) require super_admin only.
 //
 // SQL query strings and row-scan logic live in the dal sub-package.
 // Handler files are thin HTTP translators that call dal functions.

@@ -402,3 +402,148 @@ func TestTenantHTTP_TenantlessToken_Runs_403(t *testing.T) {
 	// Bearer token is ignored; the auto-injected super_admin JWT (with tenant_id) allows access.
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-12: JWT tenant_id controls /runs access; bearer token is irrelevant")
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// S1-34b — Tenant admin (role=admin) access to tenant-scoped routes.
+//
+// These tests verify the router split: tenant-scoped routes accept admin role;
+// platform-global routes remain super_admin-only.
+//
+//	TH-13  admin JWT → 200 on /admin/agents (tenant-scoped)
+//	TH-14  admin JWT → 200 on /admin/applications (tenant-scoped)
+//	TH-15  admin JWT → 200 on /admin/orchestrators (tenant-scoped)
+//	TH-16  admin JWT → 200 on /runs (tenant-scoped)
+//	TH-17  admin JWT → 403 on /admin/llm-providers (platform-global, super_admin only)
+//	TH-18  member JWT → 403 on /admin/agents (admin console requires admin or super_admin)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// thBuildAdminJWT builds an HS256 JWT with role=admin and a tenant_id claim.
+func thBuildAdminJWT(t *testing.T, secret []byte, tenantID string) string {
+	t.Helper()
+	now := time.Now().Unix()
+	headerEnc := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload, err := json.Marshal(map[string]any{
+		"sub": "2", "username": "alice", "role": "admin",
+		"tenant_id": tenantID,
+		"exp": now + 3600, "iat": now,
+	})
+	require.NoError(t, err)
+	payloadEnc := base64.RawURLEncoding.EncodeToString(payload)
+	sigInput := headerEnc + "." + payloadEnc
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(sigInput))
+	return sigInput + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// thBuildMemberJWT builds an HS256 JWT with role=member (not admin or super_admin).
+func thBuildMemberJWT(t *testing.T, secret []byte, tenantID string) string {
+	t.Helper()
+	now := time.Now().Unix()
+	headerEnc := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload, err := json.Marshal(map[string]any{
+		"sub": "3", "username": "bob", "role": "member",
+		"tenant_id": tenantID,
+		"exp": now + 3600, "iat": now,
+	})
+	require.NoError(t, err)
+	payloadEnc := base64.RawURLEncoding.EncodeToString(payload)
+	sigInput := headerEnc + "." + payloadEnc
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(sigInput))
+	return sigInput + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// tenantAdminRouterWithJWT returns a test admin router that uses the provided
+// JWT string instead of auto-injecting a super_admin token.
+func tenantAdminRouterWithJWT(t *testing.T, cache *auth.Cache, jwtToken string) http.Handler {
+	t.Helper()
+	db := &fakeDB{queryRows: newFakeRows(nil)}
+	secret := []byte(thJWTSecret)
+	jwtMW := func(next http.Handler) http.Handler {
+		inner := auth.HS256Middleware(secret)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r2 := r.Clone(r.Context())
+			r2.Header.Set("Authorization", "Bearer "+jwtToken)
+			inner(next).ServeHTTP(w, r2)
+		})
+	}
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
+}
+
+// TH-13: admin JWT with tenant_id → 200 on /admin/agents (tenant-scoped route).
+func TestTenantHTTP_AdminRole_Agents_200(t *testing.T) {
+	cache, _ := newTHCache()
+	jwt := thBuildAdminJWT(t, []byte(thJWTSecret), thBootstrapTenantID)
+	srv := httptest.NewServer(tenantAdminRouterWithJWT(t, cache, jwt))
+	defer srv.Close()
+
+	resp, err := thGet(srv, "/admin/agents", "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-13: admin role must reach /admin/agents")
+}
+
+// TH-14: admin JWT with tenant_id → 200 on /admin/applications (tenant-scoped route).
+func TestTenantHTTP_AdminRole_Applications_200(t *testing.T) {
+	cache, _ := newTHCache()
+	jwt := thBuildAdminJWT(t, []byte(thJWTSecret), thBootstrapTenantID)
+	srv := httptest.NewServer(tenantAdminRouterWithJWT(t, cache, jwt))
+	defer srv.Close()
+
+	resp, err := thGet(srv, "/admin/applications", "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-14: admin role must reach /admin/applications")
+}
+
+// TH-15: admin JWT with tenant_id → 200 on /admin/orchestrators (tenant-scoped route).
+func TestTenantHTTP_AdminRole_Orchestrators_200(t *testing.T) {
+	cache, _ := newTHCache()
+	jwt := thBuildAdminJWT(t, []byte(thJWTSecret), thBootstrapTenantID)
+	srv := httptest.NewServer(tenantAdminRouterWithJWT(t, cache, jwt))
+	defer srv.Close()
+
+	resp, err := thGet(srv, "/admin/orchestrators", "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-15: admin role must reach /admin/orchestrators")
+}
+
+// TH-16: admin JWT with tenant_id → 200 on /runs (tenant-scoped route).
+func TestTenantHTTP_AdminRole_Runs_200(t *testing.T) {
+	cache, _ := newTHCache()
+	jwt := thBuildAdminJWT(t, []byte(thJWTSecret), thBootstrapTenantID)
+	srv := httptest.NewServer(tenantAdminRouterWithJWT(t, cache, jwt))
+	defer srv.Close()
+
+	resp, err := thGet(srv, "/runs", "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-16: admin role must reach /runs")
+}
+
+// TH-17: admin JWT → 403 on /admin/llm-providers (platform-global, super_admin only).
+func TestTenantHTTP_AdminRole_LLMProviders_403(t *testing.T) {
+	cache, _ := newTHCache()
+	jwt := thBuildAdminJWT(t, []byte(thJWTSecret), thBootstrapTenantID)
+	srv := httptest.NewServer(tenantAdminRouterWithJWT(t, cache, jwt))
+	defer srv.Close()
+
+	resp, err := thGet(srv, "/admin/llm-providers", "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "TH-17: admin role must be blocked from platform-global /admin/llm-providers")
+}
+
+// TH-18: member JWT → 403 on /admin/agents (admin console requires admin or super_admin).
+func TestTenantHTTP_MemberRole_Agents_403(t *testing.T) {
+	cache, _ := newTHCache()
+	jwt := thBuildMemberJWT(t, []byte(thJWTSecret), thBootstrapTenantID)
+	srv := httptest.NewServer(tenantAdminRouterWithJWT(t, cache, jwt))
+	defer srv.Close()
+
+	resp, err := thGet(srv, "/admin/agents", "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "TH-18: member role must be blocked from admin console")
+}

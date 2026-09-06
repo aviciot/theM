@@ -27,7 +27,7 @@ The-M supports multiple isolated tenants (companies/customers) on a single insta
 | OIDC backend flow | ✅ Complete | Steps 5/8/9/17/18 — PKCE, RS256 JWKS, group mappings, HS256 JWT issuance |
 | Email-domain → tenant routing | ✅ Complete | `GET /auth/tenant-lookup?email=` live; `tenants.email_domain` indexed |
 | OIDC group claims → tenant role | ✅ Complete | `them.tenant_group_mappings`; `GetGroupRole` in OIDCCallback |
-| Tenant-scoped dashboard | ✅ Complete | Role-based nav (Step 34); super_admin route guards on tenants/users/observability |
+| Tenant-scoped dashboard | ✅ Complete | Role-based nav (Step 34); super_admin route guards on tenants/users/observability; router split (Step 34.5) — tenant admin can use Applications/Agents/Runs/MCP |
 | Tenant provisioning UX | ✅ Complete | 4-step wizard: tenant → admin user → quota → done (Step 35) |
 | SSO / OIDC frontend wiring | ⚠️ Partial | Login page email-first flow done; super-admin IdP config UI done; **tenant-admin self-service IdP form missing** (Step 37); Keycloak test IdP not yet in Docker |
 | Multi-tenant refresh (tenant preserved) | ✅ Complete | Refresh token carries tenant_id; issuePairByTenantID re-validates membership; OIDC callback also preserves tenant (OIDC-30) |
@@ -156,6 +156,7 @@ Live smoke test: create user → assign to tenant A → login → JWT has `tenan
 | **34** | Role-based nav + frontend route guards | Medium | ✅ COMPLETE (2026-09-06, 82a8f22) |
 | **35** | Tenant provisioning wizard | Medium | ✅ COMPLETE (2026-09-06, c95976d) |
 | **36** | Tenant onboarding (first-login guidance) | Small | ✅ COMPLETE (2026-09-06, 34687ad) |
+| **34.5** | Router split: tenant-scoped routes → RequireTenantAdmin; platform-global → RequireSuperAdmin | Small | ✅ COMPLETE (2026-09-06) |
 | **37** | SSO: tenant-admin self-service IdP form + Keycloak test IdP + E2E smoke | Medium | **Next** |
 | **37-S** | client_secret encryption at rest (production-readiness blocker) | Small–Medium | Before any production OIDC deployment |
 | **38** | Live two-tenant API E2E test | Small | Can be done any time after 33 |

@@ -32,9 +32,8 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 // Route classification:
 //
 //   - Tenant-scoped control-plane (agents, orchestrators, applications, tokens, runs):
-//     JWT + RequireSuperAdmin + AdminTenantMiddleware. TenantID comes from the JWT
-//     Claims set by jwtMiddleware; super_admin users with no tenant_id claim fall back
-//     to the bootstrap tenant (covers all UI-authenticated admin users).
+//     JWT + RequireTenantAdmin + AdminTenantMiddleware. Allows both admin and super_admin
+//     roles. TenantID comes from JWT claims; AdminTenantMiddleware sets the RLS GUC.
 //
 //   - Platform-global control-plane (llm-providers, monitoring-config, llm-routing, sessions):
 //     JWT + RequireSuperAdmin only. No tenant scoping — these are platform-wide resources.
@@ -56,6 +55,12 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 // Pass nil to disable background scan jobs (tests only).
 //
 // fernetKey is the 32-byte Fernet key derived from secretKey for agent token decryption.
+//
+// Auth tiers:
+//   - Tenant-scoped routes (agents, orchs, apps, runs, tokens, mcp, audit):
+//     JWT + RequireTenantAdmin (admin OR super_admin) + AdminTenantMiddleware (sets RLS GUC)
+//   - Platform-global routes (tenants, llm-providers, monitoring, sessions, observability):
+//     JWT + RequireSuperAdmin only
 //
 // Routes:
 //
@@ -133,21 +138,23 @@ func BuildRouter(
 	tenants := NewTenantsHandler(dbq, auditWriter)
 	managedApps := NewManagedAppsHandler(dbq)
 
-	// Admin routes — all require JWT + super_admin.
-	// Within /admin, tenant-scoped resources also require AdminTenantMiddleware.
-	r.Group(func(adminGroup chi.Router) {
+	// Admin + runs routes — all require JWT. Within /admin, routes are split into
+	// two authorization tiers via sub-groups:
+	//   - Tenant-scoped: RequireTenantAdmin (admin OR super_admin) + AdminTenantMiddleware
+	//   - Platform-global: RequireSuperAdmin only (no tenant scoping)
+	r.Group(func(jwtGroup chi.Router) {
 		if jwtMiddleware != nil {
-			adminGroup.Use(jwtMiddleware)
+			jwtGroup.Use(jwtMiddleware)
 		}
-		adminGroup.Use(RequireSuperAdmin(logger))
 
-		adminGroup.Route("/admin", func(a chi.Router) {
-			// Tenant-scoped sub-group: agents, orchestrators, applications, tokens.
-			// AdminTenantMiddleware extracts TenantID from the JWT Claims set by
-			// jwtMiddleware. Super_admin users with no tenant_id claim fall back to
-			// the bootstrap tenant — that covers all UI-authenticated admin users.
+		jwtGroup.Route("/admin", func(a chi.Router) {
+			// Tenant-scoped sub-group: agents, orchestrators, applications, tokens,
+			// MCP servers, audit logs. AdminTenantMiddleware sets the RLS GUC
+			// (app.tenant_id) from the JWT tenant_id claim — isolation is preserved.
 			a.Group(func(tenantScoped chi.Router) {
+				tenantScoped.Use(RequireTenantAdmin(logger))
 				tenantScoped.Use(AdminTenantMiddleware())
+
 				agents.Routes(tenantScoped)
 				orchs.Routes(tenantScoped)
 				defs.Routes(tenantScoped)
@@ -191,30 +198,32 @@ func BuildRouter(
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
-			// llm-routing, system-agents, sessions. No tenant scoping — these
-			// resources are platform-wide and apply to all tenants.
-			// /node-types is mounted here for route grouping but moved to the
-			// public group below — it needs no auth (static canvas metadata).
-			monitoring.Routes(a)
-			llmRouting.Routes(a)
-			llmProviders.Routes(a)
-			llmProviders.TenantProviderRoutes(a)
-			systemAgents.Routes(a)
-			tenants.Routes(a)
-			if pools != nil {
-				NewObservabilityHandler(pools).Routes(a)
-			}
-			managedApps.PlatformRoutes(a)
-			if sessionReader != nil {
-				NewSessionsHandler(sessionReader).Routes(a)
-			}
-			NewServicesStatsHandler(dbq, redis, logger).Routes(a)
+			// llm-routing, system-agents, sessions, tenants, observability.
+			// RequireSuperAdmin only — no tenant scoping.
+			a.Group(func(platformGlobal chi.Router) {
+				platformGlobal.Use(RequireSuperAdmin(logger))
+
+				monitoring.Routes(platformGlobal)
+				llmRouting.Routes(platformGlobal)
+				llmProviders.Routes(platformGlobal)
+				llmProviders.TenantProviderRoutes(platformGlobal)
+				systemAgents.Routes(platformGlobal)
+				tenants.Routes(platformGlobal)
+				if pools != nil {
+					NewObservabilityHandler(pools).Routes(platformGlobal)
+				}
+				managedApps.PlatformRoutes(platformGlobal)
+				if sessionReader != nil {
+					NewSessionsHandler(sessionReader).Routes(platformGlobal)
+				}
+				NewServicesStatsHandler(dbq, redis, logger).Routes(platformGlobal)
+			})
 		})
 
 		// Runs routes are at /runs (not /admin/runs) to match the existing Traefik
-		// rules that capture /api/v1/runs/*. They use JWT + super_admin + AdminTenantMiddleware
-		// (same auth as other admin routes) instead of the old BearerTenantMiddleware.
-		adminGroup.Group(func(runsGroup chi.Router) {
+		// rules that capture /api/v1/runs/*. Tenant-scoped: RequireTenantAdmin + AdminTenantMiddleware.
+		jwtGroup.Group(func(runsGroup chi.Router) {
+			runsGroup.Use(RequireTenantAdmin(logger))
 			runsGroup.Use(AdminTenantMiddleware())
 			runs.Routes(runsGroup)
 		})

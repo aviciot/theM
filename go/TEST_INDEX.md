@@ -1278,26 +1278,30 @@ per-tenant scoping in memory. Verifies four contracts per entity type:
 ### S1-34 · Tenant HTTP enforcement — `internal/admin/tenant_http_test.go`
 
 **Purpose:** R-4c2 — live HTTP-layer proof that `AdminTenantMiddleware` is wired on tenant-scoped
-admin routes (including runs, now under `/admin`) and that TenantID cannot be injected via headers
-or query params. Uses a real `auth.Cache` backed by an in-memory `thTokenQuerier` and `thRedis`.
-The test router is built via `admin.BuildRouter` with a wrapper JWT middleware that auto-injects a
-super_admin JWT, so `RequireSuperAdmin` and `AdminTenantMiddleware` operate concurrently.
-Note: `BearerTenantMiddleware` is no longer wired on runs — runs moved to /admin group (JWT-based).
+admin routes (including runs) and that TenantID cannot be injected via headers or query params.
+Also proves the router split: tenant-scoped routes allow `admin` role; platform-global routes
+require `super_admin`. Uses a real `auth.Cache` backed by in-memory fakes.
 
 | Test | What it proves |
 |---|---|
-| `TestTenantHTTP_MissingToken_Agents_401` | TH-01: super_admin JWT alone → 200 on /admin/agents (bootstrap tenant used) |
+| `TestTenantHTTP_MissingToken_Agents_401` | TH-01: super_admin JWT alone → 200 on /admin/agents |
 | `TestTenantHTTP_InvalidToken_Agents_401` | TH-02: bearer token present but admin JWT controls → 200 on /admin/agents |
-| `TestTenantHTTP_TokenWithoutTenant_Agents_403` | TH-03: valid token with empty TenantID → 403 on /admin/agents (bearer-only path test) |
-| `TestTenantHTTP_ValidToken_Agents_200` | TH-04: valid token with TenantID → handler reached (200) on /admin/agents |
+| `TestTenantHTTP_TokenWithoutTenant_Agents_403` | TH-03: JWT without tenant_id → 403 on /admin/agents |
+| `TestTenantHTTP_ValidToken_Agents_200` | TH-04: valid token with TenantID → 200 on /admin/agents |
 | `TestTenantHTTP_XTenantIDHeaderIgnored` | TH-05: X-Tenant-ID header cannot override token-derived TenantID |
 | `TestTenantHTTP_QueryTenantIDIgnored` | TH-06: ?tenant_id query param cannot override token-derived TenantID |
-| `TestTenantHTTP_MissingToken_Applications_401` | TH-07: super_admin JWT alone → 200 on /admin/applications (bootstrap tenant) |
-| `TestTenantHTTP_MissingToken_Runs_401` | TH-08: runs at /runs with AdminTenantMiddleware — super_admin JWT alone → 200 (bootstrap tenant) |
-| `TestTenantHTTP_PlatformGlobal_LLMProviders_NoTenantRequired` | TH-09: platform-global /admin/llm-providers → 200 with JWT only (no bearer) |
+| `TestTenantHTTP_MissingToken_Applications_401` | TH-07: super_admin JWT alone → 200 on /admin/applications |
+| `TestTenantHTTP_MissingToken_Runs_401` | TH-08: super_admin JWT alone → 200 on /runs |
+| `TestTenantHTTP_PlatformGlobal_LLMProviders_NoTenantRequired` | TH-09: platform-global /admin/llm-providers → 200 with super_admin JWT only |
 | `TestTenantHTTP_ValidToken_Orchestrators_200` | TH-10: valid token → 200 on /admin/orchestrators |
 | `TestTenantHTTP_ValidToken_Tokens_200` | TH-11: valid token → 200 on /admin/tokens |
-| `TestTenantHTTP_TenantlessToken_Runs_403` | TH-12: runs at /runs — bearer token irrelevant; JWT + AdminTenantMiddleware controls (200) |
+| `TestTenantHTTP_TenantlessToken_Runs_403` | TH-12: bearer token irrelevant; JWT + AdminTenantMiddleware controls /runs (200) |
+| `TestTenantHTTP_AdminRole_Agents_200` | TH-13: admin JWT → 200 on /admin/agents (tenant-scoped, router split) |
+| `TestTenantHTTP_AdminRole_Applications_200` | TH-14: admin JWT → 200 on /admin/applications (tenant-scoped) |
+| `TestTenantHTTP_AdminRole_Orchestrators_200` | TH-15: admin JWT → 200 on /admin/orchestrators (tenant-scoped) |
+| `TestTenantHTTP_AdminRole_Runs_200` | TH-16: admin JWT → 200 on /runs (tenant-scoped) |
+| `TestTenantHTTP_AdminRole_LLMProviders_403` | TH-17: admin JWT → 403 on /admin/llm-providers (platform-global, super_admin only) |
+| `TestTenantHTTP_MemberRole_Agents_403` | TH-18: member JWT → 403 on /admin/agents (console requires admin or super_admin) |
 
 **Trigger:** any change to `internal/admin/router.go`, `internal/auth/middleware.go`, or `internal/admin/` handler files
 
@@ -3107,7 +3111,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-31 | auth/tenant_middleware (R-4b) | 15 |
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
-| S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
+| S1-34 | admin tenant HTTP enforcement (R-4c2) | 18 |
 | S1-35 | execution lifecycle (unification refactor) | 22 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan + CT-01 cross-tenant) | 9 |
 | S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping + Step 32 user management + Step 33 two-tenant regression) | 83 |
@@ -3179,4 +3183,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1056** |
+| **`go test ./...` total** | | **1062** |
