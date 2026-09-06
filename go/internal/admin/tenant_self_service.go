@@ -18,8 +18,9 @@ type TenantSelfServiceHandler struct {
 }
 
 // NewTenantSelfServiceHandler creates a TenantSelfServiceHandler.
-func NewTenantSelfServiceHandler(db DBQuerier, audit *AuditWriter) *TenantSelfServiceHandler {
-	return &TenantSelfServiceHandler{db: dal.NewDB(db), audit: audit}
+// idpKey is the AES-256 encryption key for IdP client_secret; nil disables encryption.
+func NewTenantSelfServiceHandler(db DBQuerier, audit *AuditWriter, idpKey []byte) *TenantSelfServiceHandler {
+	return &TenantSelfServiceHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit}
 }
 
 // Routes mounts the self-service endpoints.

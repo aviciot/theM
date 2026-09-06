@@ -41,6 +41,7 @@ DB_ADMIN_PASS=$(derive "db-admin-password")
 DB_APP_PASS=$(derive "db-app-password")
 SECRET_KEY=$(derive "secret-key")
 JWT_SECRET=$(derive "jwt-secret")
+IDP_ENCRYPTION_KEY=$(derive "idp-encryption-key")
 LIVEKIT_API_KEY="APIkey$(derive "livekit-api-key" | cut -c1-20)"
 LIVEKIT_API_SECRET="$(derive "livekit-api-secret")"
 MINIO_ROOT_USER="them-minio"
@@ -66,6 +67,7 @@ THEM_DB_URL_ADMIN=postgres://them_admin:${DB_ADMIN_PASS}@them-postgres:5432/them
 # ─── Security ────────────────────────────────────────────────
 THE_M_SECRET_KEY=$SECRET_KEY
 THE_M_JWT_SECRET=$JWT_SECRET
+THE_M_IDP_ENCRYPTION_KEY=$IDP_ENCRYPTION_KEY
 THE_M_REDIS_PASSWORD=
 
 # ─── LLM (add your key here — not derived) ───────────────────

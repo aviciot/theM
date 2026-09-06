@@ -143,7 +143,7 @@ func TestTenantPatch_AuditDoesNotContainRawClientSecret(t *testing.T) {
 	}
 
 	auditWriter := admin.NewAuditWriterForTest(cq)
-	h := admin.NewTenantsHandler(cq, auditWriter)
+	h := admin.NewTenantsHandler(cq, auditWriter, nil)
 
 	r := chi.NewRouter()
 	h.Routes(r)

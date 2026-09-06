@@ -43,9 +43,10 @@ function Derive-Secret {
     return ([System.BitConverter]::ToString($bytes) -replace "-","").ToLower()
 }
 
-$dbPass           = Derive-Secret "db-password"
-$secretKey        = Derive-Secret "secret-key"
-$jwtSecret        = Derive-Secret "jwt-secret"
+$dbPass              = Derive-Secret "db-password"
+$secretKey           = Derive-Secret "secret-key"
+$jwtSecret           = Derive-Secret "jwt-secret"
+$idpEncryptionKey    = Derive-Secret "idp-encryption-key"
 $livekitApiKey    = "APIkey$((Derive-Secret 'livekit-api-key').Substring(0,20))"
 $livekitApiSecret = Derive-Secret "livekit-api-secret"
 
@@ -60,6 +61,7 @@ THE_M_DB_PASSWORD=$dbPass
 # ─── Security ────────────────────────────────────────────────
 THE_M_SECRET_KEY=$secretKey
 THE_M_JWT_SECRET=$jwtSecret
+THE_M_IDP_ENCRYPTION_KEY=$idpEncryptionKey
 THE_M_REDIS_PASSWORD=
 
 # ─── LLM (add your key here — not derived) ───────────────────

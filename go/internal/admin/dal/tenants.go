@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/aviciot/them/internal/idpcrypto"
 )
 
 // Tenant is a row from them.tenants.
@@ -329,8 +331,17 @@ func (d *DB) AddMember(ctx context.Context, tenantID string, in TenantMemberInpu
 func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (TenantDetail, error) {
 	var idpJSON []byte
 	if patch.SetIDP && patch.IDPConfig != nil {
+		// Encrypt client_secret before persisting. Pass-through when no key is set.
+		cfg := *patch.IDPConfig
+		if cfg.ClientSecret != "" {
+			enc, err := idpcrypto.Encrypt(d.idpKey, cfg.ClientSecret)
+			if err != nil {
+				return TenantDetail{}, err
+			}
+			cfg.ClientSecret = enc
+		}
 		var err error
-		idpJSON, err = json.Marshal(patch.IDPConfig)
+		idpJSON, err = json.Marshal(cfg)
 		if err != nil {
 			return TenantDetail{}, err
 		}

@@ -19,8 +19,9 @@ type TenantsHandler struct {
 }
 
 // NewTenantsHandler creates a TenantsHandler.
-func NewTenantsHandler(db DBQuerier, audit *AuditWriter) *TenantsHandler {
-	return &TenantsHandler{db: dal.NewDB(db), audit: audit}
+// idpKey is the AES-256 encryption key for IdP client_secret; nil disables encryption.
+func NewTenantsHandler(db DBQuerier, audit *AuditWriter, idpKey []byte) *TenantsHandler {
+	return &TenantsHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit}
 }
 
 // Routes mounts the tenant CRUD + quota + member + group-mapping endpoints.

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/dbtype"
+	"github.com/aviciot/them/internal/idpcrypto"
 )
 
 // Querier is the database interface required by all dal functions.
@@ -43,8 +44,9 @@ type SingleRowScanner interface {
 
 // DB wraps a Querier and exposes all dal query methods.
 type DB struct {
-	q    Querier
-	pool *pgxpool.Pool // optional; non-nil enables atomic multi-statement operations
+	q      Querier
+	pool   *pgxpool.Pool // optional; non-nil enables atomic multi-statement operations
+	idpKey []byte        // AES-256 key for IdP client_secret encryption; nil = pass-through
 }
 
 // NewDB wraps a Querier for use by dal query functions.
@@ -56,6 +58,21 @@ func NewDB(q Querier) *DB {
 // operations (e.g. UpsertManagedAppParams, PublishDefinition).
 func NewDBWithPool(q Querier, pool *pgxpool.Pool) *DB {
 	return &DB{q: q, pool: pool}
+}
+
+// WithIDPKey returns a shallow copy of d with the given AES-256 encryption key
+// applied to IdP client_secret fields on write. Parsed via idpcrypto.ParseKey.
+// When key is nil, encryption is disabled (pass-through mode).
+func (d *DB) WithIDPKey(key []byte) *DB {
+	c := *d
+	c.idpKey = key
+	return &c
+}
+
+// IDPEncrypt encrypts a client secret using the configured key.
+// Returns the value unchanged when no key is set.
+func (d *DB) IDPEncrypt(s string) (string, error) {
+	return idpcrypto.Encrypt(d.idpKey, s)
 }
 
 // NewDBFromTenantQuerier wraps a dbtype.TenantQuerier (e.g. *db.TenantTx produced by

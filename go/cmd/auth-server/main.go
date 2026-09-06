@@ -16,6 +16,7 @@ import (
 
 	"github.com/aviciot/them/internal/authserver"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/idpcrypto"
 	"github.com/aviciot/them/internal/telemetry"
 )
 
@@ -53,7 +54,11 @@ func run() error {
 	store := authserver.NewPgxStore(database.Pool())
 	svc := authserver.NewService(store, cfg, log)
 	handlers := authserver.NewHandlers(svc, cfg, log)
-	oidcStore := authserver.NewPgxOIDCStore(database.Pool())
+	idpKey, err := idpcrypto.ParseKey(cfg.IDPEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("IDP_ENCRYPTION_KEY: %w", err)
+	}
+	oidcStore := authserver.NewPgxOIDCStoreWithKey(database.Pool(), idpKey)
 	signer := authserver.NewTokenSigner(cfg)
 	oidcHandlers := authserver.NewOIDCHandlers(oidcStore, signer, cfg, log)
 	userMgmt := authserver.NewUserMgmtHandlers(store, cfg, log)

@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/aviciot/them/internal/idpcrypto"
 )
 
 // ErrNoIDPConfig is returned when a tenant has no idp_config set.
@@ -55,12 +57,20 @@ type OIDCStore interface {
 
 // pgxOIDCStore is the PostgreSQL-backed OIDCStore.
 type pgxOIDCStore struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	idpKey []byte // AES-256 key for client_secret decryption; nil = pass-through
 }
 
 // NewPgxOIDCStore builds an OIDCStore over the given pgx pool.
+// Call WithIDPKey to enable client_secret decryption.
 func NewPgxOIDCStore(pool *pgxpool.Pool) OIDCStore {
 	return &pgxOIDCStore{pool: pool}
+}
+
+// NewPgxOIDCStoreWithKey builds an OIDCStore that decrypts client_secret values
+// written by PatchTenant when IDP_ENCRYPTION_KEY was set.
+func NewPgxOIDCStoreWithKey(pool *pgxpool.Pool, key []byte) OIDCStore {
+	return &pgxOIDCStore{pool: pool, idpKey: key}
 }
 
 func (s *pgxOIDCStore) GetTenantIDPConfig(ctx context.Context, slug string) (string, *IDPConfig, error) {
@@ -87,6 +97,15 @@ func (s *pgxOIDCStore) GetTenantIDPConfig(ctx context.Context, slug string) (str
 	}
 	if cfg.DiscoveryURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return "", nil, ErrNoIDPConfig
+	}
+	// Decrypt client_secret when an encryption key is configured. Legacy plaintext
+	// values (no "enc:" prefix) pass through unchanged so existing configs keep working.
+	if s.idpKey != nil {
+		dec, err := idpcrypto.Decrypt(s.idpKey, cfg.ClientSecret)
+		if err != nil {
+			return "", nil, ErrNoIDPConfig
+		}
+		cfg.ClientSecret = dec
 	}
 	return tenantID, &cfg, nil
 }

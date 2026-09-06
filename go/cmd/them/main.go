@@ -47,6 +47,7 @@ import (
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/tenantctx"
+	"github.com/aviciot/them/internal/idpcrypto"
 	"github.com/aviciot/them/internal/transport"
 	"github.com/aviciot/them/internal/voice"
 	"github.com/aviciot/them/internal/ws"
@@ -413,7 +414,8 @@ func run() error {
 	adminFernetKey := crypto.DeriveKey(cfg.SecretKey)
 	adminHITLRedis := cache.NewAuthRedisClient(redisCache.Client())
 	adminHITLStore := agentgen.NewHITLStore(adminHITLRedis)
-	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler)
+	adminIDPKey, _ := idpcrypto.ParseKey(cfg.IDPEncryptionKey) // validated at startup; err is nil here
+	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

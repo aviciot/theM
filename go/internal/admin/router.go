@@ -121,6 +121,7 @@ func BuildRouter(
 	anthropicAPIKey string,
 	hitlStore *agentgen.HITLStore,
 	canvasSignaler temporal.CanvasSignaler,
+	idpKey []byte,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -135,7 +136,7 @@ func BuildRouter(
 	llmRouting := NewLLMRoutingHandler(dbq)
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
 	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
-	tenants := NewTenantsHandler(dbq, auditWriter)
+	tenants := NewTenantsHandler(dbq, auditWriter, idpKey)
 	managedApps := NewManagedAppsHandler(dbq)
 
 	// Admin + runs routes — all require JWT. Within /admin, routes are split into
@@ -231,7 +232,7 @@ func BuildRouter(
 
 	// Tenant self-service routes — available to admin OR super_admin.
 	// Reads tenant from JWT claims; no tenant ID in URL.
-	selfSvc := NewTenantSelfServiceHandler(dbq, auditWriter)
+	selfSvc := NewTenantSelfServiceHandler(dbq, auditWriter, idpKey)
 	r.Group(func(selfGroup chi.Router) {
 		if jwtMiddleware != nil {
 			selfGroup.Use(jwtMiddleware)

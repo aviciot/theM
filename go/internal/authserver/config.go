@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/aviciot/them/internal/idpcrypto"
 )
 
 // Config holds every runtime value used by the auth server. Secret fields must
@@ -40,6 +42,12 @@ type Config struct {
 	AccessTokenExpiry  int
 	RefreshTokenExpiry int
 
+	// IDPEncryptionKey is the 64-character hex-encoded AES-256 key used to
+	// encrypt client_secret in them.tenants.idp_config before DB write and to
+	// decrypt it before use in the OIDC flow. Read from IDP_ENCRYPTION_KEY.
+	// When empty, encryption is disabled (pass-through mode for migration).
+	IDPEncryptionKey string
+
 	LogLevel  string
 	LogFormat string
 
@@ -65,6 +73,8 @@ func LoadConfig() (*Config, error) {
 
 		AccessTokenExpiry:  getEnvInt("ACCESS_TOKEN_EXPIRY", 3600),
 		RefreshTokenExpiry: getEnvInt("REFRESH_TOKEN_EXPIRY", 604800),
+
+		IDPEncryptionKey: getEnv("IDP_ENCRYPTION_KEY", ""),
 
 		LogLevel:  getEnv("LOG_LEVEL", "INFO"),
 		LogFormat: getEnv("LOG_FORMAT", "json"),
@@ -93,6 +103,9 @@ func (c *Config) validate() error {
 	}
 	if c.RefreshTokenExpiry <= 0 {
 		return fmt.Errorf("REFRESH_TOKEN_EXPIRY must be positive")
+	}
+	if _, err := idpcrypto.ParseKey(c.IDPEncryptionKey); err != nil {
+		return fmt.Errorf("IDP_ENCRYPTION_KEY: %w", err)
 	}
 	return nil
 }

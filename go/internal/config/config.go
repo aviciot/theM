@@ -13,6 +13,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/aviciot/them/internal/idpcrypto"
 )
 
 // Config holds every configuration value used by the application.
@@ -112,6 +114,11 @@ type Config struct {
 	// DBURLAdmin is the postgres DSN for the them_admin role (BYPASSRLS).
 	// Read from THEM_DB_URL_ADMIN. Required — validated at startup.
 	DBURLAdmin string
+
+	// IDPEncryptionKey is the 64-character hex-encoded AES-256 key used to
+	// encrypt client_secret in them.tenants.idp_config before DB write.
+	// Read from IDP_ENCRYPTION_KEY. When empty, encryption is disabled (pass-through).
+	IDPEncryptionKey string
 }
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
@@ -171,6 +178,8 @@ func Load() (*Config, error) {
 
 		DBURLApp:   getEnv("THEM_DB_URL_APP", ""),
 		DBURLAdmin: getEnv("THEM_DB_URL_ADMIN", ""),
+
+		IDPEncryptionKey: getEnv("IDP_ENCRYPTION_KEY", ""),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -213,6 +222,9 @@ func (c *Config) validate() error {
 	}
 	if c.DBURLAdmin == "" {
 		return fmt.Errorf("THEM_DB_URL_ADMIN is required but was not set")
+	}
+	if _, err := idpcrypto.ParseKey(c.IDPEncryptionKey); err != nil {
+		return fmt.Errorf("IDP_ENCRYPTION_KEY: %w", err)
 	}
 	return nil
 }
