@@ -194,16 +194,24 @@ RLS isolation preserved — `AdminTenantMiddleware` still sets `app.tenant_id` G
 
 6 new tests (TH-13–18): admin JWT → 200 on agents/apps/orchs/runs; admin JWT → 403 on llm-providers; member JWT → 403 on agents. **1062 tests, 0 failures.**
 
-### Next task: Step 37 — SSO: tenant-admin IdP form + Keycloak test IdP
+### Step 37 — SSO: tenant-admin IdP form + Keycloak test IdP: COMPLETE (7378d09)
 
-See `docs/MULTITENANT_PLAN.md` Gap 4 and `docs/sso-access-audit.md` for full scope.
+**Frontend only. No Go changes. No DB changes.**
 
-Three pieces:
-1. **`/tenant/settings` SSO form** — add "SSO / Identity Provider" section to `frontend/src/app/tenant/settings/page.tsx`. Fields: `discovery_url`, `client_id`, `client_secret` (write-only — show "configured" placeholder if `idp_configured=true`), `redirect_uri`. Save → `PATCH /tenant/settings` with `idp_config`. Clear → `idp_config: null`. Extend `themApi.patchTenantSettings` to accept `idp_config`.
-2. **Keycloak test IdP** — add `them-keycloak` service to `docker-compose.dev.yml` (`quay.io/keycloak/keycloak`, profile `sso`). Pre-configured realm export in `keycloak/`. Traefik route at `/auth/keycloak/` (internal only).
-3. **E2E SSO smoke test** — configure tenant IdP via both paths (tenant-admin and super-admin), login via OIDC, verify JWT has correct `tenant_id` and role.
+What was built:
+- `frontend/src/app/tenant/settings/page.tsx`: added "SSO / Identity Provider" tab between General and Quota. Fields: `discovery_url`, `client_id`, `client_secret` (write-only — shows `••••••••••••••••` placeholder when `idp_configured=true` and user hasn't typed), `redirect_uri`. "Save SSO config" button → `PATCH /tenant/settings` with `idp_config`. "Clear SSO config" → `idp_config: null` after `window.confirm`. Status badge updates after save/clear.
+- `docker-compose.dev.yml`: added `them-keycloak` service (`profile: sso`) — `quay.io/keycloak/keycloak:latest`, `start-dev --import-realm`, `KC_HTTP_RELATIVE_PATH=/auth/keycloak`, bind-mounts `./keycloak`, Traefik route at `/auth/keycloak` priority 130 (beats go-auth-go router at 120). Named volume `keycloak-data`.
+- `keycloak/them-realm.json`: pre-configured `them` realm — confidential client `them-m` (secret `them-m-secret`, redirect `http://localhost:8088/auth/api/v1/auth/oidc/callback`), test user `testuser@example.com` / `testpass`.
+- `scripts/tests/test_37_sso.py`: smoke test — login, configure IdP via `PATCH /tenant/settings`, verify `idp_configured=true` in response and GET readback, tenant-lookup check, clear config.
 
-Backend is already complete (no Go changes needed for the write path). Login page email-first flow is already wired. Step 37 is frontend + Docker only (except the E2E test).
+Start Keycloak test IdP:
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile sso up -d them-keycloak
+```
+Discovery URL: `http://localhost:8088/auth/keycloak/realms/them`
+Run smoke test: `python3 scripts/tests/test_37_sso.py`
+
+### Next recommended task: Step 37-S — encrypt client_secret at DB layer
 
 **⚠️ Production blocker Step 37-S** (separate, do before any production OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints.
 
