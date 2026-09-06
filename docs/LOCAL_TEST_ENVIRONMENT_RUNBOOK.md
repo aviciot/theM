@@ -526,3 +526,123 @@ Common causes and fixes:
 | This runbook | `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` |
 
 **Future Claude sessions:** Read this file before any Docker, deployment, environment, or container recreation work. Read `go/internal/config/config.go` to verify Go variable names before touching compose environment blocks. Use `scripts/deploy.sh` for all Compose operations — it is path-independent and safe.
+
+---
+
+## 9. SSO / OIDC Test Environment (Step 37)
+
+Step 37 added tenant-admin self-service IdP configuration and a local Keycloak instance that simulates an enterprise IdP (Okta, Auth0, etc.) for local testing. Client secrets are encrypted at rest using AES-256-GCM (`THE_M_IDP_ENCRYPTION_KEY`).
+
+### Prerequisites
+
+**Run `generate-env.sh` before rebuilding** — Step 37-S added `THE_M_IDP_ENCRYPTION_KEY` derivation. If your `.env` was generated before commit `db7ddc3`, it is missing this key and both `them-auth-go` and `them-go-bridge` will fail to start.
+
+```bash
+# Regenerate .env (safe — deterministic from the same secrets.local)
+./generate-env.sh
+# Confirm the key is present (name only — do not print the value)
+grep -q "THE_M_IDP_ENCRYPTION_KEY" .env && echo "KEY PRESENT" || echo "MISSING — regenerate .env"
+```
+
+### Rebuild affected containers
+
+After regenerating `.env`, rebuild the two containers that read `IDP_ENCRYPTION_KEY`:
+
+```bash
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml \
+  build them-auth-go them-go-bridge
+
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml \
+  up -d --no-deps them-auth-go them-go-bridge
+
+# Confirm startup
+docker logs them-auth-go 2>&1 | tail -5
+docker logs them-go-bridge 2>&1 | tail -5
+```
+
+### Start Keycloak (--profile sso)
+
+Keycloak is not started by default — it uses the `sso` compose profile.
+
+```bash
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile sso up -d them-keycloak
+
+# Confirm it is healthy (takes ~30s on first boot)
+docker ps --filter "name=them-keycloak" --format "{{.Names}}\t{{.Status}}"
+docker logs them-keycloak 2>&1 | tail -10
+```
+
+### Keycloak URLs and credentials
+
+| Resource | URL |
+|---|---|
+| Admin console | `http://localhost:8088/auth/keycloak/admin` |
+| Admin credentials | `admin` / `admin123` |
+| Discovery URL (for IdP config) | `http://localhost:8088/auth/keycloak/realms/them` |
+| Callback URL (for Keycloak client) | `http://localhost:8088/auth/api/v1/auth/oidc/callback` |
+
+Pre-loaded realm `them` with:
+- Client: `them-m` (confidential, secret: `them-m-secret`)
+- Test user: `testuser@example.com` / `testpass`
+
+### Configure a tenant IdP via the UI
+
+1. Log in as a tenant admin at `http://localhost:8088`
+2. Go to **Settings → SSO** tab
+3. Fill in:
+   - **Discovery URL**: `http://localhost:8088/auth/keycloak/realms/them`
+   - **Client ID**: `them-m`
+   - **Client Secret**: `them-m-secret`
+   - **Redirect URI**: `http://localhost:8088/auth/api/v1/auth/oidc/callback`
+4. Click **Save SSO Config**
+
+The secret is encrypted with AES-256-GCM before being stored in the DB. The UI shows `••••••••••••••••` thereafter — the secret is write-only.
+
+### Test the full SSO login flow
+
+```bash
+# 1. Get an admin JWT
+TOKEN=$(curl -s -X POST http://localhost:8088/auth/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# 2. PATCH the bootstrap tenant's idp_config
+curl -s -X PATCH http://localhost:8088/api/v1/admin/tenants/00000000-0000-0000-0000-000000000001 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"idp_config":{"discovery_url":"http://localhost:8088/auth/keycloak/realms/them","client_id":"them-m","client_secret":"them-m-secret","redirect_uri":"http://localhost:8088/auth/api/v1/auth/oidc/callback"}}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('idp_configured:', d.get('idp_configured','N/A'))"
+
+# 3. Initiate SSO login (opens browser)
+# Navigate to: http://localhost:8088/auth/api/v1/auth/oidc/login?tenant=<slug>
+# Keycloak login page appears — use testuser@example.com / testpass
+# After login, callback redirects and issues a session
+```
+
+### Run the smoke test (test 37)
+
+```bash
+# Requires Keycloak to be running (--profile sso)
+ADMIN_JWT=$TOKEN python3 scripts/tests/run_tests.py 37
+```
+
+### Stop Keycloak (optional)
+
+Keycloak is stateless for testing — the realm is imported from `keycloak/them-realm.json` on every start.
+
+```bash
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile sso stop them-keycloak
+```
+
+### Variable reference for SSO
+
+| `.env` variable | Container env var | Service(s) | Purpose |
+|---|---|---|---|
+| `THE_M_IDP_ENCRYPTION_KEY` | `IDP_ENCRYPTION_KEY` | `them-auth-go`, `them-go-bridge` | AES-256-GCM key for encrypting IdP `client_secret` at rest. Derived by `generate-env.sh`. Missing = startup failure. |
