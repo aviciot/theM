@@ -130,8 +130,10 @@ func (h *UserMgmtHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username, name, and password are required")
 		return
 	}
+	// req.Role is the tenant membership role (admin/member/viewer).
+	// Global auth_service.roles always defaults to "viewer" for tenant users.
 	if req.Role == "" {
-		req.Role = "viewer"
+		req.Role = "member"
 	}
 
 	hash, err := hashPassword(req.Password)
@@ -146,9 +148,9 @@ func (h *UserMgmtHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Name:         req.Name,
 		Email:        req.Email,
 		PasswordHash: hash,
-		RoleName:     req.Role,
+		RoleName:     "viewer", // global role — always viewer for tenant users
 		TenantID:     req.TenantID,
-		TenantRole:   req.TenantRole,
+		TenantRole:   req.Role, // tenant membership role from request
 	})
 	if err != nil {
 		if errors.Is(err, ErrUserConflict) {

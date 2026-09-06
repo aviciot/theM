@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-05 (Step 31 complete — api_rpm + monthly_llm_tokens quota enforcement)
+# Last updated: 2026-09-06 (Step 33 complete — tenant login chain verified + fix)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -125,13 +125,28 @@ New `/api/v1/tenant/` route group accessible to `admin` OR `super_admin` roles (
 - `MonthlyTokenCounter` interface + `WithTokenCounter` on `quota.Enforcer`
 - 8 new unit tests (QE-10..17). `go test ./...` — 1051 pass, 0 fail.
 
-### Next recommended task for a new session
+### Step 32 — User Management: COMPLETE (9b5c320)
 
-**Step 32 candidates** (choose one):
+Full user CRUD API + frontend page. `POST /api/v1/admin/users` creates user with bcrypt password + tenant membership assignment. 12 new tests (UM-01–UM-12).
 
-1. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
-2. **Member self-service** — allow tenant members to view their own membership, role, and team assignments via `/api/v1/me/` endpoints.
-3. **Quota enforcement UI** — show current usage vs. quota limits on the tenant settings page.
+**Bug fixed in Step 33:** `createUserRequest.Role` was being passed as `RoleName` (maps to `auth_service.roles` — must be super_admin/developer/analyst/viewer). Fix: `RoleName` is always `"viewer"` for new tenant users; `req.Role` (the tenant membership role: admin/member/viewer) goes to `TenantRole`.
+
+### Step 33 — Tenant login chain verification: COMPLETE
+
+Live smoke test confirmed:
+- Create user via `/api/v1/admin/users` with `role:"admin"` + `tenant_id` → user created, membership inserted
+- User logs in → JWT contains correct `tenant_id` from `auth_service.tenant_memberships`
+- JWT `role` claim carries the **membership** role (admin), not the global `auth_service.roles` name
+- Tenant user calling super_admin route → 403 (correct, RLS + role gate both working)
+- RLS chain: JWT tenant_id → bridge sets `app.tenant_id` GUC → all queries scoped to tenant
+
+### Next recommended task
+
+**Step 34 — Role-based dashboard nav** (see `docs/MULTITENANT_PLAN.md`):
+- Read JWT role from frontend session
+- Hide super_admin nav items (Tenants, Users, Observability) from non-super_admin users
+- Guard `/admin/tenants`, `/admin/users`, `/admin/observability` pages — redirect to `/admin/applications`
+- Frontend only, no new Go work
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
