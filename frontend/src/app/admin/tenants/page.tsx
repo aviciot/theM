@@ -68,6 +68,8 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [redirectURI, setRedirectURI] = useState('');
   const [idpSaving, setIdpSaving] = useState(false);
   const [idpMsg, setIdpMsg] = useState('');
+  const [discoveryResult, setDiscoveryResult] = useState<{ issuer: string; auth: string; token: string } | null>(null);
+  const [discoveryErr, setDiscoveryErr] = useState('');
 
   const emptyQuota = (): Omit<TenantQuota, 'tenant_id'> => ({
     plan: 'trial', max_agents: null, max_apps: null, max_mcp_servers: null,
@@ -91,6 +93,8 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     setRedirectURI('');
     setGenMsg('');
     setIdpMsg('');
+    setDiscoveryResult(null);
+    setDiscoveryErr('');
     setQuota(emptyQuota());
     setQuotaMsg('');
     setMembers([]);
@@ -161,6 +165,30 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
       setIdpMsg('IdP config cleared');
     } catch { setIdpMsg('Error clearing IdP config'); }
     finally { setIdpSaving(false); }
+  }
+
+  async function testDiscovery() {
+    const url = discoveryURL.trim();
+    if (!url) { setDiscoveryErr('Enter a Discovery URL first'); return; }
+    setDiscoveryResult(null); setDiscoveryErr('');
+    try {
+      // Internal Docker hostnames (them-keycloak:8080) are unreachable from the browser.
+      // Rewrite to go through Traefik which proxies /auth/keycloak → them-keycloak.
+      const browserUrl = url
+        .replace('http://them-keycloak:8080/auth/keycloak', '/auth/keycloak')
+        .replace('http://them-keycloak:8080', '/auth/keycloak')
+        .replace(/\/$/, '') + '/.well-known/openid-configuration';
+      const res = await fetch(browserUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const raw = await res.json();
+      setDiscoveryResult({
+        issuer: raw.issuer ?? '—',
+        auth: raw.authorization_endpoint ?? '—',
+        token: raw.token_endpoint ?? '—',
+      });
+    } catch (e) {
+      setDiscoveryErr('Could not reach discovery URL: ' + (e as Error).message);
+    }
   }
 
   async function saveQuota() {
@@ -287,13 +315,37 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
               Configure an OIDC identity provider for SSO login to this tenant.
               {tenant.idp_configured && <span style={{ color: '#34d399', marginLeft: '6px' }}>✓ IdP configured</span>}
             </p>
-            {['Discovery URL', 'Client ID', 'Redirect URI'].map((label, i) => {
-              const vals = [discoveryURL, clientID, redirectURI];
-              const setters = [setDiscoveryURL, setClientID, setRedirectURI];
+
+            {/* Discovery URL row with inline Test button */}
+            <div style={row}>
+              <label style={lbl}>Discovery URL</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input value={discoveryURL} onChange={e => { setDiscoveryURL(e.target.value); setDiscoveryResult(null); setDiscoveryErr(''); }} style={{ ...inp, flex: 1 }} placeholder="https://accounts.google.com" />
+                <button onClick={testDiscovery} style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, background: 'rgba(129,140,248,.15)', border: '1px solid rgba(129,140,248,.3)', color: ACCENT, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  Test ▶
+                </button>
+              </div>
+              {/* Discovery result */}
+              {discoveryResult && (
+                <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.2)', fontSize: '12px', lineHeight: 1.7 }}>
+                  <div style={{ color: '#34d399', fontWeight: 600, marginBottom: '4px' }}>✓ Discovery reachable</div>
+                  <div style={{ color: 'var(--tm-card-text-muted)' }}><span style={{ color: 'var(--tm-card-text)' }}>Issuer:</span> {discoveryResult.issuer}</div>
+                  <div style={{ color: 'var(--tm-card-text-muted)' }}><span style={{ color: 'var(--tm-card-text)' }}>Auth:</span> {discoveryResult.auth}</div>
+                  <div style={{ color: 'var(--tm-card-text-muted)' }}><span style={{ color: 'var(--tm-card-text)' }}>Token:</span> {discoveryResult.token}</div>
+                </div>
+              )}
+              {discoveryErr && (
+                <div style={{ marginTop: '8px', fontSize: '12px', color: '#f87171' }}>{discoveryErr}</div>
+              )}
+            </div>
+
+            {['Client ID', 'Redirect URI'].map((label, i) => {
+              const vals = [clientID, redirectURI];
+              const setters = [setClientID, setRedirectURI];
               return (
                 <div key={label} style={row}>
                   <label style={lbl}>{label}</label>
-                  <input value={vals[i]} onChange={e => setters[i](e.target.value)} style={inp} placeholder={i === 0 ? 'https://accounts.google.com' : i === 2 ? 'https://yourapp.com/auth/oidc/callback' : ''} />
+                  <input value={vals[i]} onChange={e => setters[i](e.target.value)} style={inp} placeholder={i === 1 ? 'https://yourapp.com/auth/oidc/callback' : ''} />
                 </div>
               );
             })}
@@ -312,6 +364,24 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
               )}
             </div>
             {idpMsg && <p style={{ fontSize: '12px', color: idpMsg.startsWith('Error') ? '#f87171' : '#34d399', marginTop: '8px' }}>{idpMsg}</p>}
+
+            {/* SSO login test link — only shown when IdP is configured */}
+            {tenant.idp_configured && (
+              <div style={{ marginTop: '20px', padding: '12px 14px', borderRadius: '10px', background: 'rgba(129,140,248,.06)', border: '1px solid rgba(129,140,248,.15)' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text)', marginBottom: '6px' }}>Test SSO Login</div>
+                <div style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', marginBottom: '10px' }}>
+                  Opens the full SSO login flow for this tenant in a new tab. Use your IdP test credentials.
+                </div>
+                <a
+                  href={`/auth/api/v1/auth/oidc/start?tenant=${tenant.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, textDecoration: 'none' }}
+                >
+                  Start SSO Login for {tenant.slug} ↗
+                </a>
+              </div>
+            )}
           </>
         )}
 
