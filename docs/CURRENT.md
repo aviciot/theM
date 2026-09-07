@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-07 (Runtime UI fixes — EP toggle, history_window, save consolidation)
+# Last updated: 2026-09-07 (IAM UI spec + SSO docs complete — next: implement IAM UI)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+30c4e1e  docs(iam): add group mapping UI spec + Keycloak test setup guide
+227d1e8  docs: IAM UI spec (3 changes) + INDEX + SSO doc + test index row 38
+d247ce8  test(multitenant): add 74-check automation script covering S0–S11
 8b445b7  fix(runtime): consolidate EP Save buttons + fix history_window not persisting
 8b91491  fix(runtime): EP enable/disable PATCH /enabled + history_window=0 clamp + A2A dispatcher tests
-7e9b7b1  fix(a2a): route /tenant/a2a/* through appsDispatcher instead of conflicting Mount("/")
-6e8e781  fix: EP LLM fallback + interleaved pgx query + duplicate ListEntryPoints
-0ca7d92  fix(ui): refetch on visibilitychange — no more stale data on tab navigation
 ```
 
 ---
@@ -278,12 +278,37 @@ What was built:
 
 ### Next recommended task
 
-**Step 37-S** (production blocker before any OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints. **Runtime UI bugs are all resolved** — safe to proceed.
+**IAM UI implementation (Step 38-UI)** — implement the 3 changes specified in `docs/IAM_UI_SPEC.md`.
+
+Priority order (highest value first):
+
+**Change 3 — `/tenant/members` page** (new page, tenant-admin facing)
+- Requires new Go API: `GET /api/v1/tenant/members` (tenant-scoped, reads JWT tenant_id)
+- Go handler in `go/internal/admin/tenant_self_service.go`
+- Frontend: `frontend/src/app/tenant/members/page.tsx`
+- Sidebar: add "Members" under My Tenant section in `frontend/src/components/Sidebar.tsx`
+- Backend call: `auth-go` `ListTenantMemberships(tenantID)` via authclient
+
+**Change 1 — `/admin/users` Membership tab**
+- Add "Memberships" tab to existing users admin page showing per-user tenant memberships
+- Requires: `GET /api/v1/admin/users/{id}/memberships` (super-admin only)
+- Frontend: `frontend/src/app/admin/users/page.tsx`
+
+**Change 2 — `/admin/tenants` Members tab**
+- Add "Members" tab to existing tenants admin page
+- Reuse same data from `GET /api/v1/admin/tenants/{id}/members`
+- Frontend: `frontend/src/app/admin/tenants/page.tsx`
+
+**Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
+- Requires backend: extend `idp_config` JSONB, tenant-scoped group-mappings API, OIDC handler update
+- See full spec in `docs/IAM_UI_SPEC.md`
 
 Key reminders:
 - Get JWT: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
 - Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.
-- Working demo checklist (see MULTITENANT_PLAN.md) — "Alice creates an application" now works end-to-end after Step 34.5.
+- Auth-go endpoints for membership data go through `internal/authserver/user_mgmt_handlers.go` + `store.go` + `pgx.go`
+- Every Go change → run `cd go && go test ./...` (must be zero failures before commit)
+- Spec file: `docs/IAM_UI_SPEC.md` — read fully before starting
 
 ### Known blockers / pre-conditions
 
