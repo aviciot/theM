@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-07 (tenant-scoped URL restructure complete)
+# Last updated: 2026-09-07 (multi-tenant testing session)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,12 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-d2a3760  fix(server): use Handle("/*") instead of Mount("/") for apps catch-all
-3ff2593  feat(routing): tenant-scoped URL restructure — /{tenant_slug}/apps and /{tenant_slug}/a2a
-65427ae  docs: tenant-scoped URL restructure task handover
-26ee921  fix(auth): Step 34.5 — router split, tenant admin access to tenant-scoped routes
-34687ad  feat(frontend): Step 36 — Get started onboarding banner on /admin/applications
+a38bddb  fix(playground): a2a chat — add tenantSlug to URL, fix proxy patterns, fix error message
+753a83e  fix(playground): restore /{tenantSlug}/apps/... WS URL — backend already supports it
+f7db036  fix(playground): refetch app list on window focus
+4ea1440  fix(rls): grant SELECT on them.tenants to them_app role
+e4f721c  fix(publish): ON CONFLICT target must match uq_entry_points_app_slug
+4cca091  fix(tenants): delete cleans auth_service.tenant_memberships first
 ```
 
 ---
@@ -60,6 +61,18 @@ Completed:
 ⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
 All quota fields now enforced: `max_concurrent_runs`, `runs_per_minute`, `monthly_runs`, `api_requests_per_minute`, `monthly_llm_tokens`. `max_agents`, `max_apps`, `max_mcp_servers`, `max_users` enforced at Create time.
+
+### Multi-tenant testing session (2026-09-07) — bugs fixed
+
+Bugs found and fixed during end-to-end testing as `avi-test-admin`:
+
+- **Publish 500**: `UpsertEntryPoint` used `ON CONFLICT (tenant_id, slug)` but DB constraint is `(application_id, slug)`. Fixed in `go/internal/admin/dal/publish.go`. Migration `db/083_grant_tenants_to_app.sql`: `GRANT SELECT ON them.tenants TO them_app` — `listAppQuery` JOINs `them.tenants` but `them_app` had no permission, causing GET /applications/{id} → 404 for all RLS-scoped requests. Playground `useEffect` refetches on window focus (stale app list after navigation). ProvisionWizard, delete tenant, logo, font self-hosting, Material Symbols — all complete from prior session.
+
+**Current stack status:** All containers healthy. `avi-test` tenant clean (no apps). Playground WS URL uses `/{tenantSlug}/apps/{appSlug}/{epSlug}/ws` — backend serves this correctly for both `default` and `avi-test` tenants.
+
+**Next task: continue multi-tenant testing** — create app in `avi-test`, publish, test via playground (WS chat), verify response from orchestrator.
+
+---
 
 ### Tenant-scoped URL restructure — COMPLETE (3ff2593 + d2a3760, 2026-09-07)
 
