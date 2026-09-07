@@ -112,7 +112,7 @@ New: `go/internal/tenantctx/resolver.go` — `PgxSlugResolver` (DB lookup + 5-mi
   - agents.Create and orchestrators.Create now return HTTP 409 for duplicate slug/name (SQLSTATE 23505 → ErrConflict).
 - **Frontend observability page** (`frontend/src/app/admin/observability/page.tsx`): `/admin/observability` table with per-tenant run count (30d), LLM tokens (30d), agent/app quota with color coding. Sidebar entry added.
 
-**HEAD: `e455fae fix(e2e): test_14 delete orchestrator by name, not UUID`**
+**HEAD: `2b05c2c feat(iam): Step 38-UI Changes 1+2 — user Membership tab + tenant Members tab`**
 
 **E2E test 14 verified: 9/9 passed, rerun-clean** (2026-09-05 — two consecutive runs both 9/9 with no manual cleanup needed).
 
@@ -276,39 +276,39 @@ What was built:
 3. **Save button consolidation**: LLM & Memory section now has one Save per EP card (covers both LLM provider + history/summarizer). ✅
 4. **history_window not returned by API**: `EntryPoint` struct and `ListEntryPoints` query were missing `history_window` — slider always reset to 20. Fixed: added field to struct + `COALESCE(ep.history_window, 20)` to SELECT. ✅
 
+### Step 38-UI — IAM UI: COMPLETE (Changes 1–3)
+
+**Completed in this session (2026-09-07):**
+
+**Change 3 — `/tenant/members` page** ✅ commit `5038759`
+- `GET /api/v1/tenant/members` — new handler in `tenant_self_service.go`; reads tenant_id from JWT (RequireTenantAdmin); calls `dal.ListMembers`; returns `TenantMember[]`.
+- `UserUpdateInput.TenantRole *string` added to `store.go` / `pgx.go` — `UpdateUser` patches `tenant_memberships.role`; validates against `validMemberRoles`; returns `ErrInvalidRole` for invalid values → 400.
+- `updateUserRequest.TenantRole` added to `user_mgmt_handlers.go`; `ErrInvalidRole` handled → 400.
+- `frontend/src/app/tenant/members/page.tsx` — new page; read-only table (Username/Email/Role/Joined); slide-in panel with editable Membership Role dropdown (admin/member/viewer) for tenant admins; read-only for viewers.
+- `Sidebar.tsx` — "Members" nav entry directly below "My Tenant".
+- Tests: TSS-07, TSS-08 (GetMyMembers empty + populated); UM-07b (tenant_role updated); UM-07c (super_admin rejected → 400). 49 packages, 0 failures.
+
+**Change 1 — `/admin/users` Membership tab** ✅ commit `2b05c2c`
+- Added 4th tab "Membership" to `UserPanel` — shows tenant_slug (read-only) + tenant_role dropdown; Save calls `PATCH /auth/api/v1/admin/users/{id}` with `tenant_role`.
+- Added role filter `<select>` above the table (All/super_admin/admin/member/viewer/inactive), client-side.
+
+**Change 2 — `/admin/tenants` Members tab** ✅ commit `2b05c2c`
+- Added 4th tab "Members" to `TenantPanel` — fetches `GET /api/v1/admin/tenants/{id}/members` on tab open; compact read-only table.
+- `api.ts`: `listTenantMembers(tenantId)` + `TenantMember` type exported.
+
 ### Next recommended task
 
-**IAM UI implementation (Step 38-UI)** — implement the 3 changes specified in `docs/IAM_UI_SPEC.md`.
-
-Priority order (highest value first):
-
-**Change 3 — `/tenant/members` page** (new page, tenant-admin facing)
-- Requires new Go API: `GET /api/v1/tenant/members` (tenant-scoped, reads JWT tenant_id)
-- Go handler in `go/internal/admin/tenant_self_service.go`
-- Frontend: `frontend/src/app/tenant/members/page.tsx`
-- Sidebar: add "Members" under My Tenant section in `frontend/src/components/Sidebar.tsx`
-- Backend call: `auth-go` `ListTenantMemberships(tenantID)` via authclient
-
-**Change 1 — `/admin/users` Membership tab**
-- Add "Memberships" tab to existing users admin page showing per-user tenant memberships
-- Requires: `GET /api/v1/admin/users/{id}/memberships` (super-admin only)
-- Frontend: `frontend/src/app/admin/users/page.tsx`
-
-**Change 2 — `/admin/tenants` Members tab**
-- Add "Members" tab to existing tenants admin page
-- Reuse same data from `GET /api/v1/admin/tenants/{id}/members`
-- Frontend: `frontend/src/app/admin/tenants/page.tsx`
-
 **Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
-- Requires backend: extend `idp_config` JSONB, tenant-scoped group-mappings API, OIDC handler update
-- See full spec in `docs/IAM_UI_SPEC.md`
+- Requires backend: extend `idp_config` JSONB (`groups_claim`, `unmatched_action`), tenant-scoped `/api/v1/tenant/group-mappings` API, OIDC handler update.
+- Frontend: add Group Mappings section to SSO tab in `frontend/src/app/tenant/settings/page.tsx`.
+- See full spec in `docs/IAM_UI_SPEC.md` (Change 4 section).
+
+Or move to the next major feature beyond IAM.
 
 Key reminders:
-- Get JWT: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
 - Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.
-- Auth-go endpoints for membership data go through `internal/authserver/user_mgmt_handlers.go` + `store.go` + `pgx.go`
-- Every Go change → run `cd go && go test ./...` (must be zero failures before commit)
-- Spec file: `docs/IAM_UI_SPEC.md` — read fully before starting
+- Every Go change → `cd go && go test ./...` (must be zero failures before commit).
+- Spec file: `docs/IAM_UI_SPEC.md` — read Change 4 section before starting Group Mapping UI.
 
 ### Known blockers / pre-conditions
 
