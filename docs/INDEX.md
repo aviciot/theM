@@ -23,6 +23,7 @@ One line per doc. Read this first, then open only what you need.
 |---|---|---|
 | `docs/AUTH.md` | Auth service contract, JWT claims, two-role model, refresh, user CRUD endpoints | Auth flow changes |
 | `docs/MULTITENANT_PLAN.md` | Multi-tenant roadmap, gap status, build order (Steps 33–37) | Multi-tenant work |
+| `docs/TENANT_IDENTITY_AND_SSO.md` | Tenant model, user management, SSO/OIDC flow, JIT provisioning, test guidance | Multi-tenant / SSO work |
 | `docs/MULTITENANT_TEST_PLAN.md` | Multi-tenant robustness test plan — UI steps + API/DB/script checks across all layers | Multi-tenant testing |
 | `docs/SCHEMA.md` | All `them.*` tables — columns, FKs, rationale | DB table or column changes |
 | `docs/REDIS.md` | Every Redis key pattern, TTL, owner, pub/sub channels | Redis key added or renamed |
@@ -83,3 +84,4 @@ cd go && go test ./...
 | What burned us before? | `docs/LESSONS.md` |
 | Current architecture state? | `docs/CURRENT.md` |
 | How to test multi-tenant end-to-end? | `docs/MULTITENANT_TEST_PLAN.md` |
+| How does tenant SSO / user management work? | `docs/TENANT_IDENTITY_AND_SSO.md` |
