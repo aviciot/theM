@@ -47,12 +47,10 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [ttsTestMsg,   setTtsTestMsg]   = useState<Record<string, string>>({});
 
   const [epLLMDrafts,  setEPLLMDrafts]  = useState<Record<string, EPLLMDraft>>(() => { const i: Record<string, EPLLMDraft> = {}; (app.entry_points ?? []).forEach(ep => { i[ep.id] = { provider: ep.llm_provider ?? '', model: ep.llm_model ?? '' }; }); return i; });
-  const [epLLMSaving,  setEPLLMSaving]  = useState<string | null>(null);
-  const [epLLMMsg,     setEPLLMMsg]     = useState<Record<string, string>>({});
   const [entryPoints,  setEntryPoints]  = useState<import('@/lib/api').EntryPoint[]>(app.entry_points ?? []);
   const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSumDraft>>(() => { const i: Record<string, EPSumDraft> = {}; (app.entry_points ?? []).forEach(ep => { const hw = ep.history_window ?? 20; i[ep.id] = { historyEnabled: hw > 0, memoryEnabled: ep.memory_enabled ?? false, historyWindow: hw > 0 ? hw : 20, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' }; }); return i; });
-  const [epSumSaving,  setEPSumSaving]  = useState<string | null>(null);
-  const [epSumMsg,     setEPSumMsg]     = useState<Record<string, string>>({});
+  const [epSaving,     setEPSaving]     = useState<string | null>(null);
+  const [epMsg,        setEPMsg]        = useState<Record<string, string>>({});
   const [epToggling,   setEPToggling]   = useState<string | null>(null);
 
   const [agentParamsList,  setAgentParamsList]  = useState<AgentParamsResponse[]>([]);
@@ -123,15 +121,15 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
     try { await themApi.patchEntryPointEnabled(app.id, epId, !cur); setEntryPoints(prev => prev.map(ep => ep.id === epId ? { ...ep, enabled: !cur } : ep)); }
     catch { /* ignore */ } finally { setEPToggling(null); }
   }
-  async function handleSaveEPLLM(epId: string) {
-    const d = epLLMDrafts[epId]; if (!d) return; setEPLLMSaving(epId);
-    try { await themApi.patchEntryPointLLM(app.id, epId, { llm_provider: d.provider || null, llm_model: d.model || null }); setEPLLMMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPLLMMsg(m => ({ ...m, [epId]: '' })), 2500); }
-    catch (e: unknown) { setEPLLMMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' })); } finally { setEPLLMSaving(null); }
-  }
-  async function handleSaveEPSummarizer(epId: string) {
-    const d = epSumDrafts[epId]; if (!d) return; setEPSumSaving(epId);
-    try { await themApi.patchEntryPointSummarizer(app.id, epId, { memory_enabled: d.historyEnabled && d.memoryEnabled, history_window: d.historyEnabled ? d.historyWindow : 0, summarize_every_n_calls: d.summarizeEveryN, memory_raw_fallback_n: d.fallbackN, summarizer_provider: d.provider || null, summarizer_model: d.model || null }); setEPSumMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPSumMsg(m => ({ ...m, [epId]: '' })), 2500); }
-    catch (e: unknown) { setEPSumMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' })); } finally { setEPSumSaving(null); }
+  async function handleSaveEP(epId: string) {
+    const llm = epLLMDrafts[epId]; const sum = epSumDrafts[epId]; if (!llm || !sum) return;
+    setEPSaving(epId);
+    try {
+      await themApi.patchEntryPointLLM(app.id, epId, { llm_provider: llm.provider || null, llm_model: llm.model || null });
+      await themApi.patchEntryPointSummarizer(app.id, epId, { memory_enabled: sum.historyEnabled && sum.memoryEnabled, history_window: sum.historyEnabled ? sum.historyWindow : 0, summarize_every_n_calls: sum.summarizeEveryN, memory_raw_fallback_n: sum.fallbackN, summarizer_provider: sum.provider || null, summarizer_model: sum.model || null });
+      setEPMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPMsg(m => ({ ...m, [epId]: '' })), 2500);
+    } catch (e: unknown) { setEPMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' })); }
+    finally { setEPSaving(null); }
   }
   async function handleSaveVoice(orchId: string) {
     const d = voiceDrafts[orchId]; if (!d) return; setVoiceSaving(orchId);
@@ -221,12 +219,11 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
           voiceDrafts={voiceDrafts} setVoiceDrafts={setVoiceDrafts}
           epLLMDrafts={epLLMDrafts} setEPLLMDrafts={setEPLLMDrafts}
           epSumDrafts={epSumDrafts} setEPSumDrafts={setEPSumDrafts}
-          epLLMSaving={epLLMSaving} epSumSaving={epSumSaving} epToggling={epToggling}
-          epLLMMsg={epLLMMsg} epSumMsg={epSumMsg}
+          epSaving={epSaving} epMsg={epMsg} epToggling={epToggling}
           setProviders={setProviders}
           voiceSaving={voiceSaving} voiceTesting={voiceTesting} ttsTesting={ttsTesting}
           voiceMsg={voiceMsg} voiceTestMsg={voiceTestMsg} ttsTestMsg={ttsTestMsg}
-          onToggleEP={handleToggleEP} onSaveEPLLM={handleSaveEPLLM} onSaveEPSummarizer={handleSaveEPSummarizer}
+          onToggleEP={handleToggleEP} onSaveEP={handleSaveEP}
           onSaveVoice={handleSaveVoice} onTestSTT={handleTestSTT} onTestTTS={handleTestTTS}
           saveBtn={saveBtn}
         />

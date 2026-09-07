@@ -11,12 +11,11 @@ type EPSummarizerDraft = { historyEnabled: boolean; memoryEnabled: boolean; hist
 export function EPSections({
   entryPoints, orchMetas, voiceDrafts, setVoiceDrafts,
   epLLMDrafts, setEPLLMDrafts, epSumDrafts, setEPSumDrafts,
-  epLLMSaving, epSumSaving, epToggling,
-  epLLMMsg, epSumMsg,
+  epSaving, epMsg, epToggling,
   setProviders,
   voiceSaving, voiceTesting, ttsTesting,
   voiceMsg, voiceTestMsg, ttsTestMsg,
-  onToggleEP, onSaveEPLLM, onSaveEPSummarizer,
+  onToggleEP, onSaveEP,
   onSaveVoice, onTestSTT, onTestTTS,
   saveBtn,
 }: {
@@ -28,14 +27,12 @@ export function EPSections({
   setEPLLMDrafts: React.Dispatch<React.SetStateAction<Record<string, EPLLMDraft>>>;
   epSumDrafts: Record<string, EPSummarizerDraft>;
   setEPSumDrafts: React.Dispatch<React.SetStateAction<Record<string, EPSummarizerDraft>>>;
-  epLLMSaving: string | null; epSumSaving: string | null; epToggling: string | null;
-  epLLMMsg: Record<string, string>; epSumMsg: Record<string, string>;
+  epSaving: string | null; epMsg: Record<string, string>; epToggling: string | null;
   setProviders: string[];
   voiceSaving: string | null; voiceTesting: string | null; ttsTesting: string | null;
   voiceMsg: Record<string, string>; voiceTestMsg: Record<string, string>; ttsTestMsg: Record<string, string>;
   onToggleEP: (epId: string, current: boolean) => void;
-  onSaveEPLLM: (epId: string) => void;
-  onSaveEPSummarizer: (epId: string) => void;
+  onSaveEP: (epId: string) => void;
   onSaveVoice: (orchId: string) => void;
   onTestSTT: (orchId: string) => void;
   onTestTTS: (orchId: string) => void;
@@ -85,10 +82,8 @@ export function EPSections({
                   {orchEPs.map(ep => {
                     const llmDraft = epLLMDrafts[ep.id] ?? { provider: '', model: '' };
                     const sumDraft = epSumDrafts[ep.id] ?? { historyEnabled: true, memoryEnabled: false, historyWindow: 20, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
-                    const llmBusy = epLLMSaving === ep.id;
-                    const sumBusy = epSumSaving === ep.id;
-                    const llmMsg = epLLMMsg[ep.id] ?? '';
-                    const sumMsg = epSumMsg[ep.id] ?? '';
+                    const busy = epSaving === ep.id;
+                    const msg  = epMsg[ep.id] ?? '';
                     return (
                       <div key={ep.id} style={{ borderRadius: 8, border: `1px solid ${sumDraft.historyEnabled ? 'rgba(208,188,255,0.2)' : 'rgba(132,158,190,0.14)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
                         <div style={{ padding: '9px 12px', borderBottom: '1px solid rgba(132,158,190,0.1)', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -116,9 +111,7 @@ export function EPSections({
                                 <option value="">— model —</option>
                                 {(RUNTIME_MODELS[llmDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
                               </select>
-                              {saveBtn(() => onSaveEPLLM(ep.id), llmBusy, !llmDraft.provider || !llmDraft.model)}
                             </div>
-                            {llmMsg && <div style={{ marginTop: 5, fontSize: 12, color: llmMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{llmMsg}</div>}
                           </div>
 
                           {/* Memory & Summarizer */}
@@ -217,12 +210,13 @@ export function EPSections({
                               </div>
                             )}
 
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              {sumMsg
-                                ? <span style={{ fontSize: 12, color: sumMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{sumMsg}</span>
+                            {/* ── Single Save button for the entire EP card ── */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                              {msg
+                                ? <span style={{ fontSize: 12, color: msg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{msg}</span>
                                 : <span />
                               }
-                              {saveBtn(() => onSaveEPSummarizer(ep.id), sumBusy, false)}
+                              {saveBtn(() => onSaveEP(ep.id), busy, false)}
                             </div>
                           </div>
                         </div>

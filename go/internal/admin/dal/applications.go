@@ -181,6 +181,7 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 		       COALESCE(ep.memory_enabled, false),
 		       COALESCE(ep.summarize_every_n_calls, 10),
 		       COALESCE(ep.memory_raw_fallback_n, 3),
+		       COALESCE(ep.history_window, 20),
 		       ep.summarizer_provider, ep.summarizer_model,
 		       ep.llm_provider, ep.llm_model,
 		       COALESCE(t.slug, '')
@@ -201,7 +202,7 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 		if err := rows.Scan(
 			&ep.ID, &ep.ApplicationID, &ep.AppOrchestratorID,
 			&ep.Slug, &ep.EntryPointType, &ep.Enabled,
-			&ep.MemoryEnabled, &ep.SummarizeEveryNCalls, &ep.MemoryRawFallbackN,
+			&ep.MemoryEnabled, &ep.SummarizeEveryNCalls, &ep.MemoryRawFallbackN, &ep.HistoryWindow,
 			&ep.SummarizerProvider, &ep.SummarizerModel,
 			&ep.LLMProvider, &ep.LLMModel,
 			&ep.TenantSlug,

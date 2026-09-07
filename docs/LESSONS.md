@@ -3,6 +3,32 @@
 
 ---
 
+## 2026-09-07 — POST /admin/tokens returns 500 (FK violation on user_id)
+
+**Symptom:** `POST /admin/tokens` returns 500 for any user when no `user_id` is in the request body. Bridge logs show no error (silently swallowed).
+**Root cause:** `tokenCreateBody.UserID` is `int64` with Go zero value `0`. The INSERT passed `0` for `user_id`, violating the FK to `auth_service.users` (no user with id=0 exists). The scan path also failed when reading back a row with NULL user_id into `int64`.
+**Fix:** `NULLIF($4, 0)::integer` in the INSERT so 0→NULL. `COALESCE(user_id, 0)` in `tokenSelectCols` and `pgx_querier.go` so NULL scans safely into int64. Added `slog.Error` in the handler so future failures appear in logs.
+**Watch for:** Any nullable integer FK column that Go reads as `int64` (not `*int64`) needs `COALESCE` in SELECT and `NULLIF` in INSERT/UPDATE to avoid FK violations and scan panics.
+
+---
+
+## 2026-09-07 — ListApplications returns empty entry_points via RLS path
+
+**Symptom:** `GET /admin/applications` returns applications with `entry_points: []` when going through the TenantTx (App pool / RLS) path. `GET /admin/applications/{id}` returns entry_points correctly.
+**Root cause:** `ListApplications` in the DAL opened a `pgx.Rows` cursor for the main applications query, then called `ListEntryPoints` (which opens another `Query`) for each app while the first cursor was still iterating. pgx transactions do not support interleaved result sets on a single connection — the inner query silently returned empty results. Additionally, `AppService.List` was calling `ListEntryPoints` a second time after the DAL already populated it (double fetch).
+**Fix:** Scan all app rows into memory first (close cursor), then enrich with `listAppOrchSummaries` + `ListEntryPoints` after the main cursor is closed. Removed the redundant `ListEntryPoints` call in the service layer.
+**Watch for:** Never run sub-queries (even `QueryRow`) inside a `rows.Next()` iteration loop on the same `pgx.Tx` — the connection is busy with the first cursor. Collect results first, then enrich.
+
+---
+
+## 2026-09-07 — Worker uses EP LLM settings but config is on orchestrator row
+
+**Symptom:** Canvas UI allows setting LLM provider/model at EP level, but the worker loads LLM config only from `app_orchestrators.llm_model/llm_provider` — which are NULL if the user only configured the EP. Results in "messages: Input should be a valid array" from Anthropic (empty model name → empty messages array).
+**Fix:** `workerconfig/loader.go` now falls back to `entry_points.llm_provider/llm_model` when the orchestrator row has NULL values.
+**Watch for:** The EP query in the loader must select `ep.llm_provider, ep.llm_model` — verify when adding new EP columns that affect runtime.
+
+---
+
 ## 2026-09-05 — All tenant-scoped admin Create endpoints return 500 (transaction aborted)
 
 **Symptom:** `GET /admin/agents` returns 200; `POST /admin/agents` returns 500 with no structured log output. Response time ~10ms (DB contact made). Similarly for orchestrators, applications, MCP servers.

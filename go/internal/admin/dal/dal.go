@@ -331,6 +331,7 @@ type EntryPoint struct {
 	MemoryEnabled        bool    `json:"memory_enabled"`
 	SummarizeEveryNCalls int     `json:"summarize_every_n_calls"`
 	MemoryRawFallbackN   int     `json:"memory_raw_fallback_n"`
+	HistoryWindow        int     `json:"history_window"`
 	SummarizerProvider   *string `json:"summarizer_provider,omitempty"`
 	SummarizerModel      *string `json:"summarizer_model,omitempty"`
 	LLMProvider          *string `json:"llm_provider,omitempty"`
