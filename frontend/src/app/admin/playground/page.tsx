@@ -69,36 +69,44 @@ function PlaygroundInner() {
   const sentCount = { current: 0 };
   const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, { appSlug: string; epSlug: string; tenantSlug: string }>>({});
 
-  const loadApps = useCallback(() => {
-    themApi.applications().then(apps => {
-      setApplications(apps);
-      for (const a of apps) {
-        if (!a.enabled) continue;
-        const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type));
-        if (ep) {
-          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, appSlug: a.slug ?? a.id, tenantSlug: ep.tenant_slug ?? a.tenant_slug ?? 'default', epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
-          setTabs([t]);
-          setActiveTabId(targetId(t));
-          break;
-        }
+  const applyApps = useCallback((apps: Application[]) => {
+    setApplications(apps);
+    for (const a of apps) {
+      if (!a.enabled) continue;
+      const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type));
+      if (ep) {
+        const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, appSlug: a.slug ?? a.id, tenantSlug: ep.tenant_slug ?? a.tenant_slug ?? 'default', epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
+        setTabs([t]);
+        setActiveTabId(targetId(t));
+        break;
       }
-      const m: Record<string, { appSlug: string; epSlug: string; tenantSlug: string }> = {};
-      for (const a of apps) {
-        if (!a.enabled) continue;
-        const ep = a.entry_points.find(e => e.enabled && e.entry_point_type === 'webrtc');
-        const aoName = a.app_orchestrators?.[0]?.name;
-        if (ep && aoName && !m[aoName]) m[aoName] = { appSlug: a.slug ?? a.id, epSlug: ep.slug, tenantSlug: ep.tenant_slug ?? a.tenant_slug ?? 'default' };
-      }
-      setWebrtcSlugs(m);
-    }).catch(() => {});
+    }
+    const m: Record<string, { appSlug: string; epSlug: string; tenantSlug: string }> = {};
+    for (const a of apps) {
+      if (!a.enabled) continue;
+      const ep = a.entry_points.find(e => e.enabled && e.entry_point_type === 'webrtc');
+      const aoName = a.app_orchestrators?.[0]?.name;
+      if (ep && aoName && !m[aoName]) m[aoName] = { appSlug: a.slug ?? a.id, epSlug: ep.slug, tenantSlug: ep.tenant_slug ?? a.tenant_slug ?? 'default' };
+    }
+    setWebrtcSlugs(m);
   }, []);
 
+  const loadApps = useCallback(() => {
+    themApi.applications().then(applyApps).catch(() => {});
+  }, [applyApps]);
+
   useEffect(() => {
-    loadApps();
+    let cancelled = false;
+    themApi.applications()
+      .then(apps => { if (!cancelled) applyApps(apps); })
+      .catch(() => {});
     const onFocus = () => loadApps();
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [loadApps]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [applyApps, loadApps]);
 
   const activeTab = useMemo(() => tabs.find(t => targetId(t) === activeTabId) ?? null, [tabs, activeTabId]);
 
