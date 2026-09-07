@@ -155,6 +155,8 @@ WHERE ao.id = $1::uuid
 		summarizerProvider   *string
 		summarizerModel      *string
 	)
+	var epLLMProvider *string
+	var epLLMModel *string
 	if entryPointID != "" {
 		const epQ = `
 SELECT
@@ -163,7 +165,9 @@ SELECT
     COALESCE(ep.summarize_every_n_calls, 0),
     COALESCE(ep.memory_raw_fallback_n, 3),
     ep.summarizer_provider,
-    ep.summarizer_model
+    ep.summarizer_model,
+    ep.llm_provider,
+    ep.llm_model
 FROM them.entry_points ep
 WHERE ep.id = $1::uuid`
 		epRow := l.pool.QueryRow(ctx, epQ, entryPointID)
@@ -174,6 +178,8 @@ WHERE ep.id = $1::uuid`
 			&rawFallbackN,
 			&summarizerProvider,
 			&summarizerModel,
+			&epLLMProvider,
+			&epLLMModel,
 		); err != nil {
 			// Non-fatal: EP not found or missing columns — proceed without memory.
 			memoryEnabled = false
@@ -216,20 +222,24 @@ WHERE ep.id = $1::uuid`
 	if systemPrompt != nil {
 		cfg.SystemPrompt = *systemPrompt
 	}
+	// Orchestrator-level LLM config; fall back to EP-level if not set on the orchestrator.
 	if llmModel != nil {
 		cfg.Model = *llmModel
+	} else if epLLMModel != nil {
+		cfg.Model = *epLLMModel
 	}
 
 	providerName := ""
 	if llmProvider != nil {
 		providerName = *llmProvider
+	} else if epLLMProvider != nil {
+		providerName = *epLLMProvider
 	}
 	if budgetTokens != nil {
 		cfg.BudgetTokens = *budgetTokens
 	}
 
-	// If no provider is set on the orchestrator row, default to "anthropic" so
-	// the per-app key is resolved and used instead of the platform fallback.
+	// If no provider is set on either orchestrator or EP, default to "anthropic".
 	if providerName == "" {
 		providerName = "anthropic"
 	}

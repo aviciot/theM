@@ -102,17 +102,24 @@ func (d *DB) ListApplications(ctx context.Context, tenantID string) ([]Applicati
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
+	// Scan all apps first to close the cursor before running sub-queries.
+	// pgx transactions do not support interleaved result sets on the same connection.
 	apps := make([]Application, 0)
 	for rows.Next() {
 		a, err := scanApplication(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
-		a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
-		a.EntryPoints = d.ListEntryPoints(ctx, a.ID)
 		apps = append(apps, a)
+	}
+	rows.Close()
+
+	// Enrich each app with orchestrators and entry points after the main cursor is closed.
+	for i := range apps {
+		apps[i].AppOrchestrators = d.listAppOrchSummaries(ctx, apps[i].ID)
+		apps[i].EntryPoints = d.ListEntryPoints(ctx, apps[i].ID)
 	}
 	return apps, nil
 }
