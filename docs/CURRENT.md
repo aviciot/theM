@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-07 (multi-tenant testing session)
+# Last updated: 2026-09-07 (A2A dispatcher fix — ep-a2a-1 404 resolved)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,12 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-a38bddb  fix(playground): a2a chat — add tenantSlug to URL, fix proxy patterns, fix error message
-753a83e  fix(playground): restore /{tenantSlug}/apps/... WS URL — backend already supports it
-f7db036  fix(playground): refetch app list on window focus
-4ea1440  fix(rls): grant SELECT on them.tenants to them_app role
-e4f721c  fix(publish): ON CONFLICT target must match uq_entry_points_app_slug
-4cca091  fix(tenants): delete cleans auth_service.tenant_memberships first
+7e9b7b1  fix(a2a): route /tenant/a2a/* through appsDispatcher instead of conflicting Mount("/")
+6e8e781  fix: EP LLM fallback + interleaved pgx query + duplicate ListEntryPoints
+0ca7d92  fix(ui): refetch on visibilitychange — no more stale data on tab navigation
+7b8c93e  fix(runtime): rename 'Keep last N verbatim' to clearer label + hint
+dd14897  feat(runtime): redesign Memory & Summarizer UI — nested toggles + sliders
 ```
 
 ---
@@ -70,7 +69,13 @@ Bugs found and fixed during end-to-end testing as `avi-test-admin`:
 
 **Current stack status:** All containers healthy. `avi-test` tenant clean (no apps). Playground WS URL uses `/{tenantSlug}/apps/{appSlug}/{epSlug}/ws` — backend serves this correctly for both `default` and `avi-test` tenants.
 
-**Next task: continue multi-tenant testing** — create app in `avi-test`, publish, test via playground (WS chat), verify response from orchestrator.
+**Multi-tenant E2E testing COMPLETE (2026-09-07)** — WS chat verified for both tenants:
+- `avi-test` tenant: "first" app WS chat → connected, LLM replied "Hello." ✅
+- `default` tenant: "freddy" app WS chat → connected, LLM replied "Hey!" ✅
+
+Bugs fixed and committed in this session:
+- `49d8725` fix(tokens): null user_id FK violation on POST /admin/tokens — `NULLIF($4,0)::integer` + `COALESCE(user_id,0)` in SELECT + same fix in `pgx_querier.go`
+- `6e8e781` fix: EP LLM fallback + interleaved pgx query + duplicate ListEntryPoints — worker now falls back to EP-level LLM when orchestrator row has NULL values; `ListApplications` collects all rows before running sub-queries; duplicate `ListEntryPoints` call removed from service layer
 
 ---
 
@@ -258,9 +263,23 @@ What was built:
 
 **49 packages pass, 0 failures.** (S1-IDP: 9 new tests)
 
+### Session 2026-09-07 — A2A dispatcher fix (7e9b7b1)
+
+**Root cause:** `srv.MountA2A` used `s.router.Mount("/", handler)` which conflicted with `srv.MountApps`'s `s.router.Handle("/*", handler)`. Chi's `Handle("/*")` registered last wins — all `POST /{tenant_slug}/a2a/…` requests landed in `appsDispatcher` which returned 404 for non-ws/sse/voice paths.
+
+**Fix:** Removed `srv.MountA2A`; A2A handler passed as 4th arg to `appsDispatcher`; dispatcher now routes `strings.Contains(path, "/a2a/")` to it. Bridge rebuilt and restarted ✅.
+
+**⚠️ Two open UI bugs (not yet fixed) — Runtime tab → Application card:**
+
+1. **EP enable/disable toggle (Entry Points section)**: `PATCH /entry-points/{ep_id}` sends only `{enabled: true/false}` but `UpdateEntryPoint` DAL does `SET slug=$3, entry_point_type=$4, enabled=$5` — empty slug/type wipe the row. Needs a dedicated `PATCH /entry-points/{ep_id}/enabled` endpoint that only touches the `enabled` column.
+
+2. **Summarizer Save button (LLM & Memory section)**: When the DB UPDATE returns no rows (RLS mismatch or bad IDs), `SetEntryPointSummarizer` converts it to `ErrNotFound` → 404. Frontend shows "Failed". Root cause needs live reproduction to confirm (may also be the same pool/RLS issue seen before).
+
 ### Next recommended task
 
 **⚠️ Production blocker Step 37-S** (separate, do before any production OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints.
+
+**UI bugs above should be fixed before Step 37-S** (they affect usability of core EP management).
 
 Key reminders:
 - Get JWT: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
