@@ -24,7 +24,7 @@ export function targetStorageKey(t: ConnTarget): string {
 export function targetWsUrl(t: ConnTarget, token: string): string {
   const base = getBridgeWs();
   if (t.kind === 'orchestrator') return `${base}/ws/orchestrate/${t.name}?token=${encodeURIComponent(token)}`;
-  return `${base}/apps/${t.appSlug}/${t.slug}/ws?token=${encodeURIComponent(token)}`;
+  return `${base}/${t.tenantSlug}/apps/${t.appSlug}/${t.slug}/ws?token=${encodeURIComponent(token)}`;
 }
 
 // Tab colour palette — cycles for each open tab
