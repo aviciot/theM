@@ -671,20 +671,23 @@ func (s *AppService) SetOrchestratorVoice(ctx context.Context, tenantID, appID, 
 	return nil
 }
 
-// SetEntryPointSummarizer updates summarizer settings on one entry_points row.
-func (s *AppService) SetEntryPointSummarizer(ctx context.Context, tenantID, appID, epID string, enabled bool, everyN, fallbackN int, provider, model *string) error {
+// SetEntryPointSummarizer updates summarizer and history settings on one entry_points row.
+func (s *AppService) SetEntryPointSummarizer(ctx context.Context, tenantID, appID, epID string, enabled bool, everyN, fallbackN, historyWindow int, provider, model *string) error {
 	if everyN < 1 {
 		return validation("summarize_every_n_calls must be ≥ 1")
 	}
 	if fallbackN < 0 {
 		return validation("memory_raw_fallback_n must be ≥ 0")
 	}
+	if historyWindow < 1 {
+		historyWindow = 20
+	}
 	if provider != nil && *provider != "" {
 		if _, ok := validProviders[*provider]; !ok {
 			return unprocessable("unsupported summarizer provider: " + *provider)
 		}
 	}
-	if err := s.dal.SetEntryPointSummarizer(ctx, appID, epID, enabled, everyN, fallbackN, provider, model); err != nil {
+	if err := s.dal.SetEntryPointSummarizer(ctx, appID, epID, enabled, everyN, fallbackN, historyWindow, provider, model); err != nil {
 		return ErrNotFound
 	}
 	return nil

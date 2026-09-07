@@ -219,20 +219,21 @@ func (d *DB) SetEntryPointLLM(ctx context.Context, appID, epID string, provider,
 	return d.q.ExecReturning(ctx, q, epID, appID, provider, model).Scan(&id)
 }
 
-// SetEntryPointSummarizer updates summarizer settings on one entry_points row.
-func (d *DB) SetEntryPointSummarizer(ctx context.Context, appID, epID string, enabled bool, everyN, fallbackN int, provider, model *string) error {
+// SetEntryPointSummarizer updates summarizer and history settings on one entry_points row.
+func (d *DB) SetEntryPointSummarizer(ctx context.Context, appID, epID string, enabled bool, everyN, fallbackN, historyWindow int, provider, model *string) error {
 	const q = `
 		UPDATE them.entry_points
 		SET memory_enabled          = $3,
 		    summarize_every_n_calls = $4,
 		    memory_raw_fallback_n   = $5,
-		    summarizer_provider     = $6,
-		    summarizer_model        = $7,
+		    history_window          = $6,
+		    summarizer_provider     = $7,
+		    summarizer_model        = $8,
 		    updated_at              = now()
 		WHERE id = $1::uuid AND application_id = $2::uuid
 		RETURNING id`
 	var id string
-	return d.q.ExecReturning(ctx, q, epID, appID, enabled, everyN, fallbackN, provider, model).Scan(&id)
+	return d.q.ExecReturning(ctx, q, epID, appID, enabled, everyN, fallbackN, historyWindow, provider, model).Scan(&id)
 }
 
 // CreateEntryPoint inserts a new entry point row and returns the new UUID.

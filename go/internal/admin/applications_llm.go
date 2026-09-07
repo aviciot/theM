@@ -131,6 +131,7 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 		MemoryEnabled        bool    `json:"memory_enabled"`
 		SummarizeEveryNCalls int     `json:"summarize_every_n_calls"`
 		MemoryRawFallbackN   int     `json:"memory_raw_fallback_n"`
+		HistoryWindow        int     `json:"history_window"`
 		SummarizerProvider   *string `json:"summarizer_provider"`
 		SummarizerModel      *string `json:"summarizer_model"`
 	}
@@ -141,6 +142,9 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 	if body.SummarizeEveryNCalls == 0 {
 		body.SummarizeEveryNCalls = 10
 	}
+	if body.HistoryWindow == 0 {
+		body.HistoryWindow = 20
+	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
@@ -150,7 +154,7 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 	}
 	defer rollback()
 	if err := svc.SetEntryPointSummarizer(r.Context(), tenantID, id, epID,
-		body.MemoryEnabled, body.SummarizeEveryNCalls, body.MemoryRawFallbackN,
+		body.MemoryEnabled, body.SummarizeEveryNCalls, body.MemoryRawFallbackN, body.HistoryWindow,
 		body.SummarizerProvider, body.SummarizerModel,
 	); err != nil {
 		writeServiceError(w, err)
@@ -166,6 +170,7 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 		"memory_enabled":          body.MemoryEnabled,
 		"summarize_every_n_calls": body.SummarizeEveryNCalls,
 		"memory_raw_fallback_n":   body.MemoryRawFallbackN,
+		"history_window":          body.HistoryWindow,
 		"summarizer_provider":     body.SummarizerProvider,
 		"summarizer_model":        body.SummarizerModel,
 	})

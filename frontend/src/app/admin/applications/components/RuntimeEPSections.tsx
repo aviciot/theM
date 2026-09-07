@@ -6,7 +6,7 @@ import { VoicePanel, type VoiceDraft } from './RuntimeVoicePanel';
 
 type OrchMeta = { id: string; name: string; displayName: string };
 type EPLLMDraft = { provider: string; model: string };
-type EPSummarizerDraft = { memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
+type EPSummarizerDraft = { memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 
 export function EPSections({
   entryPoints, orchMetas, voiceDrafts, setVoiceDrafts,
@@ -84,7 +84,7 @@ export function EPSections({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {orchEPs.map(ep => {
                     const llmDraft = epLLMDrafts[ep.id] ?? { provider: '', model: '' };
-                    const sumDraft = epSumDrafts[ep.id] ?? { memoryEnabled: false, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
+                    const sumDraft = epSumDrafts[ep.id] ?? { memoryEnabled: false, historyWindow: 20, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
                     const llmBusy = epLLMSaving === ep.id;
                     const sumBusy = epSumSaving === ep.id;
                     const llmMsg = epLLMMsg[ep.id] ?? '';
@@ -129,6 +129,11 @@ export function EPSections({
                               <span style={{ marginLeft: 'auto' }}>
                                 <ToggleBtn on={sumDraft.memoryEnabled} onToggle={() => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, memoryEnabled: !sumDraft.memoryEnabled } }))} colorOn="#a78bfa" title={sumDraft.memoryEnabled ? 'Disable memory' : 'Enable memory'} />
                               </span>
+                            </div>
+                            <div style={{ marginBottom: 8 }}>
+                              <label style={l}>History window (turns)</label>
+                              <input type="number" min={1} max={200} value={sumDraft.historyWindow} style={f}
+                                onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, historyWindow: parseInt(e.target.value) || 20 } }))} />
                             </div>
                             <div style={{ opacity: sumDraft.memoryEnabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>

@@ -10,7 +10,7 @@ import type { VoiceDraft } from './RuntimeVoicePanel';
 type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string };
 type OrchMeta    = { id: string; name: string; displayName: string };
 type EPLLMDraft  = { provider: string; model: string };
-type EPSumDraft  = { memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
+type EPSumDraft  = { memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 type NodeLLMDraft = { provider: string; model: string };
 
 export function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
@@ -50,7 +50,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [epLLMSaving,  setEPLLMSaving]  = useState<string | null>(null);
   const [epLLMMsg,     setEPLLMMsg]     = useState<Record<string, string>>({});
   const [entryPoints,  setEntryPoints]  = useState<import('@/lib/api').EntryPoint[]>(app.entry_points ?? []);
-  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSumDraft>>(() => { const i: Record<string, EPSumDraft> = {}; (app.entry_points ?? []).forEach(ep => { i[ep.id] = { memoryEnabled: ep.memory_enabled ?? false, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' }; }); return i; });
+  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSumDraft>>(() => { const i: Record<string, EPSumDraft> = {}; (app.entry_points ?? []).forEach(ep => { i[ep.id] = { memoryEnabled: ep.memory_enabled ?? false, historyWindow: ep.history_window ?? 20, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' }; }); return i; });
   const [epSumSaving,  setEPSumSaving]  = useState<string | null>(null);
   const [epSumMsg,     setEPSumMsg]     = useState<Record<string, string>>({});
   const [epToggling,   setEPToggling]   = useState<string | null>(null);
@@ -93,7 +93,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
       setEntryPoints(eps);
       const sd: Record<string, EPSumDraft> = {}; const ld: Record<string, EPLLMDraft> = {};
       eps.forEach(ep => {
-        sd[ep.id] = { memoryEnabled: ep.memory_enabled ?? false, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' };
+        sd[ep.id] = { memoryEnabled: ep.memory_enabled ?? false, historyWindow: ep.history_window ?? 20, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' };
         ld[ep.id] = { provider: ep.llm_provider ?? '', model: ep.llm_model ?? '' };
       });
       setEPSumDrafts(sd); setEPLLMDrafts(ld);
@@ -130,7 +130,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   }
   async function handleSaveEPSummarizer(epId: string) {
     const d = epSumDrafts[epId]; if (!d) return; setEPSumSaving(epId);
-    try { await themApi.patchEntryPointSummarizer(app.id, epId, { memory_enabled: d.memoryEnabled, summarize_every_n_calls: d.summarizeEveryN, memory_raw_fallback_n: d.fallbackN, summarizer_provider: d.provider || null, summarizer_model: d.model || null }); setEPSumMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPSumMsg(m => ({ ...m, [epId]: '' })), 2500); }
+    try { await themApi.patchEntryPointSummarizer(app.id, epId, { memory_enabled: d.memoryEnabled, history_window: d.historyWindow, summarize_every_n_calls: d.summarizeEveryN, memory_raw_fallback_n: d.fallbackN, summarizer_provider: d.provider || null, summarizer_model: d.model || null }); setEPSumMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPSumMsg(m => ({ ...m, [epId]: '' })), 2500); }
     catch (e: unknown) { setEPSumMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' })); } finally { setEPSumSaving(null); }
   }
   async function handleSaveVoice(orchId: string) {

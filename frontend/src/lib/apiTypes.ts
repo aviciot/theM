@@ -196,6 +196,7 @@ export interface EntryPoint {
   app_orchestrator_id?: string | null;
   app_orchestrator?: AppOrchestratorOut | null;
   memory_enabled?: boolean;
+  history_window?: number | null;
   summarize_every_n_calls?: number;
   memory_raw_fallback_n?: number;
   summarizer_provider?: string | null;
