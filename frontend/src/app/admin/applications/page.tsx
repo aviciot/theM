@@ -44,7 +44,15 @@ export default function ApplicationsPage() {
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    const refresh = () => {
+      Promise.all([themApi.applications(), themApi.agents()])
+        .then(([apps, ags]) => { if (!cancelled) { setList(apps); setAgents(ags); } })
+        .catch(() => {});
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVisible); };
   }, []);
 
   async function load() {

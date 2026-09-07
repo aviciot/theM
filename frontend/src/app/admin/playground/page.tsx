@@ -101,10 +101,13 @@ function PlaygroundInner() {
       .then(apps => { if (!cancelled) applyApps(apps); })
       .catch(() => {});
     const onFocus = () => loadApps();
+    const onVisible = () => { if (document.visibilityState === 'visible') loadApps(); };
     window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [applyApps, loadApps]);
 
