@@ -1,76 +1,81 @@
 # Tenant Identity & SSO in the-M
 # Last updated: 2026-09-07
 
----
-
-## Start here — the plain-language version
-
-**Tenant** = a company or team that uses the-M. Each tenant has its own agents,
-applications, and users. One tenant cannot see another tenant's data — ever.
-
-**User** = a person who logs into the-M. Every user belongs to at least one tenant
-and has a role that controls what they can do inside that tenant.
-
-**SSO (Single Sign-On)** = instead of remembering a password in the-M, a user logs in
-through their company's existing identity system (Google, Microsoft, Okta, Keycloak, etc.).
-The-M never sees their password — it just receives a "yes, this person is who they say
-they are" confirmation from the company's identity system.
+This guide is written for someone with no prior SSO experience.
+It covers what tenants are, how users are managed, how SSO login works,
+and how to test it end-to-end — including exactly what the automation
+script covers and what you still need to do manually in a browser.
 
 ---
 
-## What is a Tenant?
+## Part 1 — Tenants
 
-Think of each tenant as a completely separate workspace. If you're Acme Corp, your
-agents, applications, and run history are invisible to everyone outside Acme Corp —
-even to other tenants on the same the-M installation.
+### What is a tenant?
 
-This isolation is enforced at the **database level** (PostgreSQL Row-Level Security),
-not just in the application. Even if there were a bug in the API code, the database
-itself would block cross-tenant data leaks.
+A **tenant** is a completely isolated workspace. Think of it like separate offices in
+a shared building — people in office A cannot see or touch anything in office B.
 
-Every tenant has:
-- A **slug** — a short, URL-safe ID (e.g. `acme-corp`)
-- A **display name** — human-readable (e.g. `Acme Corporation`)
-- Optionally: an **SSO configuration** (see below)
-- Optionally: an **email domain** (so users at `@acme.com` are automatically routed to the right tenant's login page)
+In the-M, each tenant has its own:
+- Agents
+- Applications
+- Runs and history
+- Users
 
-A built-in `default` tenant exists for the platform super-admin. New tenants are
-created by the super-admin via the admin API.
+This isolation is enforced at the **database level**, not just in the code. Even if
+there were a bug in the API, the database itself would block data from crossing tenant
+boundaries.
+
+### How tenants are created
+
+Only a **super-admin** can create tenants. There is no self-service tenant signup.
+
+```
+Super-admin calls:
+POST /api/v1/admin/tenants
+{ "slug": "acme-corp", "display_name": "Acme Corporation" }
+```
+
+The `slug` is a short identifier used in URLs (`acme-corp`).
+The `display_name` is the human-readable name shown in the UI.
+
+A built-in `default` tenant exists for the platform operator. It cannot be deleted.
 
 ---
 
-## Users and Roles
+## Part 2 — Users and Roles
 
-Every user in the-M has **two separate roles** that control two different things:
+### Every user has two roles
 
-### 1. Platform role — what you can do across the whole system
+This is the most important thing to understand, and it trips people up.
 
-| Role | Who it's for |
+**Role 1 — Platform role** (what you can do across the whole system):
+
+| Role | Meaning |
 |---|---|
-| `super_admin` | Platform operator — can create tenants, see everything |
+| `super_admin` | Can create tenants, see all tenants, manage everything |
 | `developer` | Platform-level developer access |
 | `analyst` | Read-only platform access |
 | `viewer` | Minimal platform access |
 
-This role is **not** in the login token. It controls things like "can this user
-create new tenants?"
+This role is **never shown in your login token**. It controls things like "can this
+person create new tenants?"
 
-### 2. Membership role — what you can do inside a specific tenant
+**Role 2 — Membership role** (what you can do inside one specific tenant):
 
-| Role | What it can do |
+| Role | Meaning |
 |---|---|
-| `super_admin` | Everything, including cross-tenant admin |
 | `admin` | Manage agents, apps, orchestrators, settings for this tenant |
 | `member` | Create and edit resources inside the tenant |
 | `viewer` | Read-only access inside the tenant |
 
-This role **is** in the login token and is checked on every API call. When you log
-into a tenant, the system issues you a token that says "this person is an `admin` in
-tenant `acme-corp`".
+This role **is** in your login token and is checked on every API call. When you log
+in, the token says something like: "this person is an `admin` in tenant `acme-corp`."
 
-A single user can belong to multiple tenants with different roles in each.
+A user can belong to multiple tenants, with a different membership role in each.
 
-### Creating a user manually (super-admin only)
+### Creating a user (super-admin only)
+
+Users are created via the Users section in the admin UI, or via API:
 
 ```http
 POST /auth/api/v1/admin/users
@@ -78,278 +83,385 @@ Authorization: Bearer <super-admin-token>
 Content-Type: application/json
 
 {
-  "username":    "alice@acme.com",
+  "username":    "alice",
   "name":        "Alice Smith",
   "password":    "SecurePass1!",
-  "role":        "viewer",      <- platform role
-  "tenant_role": "admin",       <- role inside the tenant
-  "tenant_id":   "the-tenant-uuid-here"
+  "role":        "viewer",         ← platform role
+  "tenant_role": "admin",          ← membership role inside the tenant
+  "tenant_id":   "<tenant-uuid>"
 }
 ```
 
-If a user has no tenant membership, they cannot log in at all.
+A user with no tenant membership **cannot log in at all**.
 
 ---
 
-## SSO — How It Works (Plain Language)
+## Part 3 — SSO (Single Sign-On)
 
-Without SSO, a user logs in with a username + password stored in the-M.
+### What SSO means in plain language
 
-With SSO, the flow is:
+Without SSO, Alice has a username and password stored in the-M. She types them on the
+the-M login page.
 
-1. User clicks "Log in with SSO" on the-M's login page
-2. The-M redirects the browser to the company's identity provider (e.g. Keycloak, Google, Okta)
-3. The user logs in there — the-M never sees the password
-4. The identity provider tells the-M: "yes, this is alice@acme.com, and she's in the `engineers` group"
-5. The-M looks up or creates Alice's account, assigns her the right tenant role (based on her group), and logs her in
+With SSO, Alice's company already has an identity system — maybe Google Workspace,
+Microsoft, Okta, or Keycloak. Instead of a separate the-M password, Alice clicks
+"Log in with SSO", gets taken to her company's login page, authenticates there, and
+lands back in the-M — already logged in. The-M never sees her password.
 
-From Alice's perspective: she just clicked one button and ended up logged into the-M.
-She doesn't have a separate the-M password to remember.
+The-M supports any identity provider that implements the **OpenID Connect** standard
+(Google, Microsoft, Okta, Keycloak, Auth0, and many others).
 
-### What "just-in-time provisioning" means
+### SSO is configured per-tenant
 
-The-M does **not** require you to pre-create users before they can log in via SSO.
-The first time Alice logs in through SSO, the-M automatically creates her account.
-On subsequent logins it updates her name if it changed. This is called JIT provisioning.
+Each tenant can have **one** SSO provider configured. A tenant either uses SSO or
+username/password — not both at the same time.
 
-### Group → Role mapping
+The SSO configuration lives on the tenant's settings page (Settings → SSO / Identity
+Provider tab). It has four fields:
 
-If the identity provider sends a list of groups (e.g. `["engineers", "admins"]`),
-the-M can map those to tenant roles automatically. You configure this mapping in the
-`them.tenant_group_mappings` table. If no group matches, the user gets `viewer` access.
+| Field | What to put here |
+|---|---|
+| Discovery URL | The base URL of your identity provider's realm/tenant. The-M fetches configuration from this URL automatically. |
+| Client ID | The application ID you registered in your identity provider |
+| Client Secret | The secret key from your identity provider registration |
+| Redirect URI | Where the identity provider sends the user back after login — always `https://your-host/auth/api/v1/auth/oidc/callback` |
 
-Note: no IdP group can ever grant `super_admin` — that role can only be assigned manually.
+### What "JIT provisioning" means
 
----
+JIT stands for **Just-In-Time**. It means: the-M creates the user's account
+automatically the first time they log in via SSO.
 
-## The Full SSO Login Flow (Technical Detail)
+You do not need to pre-create every user. The flow is:
 
-This section is for developers who want to understand what happens under the hood.
-You can skip this if you just want to use or test SSO.
+1. Alice logs in via SSO for the first time
+2. The identity provider confirms she is `alice@acme.com`
+3. The-M automatically creates an account for Alice with `viewer` membership in the tenant
+4. Alice is now logged in
 
-```
-Browser                    the-M (auth-go)              Identity Provider
-  │                              │                              │
-  │ Open /auth/oidc/start        │                              │
-  │   ?tenant=acme-corp          │                              │
-  │ ───────────────────────────► │                              │
-  │                              │ Load tenant's SSO config     │
-  │                              │ Fetch IdP discovery doc      │
-  │                              │ ──────────────────────────── ►│
-  │                              │ ◄────────────────────────────│
-  │                              │ Generate random PKCE secret  │
-  │                              │ Sign a state token (HMAC)    │
-  │                              │ Set one-time cookie          │
-  │ 302 → IdP login page         │                              │
-  │ ◄─────────────────────────── │                              │
-  │                                                             │
-  │ User types password at IdP                                  │
-  │ ──────────────────────────────────────────────────────────► │
-  │                                                             │
-  │ 302 → /auth/oidc/callback?code=XXX&state=YYY               │
-  │ ◄────────────────────────────────────────────────────────── │
-  │                              │                              │
-  │ GET /auth/oidc/callback      │                              │
-  │ ───────────────────────────► │                              │
-  │                              │ Verify state signature       │
-  │                              │ Exchange code for tokens     │
-  │                              │ ──────────────────────────── ►│
-  │                              │ ◄────────────────────────────│
-  │                              │ Verify identity token        │
-  │                              │ Create/update user in DB     │
-  │                              │ Issue the-M session cookie   │
-  │ 302 → / (dashboard)          │                              │
-  │ ◄─────────────────────────── │                              │
-```
+On Alice's second login, the-M updates her display name if it changed — but she is
+not re-created.
 
-Key security properties:
-- **PKCE** prevents code interception attacks — the one-time secret proves the browser that started the flow is the same one completing it
-- **Signed state** prevents CSRF — the state token is HMAC-signed so the callback cannot be forged
-- **The external IdP token is never exposed** — the-M immediately converts it to its own internal session cookie (`them_access_token`). The browser only ever sees the-M's own cookie.
+**Alice always gets at least `viewer` access.** SSO login is never rejected because of
+missing role configuration — the worst case is read-only access.
 
----
+If you want Alice to have `admin` or `member` access, you have two options:
+- After her first login, a super-admin promotes her via the Users API
+- Or use group mappings (see below)
 
-## What's in the Login Token (JWT)
+### Group mappings — what they are and how to set them
 
-After login — whether via password or SSO — the browser receives a `them_access_token`
-cookie. It's a signed JWT (JSON Web Token) that contains:
+Your identity provider can send a list of **groups** that Alice belongs to (e.g.
+`["engineers", "team-leads"]`). The-M can automatically translate those groups into
+tenant membership roles.
 
-```json
-{
-  "sub":       "42",                                   <- internal user ID
-  "username":  "alice@acme.com",
-  "name":      "Alice Smith",
-  "role":      "admin",                               <- membership role in this tenant
-  "tenant_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", <- which tenant
-  "exp":       1234567890,                             <- expiry timestamp
-  "type":      "access"
-}
+**Important: there is no UI for this yet.** Group mappings are configured via API
+only, by a super-admin.
+
+```http
+PUT /api/v1/admin/tenants/{tenant-id}/group-mappings
+Authorization: Bearer <super-admin-token>
+Content-Type: application/json
+
+[
+  { "group_claim": "team-leads", "role": "admin",  "priority": 1 },
+  { "group_claim": "engineers",  "role": "member", "priority": 2 }
+]
 ```
 
-Every API call the-M makes uses this token to know: who is this person, which tenant
-do they belong to, and what are they allowed to do.
+When Alice logs in and her identity provider says she's in `team-leads`, she gets
+`admin` membership. If she's only in `engineers`, she gets `member`. If she's in
+neither, she gets `viewer`.
+
+`priority` matters when a user is in multiple matching groups — the lowest number wins.
+
+Super-admin can never be granted via group mapping — that role can only be assigned
+manually.
+
+If you don't configure any group mappings, all SSO users get `viewer` and a super-admin
+can promote them individually afterward.
 
 ---
 
-## Setting Up SSO for a Tenant
+## Part 4 — The SSO Login Flow Step by Step
 
-### Step 1 — Start Keycloak (local dev only)
+This is what actually happens when Alice clicks "Log in with SSO":
 
-Keycloak is the test identity provider included with the dev stack:
+```
+1. Alice's browser → the-M:  "Start SSO for tenant acme-corp"
+   URL: GET /auth/oidc/start?tenant=acme-corp
+
+2. The-M → Identity Provider:  "Give me your configuration"
+   (fetches the discovery document — a JSON file at the identity provider's URL
+    that lists all the endpoints the-M needs)
+
+3. The-M → Alice's browser:  "Go log in here"
+   (redirects to the identity provider's login page, along with a one-time
+    security token so the callback can't be faked)
+
+4. Alice logs in at the identity provider (the-M never sees this)
+
+5. Identity Provider → Alice's browser:  "Here's a one-time code, go back to the-M"
+   (redirects to /auth/oidc/callback?code=ONE_TIME_CODE&state=SECURITY_TOKEN)
+
+6. Alice's browser → the-M:  "Here's my code"
+
+7. The-M → Identity Provider:  "Exchange this code for identity information"
+   (uses the code to get Alice's verified identity: email, name, groups)
+
+8. The-M:
+   - Verifies the identity (cryptographic signature check)
+   - Creates or updates Alice's account in the database (JIT provisioning)
+   - Assigns her tenant membership role (from group mappings, or viewer by default)
+   - Issues a the-M session cookie
+
+9. The-M → Alice's browser:  "You're in, go to the dashboard"
+```
+
+**The identity provider's tokens are never exposed to Alice or stored long-term.**
+The-M immediately converts them into its own short-lived session cookie (`them_access_token`).
+
+---
+
+## Part 5 — Testing SSO End-to-End
+
+### What you need
+
+The local dev stack includes **Keycloak** as a test identity provider. Start it with:
 
 ```bash
 docker compose --project-name them_gateway \
   -f docker-compose.yml -f docker-compose.dev.yml \
   --profile sso up -d them-keycloak
+
+# Verify it's running:
+curl http://localhost:8088/auth/keycloak/realms/them
+# Should return JSON with "realm": "them"
 ```
 
-For production, you'd point to your real IdP (Google, Okta, Azure AD, etc.) instead.
+Keycloak test credentials:
+| Item | Value |
+|---|---|
+| Test user email | `testuser@example.com` |
+| Test user password | `testpass` |
 
-### Step 2 — Save the SSO config on the tenant
+### Step 1 — Create a tenant
 
-A tenant admin (or super-admin) calls:
+In the UI: go to Admin → Tenants → Create, or via API:
+```bash
+# Get a super-admin token first
+TOKEN=$(curl -s -X POST http://localhost:8088/auth/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-```http
-PATCH /api/v1/tenant/settings
-Authorization: Bearer <tenant-admin-token>
-Content-Type: application/json
-
-{
-  "idp_config": {
-    "discovery_url": "http://them-keycloak:8080/auth/keycloak/realms/them",
-    "client_id":     "them-m",
-    "client_secret": "them-m-secret",
-    "redirect_uri":  "http://localhost:8088/auth/api/v1/auth/oidc/callback"
-  }
-}
+# Create the tenant
+curl -s -X POST http://localhost:8088/api/v1/admin/tenants \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"slug":"acme-corp","display_name":"Acme Corporation"}'
 ```
 
-> **Local dev gotcha:** Use `http://them-keycloak:8080/...` (the Docker-internal hostname)
-> for `discovery_url` — NOT `http://localhost:8088/...`. The auth-go service fetches
-> this URL from inside the Docker network, where `localhost` refers to the container
-> itself, not your laptop.
+Note the `id` in the response — you'll need it.
 
-The response will include `"idp_configured": true` to confirm it worked.
-
-### Step 3 — Test the redirect
+### Step 2 — Create a tenant admin user
 
 ```bash
-curl -v "http://localhost:8088/auth/oidc/start?tenant=your-tenant-slug"
-# You should see: HTTP/1.1 302 Found
-# Location: http://...keycloak.../auth?response_type=code&...
+curl -s -X POST http://localhost:8088/auth/api/v1/admin/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username":    "alice",
+    "name":        "Alice Smith",
+    "password":    "AlicePass1!",
+    "role":        "viewer",
+    "tenant_role": "admin",
+    "tenant_id":   "<tenant-id-from-step-1>"
+  }'
 ```
 
-### Step 4 — Do the browser login
+### Step 3 — Log in as the tenant admin and verify
 
-Open this URL in your browser:
-```
-http://localhost:8088/auth/oidc/start?tenant=your-tenant-slug
-```
+```bash
+ALICE=$(curl -s -X POST http://localhost:8088/auth/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"AlicePass1!"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-You'll be taken to Keycloak. Log in with:
-- Email: `testuser@example.com`
-- Password: `testpass`
-
-You should end up back at the-M's dashboard, logged in as that user.
-
-To confirm it worked:
-1. Open browser DevTools → Application → Cookies
-2. Check that `them_access_token` is set
-3. Call `GET http://localhost:8088/auth/api/v1/auth/me` — it should return the user's
-   name, role, and tenant_id
-
-### Step 5 — Remove SSO config (if needed)
-
-```http
-PATCH /api/v1/tenant/settings
-Authorization: Bearer <tenant-admin-token>
-
-{ "idp_config": null }
+# Check what's in the token (decode the JWT payload)
+echo $ALICE | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
+# Should show: "role": "admin", "tenant_id": "<your-tenant-id>"
 ```
 
----
+### Step 4 — Configure SSO on the tenant
 
-## Email Domain Routing
+Log in to the UI as Alice (or as super-admin), go to Settings → SSO / Identity Provider,
+and fill in:
 
-If you set an email domain on a tenant, the login page can automatically detect which
-tenant a user belongs to and show them the right login option (SSO vs password):
+| Field | Value for local dev |
+|---|---|
+| Discovery URL | `http://them-keycloak:8080/auth/keycloak/realms/them` |
+| Client ID | `them-m` |
+| Client Secret | `them-m-secret` |
+| Redirect URI | `http://localhost:8088/auth/api/v1/auth/oidc/callback` |
 
-```http
-PATCH /api/v1/tenant/settings
-{ "email_domain": "acme.com" }
+> **Why the internal URL?** The-M's auth service runs inside Docker. When it fetches
+> the discovery document, it goes to `them-keycloak:8080` — the Docker-internal
+> hostname. If you put `localhost:8088` here, it would try to connect to itself
+> (the container), not to Keycloak, and fail with a 502 error.
+
+Or via API using Alice's token:
+```bash
+curl -s -X PATCH http://localhost:8088/api/v1/tenant/settings \
+  -H "Authorization: Bearer $ALICE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "idp_config": {
+      "discovery_url": "http://them-keycloak:8080/auth/keycloak/realms/them",
+      "client_id":     "them-m",
+      "client_secret": "them-m-secret",
+      "redirect_uri":  "http://localhost:8088/auth/api/v1/auth/oidc/callback"
+    }
+  }'
+# Response should include: "idp_configured": true
 ```
 
-Then the login page can call:
-```
-GET /auth/api/v1/auth/tenant-lookup?email=alice@acme.com
+### Step 5 — Verify the redirect works (no browser needed)
+
+```bash
+curl -v "http://localhost:8088/auth/oidc/start?tenant=acme-corp" 2>&1 | grep -E "< HTTP|Location:"
+# Should show: HTTP/1.1 302
+# Location: http://...keycloak.../realms/them/protocol/openid-connect/auth?...
 ```
 
-Response:
+If you see 302 with a Keycloak URL in Location, the SSO config is working correctly.
+
+### Step 6 — Do the actual browser login
+
+This part cannot be automated — it requires a real browser.
+
+1. Open: `http://localhost:8088/auth/oidc/start?tenant=acme-corp`
+2. You'll be redirected to a Keycloak login page
+3. Enter: `testuser@example.com` / `testpass`
+4. You should land back on the the-M dashboard
+
+**To confirm it worked:**
+
+Open browser DevTools (F12) → Application tab → Cookies → find `them_access_token`.
+It should be set.
+
+Then open the browser console and run:
+```javascript
+// Decode and read your session token
+JSON.parse(atob(document.cookie.match(/them_access_token=([^;]+)/)[1].split('.')[1]))
+```
+You should see your `role` and `tenant_id`.
+
+Or call the /me endpoint from the browser address bar (it uses the cookie automatically):
+```
+http://localhost:8088/auth/api/v1/auth/me
+```
+
+You should see:
 ```json
 {
-  "slug": "acme-corp",
-  "display_name": "Acme Corporation",
-  "idp_configured": true
+  "id": 5,
+  "username": "testuser@example.com",
+  "name": "Test User",
+  "role": "viewer",
+  "tenant_id": "<your-tenant-id>"
 }
 ```
 
-If `idp_configured` is true, redirect the user to `/auth/oidc/start?tenant=acme-corp`.
-If false, show the password form.
+Role is `viewer` because no group mappings are configured for the Keycloak test user.
+A super-admin can promote the user afterward if needed.
 
----
+### Step 7 — Optionally set email domain routing
 
-## What the Test Script Checks
+If you want users at `@acme.com` to be automatically routed to the Acme SSO login:
 
-Run the full automation script:
 ```bash
-python3.12 scripts/tests/test_38_multitenant.py
+curl -s -X PATCH http://localhost:8088/api/v1/tenant/settings \
+  -H "Authorization: Bearer $ALICE" \
+  -H "Content-Type: application/json" \
+  -d '{"email_domain": "acme.com"}'
 ```
 
-It runs **74 checks** across 11 sections and exits 0 on full pass.
+Then test the lookup:
+```bash
+curl "http://localhost:8088/auth/api/v1/auth/tenant-lookup?email=anyone@acme.com"
+# Returns: {"slug":"acme-corp","display_name":"Acme Corporation","idp_configured":true}
+```
 
-### What it proves automatically
-
-| Section | What it verifies |
-|---|---|
-| S0 | Auth service and API are reachable |
-| S1 | Super-admin can log in; JWT has `role=super_admin`; admin-only APIs accessible |
-| S2 | Create a tenant, create a tenant-admin user, set quota — all work |
-| S3 | Tenant-admin gets a token scoped to their tenant; cannot access super-admin APIs (403) |
-| S4 | Tenant admin can create agents and apps; they appear in their list |
-| S5 | Quota is enforced — creating a 4th agent when limit=3 is rejected |
-| S6 | Super-admin sees all tenants in the observability summary |
-| S7 | Tenant settings (email_domain) can be updated; slug cannot be changed |
-| S8 | Refreshing the token preserves the same tenant and role |
-| S9 | A tenant-admin cannot see agents created in a different tenant |
-| S10 | Deleting a tenant: tenant disappears, former user cannot log in |
-| S11 | SSO config save/clear; Keycloak redirect works; email-domain lookup works |
-
-### What the script cannot test (must be done manually in a browser)
-
-The script cannot drive a browser, so these steps require a human:
-
-| What | Why it needs a browser |
-|---|---|
-| Clicking through the Keycloak login page | Requires real browser interaction |
-| The full SSO callback completing | The browser carries a one-time security cookie that curl cannot replicate |
-| Verifying `them_access_token` is set in the browser | Cookie is HttpOnly — invisible to scripts |
-| Verifying the UI loads correctly after SSO login | Front-end rendering |
-| Checking that a new user was auto-created in the DB after first SSO login | Depends on the full callback completing |
-
-**For the browser test:** follow Step 4 in "Setting Up SSO" above. The whole thing takes
-about 2 minutes.
+The login page uses this to decide: show the SSO button, or show the password form.
 
 ---
 
-## Keycloak Reference (Local Dev)
+## Part 6 — The Automation Script
+
+Run: `python3.12 scripts/tests/test_38_multitenant.py`
+
+The script runs **74 checks** and exits with code 0 if everything passes.
+
+### What it tests automatically
+
+| Section | What it checks |
+|---|---|
+| S0 | Auth service and Go bridge are reachable |
+| S1 | Super-admin login works; JWT has `role=super_admin`; admin APIs accessible |
+| S2 | Create tenant + user + quota via API — all succeed |
+| S3 | Tenant-admin gets a token with `role=admin` scoped to their tenant; calling super-admin APIs returns 403 |
+| S4 | Tenant-admin can create agents and apps; they appear in the list |
+| S5 | Quota is enforced — creating a 4th agent when limit is 3 gets rejected |
+| S6 | Super-admin sees all tenants in the observability dashboard |
+| S7 | Tenant can update its own settings (email domain); slug cannot be changed |
+| S8 | Refreshing a token preserves the same `role` and `tenant_id` |
+| S9 | Tenant-admin cannot see agents that belong to a different tenant |
+| S10 | After tenant deletion: tenant gone, former user cannot log in |
+| S11 | SSO: IdP config saves correctly; `/oidc/start` returns a redirect to Keycloak; email-domain lookup works; config can be cleared |
+
+### What the script cannot test (browser required)
+
+The actual SSO login requires a real browser because:
+
+- The browser must carry a one-time security cookie (`them_oidc_state`) from step 1 through to the callback. A script making two separate HTTP calls cannot do this.
+- The identity provider's login page requires user interaction.
+
+| Browser-only step | Why |
+|---|---|
+| Typing credentials on the Keycloak login page | Real user interaction required |
+| The SSO callback completing | Needs the browser's security cookie |
+| Verifying `them_access_token` is set | Cookie is HttpOnly — not readable by scripts |
+| Confirming `/me` returns the correct user after SSO login | Depends on the above |
+| Verifying JIT provisioning created the user row in the DB | Depends on the above |
+
+**For the browser test:** follow Step 6 above. It takes about 2 minutes.
+
+---
+
+## Quick Reference
+
+### Local Keycloak
 
 | Item | Value |
 |---|---|
+| Test user | `testuser@example.com` / `testpass` |
 | Realm | `them` |
 | Client ID | `them-m` |
 | Client secret | `them-m-secret` |
-| Test user | `testuser@example.com` / `testpass` |
-| External URL (use from browser / host) | `http://localhost:8088/auth/keycloak/realms/them` |
-| Internal URL (use in `discovery_url` config) | `http://them-keycloak:8080/auth/keycloak/realms/them` |
+| External URL (browser / curl from host) | `http://localhost:8088/auth/keycloak/realms/them` |
+| Internal URL (use in `discovery_url` field) | `http://them-keycloak:8080/auth/keycloak/realms/them` |
 | Start command | `docker compose ... --profile sso up -d them-keycloak` |
-| Verify it's up | `curl http://localhost:8088/auth/keycloak/realms/them` → should return JSON with `realm: "them"` |
+
+### Key API endpoints
+
+| Endpoint | Who can call it | What it does |
+|---|---|---|
+| `POST /api/v1/admin/tenants` | super-admin | Create a tenant |
+| `GET /api/v1/admin/tenants` | super-admin | List all tenants |
+| `POST /auth/api/v1/admin/users` | super-admin | Create a user with tenant membership |
+| `PATCH /api/v1/tenant/settings` | tenant-admin | Update tenant settings including SSO config |
+| `GET /api/v1/tenant/settings` | tenant-admin | Read tenant settings |
+| `GET /auth/oidc/start?tenant=<slug>` | anyone | Start SSO login for a tenant |
+| `GET /auth/api/v1/auth/me` | logged-in user (via cookie) | Read your own identity |
+| `GET /auth/api/v1/auth/tenant-lookup?email=<email>` | anyone | Find which tenant an email belongs to |
+| `PUT /api/v1/admin/tenants/{id}/group-mappings` | super-admin | Configure IdP group → tenant role mappings (API only, no UI yet) |
