@@ -141,7 +141,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
       assistantBuf.current = '';
 
       try {
-        for await (const ev of themApi.a2aStream(target.appSlug, target.slug, text, token)) {
+        for await (const ev of themApi.a2aStream(target.tenantSlug, target.appSlug, target.slug, text, token)) {
           const kind = ev.kind as string;
           if (kind === 'run-started') {
             const rid = (ev.runId ?? ev.taskId) as string | undefined;

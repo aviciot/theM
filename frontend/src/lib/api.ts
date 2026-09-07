@@ -302,7 +302,7 @@ export const themApi = {
   // a2aStream: POSTs a message/stream JSON-RPC request to an A2A entry point and
   // yields parsed SSE event bodies: { kind, parts?, status?, taskId? }
   // Auth is handled by the Next.js proxy via the them_access_token session cookie.
-  a2aStream: async function* (appSlug: string, slug: string, text: string, _bearerToken: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+  a2aStream: async function* (tenantSlug: string, appSlug: string, slug: string, text: string, _bearerToken: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: `pg-${Date.now()}`,
@@ -311,7 +311,7 @@ export const themApi = {
         message: { messageId: `msg-${Date.now()}`, role: 'user', parts: [{ text }] },
       },
     });
-    const res = await fetch(`/api/them/a2a/${appSlug}/${slug}`, {
+    const res = await fetch(`/api/them/${tenantSlug}/a2a/${appSlug}/${slug}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -321,7 +321,8 @@ export const themApi = {
       signal,
     });
     if (!res.ok) {
-      const errText = await res.text().catch(() => `HTTP ${res.status}`);
+      const parsed = await res.json().catch(() => null);
+      const errText = parsed?.detail || parsed?.error || parsed?.message || `HTTP ${res.status}`;
       throw new Error(errText);
     }
     const reader = res.body!.getReader();
