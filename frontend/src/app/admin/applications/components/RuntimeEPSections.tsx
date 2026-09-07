@@ -181,10 +181,11 @@ export function EPSections({
                                         </div>
                                       </div>
                                       <div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                                          <label style={{ ...l, marginBottom: 0, color: C.textMuted }}>Keep last N verbatim</label>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                                          <label style={{ ...l, marginBottom: 0, color: C.textMuted }}>Keep last N turns uncompressed</label>
                                           <span style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{sumDraft.fallbackN}</span>
                                         </div>
+                                        <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>The most recent turns are always sent in full, never summarized</div>
                                         <input type="range" min={0} max={10} value={sumDraft.fallbackN}
                                           onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, fallbackN: parseInt(e.target.value) } }))}
                                           style={{ width: '100%', accentColor: '#f59e0b', cursor: 'pointer' }} />
