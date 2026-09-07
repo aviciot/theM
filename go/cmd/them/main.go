@@ -373,6 +373,8 @@ func run() error {
 		})
 	}()
 
+	slugResolver := tenantctx.NewPgxSlugResolver(rlsPools.Admin)
+
 	a2aServer := a2a.NewServer(
 		execLifecycle,
 		bus,
@@ -384,7 +386,8 @@ func run() error {
 		WithCardLoader(a2a.NewPgxCardLoader(rlsPools.Admin)).
 		WithSessionPublisher(sessionPub).
 		WithTaskStore(a2aTaskStore).
-		WithFileGate(&fileGateAdapter{gate: fileGate})
+		WithFileGate(&fileGateAdapter{gate: fileGate}).
+		WithSlugResolver(slugResolver)
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 
@@ -419,15 +422,18 @@ func run() error {
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 
-	// ── 19b. Mount /apps/* (WS + SSE + voice) ────────────────────────────────
+	// ── 19b. Mount /{tenant_slug}/apps/* (WS + SSE + voice) ─────────────────
 	// Voice handler needs AppService (for provider-key decryption), which requires
 	// adminDB and adminFernetKey — so it must be wired here, after section 19.
 	voiceLoader := voice.NewPgxLoader(rlsPools.Admin)
 	voiceAppsSvc := admin.NewApplicationsHandler(adminDB, nil, adminCache, adminFernetKey, nil).Svc()
 	voiceRunLoader := voice.NewWorkerConfigLoader(rlsPools.Admin, adminFernetKey)
-	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, voiceRunLoader, recorder, bus, tenantctx.BootstrapTenantID, log)
+	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, voiceRunLoader, recorder, bus, tenantctx.BootstrapTenantID, log).
+		WithSlugResolver(slugResolver)
+	wsHandler.WithSlugResolver(slugResolver)
+	sseHandler.WithSlugResolver(slugResolver)
 	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes()))
-	log.Info("apps WS+SSE+voice mounted", "prefix", "/apps")
+	log.Info("apps WS+SSE+voice mounted", "prefix", "/{tenant_slug}/apps")
 
 	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
@@ -435,9 +441,10 @@ func run() error {
 	return srv.ListenAndServe()
 }
 
-// appsDispatcher routes /apps/{app_slug}/{ep_slug}/ws to wsApps,
-// /apps/{app_slug}/{ep_slug}/sse to sseApps,
-// /apps/{app_slug}/{ep_slug}/voice/* to voiceApps, and returns 404 for anything else.
+// appsDispatcher routes /{tenant_slug}/apps/{app_slug}/{ep_slug}/ws to wsApps,
+// /{tenant_slug}/apps/{app_slug}/{ep_slug}/sse to sseApps,
+// /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/* to voiceApps,
+// and returns 404 for anything else.
 // Each sub-handler owns its own chi router; this function only dispatches.
 // voiceApps may be nil (voice is disabled/not wired).
 func appsDispatcher(wsApps, sseApps, voiceApps http.Handler) http.Handler {

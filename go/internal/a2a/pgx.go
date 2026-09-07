@@ -27,7 +27,7 @@ var ErrCardNotFound = errors.New("a2a: entry point not found")
 
 // CardLoader fetches the data needed to build an agent card.
 type CardLoader interface {
-	LoadEPCard(ctx context.Context, appSlug, epSlug string) (EPCardRow, error)
+	LoadEPCard(ctx context.Context, tenantSlug, appSlug, epSlug string) (EPCardRow, error)
 }
 
 // PgxCardLoader implements CardLoader against a live pgxpool.Pool.
@@ -47,27 +47,29 @@ SELECT
     a.name
 FROM them.entry_points ep
 JOIN them.applications a  ON a.id  = ep.application_id
+JOIN them.tenants t        ON t.id  = a.tenant_id
 LEFT JOIN them.app_orchestrators ao
     ON ao.id = ep.app_orchestrator_id
    AND ao.application_id = ep.application_id
-WHERE a.slug   = $1
-  AND ep.slug  = $2
+WHERE t.slug   = $1
+  AND a.slug   = $2
+  AND ep.slug  = $3
   AND ep.entry_point_type = 'a2a'
 LIMIT 1`
 
-// LoadEPCard fetches the card row for the given app/ep slug pair.
+// LoadEPCard fetches the card row for the given tenant/app/ep slug triple.
 // Returns ErrCardNotFound when no matching a2a entry point exists.
-func (l *PgxCardLoader) LoadEPCard(ctx context.Context, appSlug, epSlug string) (EPCardRow, error) {
+func (l *PgxCardLoader) LoadEPCard(ctx context.Context, tenantSlug, appSlug, epSlug string) (EPCardRow, error) {
 	var row EPCardRow
 	var cardJSON []byte
-	err := l.pool.QueryRow(ctx, epCardQuery, appSlug, epSlug).Scan(
+	err := l.pool.QueryRow(ctx, epCardQuery, tenantSlug, appSlug, epSlug).Scan(
 		&cardJSON,
 		&row.OrchestratorDisplayName,
 		&row.AppName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return EPCardRow{}, fmt.Errorf("%w: app=%s ep=%s", ErrCardNotFound, appSlug, epSlug)
+			return EPCardRow{}, fmt.Errorf("%w: tenant=%s app=%s ep=%s", ErrCardNotFound, tenantSlug, appSlug, epSlug)
 		}
 		return EPCardRow{}, fmt.Errorf("a2a: load card: %w", err)
 	}

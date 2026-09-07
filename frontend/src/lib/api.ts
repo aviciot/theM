@@ -220,7 +220,7 @@ export const themApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
-  voiceChat: async (appSlug: string, slug: string, audio: Blob, signal?: AbortSignal): Promise<{ transcript: string; reply: string; audioBlob: Blob }> => {
+  voiceChat: async (tenantSlug: string, appSlug: string, slug: string, audio: Blob, signal?: AbortSignal): Promise<{ transcript: string; reply: string; audioBlob: Blob }> => {
     const form = new FormData();
     form.append('audio', audio, 'recording.webm');
     const timeoutCtrl = new AbortController();
@@ -230,7 +230,7 @@ export const themApi = {
       ? AbortSignal.any([signal, timeoutCtrl.signal])
       : timeoutCtrl.signal;
     try {
-      const res = await fetch(`/api/them/apps/${appSlug}/${slug}/voice/chat`, {
+      const res = await fetch(`/api/them/${tenantSlug}/apps/${appSlug}/${slug}/voice/chat`, {
         method: 'POST',
         body: form,
         signal: combined,
@@ -248,9 +248,9 @@ export const themApi = {
     }
   },
   // voiceTTS POSTs text to the voice EP's TTS endpoint and returns the audio Blob.
-  voiceTTS: async (appSlug: string, slug: string, text: string, signal?: AbortSignal): Promise<Blob> => {
+  voiceTTS: async (tenantSlug: string, appSlug: string, slug: string, text: string, signal?: AbortSignal): Promise<Blob> => {
     const combined = signal ?? undefined;
-    const res = await fetch(`/api/them/apps/${appSlug}/${slug}/voice/tts`, {
+    const res = await fetch(`/api/them/${tenantSlug}/apps/${appSlug}/${slug}/voice/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
@@ -264,14 +264,14 @@ export const themApi = {
   //   { type: 'token', content: string }
   //   { type: 'done', text: string }      — full reply
   //   { type: 'error', message: string }
-  voiceStream: async function* (appSlug: string, slug: string, audio: Blob, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+  voiceStream: async function* (tenantSlug: string, appSlug: string, slug: string, audio: Blob, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
     const form = new FormData();
     form.append('audio', audio, 'recording.webm');
     const timeoutCtrl = new AbortController();
     const timer = setTimeout(() => timeoutCtrl.abort(), 90000);
     const combined = signal ? AbortSignal.any([signal, timeoutCtrl.signal]) : timeoutCtrl.signal;
     try {
-      const res = await fetch(`/api/them/apps/${appSlug}/${slug}/voice/stream`, {
+      const res = await fetch(`/api/them/${tenantSlug}/apps/${appSlug}/${slug}/voice/stream`, {
         method: 'POST',
         body: form,
         signal: combined,

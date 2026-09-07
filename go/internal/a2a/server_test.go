@@ -267,7 +267,7 @@ func postRPC(t *testing.T, srv *httptest.Server, body any, token string) *http.R
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp/ep1", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/default/a2a/myapp/ep1", bytes.NewReader(data))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -740,7 +740,7 @@ func TestA2AMalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp/ep1", bytes.NewReader([]byte(`{not valid json`)))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/default/a2a/myapp/ep1", bytes.NewReader([]byte(`{not valid json`)))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -840,7 +840,7 @@ func postStream(t *testing.T, srv *httptest.Server, body any, token string) (int
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp/ep1", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/default/a2a/myapp/ep1", bytes.NewReader(data))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -887,7 +887,7 @@ func TestA2AStream_ContentType(t *testing.T) {
 	defer srv.Close()
 
 	data, _ := json.Marshal(validStreamBody())
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp/ep1", bytes.NewReader(data))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/default/a2a/myapp/ep1", bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp, err := http.DefaultClient.Do(req)
@@ -985,7 +985,7 @@ func TestA2AStream_NoText_RPCError(t *testing.T) {
 		"id": "stream-req-2",
 	}
 	data, _ := json.Marshal(body)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp/ep1", bytes.NewReader(data))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/default/a2a/myapp/ep1", bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp, err := http.DefaultClient.Do(req)
@@ -1004,7 +1004,7 @@ func TestA2A_AgentCard_StreamingTrue(t *testing.T) {
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	resp, err := http.Get(srv.URL + "/default/a2a/myapp/ep1/.well-known/agent.json")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1023,7 +1023,7 @@ func TestA2A_AgentCard_WithPublicURL(t *testing.T) {
 	srv := httptest.NewServer(s.Routes())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	resp, err := http.Get(srv.URL + "/default/a2a/myapp/ep1/.well-known/agent.json")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1033,7 +1033,7 @@ func TestA2A_AgentCard_WithPublicURL(t *testing.T) {
 	ifaces, _ := card["supportedInterfaces"].([]any)
 	require.NotEmpty(t, ifaces, "card must have at least one supportedInterface")
 	iface, _ := ifaces[0].(map[string]any)
-	assert.Equal(t, "https://example.com/a2a/myapp/ep1", iface["url"])
+	assert.Equal(t, "https://example.com/default/a2a/myapp/ep1", iface["url"])
 }
 
 // A2A-S09: agent card URL is derived from request host when publicURL is unset.
@@ -1043,7 +1043,7 @@ func TestA2A_AgentCard_DerivedURL(t *testing.T) {
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	resp, err := http.Get(srv.URL + "/default/a2a/myapp/ep1/.well-known/agent.json")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1066,7 +1066,7 @@ type fakeCardLoader struct {
 	err error
 }
 
-func (f *fakeCardLoader) LoadEPCard(_ context.Context, _, _ string) (a2aserver.EPCardRow, error) {
+func (f *fakeCardLoader) LoadEPCard(_ context.Context, _, _, _ string) (a2aserver.EPCardRow, error) {
 	return f.row, f.err
 }
 
@@ -1086,7 +1086,7 @@ func TestA2A_AgentCard_SynthesizedCard(t *testing.T) {
 	srv := httptest.NewServer(s.Routes())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	resp, err := http.Get(srv.URL + "/default/a2a/myapp/ep1/.well-known/agent.json")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1111,7 +1111,7 @@ func TestA2A_AgentCard_FallbackToOrchName(t *testing.T) {
 	srv := httptest.NewServer(s.Routes())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	resp, err := http.Get(srv.URL + "/default/a2a/myapp/ep1/.well-known/agent.json")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1131,7 +1131,7 @@ func TestA2A_AgentCard_FallbackNoLoader(t *testing.T) {
 	srv := httptest.NewServer(b.build().Routes()) // no WithCardLoader
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	resp, err := http.Get(srv.URL + "/default/a2a/myapp/ep1/.well-known/agent.json")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

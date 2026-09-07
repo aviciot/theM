@@ -347,10 +347,12 @@ handlers, router, oidc, oidc_store, oidc_jwks, oidc_roles, user_mgmt_handlers, t
 
 ---
 
-### S1-32 · Tenant context — `internal/tenantctx/tenantctx_test.go`
+### S1-32 · Tenant context — `internal/tenantctx/`
 
 **Purpose:** Typed context package for tenant identity — no stringly-typed key, correct error
-types, parent-child isolation.
+types, parent-child isolation. Also includes `PgxSlugResolver` — tenant slug → UUID with cache.
+
+**Files:** `tenantctx_test.go`, `resolver_test.go`
 
 | Test | What it proves |
 |---|---|
@@ -362,8 +364,12 @@ types, parent-child isolation.
 | `TestTenantCtx_MustPanicsOnMissing` | TC-06: MustTenantIDFromCtx panics when tenant absent |
 | `TestTenantCtx_MustReturnsValue` | TC-07: MustTenantIDFromCtx returns value when present |
 | `TestTenantCtx_StringKeyCannotOverride` | TC-08: raw string context key cannot retrieve typed tenant value |
+| `TestPgxSlugResolver_HappyPath` | TS-01: known slug → correct UUID returned |
+| `TestPgxSlugResolver_NotFound` | TS-02: unknown slug → ErrTenantSlugNotFound |
+| `TestPgxSlugResolver_TwoSlugs` | TS-03: two distinct slugs resolve independently |
+| `TestPgxSlugResolver_NilPoolReturnsError` | TS-04: nil pool → error (no panic) |
 
-**Trigger:** any change to `internal/tenantctx/tenantctx.go`
+**Trigger:** any change to `internal/tenantctx/tenantctx.go` or `internal/tenantctx/resolver.go`
 
 ---
 

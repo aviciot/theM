@@ -46,6 +46,10 @@ import (
 	"github.com/aviciot/them/internal/transport"
 )
 
+// SlugResolver resolves a tenant slug to its UUID.
+// Implemented by tenantctx.PgxSlugResolver.
+type SlugResolver = tenantctx.SlugResolver
+
 // Authenticator validates bearer tokens.
 // Sourced from internal/transport.
 type Authenticator = transport.Authenticator
@@ -59,6 +63,7 @@ type Handler struct {
 	instanceID    string
 	logger        *slog.Logger
 	runStreamer   runstream.RedisStreamer
+	slugResolver  SlugResolver
 }
 
 // NewHandler creates a Handler. The lifecycle owns auth, EPConfig, gate, session,
@@ -93,6 +98,13 @@ func (h *Handler) WithRunStreamer(rc runstream.RedisStreamer) *Handler {
 	return h
 }
 
+// WithSlugResolver attaches a TenantSlugResolver used by AppsSSERoute to resolve
+// the /{tenant_slug} path segment to a tenant UUID.
+func (h *Handler) WithSlugResolver(r SlugResolver) *Handler {
+	h.slugResolver = r
+	return h
+}
+
 // runEvents opens the event channel for a run by reading the run's Redis Stream
 // (them:dash:run:{runID}:stream). lastEventID is the client's resume cursor.
 func (h *Handler) runEvents(ctx context.Context, runID, lastEventID string) (<-chan event.Event, error) {
@@ -108,21 +120,34 @@ func (h *Handler) Routes() http.Handler {
 	return r
 }
 
-// AppsSSERoute returns an http.Handler for /{app_slug}/{ep_slug}/sse (relative path).
-// Mount at /apps so the full external path is /apps/{app_slug}/{ep_slug}/sse.
+// AppsSSERoute returns an http.Handler for the tenant-scoped SSE path.
+// Full external path: /{tenant_slug}/apps/{app_slug}/{ep_slug}/sse
 func (h *Handler) AppsSSERoute() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/{app_slug}/{ep_slug}/sse", func(w http.ResponseWriter, r *http.Request) {
+	handle := func(w http.ResponseWriter, r *http.Request) {
+		tenantSlug := chi.URLParam(r, "tenant_slug")
+		tenantID, err := h.resolveSlug(r.Context(), tenantSlug)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		rctx := chi.RouteContext(r.Context())
 		rctx.URLParams.Add("entry_point_slug", chi.URLParam(r, "ep_slug"))
+		rctx.URLParams.Add("resolved_tenant_id", tenantID)
 		h.ServeHTTP(w, r)
-	})
-	r.Post("/{app_slug}/{ep_slug}/sse", func(w http.ResponseWriter, r *http.Request) {
-		rctx := chi.RouteContext(r.Context())
-		rctx.URLParams.Add("entry_point_slug", chi.URLParam(r, "ep_slug"))
-		h.ServeHTTP(w, r)
-	})
+	}
+	r.Get("/{tenant_slug}/apps/{app_slug}/{ep_slug}/sse", handle)
+	r.Post("/{tenant_slug}/apps/{app_slug}/{ep_slug}/sse", handle)
 	return r
+}
+
+// resolveSlug resolves a tenant slug to its UUID. Falls back to the bootstrap
+// tenant when no resolver is configured (single-tenant / test mode).
+func (h *Handler) resolveSlug(ctx context.Context, slug string) (string, error) {
+	if h.slugResolver == nil {
+		return tenantctx.BootstrapTenantID, nil
+	}
+	return h.slugResolver.ResolveSlug(ctx, slug)
 }
 
 // ServeHTTP handles the SSE connection.
@@ -145,10 +170,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rawToken := h.extractRawToken(r)
 
 	// ── 3. Resolve tenant identity for EP config lookup ──────────────────────
-	// Tenant comes from the bearer token or JWT. For public EPs (no token),
-	// use the bootstrap tenant UUID (single-tenant deployment safe).
+	// Priority order: (1) resolved_tenant_id from AppsSSERoute slug resolution
+	// (2) bearer token TenantID claim (3) bootstrap fallback for /orchestrate path.
 	tenantID := tenantctx.BootstrapTenantID
-	if rawToken != "" && h.authenticator != nil {
+	if resolved := chi.URLParam(r, "resolved_tenant_id"); resolved != "" {
+		tenantID = resolved
+	} else if rawToken != "" && h.authenticator != nil {
 		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
 			tenantID = ti.TenantID
 		}

@@ -226,7 +226,7 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
             try {
               let assistantAdded = false;
               let fullReply = '';
-              for await (const ev of themApi.voiceStream(target.appSlug, target.slug, blob, fetchAbort.signal)) {
+              for await (const ev of themApi.voiceStream(target.tenantSlug, target.appSlug, target.slug, blob, fetchAbort.signal)) {
                 const evType = ev.type as string;
                 if (evType === 'transcript') {
                   const txt = ev.text as string;
@@ -255,7 +255,7 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
                   const replyText = (ev.text as string) || fullReply;
                   if (replyText && ev.tts_enabled !== false) {
                     connSetStatus('Speaking…');
-                    themApi.voiceTTS(target.appSlug, target.slug, replyText, fetchAbort.signal)
+                    themApi.voiceTTS(target.tenantSlug, target.appSlug, target.slug, replyText, fetchAbort.signal)
                       .then(audioBlob => {
                         if (!audioBlob || audioBlob.size === 0) return;
                         setSpeakingLocal(true);

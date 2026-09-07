@@ -13,10 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// handleAgentCard serves GET /a2a/{app_slug}/{ep_slug}/.well-known/agent.json.
+// handleAgentCard serves GET /{tenant_slug}/a2a/{app_slug}/{ep_slug}/.well-known/agent.json.
 // When a synthesized card exists in the DB it is served via the SDK handler.
 // When not yet synthesized, a minimal card is returned from orchestrator name.
 func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
+	tenantSlug := chi.URLParam(r, "tenant_slug")
 	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "ep_slug")
 
@@ -32,11 +33,11 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		}
 		base = scheme + "://" + host
 	}
-	epURL := fmt.Sprintf("%s/a2a/%s/%s", base, appSlug, epSlug)
+	epURL := fmt.Sprintf("%s/%s/a2a/%s/%s", base, tenantSlug, appSlug, epSlug)
 
 	// Try to serve synthesized card from DB.
 	if s.cardLoader != nil {
-		row, err := s.cardLoader.LoadEPCard(r.Context(), appSlug, epSlug)
+		row, err := s.cardLoader.LoadEPCard(r.Context(), tenantSlug, appSlug, epSlug)
 		if err == nil && len(row.AgentCardJSON) > 0 {
 			// Parse stored card; inject the live URL and SDK-standard capabilities.
 			var stored map[string]any

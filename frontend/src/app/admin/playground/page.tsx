@@ -29,7 +29,7 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
         const ep = app.entry_points.find(e => e.slug === slug);
         if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse' || ep.entry_point_type === 'voice' || ep.entry_point_type === 'a2a')) {
           const resolvedAppSlug = app.slug ?? app.id;
-          return { kind: 'entrypoint', slug, appSlug: resolvedAppSlug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
+          return { kind: 'entrypoint', slug, appSlug: resolvedAppSlug, tenantSlug: ep.tenant_slug ?? app.tenant_slug ?? 'default', epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
         }
       }
     }
@@ -67,7 +67,7 @@ function PlaygroundInner() {
   const [composeInput, setComposeInput] = useState('');
   const [broadcastText, setBroadcastText] = useState<string | null>(null);
   const sentCount = { current: 0 };
-  const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, { appSlug: string; epSlug: string }>>({});
+  const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, { appSlug: string; epSlug: string; tenantSlug: string }>>({});
 
   useEffect(() => {
     themApi.applications().then(apps => {
@@ -76,18 +76,18 @@ function PlaygroundInner() {
         if (!a.enabled) continue;
         const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type));
         if (ep) {
-          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, appSlug: a.slug ?? a.id, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
+          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, appSlug: a.slug ?? a.id, tenantSlug: ep.tenant_slug ?? a.tenant_slug ?? 'default', epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
           setTabs([t]);
           setActiveTabId(targetId(t));
           break;
         }
       }
-      const m: Record<string, { appSlug: string; epSlug: string }> = {};
+      const m: Record<string, { appSlug: string; epSlug: string; tenantSlug: string }> = {};
       for (const a of apps) {
         if (!a.enabled) continue;
         const ep = a.entry_points.find(e => e.enabled && e.entry_point_type === 'webrtc');
         const aoName = a.app_orchestrators?.[0]?.name;
-        if (ep && aoName && !m[aoName]) m[aoName] = { appSlug: a.slug ?? a.id, epSlug: ep.slug };
+        if (ep && aoName && !m[aoName]) m[aoName] = { appSlug: a.slug ?? a.id, epSlug: ep.slug, tenantSlug: ep.tenant_slug ?? a.tenant_slug ?? 'default' };
       }
       setWebrtcSlugs(m);
     }).catch(() => {});
@@ -200,7 +200,7 @@ function PlaygroundInner() {
             )}
 
             <button
-              onClick={() => activeWebrtc && window.open(`/apps/${activeWebrtc.appSlug}/${activeWebrtc.epSlug}/voice`, '_blank', 'noopener')}
+              onClick={() => activeWebrtc && window.open(`/${activeWebrtc.tenantSlug ?? 'default'}/apps/${activeWebrtc.appSlug}/${activeWebrtc.epSlug}/voice`, '_blank', 'noopener')}
               disabled={!activeWebrtc}
               title={activeWebrtc ? `Open voice room (${activeWebrtc.appSlug}/${activeWebrtc.epSlug})` : 'No WebRTC app configured for this target'}
               style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid', borderColor: activeWebrtc ? 'rgba(99,202,183,0.6)' : 'var(--tm-border)', background: activeWebrtc ? 'rgba(99,202,183,0.08)' : 'var(--tm-surface)', cursor: activeWebrtc ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: activeWebrtc ? 1 : 0.35 }}

@@ -200,11 +200,11 @@ func (s *Server) MountArtifacts(artifactHandler http.Handler) {
 	s.router.Get("/api/v1/runs/{run_id}/artifacts/{artifact_id}", artifactHandler.ServeHTTP)
 }
 
-// MountApps mounts an /apps handler at the router root.
-// The handler should register /apps/{slug}/ws and /apps/{slug}/sse routes.
+// MountApps mounts the tenant-scoped apps handler at the router root.
+// The handler owns the full /{tenant_slug}/apps/{app_slug}/{ep_slug}/* path.
 // Call before ListenAndServe.
 func (s *Server) MountApps(h http.Handler) {
-	s.router.Mount("/apps", h)
+	s.router.Mount("/", h)
 }
 
 // Handler returns the underlying chi router as an http.Handler. Intended for

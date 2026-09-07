@@ -815,13 +815,13 @@ services:
       - "traefik.http.routers.them-go-sse.entrypoints=web"
       - "traefik.http.routers.them-go-sse.priority=120"
       - "traefik.http.routers.them-go-sse.service=them-go-bridge-svc"
-      # ── /apps — WS, SSE, voice (two-segment: /apps/{app_slug}/{ep_slug}/*) ────
-      - "traefik.http.routers.them-go-apps.rule=PathPrefix(`/apps`)"
+      # ── /{tenant_slug}/apps — WS, SSE, voice ─────────────────────────────────
+      - "traefik.http.routers.them-go-apps.rule=PathRegexp(`^/[^/]+/apps(/|$)`)"
       - "traefik.http.routers.them-go-apps.entrypoints=web"
       - "traefik.http.routers.them-go-apps.priority=120"
       - "traefik.http.routers.them-go-apps.service=them-go-bridge-svc"
-      # ── /a2a — A2A JSON-RPC + per-agent card (/a2a/{app}/{ep}/.well-known) ────
-      - "traefik.http.routers.them-go-a2a.rule=PathPrefix(`/a2a`)"
+      # ── /{tenant_slug}/a2a — A2A JSON-RPC + per-agent card ───────────────────
+      - "traefik.http.routers.them-go-a2a.rule=PathRegexp(`^/[^/]+/a2a(/|$)`)"
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"

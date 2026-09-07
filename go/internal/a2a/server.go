@@ -40,6 +40,10 @@ import (
 	"github.com/aviciot/them/internal/transport"
 )
 
+// SlugResolver resolves a tenant slug to its UUID.
+// Implemented by tenantctx.PgxSlugResolver.
+type SlugResolver = tenantctx.SlugResolver
+
 // Authenticator validates bearer tokens. Implemented by auth.Cache.
 type Authenticator = transport.Authenticator
 
@@ -84,6 +88,7 @@ type Server struct {
 	cardLoader    CardLoader                  // optional; nil → minimal fallback card
 	taskStore     *agentgen.RedisA2ATaskStore // optional; nil → SDK in-memory store
 	fileGate      FileInterceptor             // optional; nil → no artifact scanning
+	slugResolver  SlugResolver               // optional; nil → bootstrap tenant
 }
 
 // NewServer creates a Server backed by the shared execution Lifecycle.
@@ -146,11 +151,31 @@ func (s *Server) WithFileGate(gate FileInterceptor) *Server {
 	return s
 }
 
-// Routes returns an http.Handler with A2A routes mounted.
+// WithSlugResolver attaches a TenantSlugResolver used to resolve the
+// /{tenant_slug} path segment to a tenant UUID.
+func (s *Server) WithSlugResolver(r SlugResolver) *Server {
+	s.slugResolver = r
+	return s
+}
+
+// resolveSlug resolves a tenant slug to its UUID. Falls back to the bootstrap
+// tenant when no resolver is configured (single-tenant / test mode).
+func (s *Server) resolveSlug(ctx context.Context, slug string) (string, error) {
+	if s.slugResolver == nil {
+		return tenantctx.BootstrapTenantID, nil
+	}
+	return s.slugResolver.ResolveSlug(ctx, slug)
+}
+
+// Routes returns an http.Handler with tenant-scoped A2A routes mounted.
+// Full external paths:
+//
+//	POST /{tenant_slug}/a2a/{app_slug}/{ep_slug}
+//	GET  /{tenant_slug}/a2a/{app_slug}/{ep_slug}/.well-known/agent.json
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Post("/a2a/{app_slug}/{ep_slug}", s.handle)
-	r.Get("/a2a/{app_slug}/{ep_slug}/.well-known/agent.json", s.handleAgentCard)
+	r.Post("/{tenant_slug}/a2a/{app_slug}/{ep_slug}", s.handle)
+	r.Get("/{tenant_slug}/a2a/{app_slug}/{ep_slug}/.well-known/agent.json", s.handleAgentCard)
 	return r
 }
 
@@ -161,6 +186,7 @@ func (s *Server) Routes() http.Handler {
 // then restore the body and delegate to the SDK JSON-RPC handler which provides
 // full method dispatch with A2A v1.0-compliant wire format.
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	tenantSlug := chi.URLParam(r, "tenant_slug")
 	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "ep_slug")
 	rawToken := s.extractRawToken(r)
@@ -201,10 +227,16 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	contextID := envelope.Params.Message.ContextID
 	rpcID := envelope.ID
 
-	// ── 3. Resolve tenant from bearer token ───────────────────────────────────
-	tenantID := tenantctx.BootstrapTenantID
+	// ── 3. Resolve tenant — URL slug takes precedence over bearer token ─────────
+	tenantID, err := s.resolveSlug(r.Context(), tenantSlug)
+	if err != nil {
+		writeHTTPError(w, rpcID, http.StatusNotFound, "tenant not found")
+		return
+	}
+	// Override with bearer token tenant when present and different (e.g. JWT
+	// tokens carry tenant_id from login; slug and JWT must agree for token EPs).
 	if rawToken != "" && s.authenticator != nil {
-		if ti, err := s.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
+		if ti, tiErr := s.authenticator.Validate(r.Context(), rawToken); tiErr == nil && ti.TenantID != "" {
 			tenantID = ti.TenantID
 		}
 	}

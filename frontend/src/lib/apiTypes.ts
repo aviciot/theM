@@ -183,6 +183,7 @@ export interface EntryPoint {
   id: string;
   application_id: string;
   slug: string;
+  tenant_slug?: string;
   entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
@@ -236,6 +237,7 @@ export interface Application {
   id: string;
   name: string;
   slug?: string;
+  tenant_slug?: string;
   presentation?: Record<string, unknown>;
   enabled: boolean;
   active_revision?: number | null;

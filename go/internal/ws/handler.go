@@ -36,6 +36,10 @@ import (
 	"github.com/aviciot/them/internal/transport"
 )
 
+// SlugResolver resolves a tenant slug to its UUID.
+// Implemented by tenantctx.PgxSlugResolver.
+type SlugResolver = tenantctx.SlugResolver
+
 var upgrader = websocket.Upgrader{
 	HandshakeTimeout: 10 * time.Second,
 	CheckOrigin:      func(_ *http.Request) bool { return true },
@@ -101,6 +105,7 @@ type Handler struct {
 	logger        *slog.Logger
 	runStreamer   runstream.RedisStreamer
 	sessionPub    *dashboard.SessionPublisher
+	slugResolver  SlugResolver
 }
 
 // NewHandler creates a Handler. All admission/session/gate logic is delegated
@@ -139,6 +144,13 @@ func (h *Handler) WithSessionPublisher(pub *dashboard.SessionPublisher) *Handler
 	return h
 }
 
+// WithSlugResolver attaches a TenantSlugResolver used by AppsWSRoute to resolve
+// the /{tenant_slug} path segment to a tenant UUID.
+func (h *Handler) WithSlugResolver(r SlugResolver) *Handler {
+	h.slugResolver = r
+	return h
+}
+
 // runEvents opens the event channel for a run by reading the run's Redis Stream
 // (them:dash:run:{runID}:stream). lastEventID is the client's resume cursor.
 func (h *Handler) runEvents(ctx context.Context, runID, lastEventID string) (<-chan event.Event, error) {
@@ -152,16 +164,32 @@ func (h *Handler) Routes() http.Handler {
 	return r
 }
 
-// AppsWSRoute returns an http.Handler for /{app_slug}/{ep_slug}/ws (relative path).
-// Mount at /apps so the full external path is /apps/{app_slug}/{ep_slug}/ws.
+// AppsWSRoute returns an http.Handler for the tenant-scoped WS path.
+// Full external path: /{tenant_slug}/apps/{app_slug}/{ep_slug}/ws
 func (h *Handler) AppsWSRoute() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/{app_slug}/{ep_slug}/ws", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/{tenant_slug}/apps/{app_slug}/{ep_slug}/ws", func(w http.ResponseWriter, r *http.Request) {
+		tenantSlug := chi.URLParam(r, "tenant_slug")
+		tenantID, err := h.resolveSlug(r.Context(), tenantSlug)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		rctx := chi.RouteContext(r.Context())
 		rctx.URLParams.Add("entry_point_slug", chi.URLParam(r, "ep_slug"))
+		rctx.URLParams.Add("resolved_tenant_id", tenantID)
 		h.ServeHTTP(w, r)
 	})
 	return r
+}
+
+// resolveSlug resolves a tenant slug to its UUID. Falls back to the bootstrap
+// tenant when no resolver is configured (single-tenant / test mode).
+func (h *Handler) resolveSlug(ctx context.Context, slug string) (string, error) {
+	if h.slugResolver == nil {
+		return tenantctx.BootstrapTenantID, nil
+	}
+	return h.slugResolver.ResolveSlug(ctx, slug)
 }
 
 // ServeHTTP runs the full admission pipeline via Lifecycle.Admit BEFORE upgrading
@@ -186,14 +214,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rawToken := h.extractRawToken(r)
 
 	// ── 2. Resolve tenant identity for EP config lookup ──────────────────────
-	// Tenant comes from the bearer token (validated by auth.Cache) or JWT claims.
-	// For public EPs (no token), use the bootstrap tenant UUID. This is correct
-	// for the current single-tenant deployment. Multi-tenant public EPs require
-	// Wave 10 hostname/path-prefix routing to supply the tenantID.
-	// The tokenInfo validation happens inside Lifecycle.Admit; we only need the
-	// TenantID here to scope the EP lookup. For token EPs we pre-validate now.
+	// Priority order: (1) resolved_tenant_id from AppsWSRoute slug resolution
+	// (2) bearer token TenantID claim (3) bootstrap fallback for /orchestrate path.
 	tenantID := tenantctx.BootstrapTenantID
-	if rawToken != "" && h.authenticator != nil {
+	if resolved := chi.URLParam(r, "resolved_tenant_id"); resolved != "" {
+		tenantID = resolved
+	} else if rawToken != "" && h.authenticator != nil {
 		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
 			tenantID = ti.TenantID
 		}

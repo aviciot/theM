@@ -311,6 +311,7 @@ type Application struct {
 	ID               string                   `json:"id"`
 	Name             string                   `json:"name"`
 	Slug             string                   `json:"slug"`
+	TenantSlug       string                   `json:"tenant_slug,omitempty"`
 	Enabled          bool                     `json:"enabled"`
 	ActiveRevision   *int                     `json:"active_revision,omitempty"`
 	ActiveStatus     *string                  `json:"active_status,omitempty"`
@@ -324,6 +325,7 @@ type EntryPoint struct {
 	ApplicationID        string  `json:"application_id"`
 	AppOrchestratorID    *string `json:"app_orchestrator_id,omitempty"`
 	Slug                 string  `json:"slug"`
+	TenantSlug           string  `json:"tenant_slug,omitempty"`
 	EntryPointType       string  `json:"entry_point_type"`
 	Enabled              bool    `json:"enabled"`
 	MemoryEnabled        bool    `json:"memory_enabled"`

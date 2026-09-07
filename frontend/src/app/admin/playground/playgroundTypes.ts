@@ -4,7 +4,7 @@
 // ── Connection target ──────────────────────────────────────────────────────
 export type ConnTarget =
   | { kind: 'orchestrator'; name: string; label: string }
-  | { kind: 'entrypoint'; slug: string; appSlug: string; epType: 'websocket' | 'sse' | 'voice' | 'a2a'; appName: string; orchName: string };
+  | { kind: 'entrypoint'; slug: string; appSlug: string; tenantSlug: string; epType: 'websocket' | 'sse' | 'voice' | 'a2a'; appName: string; orchName: string };
 
 export function targetLabel(t: ConnTarget): string {
   if (t.kind === 'orchestrator') return t.label;
@@ -24,7 +24,7 @@ export function targetStorageKey(t: ConnTarget): string {
 export function targetWsUrl(t: ConnTarget, token: string): string {
   const base = getBridgeWs();
   if (t.kind === 'orchestrator') return `${base}/ws/orchestrate/${t.name}?token=${encodeURIComponent(token)}`;
-  return `${base}/apps/${t.appSlug}/${t.slug}/ws?token=${encodeURIComponent(token)}`;
+  return `${base}/${t.tenantSlug}/apps/${t.appSlug}/${t.slug}/ws?token=${encodeURIComponent(token)}`;
 }
 
 // Tab colour palette — cycles for each open tab

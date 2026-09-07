@@ -8,24 +8,26 @@ import (
 )
 
 // listAppQuery is shared by ListApplications and GetApplication.
-// It returns: id, name, slug, enabled, active_revision, active_status.
+// It returns: id, name, slug, tenant_slug, enabled, active_revision, active_status.
 // app_orchestrators are fetched separately per-app to avoid N×M fanout.
 const listAppQuery = `
 SELECT
     a.id::text,
     a.name,
     COALESCE(a.slug, ''),
+    COALESCE(t.slug, ''),
     a.enabled,
     d.revision,
     d.status
 FROM them.applications a
+JOIN them.tenants t ON t.id = a.tenant_id
 LEFT JOIN them.application_definitions d ON d.id = a.active_definition_id
 WHERE a.tenant_id = $1::uuid`
 
 // scanApplication scans one application row from listAppQuery.
 func scanApplication(rows SingleRowScanner) (Application, error) {
 	var a Application
-	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
 		return a, err
 	}
 	return a, nil
@@ -162,18 +164,23 @@ func (d *DB) DeleteApplication(ctx context.Context, tenantID, id string) error {
 	return d.q.Exec(ctx, q, id, tenantID)
 }
 
-// ListEntryPoints returns all entry points for a given application UUID.
+// ListEntryPoints returns all entry points for a given application UUID,
+// including the tenant_slug from the parent tenant (for URL construction).
 // Returns an empty (non-nil) slice on DB error so callers can safely range over it.
 func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 	const q = `
-		SELECT id::text, application_id::text, app_orchestrator_id::text,
-		       slug, entry_point_type, enabled,
-		       COALESCE(memory_enabled, false),
-		       COALESCE(summarize_every_n_calls, 10),
-		       COALESCE(memory_raw_fallback_n, 3),
-		       summarizer_provider, summarizer_model,
-		       llm_provider, llm_model
-		FROM them.entry_points WHERE application_id=$1::uuid ORDER BY created_at`
+		SELECT ep.id::text, ep.application_id::text, ep.app_orchestrator_id::text,
+		       ep.slug, ep.entry_point_type, ep.enabled,
+		       COALESCE(ep.memory_enabled, false),
+		       COALESCE(ep.summarize_every_n_calls, 10),
+		       COALESCE(ep.memory_raw_fallback_n, 3),
+		       ep.summarizer_provider, ep.summarizer_model,
+		       ep.llm_provider, ep.llm_model,
+		       COALESCE(t.slug, '')
+		FROM them.entry_points ep
+		JOIN them.applications a ON a.id = ep.application_id
+		JOIN them.tenants t      ON t.id = a.tenant_id
+		WHERE ep.application_id=$1::uuid ORDER BY ep.created_at`
 
 	rows, err := d.q.Query(ctx, q, appID)
 	if err != nil {
@@ -190,6 +197,7 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 			&ep.MemoryEnabled, &ep.SummarizeEveryNCalls, &ep.MemoryRawFallbackN,
 			&ep.SummarizerProvider, &ep.SummarizerModel,
 			&ep.LLMProvider, &ep.LLMModel,
+			&ep.TenantSlug,
 		); err != nil {
 			break
 		}

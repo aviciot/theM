@@ -22,6 +22,12 @@ import (
 	"github.com/aviciot/them/internal/transport"
 )
 
+// SlugResolver resolves a tenant slug to its UUID.
+// Implemented by tenantctx.PgxSlugResolver.
+type SlugResolver interface {
+	ResolveSlug(ctx context.Context, slug string) (string, error)
+}
+
 // EPVoiceConfig is the resolved voice configuration for a voice entry point.
 // Loaded from app_orchestrators joined via entry_points.app_orchestrator_id.
 type EPVoiceConfig struct {
@@ -63,18 +69,19 @@ type KeyResolver interface {
 type Authenticator = transport.Authenticator
 
 // Handler serves voice endpoints:
-//   - POST /apps/{slug}/voice/chat       — full pipeline: audio → STT → LLM → TTS → audio
-//   - POST /apps/{slug}/voice/transcribe — standalone STT (audio → text)
-//   - POST /apps/{slug}/voice/tts        — standalone TTS (text → audio)
+//   - POST /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/chat
+//   - POST /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/transcribe
+//   - POST /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/tts
 type Handler struct {
-	loader    ConfigLoader
-	keys      KeyResolver
-	auth      Authenticator
-	runLoader workerconfig.Loader
-	recorder  *runrecorder.Recorder
-	bus       event.Bus
-	tenantID  string // bootstrap tenant ID (single-tenant deployment)
-	logger    *slog.Logger
+	loader       ConfigLoader
+	keys         KeyResolver
+	auth         Authenticator
+	runLoader    workerconfig.Loader
+	recorder     *runrecorder.Recorder
+	bus          event.Bus
+	tenantID     string       // bootstrap fallback (single-tenant / test mode)
+	logger       *slog.Logger
+	slugResolver SlugResolver // optional; nil → use h.tenantID
 }
 
 // NewHandler constructs a voice Handler.
@@ -103,14 +110,21 @@ func NewHandler(
 	}
 }
 
+// WithSlugResolver attaches a TenantSlugResolver used to resolve the
+// /{tenant_slug} path segment to a tenant UUID at request time.
+func (h *Handler) WithSlugResolver(r SlugResolver) *Handler {
+	h.slugResolver = r
+	return h
+}
+
 // Routes returns an http.Handler mounting all voice endpoints.
-// Mount at /apps so full paths are /apps/{app_slug}/{ep_slug}/voice/*.
+// Full external paths: /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/*
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Post("/{app_slug}/{ep_slug}/voice/chat", h.Chat)
-	r.Post("/{app_slug}/{ep_slug}/voice/stream", h.Stream)
-	r.Post("/{app_slug}/{ep_slug}/voice/transcribe", h.Transcribe)
-	r.Post("/{app_slug}/{ep_slug}/voice/tts", h.TTS)
+	r.Post("/{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/chat", h.Chat)
+	r.Post("/{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/stream", h.Stream)
+	r.Post("/{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/transcribe", h.Transcribe)
+	r.Post("/{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/tts", h.TTS)
 	return r
 }
 
@@ -529,9 +543,15 @@ type voiceErr struct {
 func (e *voiceErr) Error() string { return e.message }
 
 func (h *Handler) resolveAndAuth(r *http.Request, appSlug, epSlug, mode string) (*EPVoiceConfig, string, error) {
-	tenantID := h.tenantID
 	rawToken := extractRawToken(r)
 
+	// Resolve tenant: URL slug → UUID via resolver (if wired), then override
+	// with bearer token tenant when the token carries one (token EPs).
+	tenantSlug := chi.URLParam(r, "tenant_slug")
+	tenantID, slugErr := h.resolveSlug(r.Context(), tenantSlug)
+	if slugErr != nil {
+		return nil, "", &voiceErr{http.StatusNotFound, "tenant not found"}
+	}
 	if rawToken != "" && h.auth != nil {
 		if ti, err := h.auth.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
 			tenantID = ti.TenantID
@@ -577,6 +597,15 @@ func (h *Handler) resolveAndAuth(r *http.Request, appSlug, epSlug, mode string) 
 	}
 
 	return cfg, apiKey, nil
+}
+
+// resolveSlug resolves a tenant slug to its UUID. Falls back to h.tenantID
+// (bootstrap) when no resolver is configured (single-tenant / test mode).
+func (h *Handler) resolveSlug(ctx context.Context, slug string) (string, error) {
+	if h.slugResolver == nil || slug == "" {
+		return h.tenantID, nil
+	}
+	return h.slugResolver.ResolveSlug(ctx, slug)
 }
 
 func (h *Handler) writeErr(w http.ResponseWriter, err error) {
