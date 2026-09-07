@@ -6,7 +6,7 @@ import { VoicePanel, type VoiceDraft } from './RuntimeVoicePanel';
 
 type OrchMeta = { id: string; name: string; displayName: string };
 type EPLLMDraft = { provider: string; model: string };
-type EPSummarizerDraft = { memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
+type EPSummarizerDraft = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 
 export function EPSections({
   entryPoints, orchMetas, voiceDrafts, setVoiceDrafts,
@@ -84,13 +84,13 @@ export function EPSections({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {orchEPs.map(ep => {
                     const llmDraft = epLLMDrafts[ep.id] ?? { provider: '', model: '' };
-                    const sumDraft = epSumDrafts[ep.id] ?? { memoryEnabled: false, historyWindow: 20, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
+                    const sumDraft = epSumDrafts[ep.id] ?? { historyEnabled: true, memoryEnabled: false, historyWindow: 20, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
                     const llmBusy = epLLMSaving === ep.id;
                     const sumBusy = epSumSaving === ep.id;
                     const llmMsg = epLLMMsg[ep.id] ?? '';
                     const sumMsg = epSumMsg[ep.id] ?? '';
                     return (
-                      <div key={ep.id} style={{ borderRadius: 8, border: `1px solid ${sumDraft.memoryEnabled ? 'rgba(208,188,255,0.2)' : 'rgba(132,158,190,0.14)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
+                      <div key={ep.id} style={{ borderRadius: 8, border: `1px solid ${sumDraft.historyEnabled ? 'rgba(208,188,255,0.2)' : 'rgba(132,158,190,0.14)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
                         <div style={{ padding: '9px 12px', borderBottom: '1px solid rgba(132,158,190,0.1)', display: 'flex', alignItems: 'center', gap: 7 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted }}>{epIcon(ep.entry_point_type)}</span>
                           <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{ep.slug}</span>
@@ -121,53 +121,108 @@ export function EPSections({
                             {llmMsg && <div style={{ marginTop: 5, fontSize: 12, color: llmMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{llmMsg}</div>}
                           </div>
 
-                          {/* Memory */}
+                          {/* Memory & Summarizer */}
                           <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12 }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>memory</span>
-                              Memory & Summarizer
-                              <span style={{ marginLeft: 'auto' }}>
-                                <ToggleBtn on={sumDraft.memoryEnabled} onToggle={() => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, memoryEnabled: !sumDraft.memoryEnabled } }))} colorOn="#a78bfa" title={sumDraft.memoryEnabled ? 'Disable memory' : 'Enable memory'} />
-                              </span>
+
+                            {/* ── History toggle ── */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: sumDraft.historyEnabled ? 10 : 6 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 14, color: sumDraft.historyEnabled ? '#a78bfa' : C.textMuted }}>history</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: sumDraft.historyEnabled ? C.text : C.textMuted, flex: 1 }}>Conversation History</span>
+                              <ToggleBtn
+                                on={sumDraft.historyEnabled}
+                                onToggle={() => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, historyEnabled: !sumDraft.historyEnabled, memoryEnabled: !sumDraft.historyEnabled ? sumDraft.memoryEnabled : false } }))}
+                                colorOn="#a78bfa"
+                                title={sumDraft.historyEnabled ? 'Disable history — each message is independent' : 'Enable history — LLM sees prior turns'}
+                              />
                             </div>
-                            <div style={{ marginBottom: 8 }}>
-                              <label style={l}>History window (turns)</label>
-                              <input type="number" min={1} max={200} value={sumDraft.historyWindow} style={f}
-                                onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, historyWindow: parseInt(e.target.value) || 20 } }))} />
-                            </div>
-                            <div style={{ opacity: sumDraft.memoryEnabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                                <div>
-                                  <label style={l}>Every N turns</label>
-                                  <input type="number" min={1} value={sumDraft.summarizeEveryN} disabled={!sumDraft.memoryEnabled} style={f}
-                                    onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, summarizeEveryN: parseInt(e.target.value) || 10 } }))} />
+
+                            {/* ── History window slider (only when history on) ── */}
+                            {sumDraft.historyEnabled && (
+                              <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.12)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                  <label style={{ ...l, marginBottom: 0, color: C.textMuted }}>History window</label>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', fontFamily: 'JetBrains Mono, monospace' }}>{sumDraft.historyWindow} turns</span>
                                 </div>
-                                <div>
-                                  <label style={l}>Keep last N verbatim</label>
-                                  <input type="number" min={0} value={sumDraft.fallbackN} disabled={!sumDraft.memoryEnabled} style={f}
-                                    onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, fallbackN: parseInt(e.target.value) || 0 } }))} />
+                                <input type="range" min={1} max={100} value={sumDraft.historyWindow}
+                                  onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, historyWindow: parseInt(e.target.value) } }))}
+                                  style={{ width: '100%', accentColor: '#a78bfa', cursor: 'pointer' }} />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                                  <span style={{ fontSize: 10, color: C.textMuted }}>1</span>
+                                  <span style={{ fontSize: 10, color: C.textMuted }}>100</span>
+                                </div>
+
+                                {/* ── Summarizer toggle (nested inside history) ── */}
+                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(167,139,250,0.1)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: sumDraft.memoryEnabled ? 10 : 0 }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: 13, color: sumDraft.memoryEnabled ? '#f59e0b' : C.textMuted }}>compress</span>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: sumDraft.memoryEnabled ? C.text : C.textMuted, flex: 1 }}>Summarizer</span>
+                                    <ToggleBtn
+                                      on={sumDraft.memoryEnabled}
+                                      onToggle={() => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, memoryEnabled: !sumDraft.memoryEnabled } }))}
+                                      colorOn="#f59e0b"
+                                      title={sumDraft.memoryEnabled ? 'Disable summarizer' : 'Enable summarizer — compress long history'}
+                                    />
+                                  </div>
+
+                                  {/* ── Summarizer params (only when summarizer on) ── */}
+                                  {sumDraft.memoryEnabled && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '10px 12px', borderRadius: 8, background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.12)' }}>
+                                      <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                          <label style={{ ...l, marginBottom: 0, color: C.textMuted }}>Summarize every N turns</label>
+                                          <span style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{sumDraft.summarizeEveryN}</span>
+                                        </div>
+                                        <input type="range" min={2} max={50} value={sumDraft.summarizeEveryN}
+                                          onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, summarizeEveryN: parseInt(e.target.value) } }))}
+                                          style={{ width: '100%', accentColor: '#f59e0b', cursor: 'pointer' }} />
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                                          <span style={{ fontSize: 10, color: C.textMuted }}>2</span>
+                                          <span style={{ fontSize: 10, color: C.textMuted }}>50</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                          <label style={{ ...l, marginBottom: 0, color: C.textMuted }}>Keep last N verbatim</label>
+                                          <span style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{sumDraft.fallbackN}</span>
+                                        </div>
+                                        <input type="range" min={0} max={10} value={sumDraft.fallbackN}
+                                          onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, fallbackN: parseInt(e.target.value) } }))}
+                                          style={{ width: '100%', accentColor: '#f59e0b', cursor: 'pointer' }} />
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                                          <span style={{ fontSize: 10, color: C.textMuted }}>0</span>
+                                          <span style={{ fontSize: 10, color: C.textMuted }}>10</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <label style={l}>Summarizer model <span style={{ color: C.textMuted, fontWeight: 400 }}>(optional — defaults to conversation LLM)</span></label>
+                                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                          <select value={sumDraft.provider}
+                                            onChange={e => { const p = e.target.value; setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, provider: p, model: (RUNTIME_MODELS[p] ?? []).includes(sumDraft.model) ? sumDraft.model : (RUNTIME_MODELS[p] ?? [])[0] ?? '' } })); }}
+                                            style={{ ...f, width: 150, flexShrink: 0 }}>
+                                            <option value="">— same as LLM —</option>
+                                            {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                                          </select>
+                                          <select value={sumDraft.model} disabled={!sumDraft.provider}
+                                            onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, model: e.target.value } }))}
+                                            style={{ ...f, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                            <option value="">— model —</option>
+                                            {(RUNTIME_MODELS[sumDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                                          </select>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
-                              <div>
-                                <label style={l}>Summarizer model (optional — defaults to conversation LLM)</label>
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                  <select value={sumDraft.provider} disabled={!sumDraft.memoryEnabled}
-                                    onChange={e => { const p = e.target.value; setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, provider: p, model: (RUNTIME_MODELS[p] ?? []).includes(sumDraft.model) ? sumDraft.model : (RUNTIME_MODELS[p] ?? [])[0] ?? '' } })); }}
-                                    style={{ ...f, width: 150, flexShrink: 0 }}>
-                                    <option value="">— same as LLM —</option>
-                                    {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                                  </select>
-                                  <select value={sumDraft.model} disabled={!sumDraft.memoryEnabled || !sumDraft.provider}
-                                    onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, model: e.target.value } }))}
-                                    style={{ ...f, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                    <option value="">— model —</option>
-                                    {(RUNTIME_MODELS[sumDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                                  </select>
-                                  {saveBtn(() => onSaveEPSummarizer(ep.id), sumBusy, false)}
-                                </div>
-                              </div>
+                            )}
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              {sumMsg
+                                ? <span style={{ fontSize: 12, color: sumMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{sumMsg}</span>
+                                : <span />
+                              }
+                              {saveBtn(() => onSaveEPSummarizer(ep.id), sumBusy, false)}
                             </div>
-                            {sumMsg && <div style={{ marginTop: 6, fontSize: 12, color: sumMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{sumMsg}</div>}
                           </div>
                         </div>
                       </div>

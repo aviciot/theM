@@ -238,7 +238,7 @@ func TestOrchestrator_HistoryLoaded(t *testing.T) {
 		{Type: "text_delta", Delta: "hello"},
 		{Type: "stop", StopReason: "end_turn"},
 	})
-	cfg := orchestrator.Config{MaxIterations: 1}
+	cfg := orchestrator.Config{MaxIterations: 1, HistoryWindow: 20}
 	orch := orchestrator.New(cfg, mock, nil, newRecorder(), bus, nil).
 		WithHistoryLoader(loader)
 

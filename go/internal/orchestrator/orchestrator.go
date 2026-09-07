@@ -341,9 +341,10 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 	}
 
 	// OD-3: Load history from DB if caller passed an empty slice and a HistoryLoader is wired.
-	if len(history) == 0 && o.historyLoader != nil {
+	// HistoryWindow == 0 means history is explicitly disabled for this entry point.
+	if len(history) == 0 && o.historyLoader != nil && o.cfg.HistoryWindow != 0 {
 		limit := o.cfg.HistoryWindow
-		if limit <= 0 {
+		if limit < 0 {
 			limit = 20
 		}
 		loaded, err := o.historyLoader.LoadHistory(ctx, contextID, rctx.TenantID, limit)
