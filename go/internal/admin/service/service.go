@@ -53,6 +53,7 @@ type Dal interface {
 	GetEntryPointSlug(ctx context.Context, epID, appID string) (string, error)
 	GetEntryPointTenantAndSlug(ctx context.Context, epID, appID string) dal.EPTenantSlug
 	UpdateEntryPoint(ctx context.Context, epID, appID, slug, epType string, enabled bool) error
+	SetEntryPointEnabled(ctx context.Context, epID, appID string, enabled bool) error
 	DeleteEntryPoint(ctx context.Context, epID, appID string) error
 	ListEPSlugsForApp(ctx context.Context, appID string) []string
 	ListEPTenantSlugsForApp(ctx context.Context, appID string) []dal.EPTenantSlug

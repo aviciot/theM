@@ -109,6 +109,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 			ep.Put("/", h.UpdateEntryPoint)
 			ep.Patch("/", h.UpdateEntryPoint) // Python sends PATCH
 			ep.Delete("/", h.DeleteEntryPoint)
+			ep.Patch("/enabled", h.PatchEntryPointEnabled)
 			ep.Patch("/summarizer", h.PatchEntryPointSummarizer)
 			ep.Patch("/llm", h.PatchEntryPointLLM)
 			ep.Post("/discover", h.DiscoverEP)
@@ -388,6 +389,46 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "deleted": true})
+}
+
+// PatchEntryPointEnabled handles PATCH /api/v1/admin/applications/{id}/entry-points/{ep_id}/enabled.
+// Only updates the enabled column — slug and entry_point_type are untouched.
+// Body: {"enabled": true|false}
+func (h *ApplicationsHandler) PatchEntryPointEnabled(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	epID := chi.URLParam(r, "ep_id")
+	if appID == "" || epID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or entry point id")
+		return
+	}
+
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetEntryPointEnabled(r.Context(), tenantID, appID, epID, body.Enabled); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "enabled": body.Enabled})
 }
 
 // PutRuntime handles PUT /api/v1/admin/applications/{id}/runtime.

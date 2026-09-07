@@ -205,6 +205,7 @@ func (f *fakeDal) GetEntryPointSlug(_ context.Context, _, _ string) (string, err
 func (f *fakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool) error {
 	return f.updateEPErr
 }
+func (f *fakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error { return nil }
 func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return f.deleteEPErr }
 func (f *fakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return f.epSlugs }
 func (f *fakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug {
@@ -898,6 +899,20 @@ func TestAppService_UpdateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
 	err := svc.UpdateEntryPoint(context.Background(), svcTestTenantID, "ep-1", "app-1", "sl", "tcp", nil)
 	if !errors.Is(err, service.ErrUnprocessable) {
 		t.Errorf("want ErrUnprocessable, got %v", err)
+	}
+}
+
+func TestAppService_SetEntryPointEnabled_PublishesSlug(t *testing.T) {
+	c := &fakeCache{}
+	d := &fakeDal{epTenantSlug: dal.EPTenantSlug{TenantID: svcTestTenantID, Slug: "ep-ws"}}
+	svc := service.NewAppService(d, c, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), svcTestTenantID, "app-1", "ep-1", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := svcTestTenantID + ":ep-ws"
+	if len(c.publishOrder) != 1 || c.publishOrder[0] != want {
+		t.Errorf("want [%s], got %v", want, c.publishOrder)
 	}
 }
 

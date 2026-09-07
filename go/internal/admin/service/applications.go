@@ -194,6 +194,21 @@ func (s *AppService) UpdateEntryPoint(ctx context.Context, tenantID, epID, appID
 	return nil
 }
 
+// SetEntryPointEnabled updates only the enabled column on an entry_points row.
+// Publishes cache invalidation so the runtime EP config cache is evicted.
+func (s *AppService) SetEntryPointEnabled(ctx context.Context, tenantID, appID, epID string, enabled bool) error {
+	ts := s.dal.GetEntryPointTenantAndSlug(ctx, epID, appID)
+	effectiveTenantID := ts.TenantID
+	if effectiveTenantID == "" {
+		effectiveTenantID = tenantID
+	}
+	if err := s.dal.SetEntryPointEnabled(ctx, epID, appID, enabled); err != nil {
+		return ErrNotFound
+	}
+	s.publishEP(ctx, effectiveTenantID, ts.Slug)
+	return nil
+}
+
 // DeleteEntryPoint fetches the (tenantID, slug), deletes the EP, and publishes invalidation.
 func (s *AppService) DeleteEntryPoint(ctx context.Context, epID, appID string) error {
 	ts := s.dal.GetEntryPointTenantAndSlug(ctx, epID, appID)
@@ -672,8 +687,8 @@ func (s *AppService) SetEntryPointSummarizer(ctx context.Context, tenantID, appI
 	if fallbackN < 0 {
 		return validation("memory_raw_fallback_n must be ≥ 0")
 	}
-	if historyWindow < 1 {
-		historyWindow = 20
+	if historyWindow < 0 {
+		historyWindow = 0
 	}
 	if provider != nil && *provider != "" {
 		if _, ok := validProviders[*provider]; !ok {

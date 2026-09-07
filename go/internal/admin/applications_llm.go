@@ -142,9 +142,7 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 	if body.SummarizeEveryNCalls == 0 {
 		body.SummarizeEveryNCalls = 10
 	}
-	if body.HistoryWindow == 0 {
-		body.HistoryWindow = 20
-	}
+	// history_window=0 means "history disabled" — do not clamp to 20 here.
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)

@@ -319,6 +319,15 @@ func (d *DB) UpdateEntryPoint(ctx context.Context, epID, appID, slug, epType str
 	return d.q.Exec(ctx, q, epID, appID, slug, epType, enabled)
 }
 
+// SetEntryPointEnabled updates only the enabled column. Slug and type are untouched.
+func (d *DB) SetEntryPointEnabled(ctx context.Context, epID, appID string, enabled bool) error {
+	const q = `
+		UPDATE them.entry_points
+		SET enabled=$3, updated_at=now()
+		WHERE id=$1::uuid AND application_id=$2::uuid`
+	return d.q.Exec(ctx, q, epID, appID, enabled)
+}
+
 // DeleteEntryPoint soft-deletes an entry point by setting enabled=false.
 func (d *DB) DeleteEntryPoint(ctx context.Context, epID, appID string) error {
 	const q = `UPDATE them.entry_points SET enabled=false, updated_at=now() WHERE id=$1::uuid AND application_id=$2::uuid`

@@ -173,6 +173,7 @@ func (f *publishFakeDal) CreateEntryPoint(_ context.Context, _, _, _ string, _ b
 func (f *publishFakeDal) GetEntryPointSlug(_ context.Context, _, _ string) (string, error) { return "", nil }
 func (f *publishFakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug { return dal.EPTenantSlug{} }
 func (f *publishFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool) error { return nil }
+func (f *publishFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error { return nil }
 func (f *publishFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error        { return nil }
 func (f *publishFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string       { return nil }
 func (f *publishFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug { return nil }

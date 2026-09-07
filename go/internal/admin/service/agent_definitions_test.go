@@ -130,6 +130,9 @@ func (f *agentDefFakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ str
 func (f *agentDefFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool) error {
 	return nil
 }
+func (f *agentDefFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error {
+	return nil
+}
 func (f *agentDefFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return nil }
 func (f *agentDefFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return nil }
 func (f *agentDefFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug {

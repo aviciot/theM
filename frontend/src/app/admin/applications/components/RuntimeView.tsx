@@ -120,7 +120,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
 
   async function handleToggleEP(epId: string, cur: boolean) {
     setEPToggling(epId);
-    try { await themApi.patchEntryPoint(app.id, epId, { enabled: !cur }); setEntryPoints(prev => prev.map(ep => ep.id === epId ? { ...ep, enabled: !cur } : ep)); }
+    try { await themApi.patchEntryPointEnabled(app.id, epId, !cur); setEntryPoints(prev => prev.map(ep => ep.id === epId ? { ...ep, enabled: !cur } : ep)); }
     catch { /* ignore */ } finally { setEPToggling(null); }
   }
   async function handleSaveEPLLM(epId: string) {
