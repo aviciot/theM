@@ -175,3 +175,52 @@ func TestTenantSelfService_GetQuota_Found(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 	assert.Equal(t, "pro", out["plan"])
 }
+
+// ── TSS-07: GetMyMembers returns empty array when tenant has no members ───────
+
+func TestTenantSelfService_GetMyMembers_Empty(t *testing.T) {
+	db := &tenantDB{memberRows: []*memberFakeRow{}}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/members", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Empty(t, out, "empty member list must be []")
+}
+
+// ── TSS-08: GetMyMembers returns members for the caller's tenant ──────────────
+
+func TestTenantSelfService_GetMyMembers_Populated(t *testing.T) {
+	db := &tenantDB{
+		memberRows: []*memberFakeRow{
+			{
+				id: "aaaaaaaa-0000-0000-0000-000000000001", userID: 1,
+				tenantID: testTenantID, role: "admin",
+				username: "alice", email: "alice@acme.com", createdAt: "2026-09-07T10:00:00Z",
+			},
+			{
+				id: "aaaaaaaa-0000-0000-0000-000000000002", userID: 2,
+				tenantID: testTenantID, role: "member",
+				username: "bob", email: "bob@acme.com", createdAt: "2026-09-07T11:00:00Z",
+			},
+		},
+	}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/members", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 2)
+	assert.Equal(t, "alice", out[0]["username"])
+	assert.Equal(t, "admin", out[0]["role"])
+	assert.Equal(t, "bob", out[1]["username"])
+	assert.Equal(t, "member", out[1]["role"])
+}

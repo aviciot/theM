@@ -828,6 +828,18 @@ export interface TenantQuota {
   runs_per_minute: number | null;
 }
 
+// ── Tenant member types ───────────────────────────────────────────────────────
+
+export interface TenantMember {
+  id: string;
+  user_id: number;
+  tenant_id: string;
+  role: string;
+  username: string;
+  email: string;
+  created_at: string;
+}
+
 // ── Managed App types ─────────────────────────────────────────────────────────
 
 export interface ManagedApp {
@@ -926,6 +938,7 @@ export interface UserUpdateInput {
   name?: string;
   email?: string;
   active?: boolean;
+  tenant_role?: string;
 }
 
 export interface TenantSummary {

@@ -91,6 +91,12 @@ func (f *fakeUserStore) UpdateUser(_ context.Context, id int64, in UserUpdateInp
 	if in.Active != nil {
 		u.Active = *in.Active
 	}
+	if in.TenantRole != nil {
+		if !validMemberRoles[*in.TenantRole] {
+			return nil, ErrInvalidRole
+		}
+		u.TenantRole = *in.TenantRole
+	}
 	return u, nil
 }
 
@@ -275,6 +281,35 @@ func TestUserMgmt_UpdateUser(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &out)
 	if out.Name != newName {
 		t.Fatalf("name not updated: %q", out.Name)
+	}
+}
+
+// ── UM-07b: update user — tenant_role field updates membership role ───────────
+
+func TestUserMgmt_UpdateUser_TenantRole(t *testing.T) {
+	router, store := testUserMgmtRouter(t)
+	tok := superAdminToken(t)
+	store.users[4] = &ManagedUser{ID: 4, Username: "bob", Name: "Bob", Role: "viewer", TenantRole: "member", Active: true, CreatedAt: time.Now()}
+	w := doAdmin(t, router, http.MethodPatch, "/api/v1/admin/users/4", map[string]any{"tenant_role": "admin"}, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var out ManagedUser
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if out.TenantRole != "admin" {
+		t.Fatalf("tenant_role not updated: %q", out.TenantRole)
+	}
+}
+
+// ── UM-07c: update user — invalid tenant_role returns 400 ────────────────────
+
+func TestUserMgmt_UpdateUser_InvalidTenantRole(t *testing.T) {
+	router, store := testUserMgmtRouter(t)
+	tok := superAdminToken(t)
+	store.users[4] = &ManagedUser{ID: 4, Username: "bob", Name: "Bob", Role: "viewer", TenantRole: "member", Active: true, CreatedAt: time.Now()}
+	w := doAdmin(t, router, http.MethodPatch, "/api/v1/admin/users/4", map[string]any{"tenant_role": "super_admin"}, tok)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid role, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 

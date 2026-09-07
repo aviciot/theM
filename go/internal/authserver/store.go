@@ -22,6 +22,9 @@ var ErrNoMembership = errors.New("authserver: user has no tenant membership")
 // ErrTenantDomainNotFound is returned when no enabled tenant claims the given email domain.
 var ErrTenantDomainNotFound = errors.New("authserver: no tenant for email domain")
 
+// ErrInvalidRole is returned when an unsupported membership role is provided.
+var ErrInvalidRole = errors.New("authserver: invalid membership role")
+
 // TenantLookupResult is the public payload returned by the email-domain lookup endpoint.
 type TenantLookupResult struct {
 	Slug          string `json:"slug"`
@@ -141,9 +144,10 @@ type UserCreateInput struct {
 
 // UserUpdateInput carries the patchable fields. nil = leave unchanged.
 type UserUpdateInput struct {
-	Name   *string
-	Email  *string
-	Active *bool
+	Name       *string
+	Email      *string
+	Active     *bool
+	TenantRole *string // membership role (admin/member/viewer); updates tenant_memberships
 }
 
 // TenantSummary is a lightweight tenant descriptor for dropdown UIs.

@@ -2592,13 +2592,15 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ### S1-103 · Tenant self-service handler — `internal/admin/tenant_self_service_test.go`
 
-**Purpose:** Verifies `TenantSelfServiceHandler` for GET /tenant/settings, PATCH /tenant/settings, and GET /tenant/quota. Confirms that:
+**Purpose:** Verifies `TenantSelfServiceHandler` for GET /tenant/settings, PATCH /tenant/settings, GET /tenant/quota, and GET /tenant/members. Confirms that:
 - `GetSettings` returns the tenant from context (no URL param).
 - `GetSettings` returns 404 on ErrNoRows.
 - `PatchSettings` returns the patched tenant detail on success.
 - `PatchSettings` silently drops `enabled` — self-service cannot disable a tenant.
 - `GetQuota` returns 404 when no quota row exists.
 - `GetQuota` returns 200 with quota data.
+- `GetMyMembers` returns empty array `[]` when tenant has no members.
+- `GetMyMembers` returns members with correct username/role for populated tenant.
 
 | Test ID | Test | What it proves |
 |---|---|---|
@@ -2608,6 +2610,8 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | TSS-04 | `TestTenantSelfService_PatchSettings_EnabledIgnored` | Enabled field in request body is silently nil'd; DB row remains enabled=true |
 | TSS-05 | `TestTenantSelfService_GetQuota_NotFound` | Returns 404 when no quota row exists |
 | TSS-06 | `TestTenantSelfService_GetQuota_Found` | Returns 200 with quota including plan |
+| TSS-07 | `TestTenantSelfService_GetMyMembers_Empty` | Returns 200 `[]` when no members exist for tenant |
+| TSS-08 | `TestTenantSelfService_GetMyMembers_Populated` | Returns 200 with correct username and role for each member |
 
 **Trigger:** `internal/admin/tenant_self_service.go`, `internal/admin/middleware.go` (RequireTenantAdmin), `internal/admin/router.go` (self-service group)
 
@@ -3180,7 +3184,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-100 | Audit Logs handler (AL-01..03, AL-05b..11): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges, AgentInput_AuthTokenRedacted, MCPServerPatch_ProbeTokenRedacted, TenantPatch_ClientSecretRedacted | 10 |
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
 | S1-102 | Audit redaction production-path (AR-01..03): AgentUpdate_AuditNoRawAuthToken, MCPServerUpdate_AuditNoRawProbeToken, TenantPatch_AuditNoRawClientSecret | 3 |
-| S1-103 | Tenant self-service handler (TSS-01..06): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found | 6 |
+| S1-103 | Tenant self-service handler (TSS-01..08): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found, GetMyMembers_Empty, GetMyMembers_Populated | 8 |
 | **S1 total** | | **1114** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |

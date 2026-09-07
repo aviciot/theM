@@ -28,6 +28,7 @@ func (h *TenantSelfServiceHandler) Routes(r chi.Router) {
 	r.Get("/tenant/settings", h.GetSettings)
 	r.Patch("/tenant/settings", h.PatchSettings)
 	r.Get("/tenant/quota", h.GetQuota)
+	r.Get("/tenant/members", h.GetMyMembers)
 }
 
 // GetSettings handles GET /api/v1/tenant/settings.
@@ -83,6 +84,19 @@ func (h *TenantSelfServiceHandler) PatchSettings(w http.ResponseWriter, r *http.
 		Changes: changes,
 	})
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// GetMyMembers handles GET /api/v1/tenant/members.
+// Returns membership list for the caller's own tenant — tenant ID from JWT via tenantctx.
+// Requires admin or super_admin membership role (enforced by RequireTenantAdmin middleware).
+func (h *TenantSelfServiceHandler) GetMyMembers(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	members, err := h.db.ListMembers(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, members)
 }
 
 // GetQuota handles GET /api/v1/tenant/quota.

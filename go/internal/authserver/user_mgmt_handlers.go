@@ -67,9 +67,10 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
-	Name   *string `json:"name"`
-	Email  *string `json:"email"`
-	Active *bool   `json:"active"`
+	Name       *string `json:"name"`
+	Email      *string `json:"email"`
+	Active     *bool   `json:"active"`
+	TenantRole *string `json:"tenant_role"` // membership role update (admin/member/viewer)
 }
 
 type resetPasswordRequest struct {
@@ -180,9 +181,10 @@ func (h *UserMgmtHandlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := h.store.UpdateUser(r.Context(), id, UserUpdateInput{
-		Name:   req.Name,
-		Email:  req.Email,
-		Active: req.Active,
+		Name:       req.Name,
+		Email:      req.Email,
+		Active:     req.Active,
+		TenantRole: req.TenantRole,
 	})
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
@@ -191,6 +193,10 @@ func (h *UserMgmtHandlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ErrUserConflict) {
 			writeErr(w, http.StatusConflict, "email already in use")
+			return
+		}
+		if errors.Is(err, ErrInvalidRole) {
+			writeErr(w, http.StatusBadRequest, "invalid membership role: must be admin, member, or viewer")
 			return
 		}
 		h.log.Error("update user: db error", "error", err)

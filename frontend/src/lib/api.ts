@@ -93,6 +93,7 @@ export type {
   UserCreateInput,
   UserUpdateInput,
   TenantSummary,
+  TenantMember,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -156,6 +157,7 @@ import type {
   UserCreateInput,
   UserUpdateInput,
   TenantSummary,
+  TenantMember,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -575,6 +577,8 @@ export const themApi = {
     api.patch<TenantRecord>('/tenant/settings', patch),
   getTenantSelfQuota: () =>
     api.get<TenantQuota>('/tenant/quota'),
+  listMyMembers: () =>
+    api.get<TenantMember[]>('/tenant/members'),
 
   // Managed App catalog (platform-level)
   listManagedApps: () =>

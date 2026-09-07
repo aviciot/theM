@@ -309,25 +309,40 @@ func (s *pgxStore) CreateUser(ctx context.Context, in UserCreateInput) (*Managed
 }
 
 func (s *pgxStore) UpdateUser(ctx context.Context, id int64, in UserUpdateInput) (*ManagedUser, error) {
-	if in.Name == nil && in.Email == nil && in.Active == nil {
+	if in.Name == nil && in.Email == nil && in.Active == nil && in.TenantRole == nil {
 		return s.GetManagedUser(ctx, id)
 	}
-	const q = `
-		UPDATE auth_service.users
-		SET name         = COALESCE($2, name),
-		    email        = CASE WHEN $3::text IS NULL THEN email ELSE NULLIF($3,'') END,
-		    active       = COALESCE($4, active),
-		    updated_at   = CURRENT_TIMESTAMP
-		WHERE id = $1`
-	tag, err := s.pool.Exec(ctx, q, id, in.Name, in.Email, in.Active)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return nil, ErrUserConflict
+	if in.Name != nil || in.Email != nil || in.Active != nil {
+		const q = `
+			UPDATE auth_service.users
+			SET name         = COALESCE($2, name),
+			    email        = CASE WHEN $3::text IS NULL THEN email ELSE NULLIF($3,'') END,
+			    active       = COALESCE($4, active),
+			    updated_at   = CURRENT_TIMESTAMP
+			WHERE id = $1`
+		tag, err := s.pool.Exec(ctx, q, id, in.Name, in.Email, in.Active)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return nil, ErrUserConflict
+			}
+			return nil, err
 		}
-		return nil, err
+		if tag.RowsAffected() == 0 {
+			return nil, ErrUserNotFound
+		}
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrUserNotFound
+	if in.TenantRole != nil {
+		role := *in.TenantRole
+		if !validMemberRoles[role] {
+			return nil, ErrInvalidRole
+		}
+		const q = `
+			UPDATE auth_service.tenant_memberships
+			SET role = $2
+			WHERE user_id = $1`
+		if _, err := s.pool.Exec(ctx, q, id, role); err != nil {
+			return nil, err
+		}
 	}
 	return s.GetManagedUser(ctx, id)
 }
