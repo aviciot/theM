@@ -102,7 +102,6 @@ export function AppCard({
   const orchModel = orch?.llm_model ?? null;
 
   // Inline EP URLs (resolve host from window)
-  // URLs use two-segment paths: /apps/{app_slug}/{ep_slug}/... (migration 048)
   function epUrls(epRow: EntryPoint): Array<{ label: string; val: string; icon: string }> {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
     const port = typeof window !== 'undefined' ? (window.location.port || (window.location.protocol === 'https:' ? '443' : '80')) : '8088';
@@ -110,22 +109,23 @@ export function AppCard({
     const http = window.location.protocol === 'https:' ? 'https' : 'http';
     const ws   = window.location.protocol === 'https:' ? 'wss'  : 'ws';
     const base = `${host}${portSuffix}`;
+    const ts = epRow.tenant_slug ?? app.tenant_slug ?? 'default';
     const appSlug = app.slug ?? app.id;
     const t = epRow.entry_point_type;
-    if (t === 'websocket') return [{ label: 'WS', val: `${ws}://${base}/apps/${appSlug}/${epRow.slug}/ws`, icon: 'electrical_services' }];
+    if (t === 'websocket') return [{ label: 'WS', val: `${ws}://${base}/${ts}/apps/${appSlug}/${epRow.slug}/ws`, icon: 'electrical_services' }];
     if (t === 'sse')       return [
-      { label: 'SSE', val: `${http}://${base}/apps/${appSlug}/${epRow.slug}/sse`, icon: 'stream' },
+      { label: 'SSE', val: `${http}://${base}/${ts}/apps/${appSlug}/${epRow.slug}/sse`, icon: 'stream' },
     ];
     if (t === 'webrtc')    return [
-      { label: 'Voice', val: `${http}://${base}/apps/${appSlug}/${epRow.slug}/voice/chat`, icon: 'mic' },
+      { label: 'Voice', val: `${http}://${base}/${ts}/apps/${appSlug}/${epRow.slug}/voice/chat`, icon: 'mic' },
     ];
     if (t === 'a2a')       return [
-      { label: 'A2A', val: `${http}://${base}/a2a/${appSlug}/${epRow.slug}`, icon: 'smart_toy' },
-      { label: 'Card', val: `${http}://${base}/a2a/${appSlug}/${epRow.slug}/.well-known/agent.json`, icon: 'badge' },
+      { label: 'A2A', val: `${http}://${base}/${ts}/a2a/${appSlug}/${epRow.slug}`, icon: 'smart_toy' },
+      { label: 'Card', val: `${http}://${base}/${ts}/a2a/${appSlug}/${epRow.slug}/.well-known/agent.json`, icon: 'badge' },
     ];
     if (t === 'voice')     return [
-      { label: 'STT', val: `${http}://${base}/apps/${appSlug}/${epRow.slug}/voice/transcribe`, icon: 'mic' },
-      { label: 'TTS', val: `${http}://${base}/apps/${appSlug}/${epRow.slug}/voice/tts`, icon: 'volume_up' },
+      { label: 'STT', val: `${http}://${base}/${ts}/apps/${appSlug}/${epRow.slug}/voice/transcribe`, icon: 'mic' },
+      { label: 'TTS', val: `${http}://${base}/${ts}/apps/${appSlug}/${epRow.slug}/voice/tts`, icon: 'volume_up' },
     ];
     return [];
   }

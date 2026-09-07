@@ -25,26 +25,28 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
     : orchName ? `/admin/playground?orchestrator=${encodeURIComponent(orchName)}` : '/admin/playground';
 
   function endpointUrl() {
+    const ts = app?.tenant_slug ?? 'default';
     const as = app?.slug ?? '<app-slug>';
-    if (d.epType === 'websocket') return `ws://<host>/apps/${as}/${d.slug}/ws`;
-    if (d.epType === 'webrtc')   return `http://<host>/apps/${as}/${d.slug}/voice/chat`;
-    if (d.epType === 'voice')    return `http://<host>/apps/${as}/${d.slug}/voice/tts`;
-    if (d.epType === 'a2a')      return `http://<host>/a2a/${as}/${d.slug}`;
-    return `http://<host>/apps/${as}/${d.slug}/sse`;
+    if (d.epType === 'websocket') return `ws://<host>/${ts}/apps/${as}/${d.slug}/ws`;
+    if (d.epType === 'webrtc')   return `http://<host>/${ts}/apps/${as}/${d.slug}/voice/chat`;
+    if (d.epType === 'voice')    return `http://<host>/${ts}/apps/${as}/${d.slug}/voice/tts`;
+    if (d.epType === 'a2a')      return `http://<host>/${ts}/a2a/${as}/${d.slug}`;
+    return `http://<host>/${ts}/apps/${as}/${d.slug}/sse`;
   }
 
   function copyEndpointUrl() {
+    const ts = app?.tenant_slug ?? 'default';
     const as = app?.slug ?? '';
     const host = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : 'http://localhost:8088';
     const url = d.epType === 'websocket'
-      ? `${host.replace(/^http/, 'ws')}/apps/${as}/${d.slug}/ws`
+      ? `${host.replace(/^http/, 'ws')}/${ts}/apps/${as}/${d.slug}/ws`
       : d.epType === 'webrtc'
-      ? `${host}/apps/${as}/${d.slug}/voice/chat`
+      ? `${host}/${ts}/apps/${as}/${d.slug}/voice/chat`
       : d.epType === 'voice'
-      ? `${host}/apps/${as}/${d.slug}/voice/tts`
+      ? `${host}/${ts}/apps/${as}/${d.slug}/voice/tts`
       : d.epType === 'a2a'
-      ? `${host}/a2a/${as}/${d.slug}`
-      : `${host}/apps/${as}/${d.slug}/sse`;
+      ? `${host}/${ts}/a2a/${as}/${d.slug}`
+      : `${host}/${ts}/apps/${as}/${d.slug}/sse`;
     navigator.clipboard.writeText(url);
   }
 
