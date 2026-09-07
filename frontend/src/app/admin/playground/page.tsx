@@ -69,7 +69,7 @@ function PlaygroundInner() {
   const sentCount = { current: 0 };
   const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, { appSlug: string; epSlug: string; tenantSlug: string }>>({});
 
-  useEffect(() => {
+  const loadApps = useCallback(() => {
     themApi.applications().then(apps => {
       setApplications(apps);
       for (const a of apps) {
@@ -92,6 +92,13 @@ function PlaygroundInner() {
       setWebrtcSlugs(m);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadApps();
+    const onFocus = () => loadApps();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [loadApps]);
 
   const activeTab = useMemo(() => tabs.find(t => targetId(t) === activeTabId) ?? null, [tabs, activeTabId]);
 
