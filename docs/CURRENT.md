@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-06 (Step 34.5 complete — router split, tenant admin access)
+# Last updated: 2026-09-07 (tenant-scoped URL restructure complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+d2a3760  fix(server): use Handle("/*") instead of Mount("/") for apps catch-all
+3ff2593  feat(routing): tenant-scoped URL restructure — /{tenant_slug}/apps and /{tenant_slug}/a2a
+65427ae  docs: tenant-scoped URL restructure task handover
 26ee921  fix(auth): Step 34.5 — router split, tenant admin access to tenant-scoped routes
 34687ad  feat(frontend): Step 36 — Get started onboarding banner on /admin/applications
-c95976d  feat(frontend): Step 35 — 4-step tenant provisioning wizard
-82a8f22  feat(frontend): Step 34 — role-based nav + super_admin route guards
-7920bf2  fix(auth): OIDC role separation + refresh tenant preservation
 ```
 
 ---
@@ -60,6 +60,19 @@ Completed:
 ⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
 All quota fields now enforced: `max_concurrent_runs`, `runs_per_minute`, `monthly_runs`, `api_requests_per_minute`, `monthly_llm_tokens`. `max_agents`, `max_apps`, `max_mcp_servers`, `max_users` enforced at Create time.
+
+### Tenant-scoped URL restructure — COMPLETE (3ff2593 + d2a3760, 2026-09-07)
+
+All runtime entry point URLs now require a `/{tenant_slug}` prefix:
+- WS:    `/{tenant_slug}/apps/{app_slug}/{ep_slug}/ws`
+- SSE:   `/{tenant_slug}/apps/{app_slug}/{ep_slug}/sse`
+- Voice: `/{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/*`
+- A2A:   `/{tenant_slug}/a2a/{app_slug}/{ep_slug}`
+- Card:  `/{tenant_slug}/a2a/{app_slug}/{ep_slug}/.well-known/agent.json`
+
+New: `go/internal/tenantctx/resolver.go` — `PgxSlugResolver` (DB lookup + 5-min cache) wired into ws, sse, a2a, and voice handlers via `WithSlugResolver()`. Unknown slugs → 404. Admin DAL structs + API responses include `tenant_slug`. Frontend `ConnTarget` + voice API calls carry `tenantSlug`. Traefik labels changed from `PathPrefix` to `PathRegexp` (`^/[^/]+/apps(/|$)` and `^/[^/]+/a2a(/|$)`). `Handle("/*")` catch-all in server (chi does not allow `Mount("/")`). 49/49 tests pass. Bridge rebuilt and running.
+
+**⚠️ No existing clients to break — confirmed before implementation. Frontend playground updated.**
 
 ### Completed steps (this session)
 
