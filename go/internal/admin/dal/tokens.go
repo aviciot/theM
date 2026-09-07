@@ -13,7 +13,7 @@ import (
 const tokenSelectCols = `
 	id::text,
 	label,
-	user_id,
+	COALESCE(user_id, 0),
 	COALESCE(orchestrator_id::text, ''),
 	enabled,
 	COALESCE((expires_at AT TIME ZONE 'UTC')::text, ''),
@@ -160,7 +160,7 @@ func (db *DB) CreateToken(ctx context.Context, tenantID string, in TokenCreateRo
 			$1::uuid,
 			$2,
 			$3,
-			$4,
+			NULLIF($4, 0)::integer,
 			NULLIF($5, '')::uuid,
 			NULLIF($6, '')::timestamptz,
 			true

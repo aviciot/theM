@@ -34,7 +34,7 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // for tenant-scoped operations rather than silently assigning the bootstrap tenant.
 func (q *PgxQuerier) QueryToken(ctx context.Context, hashHex string) (*TokenRow, error) {
 	const sql = `
-		SELECT user_id, tenant_id, created_at, expires_at
+		SELECT COALESCE(user_id, 0), tenant_id, created_at, expires_at
 		FROM them.access_tokens
 		WHERE token_hash = $1
 		  AND enabled = true

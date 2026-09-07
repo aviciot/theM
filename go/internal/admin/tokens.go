@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -124,12 +125,14 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
+		slog.Error("tokens: openSvc failed", "tenant_id", tenantID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	defer rollback()
 	out, err := svc.Create(r.Context(), tenantID, in, body.OrchestratorID)
 	if err != nil {
+		slog.Error("tokens: Create failed", "tenant_id", tenantID, "err", err)
 		if writeServiceError(w, err) {
 			return
 		}
