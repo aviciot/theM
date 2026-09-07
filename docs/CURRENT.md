@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-07 (A2A dispatcher fix — ep-a2a-1 404 resolved)
+# Last updated: 2026-09-07 (Runtime UI fixes — EP toggle, history_window, save consolidation)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+8b445b7  fix(runtime): consolidate EP Save buttons + fix history_window not persisting
+8b91491  fix(runtime): EP enable/disable PATCH /enabled + history_window=0 clamp + A2A dispatcher tests
 7e9b7b1  fix(a2a): route /tenant/a2a/* through appsDispatcher instead of conflicting Mount("/")
 6e8e781  fix: EP LLM fallback + interleaved pgx query + duplicate ListEntryPoints
 0ca7d92  fix(ui): refetch on visibilitychange — no more stale data on tab navigation
-7b8c93e  fix(runtime): rename 'Keep last N verbatim' to clearer label + hint
-dd14897  feat(runtime): redesign Memory & Summarizer UI — nested toggles + sliders
 ```
 
 ---
@@ -269,17 +269,16 @@ What was built:
 
 **Fix:** Removed `srv.MountA2A`; A2A handler passed as 4th arg to `appsDispatcher`; dispatcher now routes `strings.Contains(path, "/a2a/")` to it. Bridge rebuilt and restarted ✅.
 
-**⚠️ Two open UI bugs (not yet fixed) — Runtime tab → Application card:**
+**Runtime UI fixes (8b91491 + 8b445b7) — all resolved:**
 
-1. **EP enable/disable toggle (Entry Points section)**: `PATCH /entry-points/{ep_id}` sends only `{enabled: true/false}` but `UpdateEntryPoint` DAL does `SET slug=$3, entry_point_type=$4, enabled=$5` — empty slug/type wipe the row. Needs a dedicated `PATCH /entry-points/{ep_id}/enabled` endpoint that only touches the `enabled` column.
-
-2. **Summarizer Save button (LLM & Memory section)**: When the DB UPDATE returns no rows (RLS mismatch or bad IDs), `SetEntryPointSummarizer` converts it to `ErrNotFound` → 404. Frontend shows "Failed". Root cause needs live reproduction to confirm (may also be the same pool/RLS issue seen before).
+1. **EP enable/disable toggle**: Added dedicated `PATCH /entry-points/{ep_id}/enabled` endpoint — only touches the `enabled` column. ✅
+2. **history_window clamp**: Removed `history_window < 1 → 20` clamp; `0` now means "history off" and persists correctly. ✅
+3. **Save button consolidation**: LLM & Memory section now has one Save per EP card (covers both LLM provider + history/summarizer). ✅
+4. **history_window not returned by API**: `EntryPoint` struct and `ListEntryPoints` query were missing `history_window` — slider always reset to 20. Fixed: added field to struct + `COALESCE(ep.history_window, 20)` to SELECT. ✅
 
 ### Next recommended task
 
-**⚠️ Production blocker Step 37-S** (separate, do before any production OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints.
-
-**UI bugs above should be fixed before Step 37-S** (they affect usability of core EP management).
+**Step 37-S** (production blocker before any OIDC deployment): AES-GCM encrypt `client_secret` in `them.tenants.idp_config` before DB write. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints. **Runtime UI bugs are all resolved** — safe to proceed.
 
 Key reminders:
 - Get JWT: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
