@@ -388,8 +388,8 @@ func run() error {
 		WithTaskStore(a2aTaskStore).
 		WithFileGate(&fileGateAdapter{gate: fileGate}).
 		WithSlugResolver(slugResolver)
-	srv.MountA2A(a2aServer.Routes())
-	log.Info("A2A server mounted")
+	// A2A routes are dispatched via appsDispatcher (mounted as Handle("/*")) below.
+	// Do NOT call srv.MountA2A here — Mount("/") conflicts with Handle("/*") in chi.
 
 	// ── 18. Wire artifact download endpoint (Phase R-3) ─────────────────────
 	// Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
@@ -432,8 +432,8 @@ func run() error {
 		WithSlugResolver(slugResolver)
 	wsHandler.WithSlugResolver(slugResolver)
 	sseHandler.WithSlugResolver(slugResolver)
-	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes()))
-	log.Info("apps WS+SSE+voice mounted", "prefix", "/{tenant_slug}/apps")
+	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes(), a2aServer.Routes()))
+	log.Info("apps WS+SSE+voice+a2a mounted", "prefix", "/{tenant_slug}/apps or /{tenant_slug}/a2a")
 
 	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
@@ -441,21 +441,25 @@ func run() error {
 	return srv.ListenAndServe()
 }
 
-// appsDispatcher routes /{tenant_slug}/apps/{app_slug}/{ep_slug}/ws to wsApps,
-// /{tenant_slug}/apps/{app_slug}/{ep_slug}/sse to sseApps,
-// /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/* to voiceApps,
-// and returns 404 for anything else.
-// Each sub-handler owns its own chi router; this function only dispatches.
-// voiceApps may be nil (voice is disabled/not wired).
-func appsDispatcher(wsApps, sseApps, voiceApps http.Handler) http.Handler {
+// appsDispatcher routes tenant-scoped runtime requests:
+//   - /{tenant_slug}/apps/{app_slug}/{ep_slug}/ws    → wsApps
+//   - /{tenant_slug}/apps/{app_slug}/{ep_slug}/sse   → sseApps
+//   - /{tenant_slug}/apps/{app_slug}/{ep_slug}/voice/ → voiceApps
+//   - /{tenant_slug}/a2a/{app_slug}/{ep_slug}         → a2aApps
+//
+// a2aApps and voiceApps may be nil (feature disabled).
+func appsDispatcher(wsApps, sseApps, voiceApps, a2aApps http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/ws"):
+		case strings.HasSuffix(p, "/ws"):
 			wsApps.ServeHTTP(w, r)
-		case strings.HasSuffix(r.URL.Path, "/sse"):
+		case strings.HasSuffix(p, "/sse"):
 			sseApps.ServeHTTP(w, r)
-		case strings.Contains(r.URL.Path, "/voice/") && voiceApps != nil:
+		case strings.Contains(p, "/voice/") && voiceApps != nil:
 			voiceApps.ServeHTTP(w, r)
+		case strings.Contains(p, "/a2a/") && a2aApps != nil:
+			a2aApps.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}

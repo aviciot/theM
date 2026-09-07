@@ -20,7 +20,7 @@ func (s *stubHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 func TestAppsDispatcher_WSPath(t *testing.T) {
 	ws := &stubHandler{status: http.StatusSwitchingProtocols}
 	sse := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, nil)
+	d := appsDispatcher(ws, sse, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/myapp/ws", nil)
 	rec := httptest.NewRecorder()
@@ -37,7 +37,7 @@ func TestAppsDispatcher_WSPath(t *testing.T) {
 func TestAppsDispatcher_SSEPath_GET(t *testing.T) {
 	ws := &stubHandler{status: http.StatusSwitchingProtocols}
 	sse := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, nil)
+	d := appsDispatcher(ws, sse, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/myapp/sse", nil)
 	rec := httptest.NewRecorder()
@@ -54,7 +54,7 @@ func TestAppsDispatcher_SSEPath_GET(t *testing.T) {
 func TestAppsDispatcher_SSEPath_POST(t *testing.T) {
 	ws := &stubHandler{status: http.StatusSwitchingProtocols}
 	sse := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, nil)
+	d := appsDispatcher(ws, sse, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/myapp/sse", nil)
 	rec := httptest.NewRecorder()
@@ -71,7 +71,7 @@ func TestAppsDispatcher_SSEPath_POST(t *testing.T) {
 func TestAppsDispatcher_UnknownPath_Returns404(t *testing.T) {
 	ws := &stubHandler{status: http.StatusSwitchingProtocols}
 	sse := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, nil)
+	d := appsDispatcher(ws, sse, nil, nil)
 
 	for _, path := range []string{"/myapp/grpc", "/myapp/", "/myapp", "/"} {
 		ws.called = false
@@ -94,7 +94,7 @@ func TestAppsDispatcher_VoicePath(t *testing.T) {
 	ws := &stubHandler{status: http.StatusSwitchingProtocols}
 	sse := &stubHandler{status: http.StatusOK}
 	voiceH := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, voiceH)
+	d := appsDispatcher(ws, sse, voiceH, nil)
 
 	for _, path := range []string{"/myapp/voice/transcribe", "/myapp/voice/tts"} {
 		ws.called, sse.called, voiceH.called = false, false, false
@@ -114,7 +114,7 @@ func TestAppsDispatcher_VoicePath(t *testing.T) {
 func TestAppsDispatcher_VoiceNilHandler(t *testing.T) {
 	ws := &stubHandler{status: http.StatusSwitchingProtocols}
 	sse := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, nil)
+	d := appsDispatcher(ws, sse, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/myapp/voice/transcribe", nil)
 	rec := httptest.NewRecorder()
@@ -131,7 +131,7 @@ func TestAppsDispatcher_UnsupportedMethod_WS(t *testing.T) {
 	// to simulate chi's method-not-allowed response.
 	ws := &stubHandler{status: http.StatusMethodNotAllowed}
 	sse := &stubHandler{status: http.StatusOK}
-	d := appsDispatcher(ws, sse, nil)
+	d := appsDispatcher(ws, sse, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/myapp/ws", nil)
 	rec := httptest.NewRecorder()
@@ -145,5 +145,43 @@ func TestAppsDispatcher_UnsupportedMethod_WS(t *testing.T) {
 	}
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 from WS stub, got %d", rec.Code)
+	}
+}
+
+// TestAppsDispatcher_A2APath routes /{tenant_slug}/a2a/{app_slug}/{ep_slug} to a2aApps.
+func TestAppsDispatcher_A2APath(t *testing.T) {
+	ws := &stubHandler{status: http.StatusSwitchingProtocols}
+	sse := &stubHandler{status: http.StatusOK}
+	a2aH := &stubHandler{status: http.StatusOK}
+	d := appsDispatcher(ws, sse, nil, a2aH)
+
+	for _, path := range []string{
+		"/avi-test/a2a/first/ep-a2a-1",
+		"/default/a2a/myapp/my-ep",
+	} {
+		ws.called, sse.called, a2aH.called = false, false, false
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, req)
+		if !a2aH.called {
+			t.Errorf("path %q: expected A2A handler to be called", path)
+		}
+		if ws.called || sse.called {
+			t.Errorf("path %q: WS/SSE must not be called for A2A path", path)
+		}
+	}
+}
+
+// TestAppsDispatcher_A2ANilHandler means A2A paths return 404 when a2aApps is nil.
+func TestAppsDispatcher_A2ANilHandler(t *testing.T) {
+	ws := &stubHandler{status: http.StatusSwitchingProtocols}
+	sse := &stubHandler{status: http.StatusOK}
+	d := appsDispatcher(ws, sse, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/avi-test/a2a/first/ep-a2a-1", nil)
+	rec := httptest.NewRecorder()
+	d.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for A2A path with nil handler, got %d", rec.Code)
 	}
 }
