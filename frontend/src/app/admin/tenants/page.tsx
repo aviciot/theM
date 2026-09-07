@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 import ProvisionWizard from './ProvisionWizard';
@@ -53,7 +53,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   onPatched: (t: TenantRecord) => void;
   onDeleted: (id: string) => void;
 }) {
-  const [tab, setTab] = useState<'general' | 'idp' | 'quota'>('general');
+  const [tab, setTab] = useState<'general' | 'idp' | 'quota' | 'members'>('general');
   const [displayName, setDisplayName] = useState(tenant.display_name);
   const [enabled, setEnabled] = useState(tenant.enabled);
   const [emailDomain, setEmailDomain] = useState(tenant.email_domain ?? '');
@@ -78,6 +78,8 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [quotaLoading, setQuotaLoading] = useState(false);
   const [quotaSaving, setQuotaSaving] = useState(false);
   const [quotaMsg, setQuotaMsg] = useState('');
+  const [members, setMembers] = useState<TenantMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
 
   useEffect(() => {
     setDisplayName(tenant.display_name);
@@ -91,6 +93,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     setIdpMsg('');
     setQuota(emptyQuota());
     setQuotaMsg('');
+    setMembers([]);
     setDeleteConfirm(false);
   }, [tenant.id]);
 
@@ -102,6 +105,15 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     } catch (e) { setGenMsg((e as Error).message || 'Error deleting tenant'); }
     finally { setDeleting(false); setDeleteConfirm(false); }
   }
+
+  useEffect(() => {
+    if (tab !== 'members') return;
+    setMembersLoading(true);
+    themApi.listTenantMembers(tenant.id)
+      .then(m => setMembers(Array.isArray(m) ? m : []))
+      .catch(() => setMembers([]))
+      .finally(() => setMembersLoading(false));
+  }, [tab, tenant.id]);
 
   useEffect(() => {
     if (tab !== 'quota') return;
@@ -202,14 +214,14 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-        {(['general', 'idp', 'quota'] as const).map(t => (
+      <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0', borderBottom: '1px solid rgba(255,255,255,.06)', flexWrap: 'wrap' }}>
+        {(['general', 'idp', 'quota', 'members'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '7px 14px', borderRadius: '8px 8px 0 0', fontSize: '13px', fontWeight: tab === t ? 600 : 400,
             background: tab === t ? 'rgba(255,255,255,.07)' : 'transparent',
             border: 'none', color: tab === t ? 'var(--tm-card-text)' : 'var(--tm-card-text-muted)', cursor: 'pointer',
           }}>
-            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : 'Quotas'}
+            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : t === 'quota' ? 'Quotas' : 'Members'}
           </button>
         ))}
       </div>
@@ -334,6 +346,36 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
               </>
             )}
           </>
+        )}
+
+        {tab === 'members' && (
+          membersLoading ? (
+            <p style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px' }}>Loading members…</p>
+          ) : members.length === 0 ? (
+            <p style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px' }}>No members yet.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr>
+                  {['Username', 'Email', 'Role', 'Joined'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', fontWeight: 600, color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((m, i) => (
+                  <tr key={m.id} style={{ borderBottom: i < members.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none' }}>
+                    <td style={{ padding: '8px 8px', color: 'var(--tm-card-text)', fontWeight: 500 }}>{m.username}</td>
+                    <td style={{ padding: '8px 8px', color: 'var(--tm-card-text-muted)', fontSize: 12 }}>{m.email || '—'}</td>
+                    <td style={{ padding: '8px 8px', color: 'var(--tm-card-text-muted)' }}>{m.role}</td>
+                    <td style={{ padding: '8px 8px', color: 'var(--tm-card-text-muted)', fontSize: 12 }}>{new Date(m.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
         )}
       </div>
     </aside>

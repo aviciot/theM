@@ -139,7 +139,7 @@ function UserPanel({ user, onClose, onUpdated, onDeleted }: {
   onUpdated: (u: ManagedUser) => void;
   onDeleted: (id: number) => void;
 }) {
-  const [tab, setTab] = useState<'info' | 'password'>('info');
+  const [tab, setTab] = useState<'info' | 'password' | 'membership'>('info');
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email ?? '');
   const [active, setActive] = useState(user.active);
@@ -148,6 +148,16 @@ function UserPanel({ user, onClose, onUpdated, onDeleted }: {
   const [newPw, setNewPw] = useState('');
   const [pwMsg, setPwMsg] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [memberRole, setMemberRole] = useState(user.tenant_role ?? 'member');
+  const [memberMsg, setMemberMsg] = useState('');
+
+  async function saveMembership() {
+    setMemberMsg('');
+    const result = await themApi.updateUser(user.id, { tenant_role: memberRole });
+    if ('detail' in result) { setMemberMsg('Error: ' + (result as { detail: string }).detail); return; }
+    onUpdated(result as ManagedUser);
+    setMemberMsg('Saved');
+  }
 
   async function saveInfo(e: React.FormEvent) {
     e.preventDefault();
@@ -183,7 +193,7 @@ function UserPanel({ user, onClose, onUpdated, onDeleted }: {
     background: 'var(--tm-bg)', borderLeft: '1px solid var(--tm-border)',
     padding: '28px', display: 'flex', flexDirection: 'column', zIndex: 50, overflowY: 'auto',
   };
-  const tabBtn = (t: 'info' | 'password') => ({
+  const tabBtn = (t: 'info' | 'password' | 'membership') => ({
     padding: '6px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px',
     fontWeight: tab === t ? 700 : 400,
     background: tab === t ? `${ACCENT}22` : 'transparent',
@@ -205,9 +215,10 @@ function UserPanel({ user, onClose, onUpdated, onDeleted }: {
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tm-card-text-muted)', fontSize: '20px' }}>×</button>
       </div>
 
-      <div style={{ display: 'flex', gap: '6px', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <button style={tabBtn('info')} onClick={() => setTab('info')}>Info</button>
         <button style={tabBtn('password')} onClick={() => setTab('password')}>Password</button>
+        <button style={tabBtn('membership')} onClick={() => setTab('membership')}>Membership</button>
       </div>
 
       {tab === 'info' && (
@@ -256,6 +267,40 @@ function UserPanel({ user, onClose, onUpdated, onDeleted }: {
         </form>
       )}
 
+      {tab === 'membership' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={label}>Tenant</label>
+            <div style={{ ...input, opacity: .7 }}>{user.tenant_slug ?? '—'}</div>
+          </div>
+          {user.tenant_slug ? (
+            <>
+              <div>
+                <label style={label}>Membership Role</label>
+                <select
+                  style={{ ...input, cursor: 'pointer' }}
+                  value={memberRole}
+                  onChange={e => setMemberRole(e.target.value)}
+                >
+                  {['viewer', 'member', 'admin'].map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </div>
+              {memberMsg && <p style={{ margin: 0, fontSize: '13px', color: memberMsg.startsWith('Error') ? '#f87171' : '#34d399' }}>{memberMsg}</p>}
+              <button
+                onClick={saveMembership}
+                disabled={memberRole === user.tenant_role}
+                style={{ padding: '8px', borderRadius: '8px', border: 'none', background: ACCENT, color: '#fff', fontWeight: 600, cursor: memberRole === user.tenant_role ? 'not-allowed' : 'pointer', opacity: memberRole === user.tenant_role ? .6 : 1 }}>
+                Save Membership
+              </button>
+            </>
+          ) : (
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--tm-card-text-muted)' }}>No tenant assigned</p>
+          )}
+        </div>
+      )}
+
       <div style={{ marginTop: 'auto', paddingTop: '24px', borderTop: '1px solid var(--tm-border)' }}>
         {!confirmDelete ? (
           <button onClick={() => setConfirmDelete(true)}
@@ -289,6 +334,7 @@ export default function UsersPage() {
   const [selected, setSelected] = useState<ManagedUser | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
 
   const load = useCallback(async () => {
     const [u, t] = await Promise.all([themApi.listUsers(), themApi.listTenantsForUsers()]);
@@ -299,11 +345,17 @@ export default function UsersPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = users.filter(u =>
-    u.username.toLowerCase().includes(search.toLowerCase()) ||
-    u.name.toLowerCase().includes(search.toLowerCase()) ||
-    (u.email ?? '').toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = users.filter(u => {
+    const matchesSearch =
+      u.username.toLowerCase().includes(search.toLowerCase()) ||
+      u.name.toLowerCase().includes(search.toLowerCase()) ||
+      (u.email ?? '').toLowerCase().includes(search.toLowerCase());
+    const matchesRole =
+      roleFilter === 'all' ? true :
+      roleFilter === 'inactive' ? !u.active :
+      (u.tenant_role === roleFilter || u.role === roleFilter);
+    return matchesSearch && matchesRole;
+  });
 
   function handleCreated(u: ManagedUser) {
     setUsers(prev => [...prev, u]);
@@ -354,16 +406,33 @@ export default function UsersPage() {
           </button>
         </div>
 
-        <input
-          placeholder="Search users…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            width: '100%', maxWidth: '360px', padding: '9px 14px', borderRadius: '9px',
-            border: '1px solid var(--tm-border)', background: 'var(--tm-card)',
-            color: 'var(--tm-card-text)', fontSize: '13px', marginBottom: '20px', boxSizing: 'border-box',
-          }}
-        />
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap' }}>
+          <input
+            placeholder="Search users…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              flex: '1 1 240px', maxWidth: '360px', padding: '9px 14px', borderRadius: '9px',
+              border: '1px solid var(--tm-border)', background: 'var(--tm-card)',
+              color: 'var(--tm-card-text)', fontSize: '13px', boxSizing: 'border-box',
+            }}
+          />
+          <select
+            value={roleFilter}
+            onChange={e => setRoleFilter(e.target.value)}
+            style={{
+              padding: '9px 14px', borderRadius: '9px', border: '1px solid var(--tm-border)',
+              background: 'var(--tm-card)', color: 'var(--tm-card-text)', fontSize: '13px', cursor: 'pointer',
+            }}
+          >
+            <option value="all">All roles</option>
+            <option value="super_admin">super_admin</option>
+            <option value="admin">admin</option>
+            <option value="member">member</option>
+            <option value="viewer">viewer</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </div>
 
         {loading ? (
           <p style={{ color: 'var(--tm-card-text-muted)' }}>Loading…</p>

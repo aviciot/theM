@@ -569,6 +569,8 @@ export const themApi = {
     api.get<TenantQuota>('/admin/tenants/' + id + '/quota'),
   upsertTenantQuota: (id: string, quota: Omit<TenantQuota, 'tenant_id'>) =>
     api.put<TenantQuota>('/admin/tenants/' + id + '/quota', quota),
+  listTenantMembers: (tenantId: string) =>
+    api.get<TenantMember[]>('/admin/tenants/' + tenantId + '/members'),
 
   // Tenant self-service (admin/super_admin — own tenant only, no ID in URL)
   getTenantSettings: () =>
