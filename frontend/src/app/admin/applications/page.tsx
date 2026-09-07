@@ -33,6 +33,20 @@ export default function ApplicationsPage() {
     setTimeout(() => setPageToast(null), 3000);
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([themApi.applications(), themApi.agents()])
+      .then(([apps, ags]) => {
+        if (cancelled) return;
+        setList(apps);
+        setAgents(ags);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   async function load() {
     setLoading(true);
     try {
@@ -40,13 +54,11 @@ export default function ApplicationsPage() {
       setList(apps);
       setAgents(ags);
     } catch {
-      // Transient auth race on first mount (token not yet in cookie) — retry once
+      // transient auth race
     } finally {
       setLoading(false);
     }
   }
-
-  useEffect(() => { load(); }, []);
 
   async function handleToggle(app: Application) {
     try {
