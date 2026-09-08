@@ -412,12 +412,15 @@ docker logs them-auth-go --tail 5
 docker logs them-go-bridge --tail 5
 ```
 
-**Step 2 — Run integration history tests against live DB:**
-```bash
-DATABASE_HOST=localhost DATABASE_PORT=5432 DATABASE_USER=them DATABASE_NAME=them \
-  DATABASE_PASSWORD=<from .env> \
-  go test -tags=integration ./internal/history/...
-```
+**Integration history tests — COMPLETE (ac7c118, 2026-09-08)**
+
+All 5 isolation tests pass against the live DB. Two bugs found and fixed during the run:
+- `resolveRootTaskID findQ`: `$2::uuid` cast error on empty runID → changed to `IS NOT DISTINCT FROM NULLIF($2,'')::uuid`
+- Integration test: `seedMessage` used a random UUID as `runID` (FK violation) → changed to `""` (NULL); added `seedUser()` helper to create real `auth_service.users` rows (required by `tasks.user_id` FK)
+
+Vendor directory synced (`go mod vendor`) — previously out of sync, causing Docker build failure.
+
+**HEAD: ac7c118**
 
 **Option B — End-user auth Phase 3** (`allowed_principals` guard on entry points — do after Step 1+2 above)
 - Schema: `ALTER TABLE them.entry_points ADD COLUMN allowed_principals TEXT DEFAULT 'internal' CHECK (...)`
