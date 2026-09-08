@@ -63,6 +63,8 @@ type Claims struct {
 
 // hs256RawClaims is the raw shape of an HS256 token from the auth service.
 // Field names differ from Claims: sub (string user_id), username, role (string).
+// Type must be "access" (or absent for legacy tokens) — refresh tokens carry
+// type="refresh" and must not be accepted as bearer credentials.
 type hs256RawClaims struct {
 	Sub      string `json:"sub"`
 	Username string `json:"username"`
@@ -70,6 +72,7 @@ type hs256RawClaims struct {
 	Role     string `json:"role"`
 	Email    string `json:"email"`
 	TenantID string `json:"tenant_id,omitempty"`
+	Type     string `json:"type,omitempty"`
 	Exp      int64  `json:"exp"`
 	Iat      int64  `json:"iat"`
 }
@@ -184,6 +187,13 @@ func ValidateHS256JWT(tokenString string, secret []byte) (*Claims, error) {
 	// ── Check expiry ──────────────────────────────────────────────────────────
 	if raw.Exp > 0 && time.Now().Unix() > raw.Exp {
 		return nil, ErrTokenExpired
+	}
+
+	// ── Reject non-access tokens ─────────────────────────────────────────────
+	// Refresh tokens carry type="refresh" and use the same signing key.
+	// They must never be accepted as bearer credentials at entry points.
+	if raw.Type != "" && raw.Type != "access" {
+		return nil, fmt.Errorf("%w: type %q is not an access token", ErrTokenMalformed, raw.Type)
 	}
 
 	// ── Normalise into Claims ─────────────────────────────────────────────────

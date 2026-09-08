@@ -90,7 +90,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-04 · JWT — `internal/auth/jwt_test.go`
 
-**Purpose:** Local RS256 JWT validation — no HTTP calls, all paths covered.
+**Purpose:** Local RS256 + HS256 JWT validation — no HTTP calls, all paths covered.
 
 | Test | What it proves |
 |---|---|
@@ -103,6 +103,13 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestParseRSAPublicKey_Garbage` | Random bytes → parse error |
 | `TestParseRSAPublicKey_EmptyPEM` | Empty input → parse error |
 | `TestParseRSAPublicKey_WrongPEMType` | Wrong PEM block type → parse error |
+| `TestValidateHS256JWT_Valid` | Valid HS256 token with correct secret → Claims |
+| `TestValidateHS256JWT_Expired` | Expired HS256 token → `ErrTokenExpired` |
+| `TestValidateHS256JWT_WrongSecret` | Mismatched secret → `ErrTokenSignature` |
+| `TestValidateHS256JWT_WrongAlgorithm` | RS256 token presented to HS256 validator → `ErrTokenMalformed` |
+| `TestValidateHS256JWT_Malformed` | Non-JWT string → error |
+| `TestValidateHS256JWT_RefreshTokenRejected` | Refresh token (type="refresh") rejected as bearer credential → `ErrTokenMalformed` |
+| `TestValidateHS256JWT_AccessTokenAccepted` | Access token (type="access") passes the type guard |
 
 **Trigger:** any change to `internal/auth/jwt.go`
 
@@ -341,6 +348,12 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestUserMgmt_NonSuperAdmin_Forbidden` (UM-12) | viewer token → 403 |
 | `TestTenantLogin_TwoTenantIsolation` (UM-13) | two users in different tenants each get JWT scoped to their tenant; no-membership user blocked; /me returns membership role |
 | `TestTenantLogin_RefreshCarriesTenant` (UM-14) | refresh issues new access token still carrying correct tenant_id and membership role |
+| `TestRuntimeLogin_EndUserRoleAdmitted` | user with dashboard_access='none' succeeds at RuntimeLogin — skips dashboard_access gate |
+| `TestRuntimeLogin_DashboardLoginStillDenied` | same user gets ErrDashboardAccessDenied from Login (dashboard gate still active) |
+| `TestRuntimeLogin_TokenIsAccessType` | access token from RuntimeLogin carries type="access" in payload |
+| `TestRuntimeLogin_RefreshWorks` | refresh token from RuntimeLogin produces a new valid access token |
+| `TestRuntimeLogin_WrongPassword` | bad password → ErrInvalidCredentials |
+| `TestRuntimeLogin_NoAPIKey` | api_key input → ErrMissingCredentials (RuntimeLogin is password-only) |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
 handlers, router, oidc, oidc_store, oidc_jwks, oidc_roles, user_mgmt_handlers, tenant_login) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
@@ -1446,11 +1459,26 @@ verifying the canonicalToDBRole and dbToCanonicalRole helpers. No live PostgreSQ
 | `TestRoleRoundTrip` | Every domain role survives canonicalToDBRole+dbToCanonicalRole identity round-trip |
 | `TestHistory_CrossUser_Denied` | LoadHistory SQL includes `external_user_id` + `user_id` dual filter — end-user A cannot access end-user B's history |
 | `TestHistory_ServiceToken_ExternalUserIsolation` | resolveRootTaskID INSERT includes both `external_user_id` (NULLIF $4) and `user_id` (NULLIF $5, 0) columns |
-| `TestHistory_UserA_CannotReadUserB` | user_id filter SQL: `($3 != '' OR $4 = 0 OR t.user_id = $4)` prevents internal user A (userID=42) from reading user B's (userID=99) history |
-| `TestHistory_InternalCannotReadExternalUser` | Internal session (userID=42) cannot read external-user rows (user_id=NULL); NULL ≠ 42 in SQL |
-| `TestHistory_LegacyRows_NotLeakedToUser` | Legacy rows (user_id=NULL, external_user_id=NULL) excluded from user-scoped queries; NULL ≠ userID in SQL |
 
 **Trigger:** any change to `internal/history/pgx.go`
+
+### S2-01 · History isolation — `internal/history/pgx_integration_test.go` (build tag: integration)
+
+**Purpose:** Exercises actual `Store.LoadHistory` + `WriteMessage` against a live PostgreSQL DB to
+prove that the dual-column isolation filter correctly prevents cross-identity history access. These
+replace the removed SQL-constant inspection tests with end-to-end query verification.
+
+Run: `go test -tags=integration ./internal/history/...` (requires `DATABASE_PASSWORD` env var)
+
+| Test | What it proves |
+|---|---|
+| `TestHistory_Integration_UserA_CannotReadUserB` | Internal user A (userID=42) gets 0 rows when user B (userID=99) wrote the only message for that context |
+| `TestHistory_Integration_InternalCannotReadExternalUser` | Internal session (userID=42) gets 0 rows from context written by externalUserID="alice" (NULL user_id ≠ 42 in SQL) |
+| `TestHistory_Integration_LegacyRows_NotLeakedToUser` | Legacy anonymous rows (user_id=NULL, external_user_id=NULL) excluded when querying as userID=42 |
+| `TestHistory_Integration_ExternalUserIsolation` | External user alice gets 0 rows from context written by external user bob |
+| `TestHistory_Integration_OwnHistory` | Each identity sees exactly their own messages; 3 identities in one context return 1 row each |
+
+**Trigger:** any change to `internal/history/pgx.go`; run post-deploy against live DB
 
 ---
 

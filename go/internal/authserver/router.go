@@ -66,6 +66,7 @@ func registerOIDC(r chi.Router, h *OIDCHandlers) {
 func registerAuth(r chi.Router, h *Handlers, base string) {
 	r.Route(base, func(a chi.Router) {
 		a.Post("/login", h.Login)
+		a.Post("/runtime-login", h.RuntimeLogin)
 		a.Get("/me", h.Me)
 		a.Get("/me/preferences", h.GetPreferences)
 		a.Put("/me/preferences", h.SetPreferences)

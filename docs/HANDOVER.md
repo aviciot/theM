@@ -1,6 +1,6 @@
-# Handover — End-User Auth Phase 2 Complete
+# Handover — End-User Auth Phase 2 + Closure Fixes
 # Date: 2026-09-08
-# HEAD: 77bb7d0
+# HEAD: (see git log — after Phase 2 closure commit)
 
 ---
 
@@ -94,33 +94,76 @@ Isolation properties:
 
 ---
 
+## Phase 2 closure fixes (same session, after review)
+
+Three issues found in code review of ef51f6b:
+
+### Fix 1 — `end_user` runtime-login endpoint
+
+**Problem:** Migration 087 comment referenced "runtime-login" but no such endpoint existed. `end_user`-role users could not authenticate at all — `Login` rejects `dashboard_access='none'` and `RuntimeLogin` was absent.
+
+**Fix:**
+- `authserver/service.go`: `RuntimeLogin()` — authenticates username+password, skips `dashboard_access` gate, calls `issuePair`. No API-key path (password-only for runtime users).
+- `authserver/handlers.go`: `RuntimeLogin()` handler — does NOT set dashboard cookies (runtime-only tokens must not create dashboard sessions).
+- `authserver/router.go`: registered at `POST /api/v1/auth/runtime-login` (and `/auth/` mirror).
+
+**Tests added:** `TestRuntimeLogin_EndUserRoleAdmitted`, `TestRuntimeLogin_DashboardLoginStillDenied`, `TestRuntimeLogin_TokenIsAccessType`, `TestRuntimeLogin_RefreshWorks`, `TestRuntimeLogin_WrongPassword`, `TestRuntimeLogin_NoAPIKey`.
+
+### Fix 2 — Refresh token rejection in `ValidateHS256JWT`
+
+**Problem:** The authserver signs access tokens with `type="access"` and refresh tokens with `type="refresh"` using the **same** HMAC-SHA256 key. `auth.ValidateHS256JWT` did not check the `type` claim — a refresh token was a valid bearer credential at any `AccessModeUser` EP.
+
+**Fix:** `auth/jwt.go`: added `Type string` field to `hs256RawClaims`; after expiry check, returns `ErrTokenMalformed` if `raw.Type != "" && raw.Type != "access"`.
+
+**Tests added:** `TestValidateHS256JWT_RefreshTokenRejected` (refresh token → `ErrTokenMalformed`), `TestValidateHS256JWT_AccessTokenAccepted` (type="access" passes).
+
+### Fix 3 — History isolation tests replaced with integration tests
+
+**Problem:** The three Phase 2 history isolation tests (`TestHistory_UserA_CannotReadUserB`, `TestHistory_InternalCannotReadExternalUser`, `TestHistory_LegacyRows_NotLeakedToUser`) inspected SQL string constants copied into the test body — they did not exercise the actual Store queries against PostgreSQL.
+
+**Fix:** Removed the three SQL-constant tests. Added `internal/history/pgx_integration_test.go` (build tag `integration`) with 5 tests that call actual `Store.WriteMessage` and `Store.LoadHistory` against a live DB. Each test uses a unique `contextID` + `tenantID` to avoid cross-test interference.
+
+Run: `go test -tags=integration ./internal/history/... ` (requires `DATABASE_PASSWORD`).
+
+---
+
 ## Next session startup
 
 ```bash
-# 1. Get token
-curl -s -X POST http://localhost:8088/auth/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
-
-# 2. Apply Phase 2 migrations (if not yet done)
+# 1. Apply Phase 2 migrations (if not yet done)
 docker cp db/086_phase2_user_history.sql them-postgres:/tmp/them_086.sql
 docker cp db/087_end_user_role.sql them-postgres:/tmp/them_087.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_086.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_087.sql
 
-# 3. Rebuild and restart the Go bridge
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-go-bridge them-go-worker them-dag-worker
+# 2. Rebuild the Go auth server and bridge (IMPORTANT: must build before recreate;
+#    docker compose restart does not deploy a newly built image)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  build them-auth-go them-go-bridge
+
+# 3. Recreate affected containers (not restart — restart reuses the old image)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile temporal up -d --force-recreate them-auth-go them-go-bridge them-go-worker them-dag-worker
+
+# 4. Verify
+docker logs them-auth-go --tail 5
+docker logs them-go-bridge --tail 5
+
+# 5. Smoke test runtime-login
+curl -s -X POST http://localhost:8088/auth/api/v1/auth/runtime-login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"end_user_test","password":"..."}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token','ERROR:',d))"
 ```
 
 **First prompt for next session:**
 
-> Read `docs/CURRENT.md` and `docs/END_USER_AUTH_PLAN.md`. Phase 2 is complete. Next task: implement Phase 3 — `allowed_principals` guard on `them.entry_points`. See Phase 3 spec in `docs/END_USER_AUTH_PLAN.md`. Run `go test ./...` before committing. Confirm plan before writing code.
+> Read `docs/CURRENT.md` and `docs/END_USER_AUTH_PLAN.md`. Phase 2 + closure fixes are complete. Next task: implement Phase 3 — `allowed_principals` guard on `them.entry_points`. See Phase 3 spec in `docs/END_USER_AUTH_PLAN.md`. Run `go test ./...` before committing. Confirm plan before writing code.
 
 ---
 
 ## Known pending items
 
 - **Migration 081** (`db/081_tenant_group_mappings_safe_roles.sql`) — not confirmed applied to live DB. Apply before enabling OIDC group mapping.
-- **Phase 2 migrations** (086, 087) — written but not yet applied to live DB. Apply + rebuild before first AccessModeUser EP test.
+- **Phase 2 migrations** (086, 087) — written but not yet applied to live DB. Apply + rebuild + recreate before first AccessModeUser EP test.
 - **`THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN`** must be in `.env` — run `./generate-env.sh` if missing.
+- **History integration tests** — run `go test -tags=integration ./internal/history/...` against live DB after applying migration 086 to verify the actual isolation queries.

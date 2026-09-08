@@ -108,6 +108,36 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 	return s.issuePair(ctx, user, in.TenantSlug)
 }
 
+// RuntimeLogin authenticates via username/password for users whose platform role
+// has dashboard_access='none'. It skips the dashboard_access gate so runtime-only
+// users (e.g. end_user role) can obtain a JWT for calling WS/SSE entry points
+// without gaining any dashboard permissions. The issued JWT carries their
+// membership role, which is rejected by RequireTenantAdmin on admin routes.
+func (s *Service) RuntimeLogin(ctx context.Context, in LoginInput) (*TokenPair, error) {
+	var user *userRecord
+
+	switch {
+	case in.Username != "" && in.Password != "":
+		u, err := s.store.GetUserByLogin(ctx, in.Username)
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrInvalidCredentials
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !verifyPassword(in.Password, u.PasswordHash) {
+			return nil, ErrInvalidCredentials
+		}
+		user = u
+	default:
+		return nil, ErrMissingCredentials
+	}
+
+	// No dashboard_access gate — runtime-only users are explicitly permitted here.
+	// They still need a tenant membership; no membership means no token.
+	return s.issuePair(ctx, user, in.TenantSlug)
+}
+
 // Refresh validates a refresh token and issues a fresh pair. The token must be of
 // type "refresh" and must not be blacklisted. If the refresh token carries a
 // tenantID (issued after the fix), the same tenant is re-validated and preserved.

@@ -225,3 +225,36 @@ func TestValidateHS256JWT_Malformed(t *testing.T) {
 	// signature decode will fail or HMAC will mismatch
 	require.Error(t, err)
 }
+
+// TestValidateHS256JWT_RefreshTokenRejected verifies that a valid refresh token
+// (type="refresh", same signing key) is rejected by ValidateHS256JWT.
+// Refresh tokens must not be usable as bearer credentials at WS/SSE entry points.
+func TestValidateHS256JWT_RefreshTokenRejected(t *testing.T) {
+	secret := []byte("mysecret")
+	now := time.Now().Unix()
+	// Build a token that looks exactly like what authserver.tokenSigner.IssueRefreshToken produces.
+	refreshToken := buildHS256Token(t, map[string]any{
+		"sub": "42", "tenant_id": "00000000-0000-0000-0000-000000000001",
+		"exp": now + 604800, "iat": now, "type": "refresh",
+	}, secret)
+
+	_, err := auth.ValidateHS256JWT(refreshToken, secret)
+	require.Error(t, err, "refresh token must be rejected as a bearer credential")
+	require.ErrorIs(t, err, auth.ErrTokenMalformed)
+}
+
+// TestValidateHS256JWT_AccessTokenAccepted verifies that a correctly typed access
+// token (type="access") is not rejected by the new type guard.
+func TestValidateHS256JWT_AccessTokenAccepted(t *testing.T) {
+	secret := []byte("mysecret")
+	now := time.Now().Unix()
+	token := buildHS256Token(t, map[string]any{
+		"sub": "7", "username": "alice", "role": "member",
+		"tenant_id": "00000000-0000-0000-0000-000000000001",
+		"exp": now + 3600, "iat": now, "type": "access",
+	}, secret)
+
+	claims, err := auth.ValidateHS256JWT(token, secret)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), claims.UserID)
+}

@@ -344,3 +344,85 @@ func import_json_unmarshal(t *testing.T, raw []byte, v any) {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 }
+
+// ── RuntimeLogin tests ────────────────────────────────────────────────────────
+
+// TestRuntimeLogin_EndUserRoleAdmitted verifies that a user with
+// dashboard_access='none' (end_user role) can obtain a JWT via RuntimeLogin
+// even though Login rejects them.
+func TestRuntimeLogin_EndUserRoleAdmitted(t *testing.T) {
+	svc, _ := testService(t)
+	// 'viewer' user has DashboardAccess='none' in testService.
+	pair, err := svc.RuntimeLogin(context.Background(), LoginInput{Username: "viewer", Password: "viewpass"})
+	if err != nil {
+		t.Fatalf("RuntimeLogin: %v", err)
+	}
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatal("expected non-empty token pair")
+	}
+}
+
+// TestRuntimeLogin_DashboardLoginStillDenied verifies that Login still rejects
+// the same end_user-role user even after RuntimeLogin is available.
+func TestRuntimeLogin_DashboardLoginStillDenied(t *testing.T) {
+	svc, _ := testService(t)
+	if _, err := svc.Login(context.Background(), LoginInput{Username: "viewer", Password: "viewpass"}); err != ErrDashboardAccessDenied {
+		t.Fatalf("want ErrDashboardAccessDenied from Login, got %v", err)
+	}
+}
+
+// TestRuntimeLogin_TokenIsAccessType verifies that the token issued by
+// RuntimeLogin has type="access" in its payload, not type="refresh".
+// A refresh token presented at a user_jwt EP must be rejected.
+func TestRuntimeLogin_TokenIsAccessType(t *testing.T) {
+	svc, _ := testService(t)
+	pair, err := svc.RuntimeLogin(context.Background(), LoginInput{Username: "viewer", Password: "viewpass"})
+	if err != nil {
+		t.Fatalf("RuntimeLogin: %v", err)
+	}
+	parts := splitJWT(pair.AccessToken)
+	if len(parts) != 3 {
+		t.Fatal("access token does not have 3 parts")
+	}
+	var payload struct {
+		Type string `json:"type"`
+	}
+	import_json_unmarshal(t, parts[1], &payload)
+	if payload.Type != "access" {
+		t.Fatalf("token type = %q, want access", payload.Type)
+	}
+}
+
+// TestRuntimeLogin_RefreshWorks verifies that the refresh token issued by
+// RuntimeLogin can be used to get a new access token.
+func TestRuntimeLogin_RefreshWorks(t *testing.T) {
+	svc, _ := testService(t)
+	pair, err := svc.RuntimeLogin(context.Background(), LoginInput{Username: "viewer", Password: "viewpass"})
+	if err != nil {
+		t.Fatalf("RuntimeLogin: %v", err)
+	}
+	newPair, err := svc.Refresh(context.Background(), pair.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh after RuntimeLogin: %v", err)
+	}
+	if newPair.AccessToken == "" {
+		t.Fatal("refresh returned empty access token")
+	}
+}
+
+// TestRuntimeLogin_WrongPassword verifies RuntimeLogin rejects bad credentials.
+func TestRuntimeLogin_WrongPassword(t *testing.T) {
+	svc, _ := testService(t)
+	if _, err := svc.RuntimeLogin(context.Background(), LoginInput{Username: "viewer", Password: "wrongpass"}); err != ErrInvalidCredentials {
+		t.Fatalf("want ErrInvalidCredentials, got %v", err)
+	}
+}
+
+// TestRuntimeLogin_NoAPIKey verifies that RuntimeLogin does not accept API keys
+// (it is intended only for password-based runtime users).
+func TestRuntimeLogin_NoAPIKey(t *testing.T) {
+	svc, _ := testService(t)
+	if _, err := svc.RuntimeLogin(context.Background(), LoginInput{APIKey: "ak_secretkey"}); err != ErrMissingCredentials {
+		t.Fatalf("want ErrMissingCredentials for api_key on RuntimeLogin, got %v", err)
+	}
+}

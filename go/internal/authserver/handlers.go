@@ -91,6 +91,33 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// RuntimeLogin handles POST /api/v1/auth/runtime-login.
+// Identical to Login but skips the dashboard_access gate so users whose
+// platform role has dashboard_access='none' (e.g. end_user) can obtain a JWT
+// for calling WS/SSE entry points without gaining dashboard access.
+func (h *Handlers) RuntimeLogin(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	pair, err := h.svc.RuntimeLogin(r.Context(), LoginInput{
+		Username: req.Username, Password: req.Password,
+		TenantSlug: req.TenantSlug,
+	})
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	// Do NOT set dashboard cookies — runtime-only users must not get a session
+	// that the dashboard frontend could accidentally use.
+	writeJSON(w, http.StatusOK, tokenPairResponse{
+		AccessToken: pair.AccessToken, RefreshToken: pair.RefreshToken, ExpiresIn: pair.ExpiresIn,
+	})
+}
+
 // Me handles GET /api/v1/auth/me — reads the access token from the cookie.
 func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 	token := cookieValue(r, accessCookie)
