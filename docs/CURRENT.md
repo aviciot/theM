@@ -371,7 +371,7 @@ Any authenticated member of the EP's tenant can invoke any `AccessModeUser` entr
 - `internal/execution/lifecycle_test.go`: `TestAccessModeUser_ValidJWT_Admitted`, `TestAccessModeUser_InvalidJWT_Rejected`, `TestAccessModeUser_TenantMismatch_Rejected`, `TestAccessModeUser_NoToken_Rejected`, `TestAccessModeUser_NoSecret_Rejected`, `TestAccessModeUser_UserIDStoredOnRun`
 - `internal/history/pgx_test.go`: `TestHistory_UserA_CannotReadUserB`, `TestHistory_InternalCannotReadExternalUser`, `TestHistory_LegacyRows_NotLeakedToUser`; existing tests updated to match new SQL signatures
 
-**`go test ./...` — 54 packages, 0 failures.**
+**`go test ./...` — 54 packages, 0 failures. HEAD: 77bb7d0**
 
 ---
 
