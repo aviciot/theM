@@ -1,247 +1,323 @@
 # End-User Authentication at Runtime Entry Points
-# Status: Design proposal — security-reviewed v2, not yet implemented
+# Status: Design v3 — code-verified, security-reviewed
 # Last updated: 2026-09-08
 
 ---
 
 ## The Problem
 
-The-M currently supports two principals at WS/SSE entry points:
+The-M needs to support two deployment patterns simultaneously:
 
-1. **Service API token** — opaque bearer token scoped to an orchestrator (not an application). Any authenticated caller in a tenant can use it at any entry point. The-M sees the token but not the individual customer behind it.
-2. **Internal JWT** — issued after login (local or SSO), used by the internal team in the dashboard.
+- **Platform-as-infrastructure**: A bank deploys the-M. Bank employees manage it. Bank customers (Alice, Bob) use agentic apps without ever knowing the-M exists.
+- **Platform-as-product**: End users sign up directly on the-M. They log in with their own credentials and use agents through a branded interface.
 
-Neither supports **end-user identity at runtime** — the bank's retail customers who interact with the agentic app. Today the-M cannot attribute a run to a specific customer, enforce per-customer limits, or isolate their history.
+These two patterns require different identity flows, different history isolation, and different permission models — but they must share the same runtime pipeline without one path degrading security for the other.
 
 ---
 
-## What Exists Today (code-verified)
+## What the Code Actually Does (verified)
 
-### History loading (`history/pgx.go:80–87`)
+### JWT claims (auth/jwt.go, authserver/jwt.go)
 
-```sql
-SELECT tm.role, tm.parts
-FROM them.task_messages tm
-JOIN them.tasks t ON t.id = tm.task_id
-WHERE t.context_id = $1::uuid
-  AND ($2 = '' OR t.tenant_id = $2::uuid)
-ORDER BY tm.id DESC LIMIT $3
+The HS256 access token issued by `them-auth-go` contains:
+```json
+{ "sub": "42", "username": "avi", "name": "Avi Cohen",
+  "role": "admin", "tenant_id": "...", "exp": ... }
 ```
 
-Filter: **`context_id` + `tenant_id` only.** No `user_id`, no session ownership check.
+- `role` is the **tenant membership role** (`admin`/`member`/`viewer`), not the platform role.
+- The bridge reads this as `Claims.Roles = []string{role}` (normalised from single string to slice).
+- `RequireSuperAdmin` checks `claims.Roles` for `"super_admin"`.
+- `RequireTenantAdmin` checks for `"admin"` or `"super_admin"`.
 
-- `context_id` is **client-supplied** (`ws/handler.go:319`). Any authenticated caller in a tenant can supply any UUID.
-- `tenant_id` prevents cross-tenant access (correct).
-- There is no per-user or per-session ownership check on history.
+### The two-role system (service.go:233–236, SCHEMA.sql)
 
-### History for different principal types today
+There are **two separate role axes**:
 
-| Principal | History scoping today |
-|---|---|
-| Internal user (JWT) | `context_id + tenant_id`. No user_id filter. User A can read user B's history by supplying B's context_id. |
-| Service token | Same. No per-user scoping. All callers sharing a service token share a flat history namespace keyed by context_id. |
-| End-user JWT (Approach B) | Does not exist yet. |
-
-### Service token scope (`them.access_tokens` schema)
-
-```sql
-CREATE TABLE IF NOT EXISTS them.access_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    token_hash TEXT NOT NULL UNIQUE,
-    label TEXT NOT NULL,
-    user_id INTEGER NOT NULL,
-    orchestrator_id UUID REFERENCES them.orchestrators(id) ON DELETE CASCADE,
-    ...
-);
-```
-
-**`application_id` does not exist on `access_tokens`** — not in schema or any migration. `TokenInfo.AppID` in Go code is always `0`. The previous plan's claim of a cross-app token gap was incorrect: service tokens are scoped to an orchestrator, not an application. Cross-app reuse via service token is not currently possible because the EP resolves the app from the URL path and the token carries no app claim to conflict with.
-
-**Correction to prior plan:** The `AppID` check proposed in Q2 is premature. No `application_id` column exists to check. This gap should only be added if/when tokens are explicitly scoped to applications.
-
-### `context_id` model
-
-- `them.tasks.context_id UUID NOT NULL` — client-supplied, not server-generated.
-- `resolveRootTaskID` (`history/pgx.go:228`) finds-or-creates a task row keyed on `(context_id, run_id, tenant_id)`.
-- `context_id` is the **history namespace**. Two runs with the same `context_id` share history (intended for multi-turn conversations).
-- No `session_id` on tasks. `them.runs.session_id` exists but is not threaded through to history loading.
-
-### Token exchange vs passthrough (corrected)
-
-The prior plan incorrectly stated that token exchange "requires user accounts or DB rows." That is wrong. OAuth2 token exchange (RFC 8693) issues a new short-lived token for the caller — the AS (the-M) can issue a stateless signed JWT with no DB row. The real trade-offs are:
-
-| | Passthrough (validate bank JWT at EP) | Exchange (issue the-M JWT) |
-|---|---|---|
-| Latency | JWKS fetch on first use (cached) | Extra pre-connect round-trip |
-| DB rows | Zero | Zero if stateless JWT issued |
-| Revocation | JWT expiry only | The-M can revoke issued token |
-| Trust boundary | The-M trusts bank's JWKS directly | The-M independently re-signs; cleaner |
-| Caller complexity | Bank JWT passed as Bearer on every request | Bank exchanges once, uses the-M JWT |
-| `external_user_id` sourcing | From bank JWT `sub` at every request | Embedded in the-M JWT at exchange time |
-
-**Recommendation: Passthrough.** The `Authenticator` interface is injectable — `JWKSAuthenticator` drops in without changing WS/SSE handlers. Exchange adds a round-trip and complexity for no security gain when the-M already validates the bank's JWKS. Short-lived bank tokens (5–15 min, refreshed by the bank app) make revocation moot.
-
----
-
-## Security Findings (v2, code-verified)
-
-### Q1. Can a caller spoof `external_user_id` or roles?
-
-**Today:** No `external_user_id` exists anywhere. Existing identity fields (TenantID, AppID) are server-sourced and well-hardened.
-
-**Risk when building:** The original plan proposed accepting `external_user_id` as a header or param — that's an exploit. Must be extracted from the validated JWT `sub` claim inside `JWKSAuthenticator` only, never from any caller-supplied field.
-
----
-
-### Q2. Is the token verified for the specific tenant and application?
-
-**Today:** `TenantID` is properly enforced. `access_tokens` has no `application_id` — `TokenInfo.AppID` is always `0`. Service tokens are scoped to an orchestrator via `orchestrator_id`. Cross-app token reuse is not possible with the current schema.
-
-**Risk:** If `application_id` is added to tokens in the future, a check must be added simultaneously. Not needed now.
-
----
-
-### Q3. Is there a runtime role concept separate from dashboard roles?
-
-**Today:** `TokenInfo.Permissions []string` exists but is never checked in the admission pipeline. No EP-level principal guard. Dashboard roles (admin/viewer) are not checked at WS/SSE either.
-
-**Risk:** An end-user JWT (Approach B) arriving at the same EP as internal team JWTs with no guard. An `allowed_principals` flag on entry points is needed before shipping Approach B.
-
----
-
-### Q4. History ownership: internal users, external users, and service tokens
-
-**Today:**
-- History is keyed by `context_id + tenant_id` only.
-- `context_id` is client-supplied — any authenticated caller in a tenant can load any other caller's history.
-- This is acceptable for internal team use (trust boundary is the tenant) but **not acceptable for end users** (bank customers must not read each other's history).
-
-**History model per principal type:**
-
-| Principal | Correct history model | Change needed |
-|---|---|---|
-| Internal user (JWT) | Shared context within tenant. Caller controls `context_id`. Acceptable — team trusts each other. | None for now. |
-| Service token (bank app) | Shared context keyed by whatever `context_id` the bank app passes. No per-customer isolation today. | Add `external_user_id` filter so history is scoped to the specific customer the bank app identifies. |
-| External end-user JWT (Approach B) | `external_user_id = JWT.sub`. History scoped by `context_id + tenant_id + external_user_id`. Caller cannot access another user's history even with correct `context_id`. | `external_user_id` on `them.tasks` + filter in `LoadHistory`. |
-
-**A shared service token cannot establish per-customer history isolation without the bank app explicitly passing an `external_user_id`.**
-Options:
-1. Service token + `external_user_id` header (trusted because the bank's service token authenticates the bank, and the bank asserts the customer ID — acceptable trust model for B2B).
-2. Per-customer JWTs (Approach B) — server extracts `sub` from each user's JWT, no header trust needed.
-
-Option 1 is acceptable if the service token is scoped to the tenant (which it is today). The bank is a trusted caller; the service token authenticates the bank; the bank asserts the customer ID. This is the same model as Stripe's `Stripe-Account` header or `on_behalf_of`.
-
----
-
-### Q5. Token exchange vs passthrough (see table above)
-
-**Recommendation: Passthrough**, not because exchange requires DB rows (it doesn't), but because it's simpler, the `Authenticator` interface already supports it, and there is no revocation requirement given short-lived tokens.
-
----
-
-## Keycloak Test Plan — Two Users, Six Cases
-
-**Setup:**
-- `avi1` in Keycloak group `bank-premium` → the-M permission: `premium`
-- `avi2` in Keycloak group `bank-free` → the-M permission: `free`
-- Keycloak client `bank-runtime` emits `groups` claim
-- avi-test tenant `runtime_config`: JWKS URI + claim mappings `{bank-premium: premium, bank-free: free}`
-
-| # | Test | Expected | Validates |
+| Axis | Where stored | Values | What it gates |
 |---|---|---|---|
-| T1 | avi1 (premium) hits `premium-only` EP | 200 admitted | Q3: runtime permission enforced |
-| T2 | avi2 (free) hits `premium-only` EP | 403 forbidden | Q3: lower-tier blocked |
-| T3 | avi1 runs agent; check DB | `external_user_id = avi1.sub` on run + task | Q1: sourced from JWT, not header |
-| T4 | avi2 supplies avi1's `context_id` | Empty history (different external_user_id) | Q4: ownership enforced |
-| T5 | Caller sends `X-External-User: avi1` header while using avi2 JWT | Run attributed to avi2's sub | Q1: header ignored |
-| T6 | avi1 token used at EP in different tenant | 403 | Tenant isolation |
+| Platform role | `auth_service.roles` (global) | `super_admin`, `developer`, `analyst`, `viewer` | `dashboard_access` field — `'admin'`/`'view'`/`'none'` |
+| Membership role | `auth_service.tenant_memberships.role` | `admin`, `member`, `viewer` | JWT `role` claim; enforced by `RequireTenantAdmin` |
 
-**Regression tests to add (before implementation):**
-- `TestHistory_CrossUser_Denied` — two users, same tenant, same `context_id`; user B gets empty history.
-- `TestHistory_ServiceToken_ExternalUserIsolation` — service token + two different `external_user_id` values; histories don't bleed.
+At login (`service.go:236`): the **membership role wins** — it is what goes into the JWT. The platform role governs `dashboard_access` (whether login is allowed at all) but does not appear in the JWT or at runtime.
+
+OIDC users (`oidc_store.go:128`): always get platform role `"viewer"` (hard-coded). Their membership role comes from group mappings and defaults to `"viewer"`.
+
+### Dashboard access gate (service.go:103–105)
+
+```go
+if user.DashboardAccess == "" || user.DashboardAccess == "none" {
+    return nil, ErrDashboardAccessDenied  // → 403
+}
+```
+
+`dashboard_access` is on `auth_service.roles`. `viewer` role has `'view'` (not `'none'`), so viewers **can log in** and get a JWT. They are blocked from admin routes by `RequireTenantAdmin`, which rejects `viewer`.
+
+**Important gap:** There is no role that has `dashboard_access = 'none'` today. A pure end-user role (runtime-only, no dashboard at all) does not exist.
+
+### Runtime entry point authentication (epconfig, lifecycle.go)
+
+Two access modes:
+- `AccessModePublic` — no token required.
+- `AccessModeToken` — requires a valid opaque bearer token from `them.access_tokens`.
+
+The HS256 dashboard JWT **cannot be used at a WS/SSE entry point today**. The token cache (`auth/token_cache.go`) validates opaque bearer tokens from the DB only. The JWT validation path (`auth/jwt.go:ValidateHS256JWT`) is used only by admin middleware — never by the WS/SSE admission pipeline.
+
+### History isolation (history/pgx.go)
+
+`LoadHistory` filters by `context_id + tenant_id + external_user_id`. No `user_id` filter. `context_id` is caller-supplied. Internal-user history is **not** per-user isolated — two users in the same tenant sharing a `context_id` share history. This is the current accepted model for internal team use.
+
+### Managed apps (migration 055)
+
+`them.applications.app_type` is `'tenant'` | `'managed'`. `managed_app_bindings` links a managed (platform-owned) app to a consuming tenant. **Nothing in the current runtime uses `app_type`** — managed apps are provisioned differently but execute identically. Runtime data (runs, tasks, history) is always scoped to the entry point's `tenant_id`, which for a managed app binding would be the **consuming tenant**, not the platform tenant.
 
 ---
 
-## Implementation Phase — Bounded Scope
+## Three Concerns, Separated
 
-### Phase 1 — History ownership (prerequisite for any end-user work)
+### 1. Application ownership
 
-**Schema:**
+Who created and controls the application definition.
+
+| `app_type` | Owner tenant | Description |
+|---|---|---|
+| `'tenant'` | Any tenant | Self-managed app. Tenant builds and owns it. |
+| `'managed'` | Platform (`default` tenant) | Platform-provided template. Tenants bind to it via `managed_app_bindings`. |
+
+The `app_type` column already exists. Runtime enforcement of this boundary is not yet implemented.
+
+### 2. Permission to invoke
+
+Who may call the entry point at runtime.
+
+Three distinct credential types are in scope:
+
+| Credential | Issued by | Validates via | `user_id` source | `external_user_id` source |
+|---|---|---|---|---|
+| **Opaque bearer token** (`is_backend=false`) | the-M admin UI | `them.access_tokens` DB lookup | `access_tokens.user_id` | never (not trusted) |
+| **Backend service token** (`is_backend=true`) | the-M admin UI | `them.access_tokens` DB lookup | `access_tokens.user_id` | `X-External-User` header (trusted) |
+| **the-M user JWT** | `them-auth-go` login/OIDC | `ValidateHS256JWT` signature check | JWT `sub` claim | none (the user IS the identity) |
+| **Bank-issued JWT** (Phase 3) | Bank's own IdP | JWKS signature check | `0` (no the-M account) | JWT `sub` claim |
+
+The-M user JWT path does not exist at entry points today. It must be added as a new `AccessModeUser` that runs the JWT validator instead of the token cache lookup.
+
+### 3. Runtime data ownership
+
+Every run and task must be scoped so that analytics, billing, and history can be attributed correctly.
+
+| Field | Populated from | Purpose |
+|---|---|---|
+| `runs.tenant_id` | `EPConfig.TenantID` (server) | Tenant billing, RLS isolation |
+| `runs.entry_point_slug` | URL path (server) | App attribution |
+| `runs.user_id` | *(not stored today)* | Internal-user attribution (gap) |
+| `runs.external_user_id` | `X-External-User` / JWKS `sub` | End-user attribution |
+| `tasks.external_user_id` | same | History ownership filter |
+
+For managed apps, `tenant_id` on the run is the **consuming tenant** (from the entry point's `tenant_id` field, which is set at binding time). The platform tenant never appears on runtime data.
+
+---
+
+## Consistent Runtime Identity Model
+
+All three credential paths must produce a `RuntimeIdentity` with the same fields:
+
+```
+RuntimeIdentity {
+    TenantID:       string   // always set; from token/JWT claim; never from request
+    UserID:         int64    // the-M internal user ID; 0 for external-only identities
+    ExternalUserID: string   // end-user identity; empty for pure internal sessions
+    IsBackend:      bool     // true = backend service token; may trust X-External-User
+    SessionID:      string   // server-assigned
+    RunID:          string   // server-assigned
+}
+```
+
+How each path populates it:
+
+| Path | TenantID | UserID | ExternalUserID |
+|---|---|---|---|
+| Opaque token (is_backend=false) | `access_tokens.tenant_id` | `access_tokens.user_id` | *(empty)* |
+| Backend service token (is_backend=true) | `access_tokens.tenant_id` | `access_tokens.user_id` | `X-External-User` header |
+| the-M user JWT (new) | JWT `tenant_id` claim | JWT `sub` claim | *(empty — user IS the identity)* |
+| Bank JWT / JWKS (Phase 3) | EP URL path tenant | `0` | JWT `sub` claim |
+
+History is always filtered by `context_id + tenant_id + external_user_id`. For the JWT path, `user_id` will also be stored on runs (for analytics), but history ownership uses `external_user_id` uniformly across all paths — this avoids a split filter path.
+
+---
+
+## Application-Level Authorization (separate from authentication)
+
+Authentication answers "who are you?". Authorization answers "are you allowed to use this entry point?".
+
+Today `CheckAccess` (`epconfig/epconfig.go:457`) enforces:
+- EP enabled/disabled
+- App enabled/disabled
+- Token-level blocklist
+- User-level blocklist
+
+It does **not** enforce principal type (internal vs external vs end-user).
+
+The missing layer is an `allowed_principals` field on entry points:
+
+| Value | Meaning |
+|---|---|
+| `'internal'` | Only opaque bearer tokens and the-M user JWTs. End-user / bank JWTs rejected. |
+| `'external'` | Only end-user / bank JWTs and backend service tokens with `X-External-User`. Internal team blocked. |
+| `'both'` | All principal types allowed. |
+
+Custom **application-level roles** (e.g. "premium vs free") are handled separately via the `Permissions []string` field already on `TokenInfo`. Phase 3 maps JWKS group claims to permissions. `CheckAccess` can then enforce permission requirements defined on the EP.
+
+---
+
+## Managed App — Platform vs Consuming Tenant
+
+For a managed app:
+- **Application definition** lives under the platform's `default` tenant. The platform team manages agents, orchestrators, and EPs.
+- **Binding** (`managed_app_bindings`) attaches it to a consuming tenant with optional config overrides.
+- **Entry point `tenant_id`** is set to the **consuming tenant** at binding time.
+- **Every run** gets `tenant_id = consuming_tenant_id`. Quota, RLS, history, and billing are all scoped to the consuming tenant.
+- The platform tenant never appears on any runtime data row.
+
+Authorization for a managed EP follows the same `allowed_principals` model. The consuming tenant controls which principal types may call their binding — the platform tenant has no say at runtime.
+
+---
+
+## Gaps vs Existing Functionality
+
+| Capability | Exists today | Gap |
+|---|---|---|
+| Tenant isolation on runs/tasks | ✅ `tenant_id` enforced | — |
+| External-user history isolation | ✅ Phase 1 (external_user_id filter) | — |
+| Internal-user history isolation | ❌ | `user_id` not stored on runs; no per-user filter |
+| Dashboard access gate | ✅ `dashboard_access` field blocks `'none'` | No `'none'` role exists for runtime-only users |
+| Runtime-only user role | ❌ | No role with `dashboard_access='none'` |
+| The-M user JWT at WS/SSE entry points | ❌ | `AccessModeUser` not implemented |
+| Bank JWT / JWKS validation | ❌ | `JWKSAuthenticator` not implemented |
+| Principal type guard on EP | ❌ | `allowed_principals` not implemented |
+| Managed app runtime distinction | ❌ | `app_type` not used at runtime |
+
+---
+
+## Implementation Phases
+
+### Phase 1 — Already complete (commit 1caef69)
+
+- `external_user_id` on `them.tasks` and `them.runs`
+- `is_backend` on `them.access_tokens`
+- `LoadHistory` / `resolveRootTaskID` filter by `external_user_id`
+- `X-External-User` header trusted only from `is_backend=true` tokens
+
+---
+
+### Phase 2 — The-M user JWT at entry points + runtime-only role
+
+**What it enables:** Direct end users with a the-M account (via SSO or local login) can call WS/SSE entry points using their dashboard JWT — no separate bearer token needed. The bank's internal team can also use this path for testing without creating separate tokens.
+
+**Schema changes:**
 ```sql
-ALTER TABLE them.tasks ADD COLUMN external_user_id TEXT;
-CREATE INDEX idx_tasks_external_user ON them.tasks(external_user_id) WHERE external_user_id IS NOT NULL;
+-- New role with no dashboard access
+INSERT INTO auth_service.roles (name, description, dashboard_access, rate_limit, cost_limit_daily, token_expiry)
+VALUES ('end_user', 'Runtime-only access, no dashboard', 'none', 1000, 10.00, 3600)
+ON CONFLICT (name) DO NOTHING;
+
+-- user_id on runs for attribution
+ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS user_id INTEGER;
 ```
 
 **Go changes:**
-- `LoadHistory` / `LoadSummary`: add `AND ($3 = '' OR t.external_user_id = $3)` filter.
-- `resolveRootTaskID` / `WriteMessage`: accept and store `external_user_id`.
-- `RuntimeIdentity`: add `ExternalUserID string` (empty for internal users and un-scoped service tokens).
-- `domain.Run`: add `ExternalUserID string`.
-- `recorder.CreateRun`: write `external_user_id` when present.
+- `epconfig`: add `AccessModeUser = "user_jwt"` constant.
+- `Lifecycle.Admit`: when `AccessMode == AccessModeUser`, validate bearer as HS256 JWT via `auth.ValidateHS256JWT`; populate `RuntimeIdentity.UserID` from `claims.UserID`; set `TenantID` from `claims.TenantID`.
+- `runrecorder.CreateRun`: write `user_id` when set.
+- Service `Login`: the `ErrDashboardAccessDenied` check blocks `dashboard_access='none'` users from logging in via `/auth/login`. For runtime-only users, a separate `/auth/runtime-login` endpoint issues a JWT without the `dashboard_access` gate.
 
-**Source of `external_user_id`:**
-- Internal user JWT: empty string (no per-user history enforcement, consistent with today).
-- Service token: from a trusted `X-External-User` header (bank authenticates with service token; bank asserts customer ID — acceptable trust model).
-- Approach B JWT: from `sub` claim extracted by `JWKSAuthenticator` (no header trust needed).
+**Dashboard protection:** `RequireTenantAdmin` already rejects `viewer` — a `viewer` JWT cannot reach any admin route. An `end_user` role JWT would also be rejected at admin routes since it carries membership role `viewer` or a new `end_user` value not in the `{admin, super_admin}` allowlist.
 
-**Acceptance criteria:**
-- `TestHistory_CrossUser_Denied` passes.
-- `TestHistory_ServiceToken_ExternalUserIsolation` passes.
-- Existing history tests unchanged.
+**Effort:** ~1 day. Low risk — additive change, no existing path modified.
+
+**Acceptance tests:**
+- `TestAccessModeUser_ValidJWT_Admitted` — valid HS256 JWT → 101 WS upgrade.
+- `TestAccessModeUser_InvalidJWT_Rejected` — tampered JWT → 401.
+- `TestAccessModeUser_ViewerJWT_AdminRoute_Rejected` — viewer JWT → 403 on admin route.
+- `TestAccessModeUser_UserIDStoredOnRun` — run row has correct `user_id`.
 
 ---
 
-### Phase 2 — Entry point principal guard
+### Phase 3 — Principal type guard on entry points
+
+**What it enables:** An EP can be restricted to internal users only, external end-users only, or both. Prevents internal team tokens from accidentally hitting customer-facing EPs and vice versa.
 
 **Schema:**
 ```sql
-ALTER TABLE them.entry_points ADD COLUMN allowed_principals TEXT NOT NULL DEFAULT 'internal'
+ALTER TABLE them.entry_points
+  ADD COLUMN IF NOT EXISTS allowed_principals TEXT NOT NULL DEFAULT 'internal'
   CHECK (allowed_principals IN ('internal', 'external', 'both'));
 ```
 
 **Go changes:**
-- `epconfig.EPConfig`: add `AllowedPrincipals string`.
-- `Admit`: if `AllowedPrincipals == 'internal'` and `tokenInfo.IsExternal → 403`; vice versa.
+- `EPConfig`: add `AllowedPrincipals string`.
+- `Lifecycle.Admit` / `CheckAccess`: check principal type against `AllowedPrincipals`:
+  - `internal` — opaque bearer token or the-M user JWT allowed; bank JWT / backend-asserted `external_user_id` rejected.
+  - `external` — only backend service tokens with `X-External-User` or bank JWTs (Phase 4) allowed.
+  - `both` — no restriction.
 
-**Acceptance criteria:**
-- Internal JWT rejected at `external`-only EP.
-- External JWT rejected at `internal`-only EP.
-- `both` EP accepts either.
+**Effort:** ~0.5 day.
+
+**Acceptance tests:**
+- `TestAllowedPrincipals_Internal_RejectsExternalUser`
+- `TestAllowedPrincipals_External_RejectsInternalToken`
+- `TestAllowedPrincipals_Both_AcceptsEither`
 
 ---
 
-### Phase 3 — JWKSAuthenticator (Approach B)
+### Phase 4 — Bank JWT / JWKS validation
+
+**What it enables:** A bank customer's JWT (issued by the bank's own IdP — Keycloak, Auth0, etc.) is validated directly at the entry point. No bearer token from the-M needed. `external_user_id` is extracted from `sub` server-side — no header trust.
 
 **Schema:**
 ```sql
 CREATE TABLE them.tenant_runtime_config (
-    tenant_id    UUID PRIMARY KEY REFERENCES them.tenants(id) ON DELETE CASCADE,
-    jwks_uri     TEXT NOT NULL,
-    issuer       TEXT NOT NULL,
-    audience     TEXT NOT NULL,
-    claim_mappings JSONB NOT NULL DEFAULT '{}',
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    tenant_id      UUID PRIMARY KEY REFERENCES them.tenants(id) ON DELETE CASCADE,
+    jwks_uri       TEXT NOT NULL,
+    issuer         TEXT NOT NULL,
+    audience       TEXT NOT NULL,
+    claim_mappings JSONB NOT NULL DEFAULT '{}',  -- {"group-name": "permission-name"}
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
 **Go changes:**
-- New `JWKSAuthenticator` implementing `transport.Authenticator`.
-- Fetches JWKS from tenant config (cached, refreshed on key rotation).
+- New `JWKSAuthenticator` implementing `transport.Authenticator` interface.
+- Fetches JWKS from tenant config (per-tenant, cached, auto-refreshed on key rotation).
 - Validates `iss`, `aud`, `exp`. Extracts `sub` → `ExternalUserID`. Maps group claims → `Permissions`.
-- Sets `UserID = 0` sentinel. `TenantID` from EP URL path, not JWT.
-- Wired in alongside `auth.Cache` via a dispatching `CompositeAuthenticator` that tries JWKS first when the tenant has `runtime_config`.
+- Sets `UserID = 0` (no the-M account). `TenantID` from EP URL path, not JWT.
+- `CompositeAuthenticator`: tries JWKS validation when the tenant has `runtime_config`; falls back to opaque token cache.
+- New `AccessModeExternal = "external_jwt"` EP mode.
 
-**Acceptance criteria (Keycloak test plan T1–T6 all pass).**
+**Effort:** ~2 days. Highest complexity — JWKS caching, key rotation, claim mapping.
+
+**Acceptance tests (Keycloak test plan):**
+
+| # | Test | Validates |
+|---|---|---|
+| T1 | `avi1` (premium group) hits `premium-only` EP | Permission enforced from JWT group claim |
+| T2 | `avi2` (free group) hits `premium-only` EP | Lower-tier blocked |
+| T3 | `avi1` runs agent; check DB | `external_user_id = avi1.sub` on run + task (sourced from JWT, not header) |
+| T4 | `avi2` supplies `avi1`'s `context_id` | Empty history (different external_user_id) |
+| T5 | Caller sends `X-External-User: avi1` while using `avi2` JWT | Run attributed to `avi2`'s sub (header ignored) |
+| T6 | `avi1` token used at EP in different tenant | 403 — tenant isolation |
 
 ---
 
-## Build Order
+## Build Order and Dependencies
 
 ```
-Phase 1: external_user_id on tasks/runs + history ownership filter   (closes Q4)
-Phase 2: allowed_principals on entry_points                           (closes Q3)
-Phase 3: JWKSAuthenticator + tenant_runtime_config                   (enables Approach B end-to-end)
+Phase 1 (done)  — external_user_id + is_backend + history isolation
+Phase 2         — the-M user JWT at entry points + runtime-only role
+Phase 3         — allowed_principals guard on EPs
+Phase 4         — Bank JWT / JWKS validation
 ```
 
-Phases 1 and 2 improve the existing system and can ship before Phase 3.
-Phase 3 is the full Approach B implementation.
+Phase 2 and 3 are independent and can be done in either order.
+Phase 4 depends on Phase 3 (needs `allowed_principals = 'external'` to safely restrict JWKS-validated EPs).
+
+Phase 2 also unblocks the "platform-as-product" pattern immediately — direct end users can sign up and use agents with their own account, fully isolated history, and no dashboard access.
