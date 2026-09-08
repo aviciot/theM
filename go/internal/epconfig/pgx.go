@@ -43,7 +43,8 @@ SELECT
     a.enabled,
     COALESCE(a.runtime_config, '{}')::text,
     ep.app_orchestrator_id::text,
-    ao.name
+    ao.name,
+    COALESCE(ep.allowed_principals, 'internal')
 FROM them.entry_points ep
 JOIN them.applications a ON a.id = ep.application_id
 LEFT JOIN them.app_orchestrators ao
@@ -75,6 +76,7 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 		&runtimeConfigText,
 		&row.AppOrchestratorID,
 		&row.OrchestratorName,
+		&row.AllowedPrincipals,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

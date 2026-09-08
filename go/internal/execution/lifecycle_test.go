@@ -854,3 +854,129 @@ func TestAccessModeUser_UserIDStoredOnRun(t *testing.T) {
 	require.True(t, r.createCalled, "CreateRun must be called")
 	assert.Equal(t, userID, r.lastRun.UserID, "UserID must be stored on the run record")
 }
+
+// ── Phase 3: allowed_principals enforcement ───────────────────────────────────
+
+func epWithPrincipal(slug, ap string) *epconfig.EPConfig {
+	cfg := tokenEP(slug)
+	cfg.AllowedPrincipals = ap
+	return cfg
+}
+
+// LC-AP-01: internal EP admits internal (non-backend) caller.
+func TestAllowedPrincipals_Internal_AdmitsInternalToken(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	ep := epWithPrincipal("slug", "internal")
+	info := &auth.TokenInfo{TokenID: 1, IsBackend: false}
+	lc := buildLifecycle(ep, &fakeAuth{info: info}, g, s, r, tmp)
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok"})
+	require.NoError(t, err, "internal EP must admit non-backend caller")
+}
+
+// LC-AP-02: internal EP rejects backend (external) caller.
+func TestAllowedPrincipals_Internal_RejectsExternalUser(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	ep := epWithPrincipal("slug", "internal")
+	info := &auth.TokenInfo{TokenID: 1, IsBackend: true}
+	lc := buildLifecycle(ep, &fakeAuth{info: info}, g, s, r, nil)
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok"})
+	require.Error(t, err)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrForbidden, ae.Kind,
+		"internal EP must reject backend (external) caller with 403")
+	assert.False(t, g.checkCalled, "gate must not be reached")
+	assert.False(t, r.createCalled, "run must not be created")
+}
+
+// LC-AP-03: external EP admits backend caller.
+func TestAllowedPrincipals_External_AdmitsExternalUser(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	ep := epWithPrincipal("slug", "external")
+	info := &auth.TokenInfo{TokenID: 1, IsBackend: true}
+	lc := buildLifecycle(ep, &fakeAuth{info: info}, g, s, r, tmp)
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok"})
+	require.NoError(t, err, "external EP must admit backend caller")
+}
+
+// LC-AP-04: external EP rejects non-backend (internal) caller.
+func TestAllowedPrincipals_External_RejectsInternalToken(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	ep := epWithPrincipal("slug", "external")
+	info := &auth.TokenInfo{TokenID: 1, IsBackend: false}
+	lc := buildLifecycle(ep, &fakeAuth{info: info}, g, s, r, nil)
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok"})
+	require.Error(t, err)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrForbidden, ae.Kind,
+		"external EP must reject non-backend (internal) caller with 403")
+	assert.False(t, g.checkCalled, "gate must not be reached")
+}
+
+// LC-AP-05: both EP admits internal caller.
+func TestAllowedPrincipals_Both_AdmitsInternalToken(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	ep := epWithPrincipal("slug", "both")
+	info := &auth.TokenInfo{TokenID: 1, IsBackend: false}
+	lc := buildLifecycle(ep, &fakeAuth{info: info}, g, s, r, tmp)
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok"})
+	require.NoError(t, err, "both EP must admit internal caller")
+}
+
+// LC-AP-06: both EP admits backend caller.
+func TestAllowedPrincipals_Both_AdmitsExternalUser(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	ep := epWithPrincipal("slug", "both")
+	info := &auth.TokenInfo{TokenID: 1, IsBackend: true}
+	lc := buildLifecycle(ep, &fakeAuth{info: info}, g, s, r, tmp)
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok"})
+	require.NoError(t, err, "both EP must admit backend caller")
+}
+
+// LC-AP-07: user_jwt EP with internal principal admits user JWT (user JWTs are internal).
+func TestAllowedPrincipals_Internal_AdmitsUserJWT(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+	tenantID := "tenant-abc"
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	ep := userJWTEP("slug", tenantID)
+	ep.AllowedPrincipals = "internal"
+	lc := buildLifecycle(ep, &fakeAuth{}, g, s, r, tmp)
+	lc.WithJWTSecret(secret)
+
+	tok := mintHS256JWT(secret, 42, tenantID, 0)
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: tok})
+	require.NoError(t, err, "user_jwt token is internal — must be admitted by internal EP")
+}

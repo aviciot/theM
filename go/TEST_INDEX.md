@@ -693,6 +693,13 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestAccessModeUser_NoToken_Rejected` | Phase 2: no token on user_jwt EP → AdmitErrUnauthorized (401) |
 | `TestAccessModeUser_NoSecret_Rejected` | Phase 2: WithJWTSecret not called → rejects all requests (401); prevents misconfigured deployments from admitting anyone |
 | `TestAccessModeUser_UserIDStoredOnRun` | Phase 2: UserID from JWT sub claim is stored on the run record (enables per-user history isolation) |
+| `TestAllowedPrincipals_Internal_AdmitsInternalToken` | LC-AP-01: internal EP + non-backend token → admitted |
+| `TestAllowedPrincipals_Internal_RejectsExternalUser` | LC-AP-02: internal EP + backend token (IsBackend=true) → AdmitErrForbidden; gate not reached |
+| `TestAllowedPrincipals_External_AdmitsExternalUser` | LC-AP-03: external EP + backend token → admitted |
+| `TestAllowedPrincipals_External_RejectsInternalToken` | LC-AP-04: external EP + non-backend token → AdmitErrForbidden; gate not reached |
+| `TestAllowedPrincipals_Both_AdmitsInternalToken` | LC-AP-05: both EP + non-backend token → admitted |
+| `TestAllowedPrincipals_Both_AdmitsExternalUser` | LC-AP-06: both EP + backend token → admitted |
+| `TestAllowedPrincipals_Internal_AdmitsUserJWT` | LC-AP-07: internal EP + user_jwt token (IsBackend=false) → admitted (user JWTs are internal) |
 
 **Trigger:** any change to `internal/execution/lifecycle.go`, `internal/execution/errors.go`, `internal/execution/request.go`, or `internal/quota/enforcer.go`
 
@@ -1047,6 +1054,16 @@ history-expired rows). Status mapping per ADR-002.
 | `TestLoad_AppIDPropagated` | `AppID` from DB propagated correctly to `EPConfig.AppID` |
 | `TestSubscribe_MessageEvictsCache` | Pub/sub message `"{tenantID}:{slug}"` → cache evicted; next Load re-queries DB (tenant-scoped payload) |
 | `TestLoad_TTLFallback_NoSubscriber` | Without subscriber, fresh entry is cached (TTL not yet expired) |
+| `TestCheckPrincipal_Internal_AdmitsInternalCaller` | EC-AP-01: `allowed_principals=internal` + non-backend → admitted |
+| `TestCheckPrincipal_Internal_RejectsExternalCaller` | EC-AP-02: `allowed_principals=internal` + backend → `ErrPrincipalNotAllowed` |
+| `TestCheckPrincipal_External_AdmitsExternalCaller` | EC-AP-03: `allowed_principals=external` + backend → admitted |
+| `TestCheckPrincipal_External_RejectsInternalCaller` | EC-AP-04: `allowed_principals=external` + non-backend → `ErrPrincipalNotAllowed` |
+| `TestCheckPrincipal_Both_AdmitsInternalCaller` | EC-AP-05: `allowed_principals=both` + non-backend → admitted |
+| `TestCheckPrincipal_Both_AdmitsExternalCaller` | EC-AP-06: `allowed_principals=both` + backend → admitted |
+| `TestCheckPrincipal_EmptyDefault_AdmitsInternal` | EC-AP-07: empty `AllowedPrincipals` + non-backend → admitted |
+| `TestCheckPrincipal_EmptyDefault_AllowsBoth` | EC-AP-08: empty `AllowedPrincipals` + backend → admitted (empty = no restriction) |
+| `TestBuildConfig_UnknownPrincipal_DefaultsToInternal` | EC-AP-09: unknown value in DB normalised to `"internal"` |
+| `TestBuildConfig_ExternalPrincipal_Propagated` | EC-AP-10: `"external"` from DB propagated to `EPConfig.AllowedPrincipals` |
 
 **Trigger:** any change to `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go`
 
@@ -3147,7 +3164,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-15 | admin | 59 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
-| S1-18 | epconfig | 26 |
+| S1-18 | epconfig | 36 |
 | S1-19 | cache | 1 |
 | S1-20 | cache (runstream adapter) | 1 |
 | S1-21 | runstream (pub/sub) | 10 |
@@ -3164,7 +3181,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 18 |
-| S1-35 | execution lifecycle (unification refactor) | 22 |
+| S1-35 | execution lifecycle (unification refactor) | 29 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan + CT-01 cross-tenant) | 9 |
 | S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping + Step 32 user management + Step 33 two-tenant regression) | 83 |
 | S1-41 | registry (component definition resolver) | 12 |

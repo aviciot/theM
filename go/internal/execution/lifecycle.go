@@ -250,11 +250,22 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	// ── 5. CheckAccess (EP/App enabled, blocked users/tokens) ─────────────────
 	tokenHash := transport.TokenHash(req.RawToken)
 	userID := int64(0)
+	isBackend := false
 	if tokenInfo != nil {
 		userID = tokenInfo.TokenID
+		isBackend = tokenInfo.IsBackend
 	}
 	if checkErr := epconfig.CheckAccess(resolvedCfg, tokenHash, userID); checkErr != nil {
 		lc.logger.Debug("execution: access denied", "ep_slug", req.EPSlug, "error", checkErr)
+		return nil, admitErr(AdmitErrForbidden)
+	}
+
+	// ── 5c. Principal type guard (Phase 3) ───────────────────────────────────
+	if principalErr := epconfig.CheckPrincipal(resolvedCfg, isBackend); principalErr != nil {
+		lc.logger.Debug("execution: principal type not allowed",
+			"ep_slug", req.EPSlug,
+			"allowed", resolvedCfg.AllowedPrincipals,
+			"is_backend", isBackend)
 		return nil, admitErr(AdmitErrForbidden)
 	}
 

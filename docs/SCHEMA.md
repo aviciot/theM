@@ -621,6 +621,7 @@ Key relationships:
 | `db/081_tenant_group_mappings_safe_roles.sql` | ADD CHECK on `them.tenant_group_mappings.role` restricting values to `('admin','member','viewer')` — closes OIDC privilege escalation via `super_admin` group mappings. |
 | `db/086_phase2_user_history.sql` | Phase 2 user history isolation: `them.tasks.user_id INT` + `them.runs.user_id INT`. Dual-column SQL filter (external_user_id / user_id) isolates internal vs external identity. Legacy NULL rows excluded from user-scoped queries by SQL NULL semantics. |
 | `db/087_end_user_role.sql` | Seed `auth_service.roles` with `end_user` role (`dashboard_access='none'`, rate_limit=1000, cost_limit_daily=$10, token_expiry=3600s). Runtime-only access — no dashboard permissions. |
+| `db/088_allowed_principals.sql` | Phase 3 principal guard: `them.entry_points.allowed_principals TEXT NOT NULL DEFAULT 'internal' CHECK (IN ('internal','external','both'))`. Controls which principal types (internal token/user_jwt, external backend+X-External-User, or both) may call each EP. Default 'internal' is safe for all existing EPs. |
 
 ---
 

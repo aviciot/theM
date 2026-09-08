@@ -60,6 +60,9 @@ type EntryPointRow struct {
 	MemoryRawFallbackN   int
 	SummarizerProvider   *string
 	SummarizerModel      *string
+
+	// Principal guard (Phase 3). "internal" | "external" | "both"; default "internal".
+	AllowedPrincipals string
 }
 
 // ── PublishDefinition ─────────────────────────────────────────────────────────
@@ -207,6 +210,10 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 	if rawFallbackN <= 0 {
 		rawFallbackN = 3
 	}
+	ap := row.AllowedPrincipals
+	if ap != "internal" && ap != "external" && ap != "both" {
+		ap = "internal"
+	}
 
 	const q = `
 		INSERT INTO them.entry_points
@@ -217,6 +224,7 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 			 source_definition_id, source_definition_hash,
 			 memory_enabled, history_window, summarize_every_n_calls,
 			 memory_raw_fallback_n, summarizer_provider, summarizer_model,
+			 allowed_principals,
 			 enabled)
 		VALUES
 			($1::uuid, $2::uuid, $3, $4,
@@ -226,6 +234,7 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 			 $11::uuid, $12,
 			 $13, $14, $15,
 			 $16, $17, $18,
+			 $19,
 			 true)
 		ON CONFLICT (application_id, slug) DO UPDATE SET
 			entry_point_type         = EXCLUDED.entry_point_type,
@@ -243,6 +252,7 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 			memory_raw_fallback_n    = EXCLUDED.memory_raw_fallback_n,
 			summarizer_provider      = EXCLUDED.summarizer_provider,
 			summarizer_model         = EXCLUDED.summarizer_model,
+			allowed_principals       = EXCLUDED.allowed_principals,
 			enabled                  = true,
 			updated_at               = now()
 		RETURNING id::text`
@@ -267,6 +277,7 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 		rawFallbackN,
 		row.SummarizerProvider,
 		row.SummarizerModel,
+		ap,
 	)
 	if err := scanRow.Scan(&id); err != nil {
 		return "", err

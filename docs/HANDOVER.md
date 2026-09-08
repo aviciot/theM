@@ -84,11 +84,36 @@ Isolation properties:
 
 ---
 
+## Pending verification gate — worker-to-task E2E check
+
+**Status: NOT yet verified.** The following check must pass before runtime end-users are enabled in production:
+
+- Bridge writes `user_id` to `them.runs` ✅ CONFIRMED (run `d0e50a33`, user_id=38)
+- Worker writes `user_id` to `them.tasks` — **PENDING** (requires a full successful orchestration run with a real LLM agent active)
+- History isolation between two users sharing the same context_id — **PENDING** (integration tests cover the SQL logic; live orchestration E2E not yet run)
+
+**How to verify (when a working test agent is available):**
+
+```python
+# 1. Create two end_user accounts and two user_jwt EPs in the same app
+# 2. runtime-login as user A, connect via WS, send message, wait for run to COMPLETE
+# 3. Query DB BEFORE deleting user A:
+#    SELECT id, user_id FROM them.tasks WHERE user_id = <uid_A> LIMIT 5
+# 4. Verify user_id = uid_A on at least one task
+# 5. Repeat for user B with a different context_id
+# 6. Cross-check: LoadHistory for user A's context_id with user B's identity → 0 messages
+# 7. Only then mark this gate as passed
+```
+
+**Do not enable `user_jwt` entry points for production end-users until both `runs.user_id` AND `tasks.user_id` are confirmed in a live run.** The bridge half is verified; the Temporal worker half is not.
+
+---
+
 ## What was NOT done (remaining phases)
 
 | Phase | What | Why deferred |
 |---|---|---|
-| Phase 3 | `allowed_principals` guard on EPs | Separate DB migration + CheckAccess change; not needed for Phase 2 correctness |
+| Phase 3 | `allowed_principals` guard on EPs | ✅ COMPLETE (2026-09-08) — migration 088, `CheckPrincipal` in lifecycle, 17 new tests |
 | Phase 4 | Bank JWT / JWKS validation | Requires `JWKSAuthenticator` + `tenant_runtime_config` table — significant new surface |
 | Phase 5 | Managed app runtime routing | Requires `epConfigQuery` JOIN on `managed_app_bindings`; consuming-tenant data+quota attribution |
 

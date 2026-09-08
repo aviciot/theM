@@ -246,7 +246,7 @@ Option (b) is smaller. This is a **Phase 5** gap — out of scope for Phases 1�
 | Runtime-only user role | ✅ Phase 2 (`end_user` role seeded, migration 087) | — | 2 |
 | The-M user JWT at WS/SSE entry points | ✅ Phase 2 (`AccessModeUser = "user_jwt"`, lifecycle step 3.5) | **Authorization rule:** any authenticated member of the EP's tenant can invoke any `AccessModeUser` EP. `allowed_principals` (Phase 3) is the scheduled fix for per-EP principal restrictions. | 2 |
 | Bank JWT / JWKS validation | ❌ | `JWKSAuthenticator` not implemented | 4 |
-| Principal type guard on EP | ❌ | `allowed_principals` not implemented | 3 |
+| Principal type guard on EP | ✅ Phase 3 (`allowed_principals` column + `CheckPrincipal` in `Lifecycle.Admit`) | `internal`/`external`/`both` controls which caller type reaches each EP. Default `'internal'` safe for existing EPs. | 3 |
 | Managed app runtime routing | ❌ | `epConfigQuery` uses `ep.tenant_id` — managed EP not reachable by consuming tenant | 5 |
 
 ---
@@ -316,11 +316,11 @@ CREATE INDEX IF NOT EXISTS idx_tasks_user ON them.tasks(user_id) WHERE user_id I
 
 ---
 
-### Phase 3 — Principal type guard on entry points
+### Phase 3 — Principal type guard on entry points — COMPLETE (2026-09-08)
 
 **What it enables:** An EP can be restricted to internal users only, external end-users only, or both. Prevents internal team tokens from accidentally hitting customer-facing EPs and vice versa.
 
-**Schema:**
+**Schema:** `db/088_allowed_principals.sql` — applied to live DB.
 ```sql
 ALTER TABLE them.entry_points
   ADD COLUMN IF NOT EXISTS allowed_principals TEXT NOT NULL DEFAULT 'internal'
@@ -328,18 +328,22 @@ ALTER TABLE them.entry_points
 ```
 
 **Go changes:**
-- `EPConfig`: add `AllowedPrincipals string`.
-- `Lifecycle.Admit` / `CheckAccess`: check principal type against `AllowedPrincipals`:
-  - `internal` — opaque bearer token or the-M user JWT allowed; bank JWT / backend-asserted `external_user_id` rejected.
-  - `external` — only backend service tokens with `X-External-User` or bank JWTs (Phase 4) allowed.
-  - `both` — no restriction.
+- `internal/epconfig/epconfig.go`: `AllowedPrincipals string` on `EPConfig` + `EPConfigRow`; `ErrPrincipalNotAllowed` sentinel; `CheckPrincipal(cfg, isBackend bool) error` function; `buildConfig` normalises unknown values to `"internal"`.
+- `internal/epconfig/pgx.go`: `COALESCE(ep.allowed_principals, 'internal')` added to `epConfigQuery` SELECT + Scan.
+- `internal/execution/lifecycle.go`: step 5c — `epconfig.CheckPrincipal(resolvedCfg, isBackend)` called after `CheckAccess`; returns `AdmitErrForbidden` on mismatch.
+- `internal/admin/dal/dal.go`: `AllowedPrincipals string` on `EntryPoint` (JSON field `allowed_principals`).
+- `internal/admin/dal/applications.go`: `ListEntryPoints` selects + scans `allowed_principals`.
+- `internal/admin/dal/publish.go`: `EntryPointRow.AllowedPrincipals` + `UpsertEntryPoint` writes it as `$19`.
 
-**Effort:** ~0.5 day.
+**Classification rule:**
+- `isBackend=false` → "internal" (opaque bearer token or the-M user JWT)
+- `isBackend=true` → "external" (backend service token with X-External-User)
 
-**Acceptance tests:**
-- `TestAllowedPrincipals_Internal_RejectsExternalUser`
-- `TestAllowedPrincipals_External_RejectsInternalToken`
-- `TestAllowedPrincipals_Both_AcceptsEither`
+**Tests (17 new across two packages):**
+- `internal/epconfig/epconfig_test.go`: EC-AP-01..10
+- `internal/execution/lifecycle_test.go`: LC-AP-01..07
+
+All 54 packages pass, 0 failures.
 
 ---
 

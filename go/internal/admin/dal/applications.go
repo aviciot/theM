@@ -184,7 +184,8 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 		       COALESCE(ep.history_window, 20),
 		       ep.summarizer_provider, ep.summarizer_model,
 		       ep.llm_provider, ep.llm_model,
-		       COALESCE(t.slug, '')
+		       COALESCE(t.slug, ''),
+		       COALESCE(ep.allowed_principals, 'internal')
 		FROM them.entry_points ep
 		JOIN them.applications a ON a.id = ep.application_id
 		JOIN them.tenants t      ON t.id = a.tenant_id
@@ -206,6 +207,7 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 			&ep.SummarizerProvider, &ep.SummarizerModel,
 			&ep.LLMProvider, &ep.LLMModel,
 			&ep.TenantSlug,
+			&ep.AllowedPrincipals,
 		); err != nil {
 			break
 		}

@@ -398,21 +398,31 @@ See full detail in `docs/HANDOVER.md`.
 
 **Phase 2 is CLOSED. All closure fixes + E2E runs.user_id confirmed.**
 
+### End-user auth Phase 3 — COMPLETE (2026-09-08)
+
+**`allowed_principals` principal type guard on entry points.**
+
+- Migration `db/088_allowed_principals.sql` — applied to live DB
+- `epconfig.go`: `AllowedPrincipals string` on `EPConfig`/`EPConfigRow`; `ErrPrincipalNotAllowed`; `CheckPrincipal(cfg, isBackend)` function; `buildConfig` normalises unknown → `"internal"`
+- `pgx.go`: `COALESCE(ep.allowed_principals, 'internal')` in `epConfigQuery`
+- `lifecycle.go`: step 5c — `CheckPrincipal` after `CheckAccess`; returns `AdmitErrForbidden` on mismatch
+- Admin DAL: `AllowedPrincipals` on `EntryPoint`, `EntryPointRow`; `ListEntryPoints` + `UpsertEntryPoint` updated
+- 17 new tests (EC-AP-01..10 in `epconfig_test.go`, LC-AP-01..07 in `lifecycle_test.go`)
+- All 54 packages pass, 0 failures
+
+**⚠️ Pending verification gate** — `tasks.user_id` not yet confirmed via live orchestration run with a working agent. See `docs/HANDOVER.md`. Do not enable user_jwt EPs in production until this passes.
+
 ---
 
 ### Next recommended task
 
-**Phase 3 — `allowed_principals` guard on entry points** (next task)
+**Phase 4 — Bank JWT / JWKS validation** (see `docs/END_USER_AUTH_PLAN.md`)
 
-- Schema: `ALTER TABLE them.entry_points ADD COLUMN allowed_principals TEXT DEFAULT 'internal' CHECK (...)`
-- Go: enforce in `Lifecycle.Admit` after EPConfig resolution
-- See `docs/END_USER_AUTH_PLAN.md` Phase 3 for full spec
+Or: **Complete worker-to-task E2E check** (requires working test agent that completes a Temporal workflow run successfully)
 
-**HEAD: 7e107ab** (Phase 2 E2E confirmed, HANDOVER.md updated)
+**HEAD: (pending commit)** — Phase 3 complete
 
-All Phase 2 migrations (085, 086, 087) applied. All 4 Go service images rebuilt and recreated. Integration history tests (5/5) pass. E2E `runs.user_id` confirmed.
-
-**Option B — Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
+**Option C — Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
 - Requires backend: extend `idp_config` JSONB (`groups_claim`, `unmatched_action`), tenant-scoped `/api/v1/tenant/group-mappings` API, OIDC handler update.
 - Frontend: add Group Mappings section to SSO tab in `frontend/src/app/tenant/settings/page.tsx`.
 - See full spec in `docs/IAM_UI_SPEC.md` (Change 4 section).

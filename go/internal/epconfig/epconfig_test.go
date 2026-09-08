@@ -499,3 +499,91 @@ func (m *multiDB) QueryEPConfig(_ context.Context, _, _, slug string) (*epconfig
 	}
 	return row, nil
 }
+
+// ── EC-AP: CheckPrincipal ─────────────────────────────────────────────────────
+
+func cfgWithPrincipal(ap string) *epconfig.EPConfig {
+	return &epconfig.EPConfig{
+		EPID:              "ep-1",
+		AppID:             "app-1",
+		TenantID:          testTenantID,
+		EPSlug:            "slug",
+		AppEnabled:        true,
+		EPEnabled:         true,
+		AccessMode:        epconfig.AccessModeToken,
+		AllowedPrincipals: ap,
+	}
+}
+
+// EC-AP-01: internal EP admits internal (non-backend) caller.
+func TestCheckPrincipal_Internal_AdmitsInternalCaller(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal("internal"), false)
+	require.NoError(t, err)
+}
+
+// EC-AP-02: internal EP rejects backend (external) caller.
+func TestCheckPrincipal_Internal_RejectsExternalCaller(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal("internal"), true)
+	require.ErrorIs(t, err, epconfig.ErrPrincipalNotAllowed)
+}
+
+// EC-AP-03: external EP admits backend (external) caller.
+func TestCheckPrincipal_External_AdmitsExternalCaller(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal("external"), true)
+	require.NoError(t, err)
+}
+
+// EC-AP-04: external EP rejects internal (non-backend) caller.
+func TestCheckPrincipal_External_RejectsInternalCaller(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal("external"), false)
+	require.ErrorIs(t, err, epconfig.ErrPrincipalNotAllowed)
+}
+
+// EC-AP-05: both EP admits internal caller.
+func TestCheckPrincipal_Both_AdmitsInternalCaller(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal("both"), false)
+	require.NoError(t, err)
+}
+
+// EC-AP-06: both EP admits external caller.
+func TestCheckPrincipal_Both_AdmitsExternalCaller(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal("both"), true)
+	require.NoError(t, err)
+}
+
+// EC-AP-07: empty AllowedPrincipals behaves like "internal" — admits internal.
+func TestCheckPrincipal_EmptyDefault_AdmitsInternal(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal(""), false)
+	require.NoError(t, err)
+}
+
+// EC-AP-08: empty AllowedPrincipals does NOT reject external — treated as "both"
+// for backwards compat (existing EPs with no column get DEFAULT 'internal' from DB;
+// empty only arises in tests that don't set the field).
+func TestCheckPrincipal_EmptyDefault_AllowsBoth(t *testing.T) {
+	err := epconfig.CheckPrincipal(cfgWithPrincipal(""), true)
+	require.NoError(t, err, "empty AllowedPrincipals must not block any caller")
+}
+
+// EC-AP-09: buildConfig normalises unknown values to "internal".
+func TestBuildConfig_UnknownPrincipal_DefaultsToInternal(t *testing.T) {
+	row := enabledRow("ap-ep")
+	row.AllowedPrincipals = "unknown-value"
+	db := &fakeDB{row: row}
+	loader := epconfig.NewLoader(db, nil)
+	cfg, err := loader.Load(context.Background(), testTenantID, "test-app", "ap-ep")
+	require.NoError(t, err)
+	assert.Equal(t, "internal", cfg.AllowedPrincipals,
+		"unknown allowed_principals value must be normalised to 'internal'")
+}
+
+// EC-AP-10: buildConfig propagates "external" correctly.
+func TestBuildConfig_ExternalPrincipal_Propagated(t *testing.T) {
+	row := enabledRow("ap-ext")
+	row.AllowedPrincipals = "external"
+	db := &fakeDB{row: row}
+	loader := epconfig.NewLoader(db, nil)
+	cfg, err := loader.Load(context.Background(), testTenantID, "test-app", "ap-ext")
+	require.NoError(t, err)
+	assert.Equal(t, "external", cfg.AllowedPrincipals)
+}

@@ -85,6 +85,10 @@ var ErrNotFound = errors.New("epconfig: entry point not found")
 // ErrDBUnavailable is returned when the DB query fails.
 var ErrDBUnavailable = errors.New("epconfig: database unavailable")
 
+// ErrPrincipalNotAllowed is returned when the caller's principal type is not
+// permitted by the EP's allowed_principals policy.
+var ErrPrincipalNotAllowed = errors.New("epconfig: principal type not allowed on this entry point")
+
 // ──────────────────────────────────────────────────────────────────────────────
 // EPConfig — resolved runtime configuration for one EP + its Application
 // ──────────────────────────────────────────────────────────────────────────────
@@ -99,8 +103,9 @@ type EPConfig struct {
 	EPSlug        string
 	AppEnabled    bool
 	EPEnabled     bool
-	EPType        string // "websocket" | "sse" | etc.
-	AccessMode    string // "public" | "token" | "user_jwt"
+	EPType             string // "websocket" | "sse" | etc.
+	AccessMode         string // "public" | "token" | "user_jwt"
+	AllowedPrincipals  string // "internal" | "external" | "both"; default "internal"
 
 	// Orchestrator binding (SEC-04).
 	// AppOrchestratorID is the UUID of the bound app_orchestrators row.
@@ -211,6 +216,9 @@ type EPConfigRow struct {
 	// Orchestrator binding (SEC-04). Nil when entry_points.app_orchestrator_id IS NULL.
 	AppOrchestratorID *string // entry_points.app_orchestrator_id
 	OrchestratorName  *string // app_orchestrators.name; nil when unbound
+
+	// Principal guard (Phase 3). "internal" | "external" | "both".
+	AllowedPrincipals string
 }
 
 // DBQuerier is the single query needed by the epconfig loader.
@@ -427,24 +435,30 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 		orchName = *row.OrchestratorName
 	}
 
+	ap := row.AllowedPrincipals
+	if ap != "internal" && ap != "external" && ap != "both" {
+		ap = "internal" // safe default for missing / unknown values
+	}
+
 	return &EPConfig{
-		EPID:              row.EPID,
-		AppID:             row.AppID,
-		TenantID:          row.TenantID,
-		EPSlug:            row.EPSlug,
-		EPType:            row.EPType,
-		EPEnabled:         row.EPEnabled,
-		AppEnabled:        row.AppEnabled,
-		AccessMode:        accessMode,
-		EPMaxConcurrent:   epMax,
-		AppMaxConcurrent:  rt.MaxConcurrentSessions,
-		RateLimitRPM:      rt.RateLimitRPM,
-		QueueTimeout:      queueTimeout,
+		EPID:               row.EPID,
+		AppID:              row.AppID,
+		TenantID:           row.TenantID,
+		EPSlug:             row.EPSlug,
+		EPType:             row.EPType,
+		EPEnabled:          row.EPEnabled,
+		AppEnabled:         row.AppEnabled,
+		AccessMode:         accessMode,
+		AllowedPrincipals:  ap,
+		EPMaxConcurrent:    epMax,
+		AppMaxConcurrent:   rt.MaxConcurrentSessions,
+		RateLimitRPM:       rt.RateLimitRPM,
+		QueueTimeout:       queueTimeout,
 		BlockedTokenHashes: rt.BlockedTokens,
-		BlockedUserIDs:    rt.BlockedUserIDs,
-		AppOrchestratorID: appOrchID,
-		OrchestratorName:  orchName,
-		fetchedAt:         time.Now(),
+		BlockedUserIDs:     rt.BlockedUserIDs,
+		AppOrchestratorID:  appOrchID,
+		OrchestratorName:   orchName,
+		fetchedAt:          time.Now(),
 	}
 }
 
@@ -461,6 +475,32 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 // These are checked on every request even when the EPConfig came from cache,
 // because a disabled state must take effect immediately (fail-closed).
 //
+// CheckPrincipal enforces the allowed_principals policy on an entry point.
+//
+// Principal classification:
+//   - isBackend=true  → "external" principal (backend service with X-External-User)
+//   - isBackend=false → "internal" principal (opaque bearer token or the-M user JWT)
+//
+// The check is skipped when AllowedPrincipals is "both" or empty (treats empty as "internal"
+// with no restriction against internal callers — default-safe for existing EPs).
+//
+// Returns ErrPrincipalNotAllowed when the caller's type is prohibited.
+func CheckPrincipal(cfg *EPConfig, isBackend bool) error {
+	switch cfg.AllowedPrincipals {
+	case "both", "":
+		return nil
+	case "internal":
+		if isBackend {
+			return ErrPrincipalNotAllowed
+		}
+	case "external":
+		if !isBackend {
+			return ErrPrincipalNotAllowed
+		}
+	}
+	return nil
+}
+
 // tokenHash is the SHA-256 hex of the raw bearer token (empty string if public EP).
 // userID is the authenticated user ID (0 if public EP).
 func CheckAccess(cfg *EPConfig, tokenHash string, userID int64) error {

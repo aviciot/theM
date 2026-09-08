@@ -336,6 +336,7 @@ type EntryPoint struct {
 	SummarizerModel      *string `json:"summarizer_model,omitempty"`
 	LLMProvider          *string `json:"llm_provider,omitempty"`
 	LLMModel             *string `json:"llm_model,omitempty"`
+	AllowedPrincipals    string  `json:"allowed_principals"`
 }
 
 // ApplicationInput is the request body for application create/update.
