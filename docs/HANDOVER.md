@@ -127,6 +127,50 @@ Run: `go test -tags=integration ./internal/history/... ` (requires `DATABASE_PAS
 
 ---
 
+## Phase 2 deployment verification (2026-09-08)
+
+All services rebuilt and recreated against the live stack. Full smoke test run.
+
+### Rebuild scope
+
+| Image | Dockerfile | Rebuilt |
+|---|---|---|
+| `them-auth-go` | `Dockerfile.auth-go` | ✅ |
+| `them-go-bridge` | `Dockerfile.go` | ✅ |
+| `them-go-worker` | `Dockerfile.go-worker` | ✅ |
+| `them-dag-worker` | `Dockerfile.dag-worker` | ✅ |
+
+Note: `Dockerfile.go-worker` is separate from `Dockerfile.go`. Both worker images were rebuilt and recreated. (Prior deployment documentation only listed auth + bridge.)
+
+Vendor directory was out of sync — `go mod vendor` run before rebuild.
+
+### Smoke test results
+
+| Step | Result | Notes |
+|---|---|---|
+| `POST /auth/runtime-login` | ✅ PASS | Returns access + refresh tokens |
+| Dashboard denied with `access_token` | ✅ PASS | 403 — membership role=member, dashboard_access=none |
+| Normal `POST /auth/login` blocked | ✅ PASS | 403 — `dashboard_access='none'` rejects at login |
+| `POST /auth/refresh` issues new tokens | ✅ PASS | Bearer header accepted |
+| Refresh token rejected as bearer | ✅ PASS | 401 — `type="refresh"` blocked by `ValidateHS256JWT` |
+| Dashboard denied after refresh (bearer) | ✅ PASS | 403 |
+| Dashboard denied after refresh (cookie) | ✅ PASS | 401 — cookie alone is not sufficient |
+| JWT `sub` matches `auth_service.users.id` | ✅ PASS | DB confirmed |
+
+### /refresh sets dashboard cookies — boundary verified
+
+`POST /auth/refresh` calls `h.setAuthCookies(w, pair)` which sets `them_access_token` and `them_refresh_token` cookies. This is the standard response for all refresh flows (login and runtime-login share the same handler).
+
+**Why this is safe:** The bridge's dashboard authorization checks the JWT `role` claim against `dashboard_access` in `auth_service.roles`. An `end_user`-role JWT has `dashboard_access='none'` — the bearer check returns 403 regardless of how the token was delivered (header or cookie). Verified: cookie-bearing request after refresh returns 401 (no cookie-only auth path exists on admin routes).
+
+**Residual note for Phase 3+:** If a future session adds cookie-to-JWT exchange for the frontend, the `dashboard_access` check must be applied there too. Not a current gap.
+
+### Integration history tests
+
+All 5 isolation tests pass against the live DB (after fixing `resolveRootTaskID findQ` UUID cast + FK-safe `seedUser` helper). HEAD: `ac7c118`.
+
+---
+
 ## Next session startup
 
 ```bash
@@ -164,6 +208,7 @@ curl -s -X POST http://localhost:8088/auth/api/v1/auth/runtime-login \
 ## Known pending items
 
 - **Migration 081** (`db/081_tenant_group_mappings_safe_roles.sql`) — not confirmed applied to live DB. Apply before enabling OIDC group mapping.
-- **Phase 2 migrations** (086, 087) — written but not yet applied to live DB. Apply + rebuild + recreate before first AccessModeUser EP test.
+- **Phase 2 migrations** (086, 087) — ✅ applied to live DB (2026-09-08).
+- **All 4 Go service images rebuilt and recreated** — ✅ complete (2026-09-08): auth-go, go-bridge, go-worker, dag-worker.
+- **Integration history tests** — ✅ all 5 pass against live DB (2026-09-08, HEAD ac7c118).
 - **`THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN`** must be in `.env` — run `./generate-env.sh` if missing.
-- **History integration tests** — run `go test -tags=integration ./internal/history/...` against live DB after applying migration 086 to verify the actual isolation queries.
