@@ -373,20 +373,53 @@ Any authenticated member of the EP's tenant can invoke any `AccessModeUser` entr
 
 **`go test ./...` — 54 packages, 0 failures. HEAD: 77bb7d0**
 
+### End-user auth Phase 2 — Closure fixes (326f5a9, 2026-09-08)
+
+Three issues identified in code review of ef51f6b, all resolved:
+
+1. **RuntimeLogin endpoint** — `end_user`-role accounts can now authenticate via `POST /api/v1/auth/runtime-login` (username+password only). Skips `dashboard_access` gate; does NOT set dashboard cookies. 6 tests (`TestRuntimeLogin_*`).
+
+2. **Refresh-token rejection** — `ValidateHS256JWT` now rejects tokens where `type != "" && type != "access"`. Prevents refresh tokens (same HMAC key, `type="refresh"`) from being used as bearer credentials at `AccessModeUser` EPs. 2 tests (`TestValidateHS256JWT_RefreshTokenRejected`, `TestValidateHS256JWT_AccessTokenAccepted`).
+
+3. **History isolation tests** — 3 SQL-string-inspection tests replaced by `go/internal/history/pgx_integration_test.go` (build tag `integration`). 5 real integration tests call actual `Store.WriteMessage` + `Store.LoadHistory` against live PostgreSQL. Run: `go test -tags=integration ./internal/history/...` (requires `DATABASE_PASSWORD`).
+
+**`go test ./...` — 54 packages, 0 failures. HEAD: 326f5a9**
+
+See full detail in `docs/HANDOVER.md`.
+
 ---
 
 ### Next recommended task
 
-**Option A — Apply Phase 2 migrations to live DB** (prerequisite for Phase 3)
+**Step 1 — Apply Phase 2 migrations + rebuild (required before Phase 3)**
 ```bash
+# Apply migrations
 docker cp db/086_phase2_user_history.sql them-postgres:/tmp/them_086.sql
 docker cp db/087_end_user_role.sql them-postgres:/tmp/them_087.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_086.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_087.sql
-```
-Then rebuild and restart `them-go-bridge` and `them-go-worker`.
 
-**Option B — End-user auth Phase 3** (`allowed_principals` guard on entry points)
+# Rebuild (must build before recreate — restart reuses the old image)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  build them-auth-go them-go-bridge
+
+# Recreate (not restart)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile temporal up -d --force-recreate them-auth-go them-go-bridge them-go-worker them-dag-worker
+
+# Verify
+docker logs them-auth-go --tail 5
+docker logs them-go-bridge --tail 5
+```
+
+**Step 2 — Run integration history tests against live DB:**
+```bash
+DATABASE_HOST=localhost DATABASE_PORT=5432 DATABASE_USER=them DATABASE_NAME=them \
+  DATABASE_PASSWORD=<from .env> \
+  go test -tags=integration ./internal/history/...
+```
+
+**Option B — End-user auth Phase 3** (`allowed_principals` guard on entry points — do after Step 1+2 above)
 - Schema: `ALTER TABLE them.entry_points ADD COLUMN allowed_principals TEXT DEFAULT 'internal' CHECK (...)`
 - Go: enforce in `Lifecycle.Admit` after EPConfig resolution
 - See `docs/END_USER_AUTH_PLAN.md` Phase 3 for full spec
