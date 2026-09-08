@@ -51,13 +51,14 @@ func (h *TenantsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get handles GET /api/v1/admin/tenants/{id}.
+// Returns TenantDetail including IdP config (secret always blank).
 func (h *TenantsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing tenant id")
 		return
 	}
-	tenant, err := h.db.GetTenant(r.Context(), id)
+	tenant, err := h.db.GetTenantDetail(r.Context(), id)
 	if dal.IsNoRows(err) {
 		writeError(w, http.StatusNotFound, "tenant not found")
 		return

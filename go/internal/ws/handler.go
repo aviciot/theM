@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
@@ -216,24 +217,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 2. Resolve tenant identity for EP config lookup ──────────────────────
 	// Priority order: (1) resolved_tenant_id from AppsWSRoute slug resolution
 	// (2) bearer token TenantID claim (3) bootstrap fallback for /orchestrate path.
+	// Capture tokenInfo here so we can enforce the is_backend check below.
 	tenantID := tenantctx.BootstrapTenantID
+	var tokenInfo *auth.TokenInfo
 	if resolved := chi.URLParam(r, "resolved_tenant_id"); resolved != "" {
 		tenantID = resolved
 	} else if rawToken != "" && h.authenticator != nil {
-		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
-			tenantID = ti.TenantID
+		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil {
+			tokenInfo = ti
+			if ti.TenantID != "" {
+				tenantID = ti.TenantID
+			}
 		}
+	}
+
+	// ── 2b. External user identity ────────────────────────────────────────────
+	// X-External-User is accepted only when the caller presents a backend token
+	// (is_backend=true). Mobile/browser tokens must never assert end-user identity.
+	var externalUserID string
+	if tokenInfo != nil && tokenInfo.IsBackend {
+		externalUserID = r.Header.Get("X-External-User")
 	}
 
 	// ── 3. Lifecycle.Admit — full pipeline before upgrade ────────────────────
 	// All pre-upgrade errors are clean HTTP responses (not WS close frames).
 	// The voice EP check (→ 501) is inside Lifecycle, so no separate check needed.
 	admitReq := execution.ExecutionRequest{
-		AppSlug:    appSlug,
-		EPSlug:     epSlug,
-		TenantID:   tenantID,
-		RawToken:   rawToken,
-		InstanceID: h.instanceID,
+		AppSlug:        appSlug,
+		EPSlug:         epSlug,
+		TenantID:       tenantID,
+		RawToken:       rawToken,
+		InstanceID:     h.instanceID,
+		ExternalUserID: externalUserID,
 	}
 	handle, admitErr := h.lc.Admit(r.Context(), admitReq)
 	if admitErr != nil {
@@ -358,6 +373,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
 		EntryPointID:      handle.EPConfig.EPID,
 		UserMessage:       userMsg,
+		ExternalUserID:    handle.ExternalUserID,
 	}
 	wfRun, startErr := h.lc.Start(ctx, handle, input)
 	if startErr != nil {

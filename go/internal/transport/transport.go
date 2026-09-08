@@ -77,9 +77,11 @@ func TokenHash(rawToken string) string {
 // Tenant isolation: TenantID comes from access_tokens.tenant_id (bearer token
 // path) or jwt.Claims.TenantID (JWT path). It is NEVER inferred from AppID.
 type RuntimeIdentity struct {
-	TenantID string // UUID string; from auth token or JWT claim
-	AppID    string // UUID string; from entry point → application chain
-	UserID   int64  // from access_tokens.user_id or JWT sub claim
-	SessionID string // assigned at WS/SSE upgrade time
-	RunID    string // assigned when a Temporal workflow is started; empty before then
+	TenantID       string // UUID string; from auth token or JWT claim
+	AppID          string // UUID string; from entry point → application chain
+	UserID         int64  // from access_tokens.user_id or JWT sub claim
+	SessionID      string // assigned at WS/SSE upgrade time
+	RunID          string // assigned when a Temporal workflow is started; empty before then
+	ExternalUserID string // end-user identity: from JWKS JWT sub, or X-External-User header
+	                      // (only when tokenInfo.IsBackend=true). Never from non-backend callers.
 }

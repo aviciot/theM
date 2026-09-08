@@ -80,6 +80,11 @@ type WorkflowInput struct {
 	// EntryPointID is the UUID of the entry_points row for this run.
 	// Used to load per-EP memory/history configuration from the DB.
 	EntryPointID string
+
+	// ExternalUserID is the end-user identity for this run. Sourced from
+	// X-External-User header (only when caller token has is_backend=true) or
+	// from a JWKS-validated JWT sub claim. Empty for internal-user runs.
+	ExternalUserID string
 }
 
 // WorkflowResult is returned by OrchestrationWorkflow on completion.

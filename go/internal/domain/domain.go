@@ -134,6 +134,12 @@ type Run struct {
 	OutputTokens   int
 	ErrorMessage   string
 
+	// ExternalUserID is the end-user identity for this run. Set server-side from
+	// a JWKS-validated JWT sub claim (Approach B) or from X-External-User header
+	// when the caller's token has is_backend=true. Empty for internal-user runs
+	// and service-token runs where no end-user identity was asserted.
+	ExternalUserID string
+
 	// Goal is the user's first message for this run, stored as a short summary
 	// in them.runs.goal for display in the run history UI.
 	Goal string

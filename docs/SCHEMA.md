@@ -165,6 +165,8 @@ Opaque bearer tokens for WS orchestrator / A2A access. Token stored as SHA-256 h
 | enabled | BOOL | |
 | expires_at | TIMESTAMPTZ | NULL = no expiry; enforced at API layer (not just DB) |
 | last_used_at | TIMESTAMPTZ | updated on each use |
+| tenant_id | UUID NOT NULL | owning tenant (migration R-4a) |
+| is_backend | BOOL DEFAULT false | when true, caller may assert X-External-User; never set on mobile/browser tokens (migration 084) |
 
 ---
 
@@ -189,6 +191,7 @@ One row per orchestrator invocation (user goal → final answer).
 | error | TEXT | error string on failure |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |
+| external_user_id | TEXT | end-user identity: set from X-External-User (is_backend=true) or JWKS JWT sub. NULL for internal/service-token runs. (migration 085) |
 
 ---
 
@@ -269,6 +272,8 @@ State machine: `submitted → working → completed/failed/canceled/rejected`
 | deadline | TIMESTAMPTZ | reaper collects hung tasks past this (default: created_at + 30 min) |
 | max_depth | INT | recursion depth limit (fork-bomb guard) |
 | user_id | INT FK→auth_service.users | task owner (Phase 9) — NULL for legacy rows |
+| tenant_id | UUID | owning tenant for history isolation |
+| external_user_id | TEXT | end-user identity scoping this task's history. NULL = internal or service-token run. (migration 084) |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |
 

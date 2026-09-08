@@ -559,6 +559,8 @@ export const themApi = {
   // Tenant provisioning
   listTenants: () =>
     api.get<TenantRecord[]>('/admin/tenants'),
+  getTenant: (id: string) =>
+    api.get<TenantRecord>('/admin/tenants/' + id),
   createTenant: (input: { slug: string; display_name: string }) =>
     api.post<TenantRecord>('/admin/tenants', input),
   patchTenant: (id: string, patch: TenantPatch) =>

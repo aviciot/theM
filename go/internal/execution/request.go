@@ -23,9 +23,10 @@ type ExecutionRequest struct {
 	// EPs, a Wave 10 hostname/path-prefix routing layer will provide this.
 	// MUST NOT be taken from the request body or any HTTP header.
 	TenantID    string
-	UserMessage domain.Message // parsed user message (content + role)
-	ContextID   string         // caller-supplied; empty → Lifecycle generates UUID v4
-	InstanceID  string         // pod/replica identity for session record
+	UserMessage    domain.Message // parsed user message (content + role)
+	ContextID      string         // caller-supplied; empty → Lifecycle generates UUID v4
+	InstanceID     string         // pod/replica identity for session record
+	ExternalUserID string         // end-user identity: only set when caller's token has is_backend=true
 }
 
 // ExecutionHandle is the admission ticket returned by Admit on success.
@@ -35,11 +36,12 @@ type ExecutionRequest struct {
 // The gateAdmitted/gateCfg fields are unexported — Release uses them internally;
 // callers should not access gate state directly.
 type ExecutionHandle struct {
-	RunID      string
-	ContextID  string
-	SessionID  string
-	InstanceID string
-	EPConfig   *epconfig.EPConfig
+	RunID          string
+	ContextID      string
+	SessionID      string
+	InstanceID     string
+	EPConfig       *epconfig.EPConfig
+	ExternalUserID string // end-user identity; empty for internal/service-token runs
 
 	// internal gate state — used by Release only
 	gateAdmitted bool

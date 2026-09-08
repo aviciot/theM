@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-07 (IAM UI spec + SSO docs complete — next: implement IAM UI)
+# Last updated: 2026-09-08 (end-user auth Phase 1 complete — next: Change 4 Group Mapping UI or Phase 2)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -295,6 +295,39 @@ What was built:
 **Change 2 — `/admin/tenants` Members tab** ✅ commit `2b05c2c`
 - Added 4th tab "Members" to `TenantPanel` — fetches `GET /api/v1/admin/tenants/{id}/members` on tab open; compact read-only table.
 - `api.ts`: `listTenantMembers(tenantId)` + `TenantMember` type exported.
+
+### End-user auth Phase 1 — COMPLETE (2026-09-08)
+
+**Plan:** `docs/END_USER_AUTH_PLAN.md` — Phase 1 of 3-phase end-user identity implementation.
+
+**Migrations applied:**
+- `db/084_external_user_history.sql`: `them.tasks.external_user_id TEXT`, `them.access_tokens.is_backend BOOLEAN DEFAULT false`
+- `db/085_runs_external_user.sql`: `them.runs.external_user_id TEXT`
+
+**Go changes (all tests pass, 0 failures):**
+- `go/internal/auth/pgx_querier.go` + `token_cache.go`: `is_backend` fetched from DB, surfaced as `TokenInfo.IsBackend`
+- `go/internal/transport/transport.go`: `ExternalUserID string` added to `RuntimeIdentity`
+- `go/internal/domain/domain.go`: `ExternalUserID string` added to `Run`
+- `go/internal/execution/request.go`: `ExternalUserID string` in `ExecutionRequest` + `ExecutionHandle`
+- `go/internal/execution/lifecycle.go`: `ExternalUserID` propagated from request → `domain.Run`
+- `go/internal/ws/handler.go` + `go/internal/sse/handler.go`: read `X-External-User` header only when `tokenInfo.IsBackend==true`; wire into `WorkflowInput.ExternalUserID`
+- `go/internal/temporal/workflow.go`: `ExternalUserID string` in `WorkflowInput`
+- `go/internal/temporal/activities.go`: `ExternalUserID` set in `RunContext`
+- `go/internal/orchestrator/orchestrator.go`: `RunContext.ExternalUserID`; `HistoryLoader` and `CheckpointWriter` interfaces updated to include `externalUserID` parameter
+- `go/internal/orchestrator/summary.go`: `SummaryStore` interface + `maybeSummarize` updated
+- `go/internal/history/pgx.go`: `LoadHistory`, `WriteMessage`, `LoadSummary`, `SaveSummary`, `resolveRootTaskID` all thread `externalUserID` through
+- `go/internal/runrecorder/recorder.go`: `external_user_id` written in `CreateRun` INSERT
+- Tests: `TestHistory_CrossUser_Denied`, `TestHistory_ServiceToken_ExternalUserIsolation` added
+
+**Trust boundary enforced:** `X-External-User` header accepted ONLY when `tokenInfo.IsBackend==true`. Mobile/browser tokens can never assert end-user identity.
+
+**What Phase 1 enables:** A backend service (e.g. bank's app backend) can present a token with `is_backend=true` and include `X-External-User: customer-123` — all runs and tasks are tagged with `external_user_id`. `LoadHistory` filters by `external_user_id` when non-empty, preventing user A from reading user B's history with the same `context_id`.
+
+**What Phase 2 requires:** Add `allowed_principals` to entry points to restrict which principals may call a given EP. See `docs/END_USER_AUTH_PLAN.md`.
+
+**What Phase 3 requires:** `JWKSAuthenticator` + `tenant_runtime_config` for JWKS-validated end-user JWTs (Approach B from plan). Also requires `is_backend` token to be created in the admin UI.
+
+---
 
 ### Next recommended task
 

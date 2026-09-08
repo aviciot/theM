@@ -26,21 +26,30 @@ import (
 var testNow = time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 
 type tenantFakeRow struct {
-	id          string
-	slug        string
-	displayName string
-	enabled     bool
-	isBootstrap bool
-	emailDomain *string // nil = no domain
-	err         error   // when non-nil, Scan returns this
+	id            string
+	slug          string
+	displayName   string
+	enabled       bool
+	isBootstrap   bool
+	idpConfigured bool
+	rawIDP        []byte  // nil = no IdP config
+	emailDomain   *string // nil = no domain
+	err           error   // when non-nil, Scan returns this
 }
 
 func (r *tenantFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	// Columns: id, slug, display_name, enabled, is_bootstrap, email_domain, created_at, updated_at
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.emailDomain, testNow, testNow}
+	// Support both 8-column (GetTenant) and 10-column (GetTenantDetail/PatchTenant) scans.
+	// 8-col:  id, slug, display_name, enabled, is_bootstrap, email_domain, created_at, updated_at
+	// 10-col: id, slug, display_name, enabled, is_bootstrap, idp_configured, idp_config, email_domain, created_at, updated_at
+	var vals []any
+	if len(dest) >= 10 {
+		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, testNow, testNow}
+	} else {
+		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.emailDomain, testNow, testNow}
+	}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
@@ -57,7 +66,13 @@ func (r *tenantFakeRow) Scan(dest ...any) error {
 				*dp = s
 			}
 		case *bool:
-			*dp = vals[i].(bool)
+			if b, ok := vals[i].(bool); ok {
+				*dp = b
+			}
+		case *[]byte:
+			if b, ok := vals[i].([]byte); ok {
+				*dp = b
+			}
 		case *time.Time:
 			*dp = vals[i].(time.Time)
 		}
@@ -154,8 +169,8 @@ func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.Si
 	return &tenantFakeRow{err: pgx.ErrNoRows}
 }
 
-// tenantDetailFakeRow simulates the 9-column RETURNING from PatchTenant.
-// Columns: id, slug, display_name, enabled, is_bootstrap, idp_configured, email_domain, created_at, updated_at
+// tenantDetailFakeRow simulates the 10-column RETURNING from PatchTenant.
+// Columns: id, slug, display_name, enabled, is_bootstrap, idp_configured, idp_config, email_domain, created_at, updated_at
 type tenantDetailFakeRow struct {
 	id            string
 	slug          string
@@ -163,6 +178,7 @@ type tenantDetailFakeRow struct {
 	enabled       bool
 	isBootstrap   bool
 	idpConfigured bool
+	rawIDP        []byte  // nil = no IdP config
 	emailDomain   *string
 	err           error
 }
@@ -171,7 +187,7 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.emailDomain, testNow, testNow}
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, testNow, testNow}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
@@ -188,7 +204,13 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 				*dp = s
 			}
 		case *bool:
-			*dp = vals[i].(bool)
+			if b, ok := vals[i].(bool); ok {
+				*dp = b
+			}
+		case *[]byte:
+			if b, ok := vals[i].([]byte); ok {
+				*dp = b
+			}
 		case *time.Time:
 			*dp = vals[i].(time.Time)
 		}

@@ -34,6 +34,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
@@ -172,25 +173,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 3. Resolve tenant identity for EP config lookup ──────────────────────
 	// Priority order: (1) resolved_tenant_id from AppsSSERoute slug resolution
 	// (2) bearer token TenantID claim (3) bootstrap fallback for /orchestrate path.
+	// Capture tokenInfo here so we can enforce the is_backend check below.
 	tenantID := tenantctx.BootstrapTenantID
+	var tokenInfo *auth.TokenInfo
 	if resolved := chi.URLParam(r, "resolved_tenant_id"); resolved != "" {
 		tenantID = resolved
 	} else if rawToken != "" && h.authenticator != nil {
-		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
-			tenantID = ti.TenantID
+		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil {
+			tokenInfo = ti
+			if ti.TenantID != "" {
+				tenantID = ti.TenantID
+			}
 		}
+	}
+
+	// ── 3b. External user identity ────────────────────────────────────────────
+	// X-External-User is accepted only when the caller presents a backend token
+	// (is_backend=true). Mobile/browser tokens must never assert end-user identity.
+	var externalUserID string
+	if tokenInfo != nil && tokenInfo.IsBackend {
+		externalUserID = r.Header.Get("X-External-User")
 	}
 
 	// ── 4. Admit (auth → EPConfig → voice-check → access → gate → session → CreateRun) ──
 	// All pre-Admit errors return clean HTTP responses. After Admit succeeds,
 	// SSE headers are written and errors become SSE error events.
 	admitReq := execution.ExecutionRequest{
-		AppSlug:     appSlug,
-		EPSlug:      epSlug,
-		TenantID:    tenantID,
-		RawToken:    rawToken,
-		UserMessage: domain.TextMessage(domain.RoleUser, userText),
-		InstanceID:  h.instanceID,
+		AppSlug:        appSlug,
+		EPSlug:         epSlug,
+		TenantID:       tenantID,
+		RawToken:       rawToken,
+		UserMessage:    domain.TextMessage(domain.RoleUser, userText),
+		InstanceID:     h.instanceID,
+		ExternalUserID: externalUserID,
 	}
 	handle, admitErr := h.lc.Admit(r.Context(), admitReq)
 	if admitErr != nil {
@@ -294,6 +309,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
 		EntryPointID:      handle.EPConfig.EPID,
 		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
+		ExternalUserID:    handle.ExternalUserID,
 	}
 	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EntryPointSlug) are
 	// overwritten by Lifecycle.Start from the handle — caller values are ignored.

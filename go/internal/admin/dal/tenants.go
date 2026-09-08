@@ -63,6 +63,30 @@ func (d *DB) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	return t, err
 }
 
+// GetTenantDetail returns a single tenant by ID with IdP config (secret blanked), or pgx.ErrNoRows if not found.
+func (d *DB) GetTenantDetail(ctx context.Context, id string) (TenantDetail, error) {
+	const q = `
+		SELECT id::text, slug, display_name, enabled, is_bootstrap,
+		       idp_config IS NOT NULL AS idp_configured,
+		       idp_config,
+		       email_domain, created_at, updated_at
+		FROM them.tenants
+		WHERE id = $1::uuid`
+	var t TenantDetail
+	var rawIDP []byte
+	err := d.q.QueryRow(ctx, q, id).Scan(
+		&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap,
+		&t.IDPConfigured, &rawIDP, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+	if err == nil && rawIDP != nil {
+		var cfg TenantIDPConfig
+		if json.Unmarshal(rawIDP, &cfg) == nil {
+			cfg.ClientSecret = "" // never expose
+			t.IDPConfig = &cfg
+		}
+	}
+	return t, err
+}
+
 // TenantLookup is the public payload for email-domain → tenant routing.
 type TenantLookup struct {
 	Slug          string `json:"slug"`
@@ -165,15 +189,16 @@ func (p *TenantPatch) UnmarshalJSON(data []byte) error {
 
 // TenantDetail extends Tenant with IdP configuration status and email domain.
 type TenantDetail struct {
-	ID            string    `json:"id"`
-	Slug          string    `json:"slug"`
-	DisplayName   string    `json:"display_name"`
-	Enabled       bool      `json:"enabled"`
-	IsBootstrap   bool      `json:"is_bootstrap"`
-	IDPConfigured bool      `json:"idp_configured"`
-	EmailDomain   *string   `json:"email_domain,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            string           `json:"id"`
+	Slug          string           `json:"slug"`
+	DisplayName   string           `json:"display_name"`
+	Enabled       bool             `json:"enabled"`
+	IsBootstrap   bool             `json:"is_bootstrap"`
+	IDPConfigured bool             `json:"idp_configured"`
+	IDPConfig     *TenantIDPConfig `json:"idp_config,omitempty"` // secret always blank
+	EmailDomain   *string          `json:"email_domain,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
 }
 
 // ── Tenant quota types ────────────────────────────────────────────────────────
@@ -333,14 +358,20 @@ func (d *DB) AddMember(ctx context.Context, tenantID string, in TenantMemberInpu
 func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (TenantDetail, error) {
 	var idpJSON []byte
 	if patch.SetIDP && patch.IDPConfig != nil {
-		// Encrypt client_secret before persisting. Pass-through when no key is set.
 		cfg := *patch.IDPConfig
 		if cfg.ClientSecret != "" {
+			// Encrypt the new secret before persisting.
 			enc, err := idpcrypto.Encrypt(d.idpKey, cfg.ClientSecret)
 			if err != nil {
 				return TenantDetail{}, err
 			}
 			cfg.ClientSecret = enc
+		} else {
+			// No new secret supplied — preserve whatever is already stored.
+			var existingRaw []byte
+			row := d.q.QueryRow(ctx, `SELECT idp_config->>'client_secret' FROM them.tenants WHERE id = $1::uuid`, id)
+			_ = row.Scan(&existingRaw) // ignore error — if missing, secret stays empty
+			cfg.ClientSecret = string(existingRaw)
 		}
 		var err error
 		idpJSON, err = json.Marshal(cfg)
@@ -369,13 +400,22 @@ func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (Ten
 		WHERE id = $1::uuid
 		RETURNING id::text, slug, display_name, enabled, is_bootstrap,
 		          idp_config IS NOT NULL AS idp_configured,
+		          idp_config,
 		          email_domain,
 		          created_at, updated_at`
 	var t TenantDetail
+	var rawIDP []byte
 	err := d.q.ExecReturning(ctx, q, id, patch.DisplayName, patch.Enabled,
 		patch.SetIDP, idpJSONArg,
 		patch.SetEmailDomain, emailDomainArg).
-		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap, &t.IDPConfigured, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap, &t.IDPConfigured, &rawIDP, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+	if err == nil && rawIDP != nil {
+		var cfg TenantIDPConfig
+		if json.Unmarshal(rawIDP, &cfg) == nil {
+			cfg.ClientSecret = "" // never expose
+			t.IDPConfig = &cfg
+		}
+	}
 	return t, err
 }
 

@@ -34,7 +34,7 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // for tenant-scoped operations rather than silently assigning the bootstrap tenant.
 func (q *PgxQuerier) QueryToken(ctx context.Context, hashHex string) (*TokenRow, error) {
 	const sql = `
-		SELECT COALESCE(user_id, 0), tenant_id, created_at, expires_at
+		SELECT COALESCE(user_id, 0), tenant_id, is_backend, created_at, expires_at
 		FROM them.access_tokens
 		WHERE token_hash = $1
 		  AND enabled = true
@@ -42,10 +42,11 @@ func (q *PgxQuerier) QueryToken(ctx context.Context, hashHex string) (*TokenRow,
 
 	var userID int64
 	var tenantID string
+	var isBackend bool
 	var createdAt time.Time
 	var expiresAt *time.Time
 
-	err := q.pool.QueryRow(ctx, sql, hashHex).Scan(&userID, &tenantID, &createdAt, &expiresAt)
+	err := q.pool.QueryRow(ctx, sql, hashHex).Scan(&userID, &tenantID, &isBackend, &createdAt, &expiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrTokenNotFound
@@ -56,6 +57,7 @@ func (q *PgxQuerier) QueryToken(ctx context.Context, hashHex string) (*TokenRow,
 	return &TokenRow{
 		ID:        userID,
 		TenantID:  tenantID,
+		IsBackend: isBackend,
 		CreatedAt: createdAt,
 		ExpiresAt: expiresAt,
 	}, nil

@@ -99,6 +99,14 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     setQuotaMsg('');
     setMembers([]);
     setDeleteConfirm(false);
+    // Fetch full detail to get IdP config fields (list endpoint omits them)
+    themApi.getTenant(tenant.id).then(detail => {
+      if (detail.idp_config) {
+        setDiscoveryURL(detail.idp_config.discovery_url ?? '');
+        setClientID(detail.idp_config.client_id ?? '');
+        setRedirectURI(detail.idp_config.redirect_uri ?? '');
+      }
+    }).catch(() => { /* ignore — panel still works, fields just stay blank */ });
   }, [tenant.id]);
 
   async function deleteTenantHandler() {
@@ -373,7 +381,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
                   Opens the full SSO login flow for this tenant in a new tab. Use your IdP test credentials.
                 </div>
                 <a
-                  href={`/auth/api/v1/auth/oidc/start?tenant=${tenant.slug}`}
+                  href={`/auth/oidc/start?tenant=${tenant.slug}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, textDecoration: 'none' }}

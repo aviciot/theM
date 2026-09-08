@@ -436,7 +436,7 @@ sanitization, and cross-run access denial.
 
 | Test | What it proves |
 |---|---|
-| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 8-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name); tenant_id is a plain string (NOT NULL) |
+| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 9-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name, external_user_id); tenant_id is a plain string (NOT NULL) |
 | `TestCreateRun_eventsTransportByMode` | events_transport derived from RunEventsMode: pubsub→"pubsub", dual/streams→"streams" (Phase 11c-B) |
 | `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
 | `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `status` and `error` (column is "error", not "error_message") |
@@ -1438,6 +1438,8 @@ verifying the canonicalToDBRole and dbToCanonicalRole helpers. No live PostgreSQ
 | `TestDBToCanonicalRole_WithEnvelope` | Envelope canonical_role takes priority over DB role for all four combinations |
 | `TestDBToCanonicalRole_Fallback` | Empty canonical_role (legacy rows): agent→assistant, user→user, system→system |
 | `TestRoleRoundTrip` | Every domain role survives canonicalToDBRole+dbToCanonicalRole identity round-trip |
+| `TestHistory_CrossUser_Denied` | LoadHistory SQL includes `external_user_id` filter — user A cannot access user B's history when externalUserID is non-empty |
+| `TestHistory_ServiceToken_ExternalUserIsolation` | resolveRootTaskID INSERT includes `external_user_id` column using NULLIF so service-token runs store NULL |
 
 **Trigger:** any change to `internal/history/pgx.go`
 

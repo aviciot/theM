@@ -115,8 +115,9 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 
 	finalText, err := runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
 		orchestrator.RunContext{
-			TenantID:      input.TenantID,
-			ApplicationID: input.ApplicationID,
+			TenantID:       input.TenantID,
+			ApplicationID:  input.ApplicationID,
+			ExternalUserID: input.ExternalUserID,
 		},
 	)
 	if err != nil {

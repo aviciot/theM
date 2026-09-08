@@ -74,19 +74,22 @@ func NewStore(pool *pgxpool.Pool, logger *slog.Logger) *Store {
 
 // LoadHistory fetches the most recent `limit` messages for contextID and
 // tenantID, in chronological order. tenantID="" skips the tenant filter
-// (single-tenant / bootstrap use). The DB query orders by descending ID to
+// (single-tenant / bootstrap use). When externalUserID is non-empty, only
+// messages belonging to that end-user's tasks are returned — this enforces
+// cross-user history isolation. The DB query orders by descending ID to
 // apply the LIMIT, then Go reverses the slice.
-func (s *Store) LoadHistory(ctx context.Context, contextID, tenantID string, limit int) ([]domain.Message, error) {
+func (s *Store) LoadHistory(ctx context.Context, contextID, tenantID, externalUserID string, limit int) ([]domain.Message, error) {
 	const q = `
 SELECT tm.role, tm.parts
 FROM them.task_messages tm
 JOIN them.tasks t ON t.id = tm.task_id
 WHERE t.context_id = $1::uuid
   AND ($2 = '' OR t.tenant_id = $2::uuid)
+  AND ($3 = '' OR t.external_user_id = $3)
 ORDER BY tm.id DESC
-LIMIT $3`
+LIMIT $4`
 
-	rows, err := s.pool.Query(ctx, q, contextID, tenantID, limit)
+	rows, err := s.pool.Query(ctx, q, contextID, tenantID, externalUserID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("history: load: %w", err)
 	}
@@ -123,9 +126,10 @@ LIMIT $3`
 
 // WriteMessage persists a single message to task_messages.
 // It resolves (or creates) the root task row for contextID+runID+tenantID first,
-// then assigns the next sequence number.
-func (s *Store) WriteMessage(ctx context.Context, contextID, runID, tenantID string, msg domain.Message) error {
-	taskID, err := s.resolveRootTaskID(ctx, contextID, runID, tenantID)
+// then assigns the next sequence number. externalUserID is stored on the task row
+// to scope history reads per end-user.
+func (s *Store) WriteMessage(ctx context.Context, contextID, runID, tenantID, externalUserID string, msg domain.Message) error {
+	taskID, err := s.resolveRootTaskID(ctx, contextID, runID, tenantID, externalUserID)
 	if err != nil {
 		return fmt.Errorf("history: resolve task: %w", err)
 	}
@@ -158,20 +162,22 @@ ON CONFLICT (task_id, seq) DO NOTHING`
 }
 
 // LoadSummary returns the text of the most recent summary message for contextID.
-// Returns "" with nil error when no summary exists.
-func (s *Store) LoadSummary(ctx context.Context, contextID, tenantID string) (string, error) {
+// Returns "" with nil error when no summary exists. When externalUserID is
+// non-empty, the query is restricted to tasks owned by that user.
+func (s *Store) LoadSummary(ctx context.Context, contextID, tenantID, externalUserID string) (string, error) {
 	const q = `
 SELECT tm.parts
 FROM them.task_messages tm
 JOIN them.tasks t ON t.id = tm.task_id
 WHERE t.context_id = $1::uuid
   AND ($2 = '' OR t.tenant_id = $2::uuid)
+  AND ($3 = '' OR t.external_user_id = $3)
   AND tm.role = 'system'
   AND (tm.parts->>'summary')::boolean = true
 ORDER BY tm.id DESC
 LIMIT 1`
 
-	row := s.pool.QueryRow(ctx, q, contextID, tenantID)
+	row := s.pool.QueryRow(ctx, q, contextID, tenantID, externalUserID)
 	var raw []byte
 	if err := row.Scan(&raw); err != nil {
 		// pgx returns pgx.ErrNoRows when no row — treat as "no summary".
@@ -190,12 +196,12 @@ LIMIT 1`
 }
 
 // SaveSummary persists a summary as a system message.
-func (s *Store) SaveSummary(ctx context.Context, contextID, runID, tenantID, summary string) error {
+func (s *Store) SaveSummary(ctx context.Context, contextID, runID, tenantID, externalUserID, summary string) error {
 	msg := domain.Message{
 		Role:  domain.RoleSystem,
 		Parts: []domain.ContentPart{{Type: "text", Text: summary}},
 	}
-	taskID, err := s.resolveRootTaskID(ctx, contextID, runID, tenantID)
+	taskID, err := s.resolveRootTaskID(ctx, contextID, runID, tenantID, externalUserID)
 	if err != nil {
 		return fmt.Errorf("history: save summary resolve task: %w", err)
 	}
@@ -225,7 +231,8 @@ ON CONFLICT (task_id, seq) DO NOTHING`
 // resolveRootTaskID finds or creates the root tasks row for (contextID, runID, tenantID).
 // Uses a find-then-insert pattern to be idempotent — the row is created once per run.
 // tenantID is included in the lookup to prevent cross-tenant root task reuse.
-func (s *Store) resolveRootTaskID(ctx context.Context, contextID, runID, tenantID string) (string, error) {
+// externalUserID is stored on the task row so history reads can filter per end-user.
+func (s *Store) resolveRootTaskID(ctx context.Context, contextID, runID, tenantID, externalUserID string) (string, error) {
 	// Try to find an existing task first, scoped to tenantID when non-empty.
 	const findQ = `
 SELECT id::text
@@ -241,12 +248,13 @@ LIMIT 1`
 	}
 
 	// Not found — insert. tenant_id and run_id may be empty (NULL).
+	// external_user_id is nullable — NULL when no end-user identity is asserted.
 	const insertQ = `
-INSERT INTO them.tasks (context_id, run_id, tenant_id, state, kind)
-VALUES ($1::uuid, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, 'working', 'root')
+INSERT INTO them.tasks (context_id, run_id, tenant_id, state, kind, external_user_id)
+VALUES ($1::uuid, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, 'working', 'root', NULLIF($4, ''))
 ON CONFLICT DO NOTHING
 RETURNING id::text`
-	row = s.pool.QueryRow(ctx, insertQ, contextID, runID, tenantID)
+	row = s.pool.QueryRow(ctx, insertQ, contextID, runID, tenantID, externalUserID)
 	if err := row.Scan(&id); err != nil {
 		// Race: another goroutine inserted first — re-query with tenant filter.
 		row2 := s.pool.QueryRow(ctx, findQ, contextID, runID, tenantID)

@@ -347,6 +347,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		Status:           domain.RunStatusAdmitted,
 		Goal:             firstTextPart(req.UserMessage),
 		OrchestratorName: resolvedCfg.OrchestratorName,
+		ExternalUserID:   req.ExternalUserID,
 	}
 	runCreated := false
 	if lc.recorder != nil {
@@ -362,14 +363,15 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	return &ExecutionHandle{
-		RunID:        runID,
-		ContextID:    contextID,
-		SessionID:    sessionID,
-		InstanceID:   req.InstanceID,
-		EPConfig:     resolvedCfg,
-		gateCfg:      gateCfg,
-		gateAdmitted: gateAdmitted,
-		runCreated:   runCreated,
+		RunID:          runID,
+		ContextID:      contextID,
+		SessionID:      sessionID,
+		InstanceID:     req.InstanceID,
+		EPConfig:       resolvedCfg,
+		ExternalUserID: req.ExternalUserID,
+		gateCfg:        gateCfg,
+		gateAdmitted:   gateAdmitted,
+		runCreated:     runCreated,
 	}, nil
 }
 

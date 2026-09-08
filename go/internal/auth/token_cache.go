@@ -25,6 +25,7 @@ type TokenInfo struct {
 	AppID       int64    `json:"app_id,omitempty"`
 	TenantID    string   `json:"tenant_id,omitempty"`
 	Permissions []string `json:"permissions"`
+	IsBackend   bool     `json:"is_backend,omitempty"` // trusted to assert X-External-User header
 	CreatedAt   int64    `json:"created_at"`
 	ExpiresAt   int64    `json:"expires_at,omitempty"` // 0 = no expiry
 }
@@ -42,6 +43,7 @@ type TokenRow struct {
 	ID            int64
 	ApplicationID int64
 	TenantID      string     // UUID string; empty for pre-R-4a records (see pgx_querier.go)
+	IsBackend     bool       // true = trusted server-side caller; may assert X-External-User
 	Permissions   []string
 	CreatedAt     time.Time
 	ExpiresAt     *time.Time // nil means no expiry
@@ -247,6 +249,7 @@ func rowToTokenInfo(row *TokenRow) *TokenInfo {
 		TokenID:     row.ID,
 		AppID:       row.ApplicationID,
 		TenantID:    row.TenantID,
+		IsBackend:   row.IsBackend,
 		Permissions: row.Permissions,
 		CreatedAt:   row.CreatedAt.Unix(),
 	}
