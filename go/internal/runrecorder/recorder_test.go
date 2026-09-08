@@ -109,10 +109,10 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	assert.Contains(t, call.sql, "tenant_id")
 	assert.Contains(t, call.sql, "events_transport")
 
-	// Arguments: id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name, external_user_id (9 args).
+	// Arguments: id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name, external_user_id, user_id (10 args).
 	// context_id and application_id are NOT in the DB — them.runs has no such columns.
 	// tenant_id is passed as a plain string (NOT NULL column — no nullable *string).
-	require.Len(t, call.args, 9)
+	require.Len(t, call.args, 10)
 	assert.Equal(t, "run-abc", call.args[0])
 	assert.Equal(t, tenantID, call.args[1], "tenant_id must be the plain string UUID")
 	assert.Equal(t, "ws-chat", call.args[2])
@@ -125,6 +125,8 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	assert.Equal(t, "", call.args[7])
 	// external_user_id defaults to empty string when no end-user identity is asserted.
 	assert.Equal(t, "", call.args[8])
+	// user_id defaults to int64(0) when no internal user identity is asserted.
+	assert.Equal(t, int64(0), call.args[9])
 }
 
 // TestCreateRun_defaultsToStreams verifies that a run with no explicit

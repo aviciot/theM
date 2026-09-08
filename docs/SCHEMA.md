@@ -178,7 +178,7 @@ One row per orchestrator invocation (user goal → final answer).
 | id | UUID PK | Temporal workflow run_id |
 | orchestrator_id | UUID FK | |
 | orchestrator_name | TEXT | denormalized for fast queries |
-| user_id | INT | |
+| user_id | INT | internal THE-M user ID: set from the JWT `sub` claim on AccessModeUser (user_jwt) EPs. NULL for service-token or external-user runs. Enables per-user history isolation for dashboard users. (migration 086) |
 | session_id | UUID | WS connection session |
 | context_id | UUID | conversation thread — shared across multi-turn runs |
 | goal | TEXT | user's input message |
@@ -271,7 +271,7 @@ State machine: `submitted → working → completed/failed/canceled/rejected`
 | tokens_used | INT | running total |
 | deadline | TIMESTAMPTZ | reaper collects hung tasks past this (default: created_at + 30 min) |
 | max_depth | INT | recursion depth limit (fork-bomb guard) |
-| user_id | INT FK→auth_service.users | task owner (Phase 9) — NULL for legacy rows |
+| user_id | INT FK→auth_service.users | task owner: set from JWT sub on AccessModeUser EPs (migration 086). Dual-column filter with external_user_id ensures cross-identity isolation: external rows have user_id=NULL, internal rows have external_user_id=NULL. Legacy rows with both NULL are excluded from user-scoped queries. |
 | tenant_id | UUID | owning tenant for history isolation |
 | external_user_id | TEXT | end-user identity scoping this task's history. NULL = internal or service-token run. (migration 084) |
 | created_at | TIMESTAMPTZ | |
@@ -619,6 +619,8 @@ Key relationships:
 | `db/079_component_definitions_grant.sql` | Restore `GRANT INSERT, DELETE ON them.component_definitions TO them_app` — 078 over-revoked (Agent Create CTE + Delete run via TenantTx). Apply 078+079 together. |
 | `db/080_grant_tenant_quotas_to_app.sql` | `GRANT SELECT ON them.tenant_quotas TO them_app` — required by `checkResourceQuota` in Create paths (quota check runs in TenantTx). |
 | `db/081_tenant_group_mappings_safe_roles.sql` | ADD CHECK on `them.tenant_group_mappings.role` restricting values to `('admin','member','viewer')` — closes OIDC privilege escalation via `super_admin` group mappings. |
+| `db/086_phase2_user_history.sql` | Phase 2 user history isolation: `them.tasks.user_id INT` + `them.runs.user_id INT`. Dual-column SQL filter (external_user_id / user_id) isolates internal vs external identity. Legacy NULL rows excluded from user-scoped queries by SQL NULL semantics. |
+| `db/087_end_user_role.sql` | Seed `auth_service.roles` with `end_user` role (`dashboard_access='none'`, rate_limit=1000, cost_limit_daily=$10, token_expiry=3600s). Runtime-only access — no dashboard permissions. |
 
 ---
 

@@ -253,6 +253,14 @@ func run() error {
 		log,
 	)
 
+	// ── 16a-pre. Wire JWT secret for AccessModeUser (user_jwt) entry points ───
+	// Uses JWT_SECRET if set, falls back to SECRET_KEY (same precedence as dashboard WS).
+	userJWTSecret := []byte(cfg.JWTSecret)
+	if len(userJWTSecret) == 0 {
+		userJWTSecret = []byte(cfg.SecretKey)
+	}
+	execLifecycle.WithJWTSecret(userJWTSecret)
+
 	// ── 16a. Wire quota enforcer ─────────────────────────────────────────────
 	// Reuses the same RateLimitClient already constructed above for per-token RL.
 	quotaDB := dal.NewDB(admin.NewPgxQuerier(rlsPools.Admin))

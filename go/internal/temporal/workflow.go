@@ -85,6 +85,10 @@ type WorkflowInput struct {
 	// X-External-User header (only when caller token has is_backend=true) or
 	// from a JWKS-validated JWT sub claim. Empty for internal-user runs.
 	ExternalUserID string
+
+	// UserID is the the-M internal user ID from AccessModeUser JWT claims.
+	// Zero for service-token, public, and bank-JWT (Phase 4) runs.
+	UserID int64
 }
 
 // WorkflowResult is returned by OrchestrationWorkflow on completion.

@@ -118,6 +118,7 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 			TenantID:       input.TenantID,
 			ApplicationID:  input.ApplicationID,
 			ExternalUserID: input.ExternalUserID,
+			UserID:         input.UserID,
 		},
 	)
 	if err != nil {

@@ -374,6 +374,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EntryPointID:      handle.EPConfig.EPID,
 		UserMessage:       userMsg,
 		ExternalUserID:    handle.ExternalUserID,
+		UserID:            handle.UserID,
 	}
 	wfRun, startErr := h.lc.Start(ctx, handle, input)
 	if startErr != nil {

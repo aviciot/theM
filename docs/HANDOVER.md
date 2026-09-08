@@ -1,773 +1,126 @@
-# Handover — Multi-Tenancy (Steps 1–34 complete; Step 35 next)
-**Date:** 2026-09-06
-**Branch:** main
-**HEAD:** 82a8f22 (feat(frontend): Step 34 — role-based nav + super_admin route guards)
-**Steps complete:** 1 → 23 + H2 (RLS) + 29 + 30 + 31 + 32 + 33 + 34
-**Unit tests:** all packages pass, 0 failures (`go test ./...` — 1056 pass, S1-40: 83 tests + OIDC-28/29/30)
-**Integration tests:** `go test -tags=integration ./internal/db/...` — all pass (TwoTenantFullIsolation, CatalogVerification CV-01..05)
-**RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete and verified
+# Handover — End-User Auth Phase 2 Complete
+# Date: 2026-09-08
+# HEAD: (see commit below after commit is made)
 
 ---
 
-## Rules for the new session (read this before touching code)
+## What was completed
 
-### Standing constraints — non-negotiable
-- **Go runs inside Docker only** — no host `go` binary. Always use:
-  ```bash
-  docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
-  ```
-- **TenantID is NEVER read from HTTP headers or query params** — only from JWT claims via the typed `tenantctx` context key.
-- **500 responses use static strings only** — never `err.Error()` from service or DAL layers.
-- **Secrets never appear in logs** — use `cfg.SafeString()`.
-- **Never commit `.env` or `secrets.local`**.
-- **Never use DB name `odin` or schema `odin`** — everything is `them`.
-- **Never query `auth_service.*` tables directly from the bridge** — Go uses `internal/auth/`.
-- **Never skip git hooks** (`--no-verify`).
-- **Never use `git add .` or `git add -A`** — add only the files relevant to the current task.
-- **`go test ./...` must be zero failures before every commit** — no exceptions.
-- **`TEST_INDEX.md` must be updated in the same commit as any new or changed test.**
-- **Every code change to `internal/` or `cmd/` MUST have a test** — new behavior = new test.
-- **Files must stay under 400 lines** — propose a split before adding more code to a file that is approaching 500 lines.
-- **Handler → Service → DAL** — no SQL in handlers, no business rules in handlers.
-- **All list endpoints return `[]` not `null` when empty.**
+**Phase 2 of `docs/END_USER_AUTH_PLAN.md`** — the-M user JWT at entry points, runtime-only role, and internal history isolation.
 
-### Session workflow
-1. **Plan** — read relevant docs, confirm scope before writing code.
-2. **Implement** — one focused subsystem; do not widen scope mid-task.
-3. **Test** — run `go test ./...`; zero new failures before committing.
-4. **Commit** — all changed files in one commit with a clear message.
-5. **Report** — files changed, tests passed, commit hash.
+### Migrations (not yet applied to live DB)
 
-### When to recommend a new session
-- After each step is complete and committed.
-- When 5–8 meaningful commits have been made.
-- When context reliability is uncertain (re-reading same files, conflicting statements).
-- Before a major architecture decision.
-- **When recommending a new session: update this HANDOVER.md first, then say so.**
+| File | What it does |
+|---|---|
+| `db/086_phase2_user_history.sql` | `them.tasks.user_id INT` + `them.runs.user_id INT` + indexes |
+| `db/087_end_user_role.sql` | Seed `end_user` role with `dashboard_access='none'` |
 
----
-
-## Completed steps
-
-| Step | Description | Status | Commit |
-|---|---|---|---|
-| Step 1 | JWT + tenant membership foundation | Complete | 4ccb4c4 |
-| Step 2 | Redis key hardening | Complete | 97c9d71 |
-| Step 3 | Temporal workflow ID prefix with `{tenant_id}:` | Complete | 98ccf03 |
-| Step 4 | Tenant CRUD API (`GET/POST /admin/tenants`, `GET /admin/tenants/{id}`) | Complete | a534a54 |
-| Step 5 | OIDC login flow | Complete | 2de98f5 |
-| Step 6 | Managed Apps foundation | Complete | 7c056fc |
-| Step 7 | Runtime parameter injection | Complete | 0bbfa28 |
-| Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | 99fc33c |
-| Step 9 | OIDC JWKS key caching (TTL-based, rotation-aware) | Complete | 2056550 |
-| Step 10 | Tenant provisioning UI — PATCH /admin/tenants/{id} + frontend Tenants page | Complete | 441f9e7 |
-| Step 11 | Binding management UI — platform-level binding API + frontend Managed Apps page | Complete | 59105c4 |
-| Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
-| Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
-| Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | 828739b |
-| Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | 24ff822 |
-| Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
-| Step 17 | Email-domain → tenant routing — email_domain on tenants, GET /auth/tenant-lookup (public), SSO banner on login page, admin UI field | Complete | f2c6e90 |
-| Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | 7c346da |
-| Step 19 | Postgres Row-Level Security — new `dbtype` package, two pools (them_app/them_admin), TenantTx/AdminTx, per-table policies, caller migration | Complete | 0ad7ccb |
-| Step 20 | Resource quota enforcement — max_agents, max_apps, max_mcp_servers checked on Create; ErrQuotaExceeded → 429; 9 tests | Complete | 8f8cbc8 |
-| Step 21 | max_users enforcement — CountTenantMembers DAL; AddMember handler quota check (fail-open); 3 tests TN-23..25 | Complete | d164a4d |
-| Step 22 | Audit log UI — GET /admin/audit-logs (admin pool, BYPASSRLS); paginated frontend page; 3 tests AL-01..03 | Complete | 557b9dd |
-| Step 23 | Audit write path — AuditWriter (3s timeout, fail-open); agent/app/tenant create+update+delete wired; them_audit_write_errors_total metric; AL-04 integration test | Complete | 10628a3 |
-| Step H2 | RLS closure — migration 078 (4 remaining tables); required DB pools config; full superuser removal from cmd/them+worker+dag-worker; 27-table integration test + catalog verification | Complete | b0cdb79 |
-| RLS verify | Fix TestRLS_TwoTenantFullIsolation (audit_logs/middleware SELECT exclusion, orchestrators count fix, eager cleanupData); add AR-02 (MCP probe_token) + AR-03 (tenant client_secret) handler-path redaction tests | Complete | 537fcb3 |
-| Step 29 | Orchestrator hard-delete: DELETE FROM (not UPDATE enabled=false); name freed immediately for reuse; E2E test 14 cleanup fixed to use orchestrator name | Complete | f787894 |
-| Step 30 | Tenant self-service API + frontend settings page (`/tenant/settings`): GET/PATCH /tenant/settings, GET /tenant/quota; RequireTenantAdmin middleware; "My Tenant" sidebar | Complete | bfc98a2 |
-| Step 31 | Quota enforcement for api_requests_per_minute (Redis INCR) + monthly_llm_tokens (DB SUM); 8 new unit tests QE-10..17 | Complete | 1c2bc3a |
-| Step 32 | User management API + frontend page: full CRUD GET/POST/PATCH/DELETE /api/v1/admin/users, reset-password, list-tenants; bcrypt + tenant membership; 12 tests UM-01..12 | Complete | 9b5c320 |
-| Step 33 | Tenant login chain alignment: CreateUser role/tenant_role contract fixed; /me returns JWT membership role (not DB global role); regression tests UM-13 (two-tenant isolation) + UM-14 (refresh carries tenant) | Complete | 5b2e283 |
-| Pre-34 auth sync | Docs sync — OIDC status corrected, Steps 29–33 history, migration 078–080, escalation risk documented | Complete | dc21381 |
-| Pre-34 auth hardening | OIDC role separation (platform=viewer always; super_admin rejected at app+DB layer; migration 081); refresh preserves tenant (TenantID in refreshClaims; issuePairByTenantID; GetTenantMembershipByID); tests OIDC-28/29/30 | Complete | 7920bf2 |
-| Step 34 | Role-based nav + super_admin route guards: Sidebar SUPER_ADMIN_NAV split; useRequireSuperAdmin hook; tenants/users/observability pages guarded | Complete | 82a8f22 |
-| Step 35 | Tenant provisioning wizard: 4-step modal (tenant → admin user → quota → done); ProvisionWizard.tsx extracted; skippable steps 2+3; skipped-step warnings on done screen | Complete | c95976d |
-| Step 36 | Tenant onboarding banner: GetStartedBanner on empty applications page; role-aware headline; 3-step guide; replaces minimal dashed card | Complete | 34687ad |
-
----
-
-## Current pause point — tenant roadmap status
-
-**Steps 1–23 + H2 + 29–36 are complete. Step 37 is next.**
-
-All 28 them-schema tables have ENABLE + FORCE ROW LEVEL SECURITY. Two-tenant full isolation test passes (24 table checks per tenant). Cross-tenant INSERT blocked by WITH CHECK. Catalog verification CV-01..05 passes. Handler-path audit redaction verified end-to-end for agent auth_token (AR-01), MCP probe_token (AR-02), tenant client_secret (AR-03).
-
-### RLS closure summary (Step H2 + verification)
-
-- **Migration 078** (`db/078_rls_phase_h2.sql`): application_definitions, managed_app_bindings, quarantine_artifacts (direct isolation), component_definitions (split policy: SELECT own+NULL, DML revoked from them_app).
-- **Config validation**: `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` required at startup; binaries fail fast if absent.
-- **Superuser removal**: All 3 Go binaries (cmd/them, cmd/worker, cmd/dag-worker) use `rlsPools.Admin` for all tenant data paths. `database.Pool()` retained only for health check pinger.
-- **Docker-compose**: Both env vars injected into all 4 Go service environments.
-- **Integration tests (verified 2026-09-05)**: `TestRLS_TwoTenantFullIsolation` covers 24 tenant-scoped tables per tenant (audit_logs, middleware_audit, middleware_jobs excluded from SELECT loop — INSERT-only for them_app by design). `TestRLS_CatalogVerification` (CV-01..05) asserts catalog invariants. Eager `cleanupData()` prevents stale-row accumulation across test reruns.
-- **AR-02/AR-03 handler-path redaction**: `NewMCPServersHandlerForTest` added; tests verify probe_token and client_secret are never written to audit JSONB.
-
-⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
-
-### Step 34 — Role-based nav + frontend route guards: COMPLETE (82a8f22)
-
-What was built:
-- `frontend/src/hooks/useRequireSuperAdmin.ts`: hook reads `user.role` from authStore; redirects to `/admin/applications` if not `super_admin`.
-- `frontend/src/components/Sidebar.tsx`: `SUPER_ADMIN_NAV` array added (Tenants/Users/Managed Apps/Observability); rendered only when `role === 'super_admin'`.
-- Guards applied to: `admin/tenants/page.tsx`, `admin/users/page.tsx`, `admin/observability/page.tsx`.
-- `tsc --noEmit`: zero new errors.
-
-### Step 35 — Tenant provisioning wizard: COMPLETE (c95976d)
-
-What was built:
-- `frontend/src/app/admin/tenants/ProvisionWizard.tsx` (new, 312 lines): 4-step guided wizard replacing the simple CreateModal.
-  - Step 1 — Tenant: slug + display_name (required; calls `createTenant`)
-  - Step 2 — Admin user: username/name/email/password, tenant_role=admin (skippable; calls `createUser`)
-  - Step 3 — Quota: plan + 9 limit fields (skippable; calls `upsertTenantQuota`)
-  - Step 4 — Done: summary with amber warnings for skipped steps
-- `frontend/src/app/admin/tenants/page.tsx`: imports `ProvisionWizard`, removed inline `CreateModal`.
-- `tsc --noEmit`: zero new errors.
-
-### Step 36 — Tenant onboarding banner: COMPLETE (34687ad)
-
-`GetStartedBanner` component added to `frontend/src/app/admin/applications/components/ListView.tsx`. Shown when `!loading && list.length === 0`. Role-aware headline (super_admin vs tenant admin); three-step guide (Create App → Configure Agents → Share Entry Point); primary "Create Application" CTA. Replaces the minimal dashed card. No new API calls, no Go changes. tsc: zero new errors.
-
-### Step 37 — SSO: corrected scope (2026-09-06 audit — see docs/sso-access-audit.md)
-
-**What was already done before Step 37:**
-- Login page email-first flow: email blur → tenant-lookup → SSO button → OIDC redirect — **already complete** in `frontend/src/app/login/page.tsx`
-- Super-admin IdP config UI: `/admin/tenants` TenantPanel "Identity Provider" tab — complete (Step 10)
-
-**Access model — hybrid (backend already supports both paths, no Go changes needed):**
-- `PATCH /admin/tenants/{id}` (`RequireSuperAdmin`) — platform admin configures any tenant's IdP
-- `PATCH /tenant/settings` (`RequireTenantAdmin`) — tenant admin configures own IdP; JWT-scoped, cannot escape own tenant
-
-**What Step 37 must build:**
-1. `/tenant/settings` SSO form — discovery_url, client_id, client_secret (write-only input), redirect_uri; Save + Clear buttons; wired to `PATCH /tenant/settings` via `themApi.patchTenantSettings` (extend to pass `idp_config`)
-2. Keycloak test IdP — `docker-compose.dev.yml` `them-keycloak` service (profile `sso`); realm export in `keycloak/`
-3. E2E smoke — configure via both paths, log in via OIDC, verify JWT claims
-
-**What Step 37 must NOT do:** rebuild login page; add SSO to Provision Wizard; encrypt client_secret.
-
-**⚠️ Production-readiness blocker — Step 37-S (separate step, before any production OIDC):**
-`client_secret` is stored as plaintext JSONB in `them.tenants`. Mitigated (never returned, audit-redacted, privileged DB access) but not acceptable for production.
-Design: AES-GCM encrypt before write in `PatchTenant`; decrypt in `GetTenantIDPConfig` before OAuth2 exchange. Touches `go/internal/admin/dal/tenants.go` + `go/internal/authserver/oidc_store.go` + both binary entrypoints + data migration. **Block production OIDC deployment on this.**
-
-Steps 36–38 + 37-S: see `docs/MULTITENANT_PLAN.md` Build Order table.
-
-Key facts for the new session:
-- UM-13/14 are **unit tests** (fakeStore, no real DB/RLS) — not live two-tenant E2E
-- Live two-tenant E2E test: `TestRLS_TwoTenantFullIsolation` (integration tag, `go/internal/db/`) — tests DB isolation only, not the HTTP stack. The full auth→bridge→RLS→response HTTP path test is Step 38 (still pending).
-- OIDC backend is **COMPLETE** — `oidc.go`, `oidc_jwks.go`, `oidc_store.go` all built (Steps 5/8/9/17/18). Gap is frontend email-first flow + Keycloak test IdP (Step 37).
-- `tenant_group_mappings.role` CHECK now restricted to `('admin','member','viewer')` — migration 081 created. **Migration 081 has NOT been verified as applied to the live DB** — apply before enabling OIDC group mapping.
-- Refresh tokens issued BEFORE commit 7920bf2 do not carry `tenant_id`. These tokens will use the legacy `issuePair(ctx, user, "")` fallback (first-row behavior). Affected users must re-login to get a tenant-preserving refresh token.
-- Migrations applied and verified through 080. Migration 081 exists as a file (`db/081_tenant_group_mappings_safe_roles.sql`) but its live DB application is **unverified** — check before deploying.
-- See `docs/SCHEMA.md` for full migration table.
-
----
-
-## What Step 5 built
-
-- `db/054_tenant_idp_config.sql` — adds `idp_config JSONB DEFAULT NULL` to `them.tenants`
-- `go/internal/authserver/oidc_store.go` — `OIDCStore` interface + `pgxOIDCStore`:
-  - `GetTenantIDPConfig(slug)` → tenant UUID + `IDPConfig` (discovery_url, client_id, client_secret, redirect_uri) or `ErrTenantNotFound`/`ErrNoIDPConfig`
-  - `UpsertOIDCUser(tenantID, email, name)` → idempotent ON CONFLICT(email) user upsert + `tenant_memberships` row
-- `go/internal/authserver/oidc.go` — `OIDCHandlers`:
-  - `GET /auth/oidc/start?tenant={slug}` — PKCE code_verifier generated, S256 challenge computed, HMAC-signed state (slug + nonce), cookie set, redirect to IdP
-  - `GET /auth/oidc/callback?code=...&state=...` — state HMAC verified, PKCE cookie read and cleared, code exchanged with IdP, ID token parsed, user upserted, internal HS256 JWT issued with `tenant_id`, auth cookies set, redirect to `/`
-  - OIDC routes registered under `/oidc/start`, `/oidc/callback` AND Traefik mirror `/auth/oidc/start`, `/auth/oidc/callback`
-- `go/internal/authserver/jwt.go` — exported `NewTokenSigner(cfg)` for cmd wiring
-- `go/internal/authserver/oidc_test.go` — 12 tests (OIDC-01 to OIDC-12) with mock IdP HTTP server
-- Migration applied to live DB: `them.tenants.idp_config` column live
-
-### Step 5 limitation — resolved in Step 8
-ID token signature is now verified against the IdP's JWKS using RS256 (stdlib only). See Step 8 below.
-
----
-
-## What Step 4 built
-
-- `go/internal/admin/dal/tenants.go` — `Tenant`, `TenantInput` types; `ListTenants`, `GetTenant`, `CreateTenant` DAL methods
-- `go/internal/admin/dal/dal.go` — added `IsCheckViolation` (SQLSTATE 23514)
-- `go/internal/admin/tenants.go` — `TenantsHandler` with `GET /tenants`, `POST /tenants`, `GET /tenants/{id}`
-- `go/internal/admin/tenants_test.go` — 8 handler tests (TN-01 to TN-08)
-- `go/internal/admin/router.go` — `TenantsHandler` wired into platform-global group
-- **No migration needed** — `them.tenants` table already existed from `026_tenant_foundation.sql`
-- Table columns: `id UUID PK, slug TEXT UNIQUE, display_name TEXT, enabled BOOL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ`
-
----
-
-## Known constraints and surprises
-
-1. **Go 1.25 is only available inside Docker** — host has no `go` binary (see run command above).
-
-2. **`ratelimit.Limiter.CheckToken` is defined but currently unused** — `main.go` assigns `_ = limiter`. Signature is correct (tenant-scoped). Will be wired when per-token rate limiting moves out of the Lua gate script.
-
-3. **Dashboard `sendScanSnapshot`** — `scan:{artifactID}` channel and `them:{tenant_id}:scan:state:{artifactID}` are distinct from the agent scan flow. Both now use tenant-scoped keys but remain separate flows.
-
-4. **MCP server `TenantID` field** — `w.server.TenantID` flows from the DB query in the supervisor. Verify this field is populated in `go/internal/mcp/dal.go` if adding a new MCP server.
-
-5. **Bootstrap tenant UUID** — `00000000-0000-0000-0000-000000000001`, slug `default`. Used in all tests as `testTenantID`.
-
-6. **`them.tenants` table** — `is_bootstrap` column does NOT exist in the live DB (was removed). Live columns after Step 5: `id, slug, display_name, enabled, idp_config, created_at, updated_at`. Verify before adding columns.
-
----
-
-## Step 5 — COMPLETE (see "What Step 5 built" above)
-
----
-
-## Step 6 — COMPLETE
-
-### What Step 6 built
-
-- `db/055_managed_apps.sql` — adds `app_type TEXT DEFAULT 'tenant'`, `version TEXT DEFAULT '1.0.0'`, `changelog TEXT` to `them.applications`; creates `them.managed_app_params` (parameter manifest) and `them.managed_app_bindings` (per-tenant activation); indexes on `(tenant_id, enabled)` and `(app_id, sort_order)`
-- `go/internal/admin/dal/managed_apps.go` — 8 DAL methods: `ListManagedApps`, `CreateManagedApp`, `GetManagedApp`, `ListManagedAppParams`, `UpsertManagedAppParams` (DELETE+INSERT), `ListBindingsForTenant`, `GetBinding`, `UpsertBinding` (ON CONFLICT DO UPDATE)
-- `go/internal/admin/managed_apps.go` — `ManagedAppsHandler` with:
-  - Platform routes (no tenant scope): `GET /admin/managed-apps`, `POST /admin/managed-apps`, `GET /admin/managed-apps/{id}`, `PUT /admin/managed-apps/{id}/params`
-  - Tenant routes (inside AdminTenantMiddleware): `GET /admin/managed-app-bindings`, `PUT /admin/managed-app-bindings/{app_id}`
-  - TenantID always from `tenantctx.TenantIDFromCtx` — never from headers
-  - All 500 responses use static strings only
-- `go/internal/admin/router.go` — wires `PlatformRoutes` in the platform-global group and `TenantRoutes` in the tenant-scoped group
-- `go/internal/admin/managed_apps_test.go` — 10 tests (MA-01..MA-10)
-- `go/TEST_INDEX.md` — adds S1-92, updates trigger map, total 989 → 999
-
-All 46 packages pass (`go test ./...`).
-
-### Migration note for live DB
-`db/055_managed_apps.sql` has not yet been applied to the live DB. Run before next feature work:
+**Apply before restarting containers:**
 ```bash
-docker cp db/055_managed_apps.sql them-postgres:/tmp/them_055.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
+docker cp db/086_phase2_user_history.sql them-postgres:/tmp/them_086.sql
+docker cp db/087_end_user_role.sql them-postgres:/tmp/them_087.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_086.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_087.sql
 ```
 
+### Go changes
+
+All changes compile and all 54 packages pass (`go test ./...` — 0 failures).
+
+| File | Change |
+|---|---|
+| `go/internal/epconfig/epconfig.go` | `AccessModeUser = "user_jwt"` constant |
+| `go/internal/domain/domain.go` | `UserID int64` on `Run` |
+| `go/internal/execution/request.go` | `UserID int64` on `ExecutionRequest` + `ExecutionHandle` |
+| `go/internal/execution/lifecycle.go` | Step 3.5: HS256 JWT validation + tenant check for `AccessModeUser` EPs; `jwtSecret` field; `WithJWTSecret()` |
+| `go/cmd/them/main.go` | `execLifecycle.WithJWTSecret(userJWTSecret)` wired at startup |
+| `go/internal/runrecorder/recorder.go` | `user_id` ($10) in `CreateRun` INSERT |
+| `go/internal/history/pgx.go` | All 5 functions gain `userID int64`; dual-column SQL filter; `resolveRootTaskID` gains `user_id` column |
+| `go/internal/orchestrator/orchestrator.go` + `summary.go` | Interface + call site updates for new signatures |
+| `go/internal/temporal/workflow.go` + `activities.go` | `UserID int64` in `WorkflowInput` + `RunContext` |
+| `go/internal/ws/handler.go` + `go/internal/sse/handler.go` | `UserID: handle.UserID` in `WorkflowInput` |
+
+### Tests added / updated
+
+| File | Tests |
+|---|---|
+| `go/internal/execution/lifecycle_test.go` | 6 new: `TestAccessModeUser_*` — valid JWT admitted, invalid rejected, cross-tenant forbidden, no token, no secret, UserID stored on run |
+| `go/internal/history/pgx_test.go` | 3 new: `TestHistory_UserA_CannotReadUserB`, `TestHistory_InternalCannotReadExternalUser`, `TestHistory_LegacyRows_NotLeakedToUser`; 2 updated: `TestHistory_CrossUser_Denied`, `TestHistory_ServiceToken_ExternalUserIsolation` |
+| `go/internal/runrecorder/recorder_test.go` | `TestCreateRun_callsCorrectSQL` updated: arg count 9→10, new `user_id` assert |
+| `go/internal/orchestrator/orchestrator_test.go` | `fakeHistoryLoader.LoadHistory` + `fakeCheckpointWriter.WriteMessage` signatures updated |
+
+### Docs updated
+
+- `docs/SCHEMA.md`: `them.runs.user_id` + `them.tasks.user_id` descriptions updated; migrations 086+087 added to migration table
+- `docs/END_USER_AUTH_PLAN.md`: gap table updated (Phase 2 rows all ✅); Phase 2 section marked COMPLETE; `AccessModeUser` authorization rule documented
+- `docs/CURRENT.md`: Phase 2 completion section added; next-task options updated
+- `go/TEST_INDEX.md`: S1-35 (lifecycle) + S1-46 (history) test tables updated with new tests
+
 ---
 
-## Step 7 — COMPLETE
+## AccessModeUser authorization rule (explicit)
 
-### What Step 7 built
+**Current rule:** Any authenticated member of the EP's tenant can invoke any `AccessModeUser` entry point. JWT validity + `claims.TenantID == EP.TenantID` is the only gate.
 
-- `go/internal/temporal/workerconfig/loader.go` — Added:
-  - `ManagedAppParams` struct: `Config map[string]any` (Secrets field deferred — KMS decision pending)
-  - `ApplyParamSubstitution(prompt string, params *ManagedAppParams) string` — replaces `{{PARAMS.KEY}}` placeholders; leaves unmatched keys unchanged; nil-safe
-  - `ManagedAppParams *ManagedAppParams` field on `RunConfig`
-  - `tenantID string` added as 5th parameter to `Loader` interface and `PgxLoader.LoadRunConfig`
-  - `loadAppType(ctx, applicationID)` — queries `applications.app_type`; non-fatal (returns "tenant" on error)
-  - `loadBindingParams(ctx, appID, tenantID)` — queries `managed_app_bindings.config` WHERE `enabled = true`; non-fatal (returns nil on miss or error)
-  - At run start: if `app_type = 'managed'` and binding found, `RunConfig.ManagedAppParams` is populated and `{{PARAMS.KEY}}` is substituted into the system prompt
-- `go/internal/temporal/activities.go` — `LoadRunConfig` call passes `input.TenantID`
-- `go/internal/voice/handler.go` — both `LoadRunConfig` calls pass `cfg.TenantID`
-- `go/internal/temporal/worker_test.go` — fake `LoadRunConfig` updated for new signature
-- `go/internal/temporal/workerconfig/loader_test.go` — 3 new tests (MAP-01..03): substitution, nil-safe, zero-value
-- `go/TEST_INDEX.md` — S1-93 added; totals 999 → 1002 (S1), 951 → 954 (go test ./...)
-
-### Step 7 constraints and notes
-
-- Secrets NOT populated: `ManagedAppParams` has no `Secrets` field — KMS/encryption decision deferred
-- Non-fatal binding lookup: binding not found or DB error → `ManagedAppParams = nil`, run proceeds normally
-- Voice handler passes tenant from resolved EP config (`cfg.TenantID`)
+**Scheduled fix:** Phase 3 adds `allowed_principals` column to `them.entry_points`, letting operators restrict which principal types may call each EP. Until then, all tenant members have equal access to `AccessModeUser` EPs.
 
 ---
 
-## Step 8 — COMPLETE
+## History isolation invariant
 
-### What Step 8 built
+SQL dual-column filter in `LoadHistory`, `LoadSummary`, `SaveSummary`, `WriteMessage`, `resolveRootTaskID`:
 
-- `go/internal/authserver/oidc_jwks.go` — JWKS-based RS256 id_token signature verification (stdlib only):
-  - `jwk` struct + `rsaPublicKey()` — parses JWK RSA fields, rejects keys < 2048 bits
-  - `httpJWKSFetcher` — fetches JWKS from IdP over HTTP (injectable for tests)
-  - `jwksFetcher` interface — injectable in `OIDCHandlers` for test isolation
-  - `verifyRS256IDToken(ctx, fetcher, jwksURI, idToken)` — decodes JWT header, verifies `alg=RS256`, fetches JWKS, selects key by `kid`, verifies PKCS1v15 RS256 signature, then parses claims
-- `go/internal/authserver/oidc.go` changes:
-  - `oidcDiscovery` gains `JWKSURI string` (`jwks_uri` JSON field); discovery now fails if `jwks_uri` is missing
-  - `OIDCHandlers` gains `jwks jwksFetcher` field, wired to `httpJWKSFetcher` in `NewOIDCHandlers`
-  - `OIDCCallback` calls `verifyRS256IDToken` instead of the removed `parseIDTokenClaims`
-  - `parseIDTokenClaims` (unsigned, Step 5 legacy) removed
-- `go/internal/authserver/oidc_test.go` — mock IdP upgraded:
-  - Generates a real RSA 2048-bit test key at `init()` time (`testRSAKey`)
-  - Mock IdP now serves `/jwks` endpoint with `testJWKS()` JWKS document
-  - Discovery document now includes `jwks_uri`
-  - Token endpoint signs id_tokens with `testRSAKey` (RS256, kid=`test-key-1`)
-  - All 12 existing OIDC tests (OIDC-01..12) pass with real signatures
-- `go/internal/authserver/oidc_jwks_test.go` — 5 new unit tests (OIDC-13..OIDC-17):
-  - OIDC-13: valid RS256 token accepted
-  - OIDC-14: tampered signature rejected
-  - OIDC-15: unknown kid rejected (no matching JWKS key)
-  - OIDC-16: non-RS256 alg rejected before JWKS fetch
-  - OIDC-17: JWKS fetch failure propagated
-- `go/TEST_INDEX.md` — S1-40 updated (50→55 tests); totals 1002→1007 S1, 954→959 `go test ./...`
-
-All 46 packages pass (`go test ./...`).
-
-## Step 9 — COMPLETE
-
-### What Step 9 built
-
-- `go/internal/authserver/oidc_jwks.go` — Added TTL-based JWKS cache:
-  - `jwksCacheEntry` struct: cached `*jwksDocument` + `expiresAt time.Time`
-  - `jwksCache` struct: `sync.Map` keyed by `jwks_uri`, configurable TTL, default 5 minutes
-  - `newJWKSCache(inner jwksFetcher, ttl time.Duration) *jwksCache` — constructor
-  - `FetchJWKS` returns cached entry if still fresh, else fetches from upstream and stores
-  - `fetchFresh` bypasses cache and re-fetches (called on unknown kid — key rotation path)
-  - `findKey` helper extracted (replaces inline loop in `verifyRS256IDToken`)
-  - `verifyRS256IDToken` updated: on kid-not-found with a `*jwksCache` fetcher, calls `fetchFresh` once before failing
-- `go/internal/authserver/oidc.go` — `NewOIDCHandlers` wires `newJWKSCache(httpJWKSFetcher, defaultJWKSCacheTTL)` instead of raw `httpJWKSFetcher`
-- `go/internal/authserver/oidc_jwks_test.go` — 3 new tests (OIDC-18..20):
-  - OIDC-18: second verify call within TTL → only 1 upstream fetch (cache hit)
-  - OIDC-19: TTL=1ns → expires before second call → 2 upstream fetches
-  - OIDC-20: cached doc has "old-key", token carries "new-key" → 1 re-fetch, succeeds
-
-All 46 packages pass.
-
-## Step 10 — COMPLETE
-
-### What Step 10 built
-
-**Go backend:**
-- `go/internal/admin/dal/tenants.go`:
-  - `TenantIDPConfig` — OIDC IdP config struct (`discovery_url`, `client_id`, `client_secret` write-only, `redirect_uri`)
-  - `TenantPatch` — patch body with custom `UnmarshalJSON` to distinguish "idp_config absent" vs "explicit null" (clears config) via `SetIDP bool`
-  - `TenantDetail` — extends with `IDPConfigured bool` (`idp_config IS NOT NULL`)
-  - `PatchTenant` — COALESCE-based UPDATE with `CASE WHEN $4 THEN $5::jsonb ELSE idp_config END` for idp_config
-- `go/internal/admin/tenants.go`: `Patch` handler + `r.Patch("/tenants/{id}", h.Patch)` route
-- `go/internal/admin/tenants_test.go`: `tenantDetailFakeRow` (7-col), extended `tenantDB.patchRow`; TN-09..12 (Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured) — 8→12 tests; S1-94 covers all 12
-
-**Frontend:**
-- `frontend/src/lib/apiTypes.ts`: `IDPConfig` (with `client_secret?: string` write-only), `TenantRecord`, `TenantPatch` types
-- `frontend/src/lib/api.ts`: `listTenants`, `createTenant`, `patchTenant` methods
-- `frontend/src/app/admin/tenants/page.tsx`: full Tenants admin page with:
-  - Card grid: slug, display_name, enabled badge, IdP badge, created date
-  - Side panel with two tabs — General (display_name + enabled toggle) and Identity Provider (OIDC discovery_url/client_id/client_secret/redirect_uri + Clear button)
-  - Create modal: slug + display_name validation
-- `frontend/src/components/Sidebar.tsx`: "Tenants" nav entry (`domain` icon) added to ADMIN_NAV
-
-All 46 Go packages pass (`go test ./...`); 1022 S1 tests, 974 `go test ./...` total. TypeScript: zero new errors.
-
-## Step 11 — COMPLETE
-
-### What Step 11 built
-
-**Go backend:**
-- `go/internal/admin/managed_apps.go`:
-  - `PlatformRoutes` extended with two new endpoints:
-    - `GET /admin/tenants/{tenant_id}/managed-app-bindings` — list all bindings for any tenant (by path param)
-    - `PUT /admin/tenants/{tenant_id}/managed-app-bindings/{app_id}` — upsert binding for any tenant (by path param)
-  - `ListBindingsByTenant` + `UpsertBindingByTenant` handlers — tenant_id from path, no AdminTenantMiddleware, reuse existing DAL methods
-- `go/internal/admin/managed_apps_test.go`: MA-11..14 (ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig)
-- `go/TEST_INDEX.md`: S1-92 updated (10→14 tests); totals 1022→1026 S1, 974→978 go test ./...
-
-**Frontend:**
-- `frontend/src/lib/apiTypes.ts`: `ManagedApp`, `ManagedAppParam`, `ManagedAppDetail`, `ManagedAppBinding`, `ManagedAppBindingInput` types
-- `frontend/src/lib/api.ts`: `listManagedApps`, `getManagedApp`, `listManagedAppBindings`, `upsertManagedAppBinding`
-- `frontend/src/app/admin/managed-apps/page.tsx`: Binding management page:
-  - Tenant selector dropdown in header (loads all tenants, switches binding context)
-  - Managed app catalog grid — each card shows app name/slug/version + binding status (active/inactive/not bound)
-  - `BindingPanel` side panel: active toggle, per-param inputs (text/password/enum), save button
-  - `BindingPanel` pre-fills from existing binding config; inline create on first save
-- `frontend/src/components/Sidebar.tsx`: "Managed Apps" nav entry (`extension` icon); removes pre-existing duplicate Tenants entry
-
-## Step 12 — COMPLETE
-
-### What Step 12 built
-
-- `db/056_tenant_quotas.sql` — creates `them.tenant_quotas` with `tenant_id PK`, `plan TEXT CHECK(...)`, and 9 nullable limit columns (max_agents, max_apps, max_mcp_servers, max_concurrent_runs, max_users, monthly_llm_tokens, monthly_runs, api_requests_per_minute, runs_per_minute); inserts bootstrap tenant default row (plan='enterprise')
-- `go/internal/admin/dal/tenants.go` — added `TenantQuota` struct (nullable int/int64 pointer fields, 11 columns), `GetQuota`, `UpsertQuota` (ON CONFLICT DO UPDATE RETURNING) DAL methods
-- `go/internal/admin/tenants.go` — added `GetQuota` (GET /admin/tenants/{id}/quota) and `UpsertQuota` (PUT /admin/tenants/{id}/quota) handlers; plan validation (trial/starter/pro/enterprise); routes registered in `TenantsHandler.Routes`
-- `go/internal/admin/tenants_test.go` — TN-13..TN-17: GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON; `quotaFakeRow` + `quotaRow` field on `tenantDB`
-- `go/TEST_INDEX.md` — S1-94 updated 12→17 tests; totals 1026→1031 S1, 978→983 go test ./...
-- `frontend/src/lib/apiTypes.ts` — `TenantQuota` interface, `QuotaPlan` type
-- `frontend/src/lib/api.ts` — `getTenantQuota`, `upsertTenantQuota` API methods; types re-exported
-- `frontend/src/app/admin/tenants/page.tsx` — "Quotas" tab added to `TenantPanel`; lazy-loads quota on tab switch; plan `<select>` + 9 nullable number inputs (blank = unlimited); Save Quotas button
-
-All 46 Go packages pass.
-
-### Migration note
-`db/056_tenant_quotas.sql` must be applied to the live DB before the quota routes are used:
-```bash
-docker cp db/056_tenant_quotas.sql them-postgres:/tmp/them_056.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_056.sql
+```sql
+AND ($3 = '' OR t.external_user_id = $3)       -- external/backend runs: filter by external_user_id
+AND ($3 != '' OR $4 = 0 OR t.user_id = $4)     -- internal runs: filter by user_id when set
 ```
 
----
-
-## Step 13 — COMPLETE
-
-### What Step 13 built
-
-- `go/internal/admin/dal/runs.go` — `CountActiveRuns(ctx, tenantID)` — `COUNT(*)` of runs with status `admitted`, `running`, or `input_required` for the tenant. Used by quota enforcement.
-- `go/internal/quota/enforcer.go` — new package:
-  - `RunCounter` interface (DB) + `RedisIncrementer` interface (Redis)
-  - `Quota` struct: `MaxConcurrentRuns *int`, `RunsPerMinute *int`
-  - `Enforcer.Check(ctx, tenantID, quota)` — enforces both limits; nil limit → skip
-  - `ErrConcurrentRunsExceeded`, `ErrRunsRateLimited` sentinels
-  - Redis key: `rl:them:{tenant_id}:runs:{minute}`, TTL 90s (same pattern as ratelimit)
-  - Fail-open on DB error; returns wrapped error
-- `go/internal/quota/enforcer_test.go` — 6 tests (QE-01..06)
-- `go/internal/execution/errors.go` — `AdmitErrQuotaConcurrentRuns`, `AdmitErrQuotaRunsPerMinute` (both HTTP 429; static error strings)
-- `go/internal/execution/lifecycle.go`:
-  - `QuotaEnforcer` interface with `CheckQuota(ctx, tenantID) error`
-  - `ErrQuotaConcurrentRuns`, `ErrQuotaRunsPerMinute` package-level sentinels
-  - `Lifecycle.quota QuotaEnforcer` field (nil = fail-open)
-  - `WithQuotaEnforcer(qe) *Lifecycle` setter (chained after constructor)
-  - Enforcement in `Admit` step 5b (after CheckAccess, before gate.Check)
-- `go/internal/execution/lifecycle_test.go` — 3 tests (LC-QE-01..03)
-- `go/cmd/them/main.go`:
-  - `tenantQuotaAdapter` struct: loads quota row from DB via `dal.DB.GetQuota`; maps errors to execution sentinels; fails-open when no quota row exists
-  - Wired in section 16a: `execLifecycle.WithQuotaEnforcer(quotaAdapter)`
-  - Imports: `admin/dal`, `quota`, `errors`
-
-All 47 packages pass. S1: 1040, go test ./...: 992.
-
-### Step 13 design decisions
-
-- **Fail-open on missing quota row** — `GetQuota` returning `pgx.ErrNoRows` → no enforcement; allows bootstrapping tenants without a quota row
-- **Fail-closed on quota hit** — returns 429 before consuming a gate slot
-- **Fail-open on DB error counting runs** — the quota enforcer propagates the DB error; `tenantQuotaAdapter` returns it to `Lifecycle` which maps it to `AdmitErrInternal` (500) not 429
-- **Redis error on RPM** — propagated, mapped to `AdmitErrInternal` (500); acceptable for rare Redis unavailability
-- **No schema migration needed** — `them.tenant_quotas` already created in Step 12
-
-## Step 14 — COMPLETE
-
-### What Step 14 built
-
-- `go/internal/quota/enforcer.go`:
-  - `ErrMonthlyRunsExceeded` sentinel
-  - `MonthlyRuns *int` field on `Quota` struct
-  - `checkMonthly(ctx, tenantID, limit)` — Redis INCR keyed by `rl:them:{tenant_id}:runs:monthly:{YYYY-MM}`; TTL = seconds remaining in current month + 48 h buffer (only set on first increment); returns `ErrMonthlyRunsExceeded` when limit exceeded
-  - `Check()` updated to call `checkMonthly` after existing checks
-- `go/internal/execution/errors.go`:
-  - `AdmitErrQuotaMonthlyRuns` constant; static string `"monthly run limit exceeded"`; HTTP 429 mapping
-- `go/internal/execution/lifecycle.go`:
-  - `ErrQuotaMonthlyRuns` sentinel; `Check()` switch case maps it to `AdmitErrQuotaMonthlyRuns`
-- `go/cmd/them/main.go`:
-  - `tenantQuotaAdapter` populates `MonthlyRuns: q.MonthlyRuns` in `quota.Quota`
-  - Maps `quota.ErrMonthlyRunsExceeded → execution.ErrQuotaMonthlyRuns`
-- `go/internal/quota/enforcer_test.go`: QE-07..09 (MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded)
-- `go/internal/execution/lifecycle_test.go`: LC-QE-04 (QuotaMonthlyRunsExceeded → AdmitErrQuotaMonthlyRuns)
-- `go/TEST_INDEX.md`: S1-95 updated 6→9 tests; S1-35 updated 21→22; totals 1040→1044 S1, 992→996 go test
-
-No schema migration needed — `monthly_runs` column already exists in `them.tenant_quotas` from Step 12.
-
-### Step 14 design decisions
-- **Redis key per calendar month** — `rl:them:{tenant_id}:runs:monthly:{YYYY-MM}` avoids precision loss from UNIX-second month boundaries
-- **TTL set only on first increment** — avoids race where a late Expire call resets the TTL of an already-expiring key
-- **48 h buffer on TTL** — month end is computed from UTC; 48 h absorbs DST surprises and minor clock skew without leaving stale keys indefinitely
-- **Fail-open on Redis error** — same policy as `checkRPM`; Redis unavailability returns a wrapped error that `tenantQuotaAdapter` propagates as `AdmitErrInternal` (500), not a false 429
+Isolation properties:
+- External user A (`externalUserID="alice"`) cannot read external user B (`externalUserID="bob"`) ✓
+- Internal user A (`userID=42`) cannot read internal user B (`userID=99`) ✓  
+- Internal session (`userID=42`) cannot read external-user rows (`user_id=NULL`, NULL≠42 in SQL) ✓
+- External-user session (`externalUserID="alice"`) cannot read internal-user rows (`external_user_id=NULL`) ✓
+- Legacy rows (both NULL) excluded from all user-scoped queries by SQL NULL semantics ✓
 
 ---
 
-## Step 15 — COMPLETE
+## What was NOT done (remaining phases)
 
-### What Step 15 built
-
-- `db/057_tenant_llm_providers.sql` — adds `tenant_id UUID FK→them.tenants(id) ON DELETE CASCADE` (nullable) to `them.llm_providers`; drops old `llm_providers_name_key` UNIQUE; adds partial unique indexes `llm_providers_name_platform_uq` (WHERE tenant_id IS NULL) and `llm_providers_name_tenant_uq` (WHERE tenant_id IS NOT NULL); adds lookup index `llm_providers_tenant_id_idx`
-- `go/internal/admin/dal/llm_providers.go`:
-  - `LLMProvider` struct gains `TenantID *string`
-  - `scanProvider` updated to scan 9 columns (adds tenant_id)
-  - `ListProviders` now filters `WHERE tenant_id IS NULL` (platform defaults only)
-  - `ListProvidersForTenant(ctx, tenantID)` — merged view: tenant overrides + platform defaults not overridden
-  - `GetProviderByNameForTenant(ctx, name, tenantID)` — tenant override by name+tenantID
-  - `GetProviderByNamePlatform(ctx, name)` — platform default by name
-  - `UpsertTenantProvider(ctx, tenantID, in)` — ON CONFLICT(name, tenant_id) WHERE tenant_id IS NOT NULL DO UPDATE
-  - `CreateProvider` INSERT unchanged (no tenant_id column set = NULL = platform)
-  - `UpdateProvider` and `DeleteProvider` RETURNING updated to scan 9 columns
-- `go/internal/admin/service/service.go` — Dal interface: 4 new methods (`ListProvidersForTenant`, `GetProviderByNameForTenant`, `GetProviderByNamePlatform`, `UpsertTenantProvider`)
-- `go/internal/admin/service/llm_providers.go`:
-  - `LLMProviderOut` gains `TenantID *string` field
-  - `toOut` maps `TenantID`
-  - `ListForTenant(ctx, tenantID)` — calls `ListProvidersForTenant`
-  - `UpsertForTenant(ctx, tenantID, name, body)` — validates, inherits display_name from platform row, encrypts key, delegates to `UpsertTenantProvider`
-- `go/internal/admin/llm_providers.go`:
-  - `TenantProviderRoutes(r)` — mounts `GET /tenants/{id}/llm-providers` and `PUT /tenants/{id}/llm-providers/{name}`
-  - `ListForTenant` and `UpsertForTenant` handler methods
-- `go/internal/admin/router.go` — `llmProviders.TenantProviderRoutes(a)` wired into platform-global admin group
-- `go/internal/temporal/workerconfig/loader.go`:
-  - `loadTenantProviderKey(ctx, tenantID, provider)` — prefers tenant override in llm_providers, falls back to platform default
-  - `lookupLLMProviderKey(ctx, provider, tenantID*)` — single-row lookup helper (nil tenantID = platform)
-  - `LoadRunConfig`: main LLM key resolution now calls `loadTenantProviderKey` first, then falls back to `loadProviderKey` (per-app key)
-  - Summarizer key resolution updated the same way
-- Tests: S1-96 (6 service tests), S1-97 (5 handler tests), S1-93 updated (+1 workerconfig test)
-- `docs/SCHEMA.md` — `them.llm_providers` updated with `tenant_id` column and constraint notes
-- `go/TEST_INDEX.md` — S1-93 updated (3→4), S1-96 and S1-97 added; totals 1044→1056 S1, 996→1008 go test
-
-All 47 Go packages pass.
-
-### Migration note
-`db/057_tenant_llm_providers.sql` must be applied to the live DB before the tenant LLM override endpoints are used:
-```bash
-docker cp db/057_tenant_llm_providers.sql them-postgres:/tmp/them_057.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_057.sql
-```
-
-### Step 15 design decisions
-- **NULL = platform default** — existing rows remain valid; no backfill needed
-- **Two partial unique indexes** — avoids complications with NULL equality in standard UNIQUE constraints
-- **Fail-open tenant key lookup** — if tenant has no override, falls back to platform row, then falls back to per-app key in applications.provider_keys; run is never blocked by a missing tenant override
-- **UpsertForTenant requires platform row** — enforces that tenant overrides can only name providers that exist at the platform level (prevents typos creating orphaned rows)
-- **Summarizer key inherits same resolution chain** — tenant override → per-app key → global env; consistent with main LLM key
+| Phase | What | Why deferred |
+|---|---|---|
+| Phase 3 | `allowed_principals` guard on EPs | Separate DB migration + CheckAccess change; not needed for Phase 2 correctness |
+| Phase 4 | Bank JWT / JWKS validation | Requires `JWKSAuthenticator` + `tenant_runtime_config` table — significant new surface |
+| Phase 5 | Managed app runtime routing | Requires `epConfigQuery` JOIN on `managed_app_bindings`; consuming-tenant data+quota attribution |
 
 ---
 
-## Step 16 — COMPLETE
-
-### What Step 16 built
-
-- `go/internal/authserver/store.go` — `GetTenantMembership` signature extended: new `tenantSlug string` param selects a specific tenant membership when provided; empty string picks `LIMIT 1` (backward-compatible)
-- `go/internal/authserver/pgx.go` — `GetTenantMembership` implementation: if `tenantSlug != ""`, JOINs `them.tenants` on slug+enabled=true; else uses original single-row query
-- `go/internal/authserver/jwt.go` — `verifiedClaims` struct gains `TenantID string` field; populated from `raw.TenantID` in `Verify()`
-- `go/internal/authserver/service.go`:
-  - `LoginInput` gains `TenantSlug string` (optional)
-  - `PublicUser` gains `TenantID string` (populated from JWT claims in `Me()`)
-  - `issuePair` signature: `(ctx, user, tenantSlug)` — passes slug to `GetTenantMembership`
-  - `Me()` now returns `TenantID: claims.TenantID` (no extra DB query)
-- `go/internal/authserver/handlers.go`:
-  - `loginRequest` gains `TenantSlug string` `json:"tenant_slug,omitempty"` — forwarded to `LoginInput`
-  - `meResponse` gains `TenantID string` `json:"tenant_id"` — populated from `PublicUser.TenantID`
-- `go/internal/admin/dal/tenants.go`:
-  - `TenantMember` struct: `id, user_id, tenant_id, role, username, email, created_at`
-  - `TenantMemberInput` struct: `user_id, role`
-  - `ListMembers(ctx, tenantID)` — SELECT from `auth_service.tenant_memberships` LEFT JOIN `auth_service.users`
-  - `AddMember(ctx, tenantID, in)` — INSERT INTO `auth_service.tenant_memberships` RETURNING
-- `go/internal/admin/tenants.go`:
-  - `Routes` extended with `GET /tenants/{id}/members` and `POST /tenants/{id}/members`
-  - `ListMembers` handler: returns `[]` when empty; 500 on DB error
-  - `AddMember` handler: validates user_id+role; maps unique violation→409, FK violation→400
-- Tests: TN-18..22 (member handlers), TestHTTPMeReturnsTenantID, TestHTTPLoginWithTenantSlug
-- `go/TEST_INDEX.md` — S1-40 updated 58→62; S1-94 updated 17→22; totals 1056→1065 S1, 1008→1017 go test
-
-All 47 Go packages pass.
-
-### Step 16 design decisions
-- **tenant_id in /me from JWT** — no extra DB query; the JWT already carries the claim from login; stale only if tenant changes while token is live (acceptable: 1h TTL)
-- **tenant_slug is optional at login** — empty string falls back to LIMIT 1 (first membership); forward-compatible with multi-tenancy UI
-- **AddMember writes to auth_service schema** — the admin bridge queries the auth_service schema directly for membership management (only for admin CRUD, not for auth flows); this is consistent with how OIDCStore.UpsertOIDCUser works
-- **No schema migration needed** — `auth_service.tenant_memberships` was created in Step 5
-- **AdminTenantMiddleware unchanged** — it already has no bootstrap fallback (removed in Step 1)
-
----
-
-## Step 18 — COMPLETE
-
-### What Step 18 built
-
-**Scope:** OIDC group claims → tenant role mapping (Phase 3 of multi-tenancy).
-
-**DB migration:**
-- `db/059_tenant_group_mappings.sql` — `them.tenant_group_mappings(id UUID PK, tenant_id UUID FK→tenants ON DELETE CASCADE, group_claim TEXT NOT NULL, role TEXT CHECK(viewer|member|admin|super_admin), priority INT DEFAULT 0, created_at/updated_at TIMESTAMPTZ)`. UNIQUE `(tenant_id, group_claim)`. Index on `tenant_id`.
-
-**Go changes:**
-- `go/internal/admin/dal/tenants.go` — `GroupMapping` + `GroupMappingInput` structs; `ListGroupMappings`, `UpsertGroupMapping` (ON CONFLICT DO UPDATE RETURNING), `DeleteGroupMapping` (tenant ownership check, pgx.ErrNoRows when not found)
-- `go/internal/admin/tenants.go` — 3 new handlers: `ListGroupMappings` (GET), `UpsertGroupMapping` (PUT, validates group_claim non-empty + role in allowed set), `DeleteGroupMapping` (DELETE, 204 success); routes registered in `Routes()`
-- `go/internal/authserver/oidc_store.go` — `OIDCStore` interface gains `GetGroupRole(ctx, tenantID, groups []string) (role string, found bool, err error)`; `UpsertOIDCUser` signature updated to accept `role string` (4th param); `pgxOIDCStore.GetGroupRole` queries `ORDER BY priority ASC, group_claim ASC LIMIT 1`; `UpsertOIDCUser` uses supplied role (defaults to "viewer" when empty)
-- `go/internal/authserver/oidc.go` — `idTokenClaims` extended with `Groups []string`; `OIDCCallback` calls `GetGroupRole` before `UpsertOIDCUser`; group lookup is non-fatal (no match or error → default "viewer" role)
-
-**Tests:**
-- `go/internal/admin/tenants_test.go` — 7 new tests GM-01..07 (list empty, list populated, upsert success, missing group_claim 400, invalid role 400, delete 204, delete 404)
-- `go/internal/authserver/oidc_test.go` — 3 new tests OIDC-25..27 (matched group → admin, unmatched group → viewer, no groups → viewer); `fakeOIDCStore` updated with `groupRoleMapping map[string]string`; `testOIDCClaimsWithGroups` helper added
-- `go/TEST_INDEX.md` — S1-94 → 32 tests (+7 GM); S1-40 → 69 tests (+3 OIDC-25..27); S1 total 1072→1082; `go test ./...` total 1024→1034
-
-**Docs:**
-- `docs/SCHEMA.md` — `them.tenant_group_mappings` table documented + migration file entry
-
-**Priority semantics:** lower `priority` integer = higher priority (0 is highest). Ties broken alphabetically by `group_claim`. Role resolution is a single SQL query with `ORDER BY priority ASC, group_claim ASC LIMIT 1`.
-
-**Migration note:** `db/059_tenant_group_mappings.sql` must be applied to the live DB before Step 18 features are usable:
-```bash
-docker cp db/059_tenant_group_mappings.sql them-postgres:/tmp/them_059.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_059.sql
-```
-
-### Step 18 design decisions
-- **Non-fatal group lookup** — if `GetGroupRole` returns an error or no match, the OIDC callback falls back to "viewer". This avoids blocking login on a DB error.
-- **Priority integer (ascending)** — 0 = highest priority, matches convention of priority queues and Traefik rules. Negative values are allowed for "super-priority" overrides.
-- **UNIQUE (tenant_id, group_claim)** — each group maps to exactly one role per tenant. Change the role by calling PUT again.
-- **PUT = upsert** — using ON CONFLICT DO UPDATE simplifies the API (no separate POST + PATCH).
-
----
-
-## Step 17 — COMPLETE
-
-### What Step 17 built
-- `db/058_tenant_email_domain.sql` — `email_domain TEXT DEFAULT NULL` on `them.tenants` + partial UNIQUE INDEX `(email_domain) WHERE email_domain IS NOT NULL`
-- `go/internal/admin/dal/tenants.go` — `Tenant.EmailDomain *string`; `TenantPatch.SetEmailDomain` sentinel for absent-vs-null PATCH; `GetTenantByEmailDomain` DAL helper; `PatchTenant` lowercases domain; all Tenant-returning queries unified at 7 columns
-- `go/internal/authserver/store.go` — `LookupTenantByEmailDomain(ctx, domain)` on `Store` interface; `ErrTenantDomainNotFound`; `TenantLookupResult{Slug, DisplayName, IDPConfigured}`
-- `go/internal/authserver/pgx.go` — `pgxStore.LookupTenantByEmailDomain` SQL: `WHERE email_domain = lower($1) AND enabled = true`
-- `go/internal/authserver/handlers.go` — `GET /auth/tenant-lookup?email=` handler (public; extracts domain after last `@`, calls store, returns 200/400/404/500)
-- `go/internal/authserver/router.go` — route registered with comment "Public — no JWT required"
-- `go/internal/authserver/service_test.go` — `fakeStore.domainLookup` map + `LookupTenantByEmailDomain` stub
-- `go/internal/authserver/handlers_test.go` — 4 new tests OIDC-21..24 (found, not-found, missing-email, invalid-email)
-- `go/internal/admin/tenants_test.go` — 3 new tests TN-23..25 (patch email domain, clear email domain, list returns email_domain)
-- `go/TEST_INDEX.md` — S1-40 → 66 tests (OIDC-21..24 added); S1-94 → 25 tests (TN-23..25); totals 1065→1072 / 1017→1024
-- `frontend/src/lib/apiTypes.ts` — `email_domain?: string | null` on `TenantRecord` and `TenantPatch`; new `TenantLookup` interface
-- `frontend/src/lib/api.ts` — `TenantLookup` re-exported
-- `frontend/src/app/api/auth/tenant-lookup/route.ts` — Next.js proxy GET route → `them-auth-go:8703/api/v1/auth/tenant-lookup`
-- `frontend/src/app/login/page.tsx` — `lookupDomain()` on email blur; SSO banner when `idp_configured=true` (display_name + "Continue with SSO" button); spinner while looking up; password form always visible
-- `frontend/src/app/admin/tenants/page.tsx` — `emailDomain` state + input field in General tab; PATCH sends `null` to clear
-
-### Step 17 design decisions
-- **Partial UNIQUE INDEX** — allows multiple `NULL` rows (tenants without domain) while enforcing uniqueness among non-null values; standard PostgreSQL pattern
-- **Public endpoint** — `/auth/tenant-lookup` has no JWT middleware; the email is not a credential; 404 leaks only that no tenant claims the domain (acceptable)
-- **lowercase normalization** — `strings.ToLower` at write time (PatchTenant) and at query time (`lower($1)`) ensures case-insensitive matching
-- **SSO banner is additive** — password form always shown; SSO button is a convenience, not a gate
-- **`lastLookupDomain.current` ref** — prevents duplicate network calls if user blurs twice with same domain
-- **Phase 2 complete** — Step 17 was the last remaining item in `docs/architecture/MULTI_TENANCY_DESIGN.md §25` Phase 2 checklist
-
----
-
-## Step 7 — Runtime parameter injection (original plan, now complete)
-
-### Goal
-Wire the Managed App binding into the agent/orchestrator invocation path so that when a run
-is created under a managed-app entry point, the binding's `config` values are injected into
-the `InvocationContext` — making `{{PARAMS.KEY}}` substitution available to agent prompts.
-
-### Design summary (from `docs/architecture/MULTI_TENANCY_DESIGN.md` §19)
-- `InvocationContext` gains `ManagedAppParams *ManagedAppParams` field (non-nil only for managed-app runs)
-- `ManagedAppParams.Config map[string]any` — plain config values from the binding
-- `ManagedAppParams.Secrets map[string]string` — decrypted secrets (never logged, never in Temporal history)
-- At run start: load the application → check `app_type`; if `managed`, look up binding for `(app_id, tenant_id)`, populate `ManagedAppParams`
-- Orchestrator uses `ManagedAppParams.Config` for `{{PARAMS.KEY}}` substitution in system prompts
-
-### Files to read before starting
-- `docs/architecture/MULTI_TENANCY_DESIGN.md` §19 (Runtime injection section)
-- `go/internal/orchestrator/orchestrator.go` — where InvocationContext is built
-- `go/internal/admin/dal/managed_apps.go` — GetBinding method (already implemented)
-- `go/internal/domain/domain.go` — InvocationContext definition
-
-### What NOT to do in Step 7
-- Do not add secret encryption/decryption (secrets_enc BYTEA) — leave secrets_enc NULL for now; encryption requires a KMS decision (deferred per design doc)
-- Do not add OIDC JWKS signature verification
-- Do not add SAML 2.0 or SCIM
-
----
-
-## Startup commands for next session
+## Next session startup
 
 ```bash
-cd /opt/docker/them
+# 1. Get token
+curl -s -X POST http://localhost:8088/auth/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
 
-# Verify stack is healthy
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
+# 2. Apply Phase 2 migrations (if not yet done)
+docker cp db/086_phase2_user_history.sql them-postgres:/tmp/them_086.sql
+docker cp db/087_end_user_role.sql them-postgres:/tmp/them_087.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_086.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_087.sql
 
-# Apply pending migrations if not yet applied
-docker cp db/058_tenant_email_domain.sql them-postgres:/tmp/them_058.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_058.sql
-
-docker cp db/059_tenant_group_mappings.sql them-postgres:/tmp/them_059.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_059.sql
-
-# Rebuild containers that changed (auth-go picks up oidc_store + oidc group role; go-bridge picks up admin group-mappings routes)
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-auth-go them-go-bridge
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-auth-go them-go-bridge
-
-# Read before starting
-cat docs/HANDOVER.md
-
-# Run tests to confirm baseline (zero failures required)
-docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
+# 3. Rebuild and restart the Go bridge
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-go-bridge them-go-worker them-dag-worker
 ```
+
+**First prompt for next session:**
+
+> Read `docs/CURRENT.md` and `docs/END_USER_AUTH_PLAN.md`. Phase 2 is complete. Next task: implement Phase 3 — `allowed_principals` guard on `them.entry_points`. See Phase 3 spec in `docs/END_USER_AUTH_PLAN.md`. Run `go test ./...` before committing. Confirm plan before writing code.
 
 ---
 
-## First prompt for next session
+## Known pending items
 
-```
-Continue multi-tenancy implementation — Step 19 (or next planned step).
-
-Current state: Steps 1–18 are complete and pushed to main.
-- Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
-- Step 2: Redis key hardening (97c9d71)
-- Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
-- Step 4: Tenant CRUD API (a534a54)
-- Step 5: OIDC login flow — PKCE + signed state (2de98f5)
-- Step 6: Managed Apps foundation — catalog CRUD + binding activation (7c056fc)
-- Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
-- Step 8: OIDC JWKS RS256 id_token signature verification — stdlib only (99fc33c)
-- Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
-- Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
-- Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
-- Step 12: Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota (293fe26)
-- Step 13: Quota enforcement at run start — max_concurrent_runs + runs_per_minute (cfaef99)
-- Step 14: Monthly run limit enforcement — monthly_runs quota Redis INCR (828739b)
-- Step 15: Per-tenant LLM provider key management — tenant_id on llm_providers, merged list API,
-           upsert override API, run-time resolution in workerconfig (24ff822)
-- Step 16: Per-tenant RBAC — tenant_id in /me response, tenant_slug login, GET/POST
-           /admin/tenants/{id}/members (5ee5a34)
-- Step 17: Email-domain → tenant routing — email_domain on tenants, public /auth/tenant-lookup,
-           SSO banner on login page, email_domain admin UI field (f2c6e90)
-- Step 18: OIDC group claims → tenant role mapping — them.tenant_group_mappings (db/059),
-           GET/PUT/DELETE /admin/tenants/{id}/group-mappings, GetGroupRole in OIDCCallback (pending commit)
-All 47 Go packages pass (go test ./..., 1082 S1 tests, 1034 go test ./... total).
-Phase 2 complete. Phase 3 started (Step 18).
-
-Read docs/HANDOVER.md fully before starting — it is the source of truth.
-
-Constraints (all in HANDOVER.md):
-- go test ./... must be zero failures before every commit
-- TenantID comes only from JWT claims via tenantctx typed key — never from headers
-- 500 responses use static strings only — never err.Error()
-- Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
-- Handler → Service → DAL — no SQL in handlers
-- TEST_INDEX.md updated in same commit as any new test
-```
-
----
-
-Current state: Steps 1–14 are complete and pushed to main.
-- Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
-- Step 2: Redis key hardening (97c9d71)
-- Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
-- Step 4: Tenant CRUD API (a534a54)
-- Step 5: OIDC login flow — PKCE + signed state (2de98f5)
-- Step 6: Managed Apps foundation — catalog CRUD + binding activation (7c056fc)
-- Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
-- Step 8: OIDC JWKS RS256 id_token signature verification — stdlib only, no third-party (99fc33c)
-- Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
-- Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
-- Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
-- Step 12: Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab (293fe26)
-- Step 13: Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) wired into Lifecycle.Admit (cfaef99)
-- Step 14: Monthly run limit enforcement — monthly_runs quota (Redis INCR per YYYY-MM, TTL past month end) wired into quota.Enforcer and Lifecycle.Admit
-All 47 Go packages pass (go test ./..., 1044 S1 tests, 996 go test ./... total).
-
-Read docs/HANDOVER.md fully before starting — it is the source of truth.
-
-Goal for Step 15: Per-tenant LLM provider key management — see Step 15 section in HANDOVER.md.
-
-Constraints (all in HANDOVER.md):
-- go test ./... must be zero failures before every commit
-- TenantID comes only from JWT claims via tenantctx typed key — never from headers
-- 500 responses use static strings only — never err.Error()
-- Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
-- Handler → Service → DAL — no SQL in handlers
-- TEST_INDEX.md updated in same commit as any new test
-```
-
----
-
-## ARCHIVED: First prompt for Step 7 session
-
-```
-Continue multi-tenancy implementation — Step 7: Runtime parameter injection.
-
-Current state: Steps 1–6 are complete and merged to main.
-- Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
-- Step 2: All Redis keys tenant-scoped (97c9d71)
-- Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
-- Step 4: Tenant CRUD API — GET/POST /admin/tenants, GET /admin/tenants/{id} (a534a54)
-- Step 5: OIDC login flow — /auth/oidc/start + /auth/oidc/callback with PKCE + signed state (2de98f5)
-- Step 6: Managed Apps foundation — catalog CRUD + tenant binding activation (7c056fc)
-All 46 Go packages pass (go test ./..., 999 tests).
-
-Read docs/HANDOVER.md fully before starting — it contains all rules, constraints, and the
-exact scope for Step 7. The HANDOVER.md is the source of truth for this session.
-
-Constraints (all in HANDOVER.md):
-- go test ./... must be zero failures before every commit
-- TenantID comes only from JWT claims via tenantctx typed key — never from headers
-- 500 responses use static strings only — never err.Error()
-- Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
-- Handler → Service → DAL — no SQL in handlers
-- TEST_INDEX.md updated in same commit as any new test
-- Do NOT add secret encryption (secrets_enc) — leave NULL, KMS decision deferred
-
-After each change run go test ./... before committing. Report: files changed, tests passed, commit hash.
-Update docs/HANDOVER.md at the end.
-```
+- **Migration 081** (`db/081_tenant_group_mappings_safe_roles.sql`) — not confirmed applied to live DB. Apply before enabling OIDC group mapping.
+- **Phase 2 migrations** (086, 087) — written but not yet applied to live DB. Apply + rebuild before first AccessModeUser EP test.
+- **`THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN`** must be in `.env` — run `./generate-env.sh` if missing.

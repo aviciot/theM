@@ -140,6 +140,11 @@ type Run struct {
 	// and service-token runs where no end-user identity was asserted.
 	ExternalUserID string
 
+	// UserID is the the-M internal user ID for runs initiated via AccessModeUser
+	// (the-M HS256 JWT). Zero for anonymous, external-only, or service-token runs.
+	// Stored for analytics attribution and history isolation of internal users.
+	UserID int64
+
 	// Goal is the user's first message for this run, stored as a short summary
 	// in them.runs.goal for display in the run history UI.
 	Goal string

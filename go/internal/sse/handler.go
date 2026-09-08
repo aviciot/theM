@@ -310,6 +310,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EntryPointID:      handle.EPConfig.EPID,
 		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
 		ExternalUserID:    handle.ExternalUserID,
+		UserID:            handle.UserID,
 	}
 	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EntryPointSlug) are
 	// overwritten by Lifecycle.Start from the handle — caller values are ignored.

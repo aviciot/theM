@@ -674,6 +674,12 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestLifecycle_QuotaMonthlyRunsExceeded` | LC-QE-04: QuotaEnforcer returns ErrQuotaMonthlyRuns → AdmitErrQuotaMonthlyRuns (429); gate.Check never called |
 | `TestLifecycle_NilQuotaEnforcer` | LC-QE-03: no quota enforcer wired → quota check skipped; run admitted normally |
 | (QE-10..17 paths) | New api_rpm + monthly_llm_tokens sentinels covered by quota enforcer unit tests (S1-95); Lifecycle simply maps them with the same switch pattern |
+| `TestAccessModeUser_ValidJWT_Admitted` | Phase 2: correctly-signed HS256 JWT with matching tenant → admitted; UserID set on handle from sub claim |
+| `TestAccessModeUser_InvalidJWT_Rejected` | Phase 2: tampered/malformed JWT → AdmitErrUnauthorized (401); gate never called |
+| `TestAccessModeUser_TenantMismatch_Rejected` | Phase 2: JWT tenant_id ≠ EP tenant → AdmitErrForbidden (403); prevents cross-tenant access |
+| `TestAccessModeUser_NoToken_Rejected` | Phase 2: no token on user_jwt EP → AdmitErrUnauthorized (401) |
+| `TestAccessModeUser_NoSecret_Rejected` | Phase 2: WithJWTSecret not called → rejects all requests (401); prevents misconfigured deployments from admitting anyone |
+| `TestAccessModeUser_UserIDStoredOnRun` | Phase 2: UserID from JWT sub claim is stored on the run record (enables per-user history isolation) |
 
 **Trigger:** any change to `internal/execution/lifecycle.go`, `internal/execution/errors.go`, `internal/execution/request.go`, or `internal/quota/enforcer.go`
 
@@ -1438,8 +1444,11 @@ verifying the canonicalToDBRole and dbToCanonicalRole helpers. No live PostgreSQ
 | `TestDBToCanonicalRole_WithEnvelope` | Envelope canonical_role takes priority over DB role for all four combinations |
 | `TestDBToCanonicalRole_Fallback` | Empty canonical_role (legacy rows): agent→assistant, user→user, system→system |
 | `TestRoleRoundTrip` | Every domain role survives canonicalToDBRole+dbToCanonicalRole identity round-trip |
-| `TestHistory_CrossUser_Denied` | LoadHistory SQL includes `external_user_id` filter — user A cannot access user B's history when externalUserID is non-empty |
-| `TestHistory_ServiceToken_ExternalUserIsolation` | resolveRootTaskID INSERT includes `external_user_id` column using NULLIF so service-token runs store NULL |
+| `TestHistory_CrossUser_Denied` | LoadHistory SQL includes `external_user_id` + `user_id` dual filter — end-user A cannot access end-user B's history |
+| `TestHistory_ServiceToken_ExternalUserIsolation` | resolveRootTaskID INSERT includes both `external_user_id` (NULLIF $4) and `user_id` (NULLIF $5, 0) columns |
+| `TestHistory_UserA_CannotReadUserB` | user_id filter SQL: `($3 != '' OR $4 = 0 OR t.user_id = $4)` prevents internal user A (userID=42) from reading user B's (userID=99) history |
+| `TestHistory_InternalCannotReadExternalUser` | Internal session (userID=42) cannot read external-user rows (user_id=NULL); NULL ≠ 42 in SQL |
+| `TestHistory_LegacyRows_NotLeakedToUser` | Legacy rows (user_id=NULL, external_user_id=NULL) excluded from user-scoped queries; NULL ≠ userID in SQL |
 
 **Trigger:** any change to `internal/history/pgx.go`
 

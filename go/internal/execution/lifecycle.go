@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
@@ -68,14 +69,15 @@ var ErrQuotaMonthlyLLMTokens = errors.New("quota: monthly LLM token limit exceed
 // Callers MUST subscribe to the event bus between Admit and Start to guarantee
 // that no event emitted by the workflow is missed (bootstrap ordering invariant).
 type Lifecycle struct {
-	auth     transport.Authenticator
-	epLoader transport.EPConfigLoader
-	gate     transport.GateStore
-	sessions transport.SessionStore
-	recorder RunCreator
-	temporal transport.TemporalClientExecutor
-	quota    QuotaEnforcer // optional; nil = no quota enforcement
-	logger   *slog.Logger
+	auth      transport.Authenticator
+	epLoader  transport.EPConfigLoader
+	gate      transport.GateStore
+	sessions  transport.SessionStore
+	recorder  RunCreator
+	temporal  transport.TemporalClientExecutor
+	quota     QuotaEnforcer // optional; nil = no quota enforcement
+	jwtSecret []byte        // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
+	logger    *slog.Logger
 }
 
 // NewLifecycle constructs a production Lifecycle. epLoader, gateStore, sessions,
@@ -111,6 +113,14 @@ func NewLifecycle(
 // enforcement. If not called, quota enforcement is skipped (fail-open).
 func (lc *Lifecycle) WithQuotaEnforcer(qe QuotaEnforcer) *Lifecycle {
 	lc.quota = qe
+	return lc
+}
+
+// WithJWTSecret sets the HMAC-SHA256 secret used to validate HS256 user JWTs
+// on AccessModeUser entry points. Call this at startup when user JWT EPs are in use.
+// Without it, AccessModeUser EPs reject all requests with 401.
+func (lc *Lifecycle) WithJWTSecret(secret []byte) *Lifecycle {
+	lc.jwtSecret = secret
 	return lc
 }
 
@@ -188,6 +198,43 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 		lc.logger.Warn("execution: epconfig load failed", "tenant_id", req.TenantID, "app_slug", req.AppSlug, "ep_slug", req.EPSlug, "error", err)
 		return nil, admitErr(AdmitErrDBUnavailable)
+	}
+
+	// ── 3.5. AccessModeUser — validate HS256 user JWT ───────────────────────────
+	// For user_jwt EPs the bearer token is a the-M dashboard HS256 JWT, not an
+	// opaque bearer token. The opaque token cache will not contain it.
+	// Validate here and synthesise a TokenInfo so the rest of the pipeline is
+	// agnostic to the credential type.
+	//
+	// Application-level authorization (Phase 3): current rule is that any
+	// authenticated member of the entry point's tenant can call any AccessModeUser
+	// EP in that tenant. allowed_principals enforcement is scheduled for Phase 3.
+	if resolvedCfg.AccessMode == epconfig.AccessModeUser {
+		if req.RawToken == "" {
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		if len(lc.jwtSecret) == 0 {
+			lc.logger.Warn("execution: AccessModeUser EP but no JWT secret configured", "ep_slug", req.EPSlug)
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		claims, jwtErr := auth.ValidateHS256JWT(req.RawToken, lc.jwtSecret)
+		if jwtErr != nil {
+			lc.logger.Debug("execution: user JWT validation failed", "ep_slug", req.EPSlug, "error", jwtErr)
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		// Enforce tenant match — JWT tenant_id must match the EP's resolved tenant.
+		if claims.TenantID != resolvedCfg.TenantID {
+			lc.logger.Debug("execution: JWT tenant mismatch",
+				"jwt_tenant", claims.TenantID, "ep_tenant", resolvedCfg.TenantID)
+			return nil, admitErr(AdmitErrForbidden)
+		}
+		// Populate tokenInfo from JWT claims so CheckAccess blocked_user_ids works.
+		tokenInfo = &auth.TokenInfo{
+			TokenID:  claims.UserID,
+			TenantID: claims.TenantID,
+		}
+		// Store the-M user ID for history isolation and run attribution.
+		req.UserID = claims.UserID
 	}
 
 	// ── 4. Access mode enforcement ────────────────────────────────────────────
@@ -348,6 +395,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		Goal:             firstTextPart(req.UserMessage),
 		OrchestratorName: resolvedCfg.OrchestratorName,
 		ExternalUserID:   req.ExternalUserID,
+		UserID:           req.UserID,
 	}
 	runCreated := false
 	if lc.recorder != nil {
@@ -369,6 +417,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		InstanceID:     req.InstanceID,
 		EPConfig:       resolvedCfg,
 		ExternalUserID: req.ExternalUserID,
+		UserID:         req.UserID,
 		gateCfg:        gateCfg,
 		gateAdmitted:   gateAdmitted,
 		runCreated:     runCreated,

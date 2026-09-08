@@ -2,10 +2,16 @@ package execution
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	temporalclient "go.temporal.io/sdk/client"
 
@@ -669,4 +675,182 @@ func TestLifecycle_NilQuotaEnforcer(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, h)
 	assert.True(t, g.checkCalled, "gate.Check must be called when quota enforcer is nil")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AccessModeUser (user_jwt) tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mintHS256JWT creates a minimal HS256 JWT signed with the given secret.
+// sub encodes userID, tenant_id encodes the tenant. exp defaults to 1 hour out
+// unless expiredAt is non-zero (use a past timestamp to produce an expired token).
+func mintHS256JWT(secret []byte, userID int64, tenantID string, expiredAt int64) string {
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	var exp int64
+	if expiredAt != 0 {
+		exp = expiredAt
+	} else {
+		exp = time.Now().Add(time.Hour).Unix()
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"sub":       fmt.Sprintf("%d", userID),
+		"tenant_id": tenantID,
+		"exp":       exp,
+	})
+	pay := base64.RawURLEncoding.EncodeToString(payload)
+
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(hdr + "." + pay))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return hdr + "." + pay + "." + sig
+}
+
+func userJWTEP(slug, tenantID string) *epconfig.EPConfig {
+	return &epconfig.EPConfig{
+		EPID:       "ep-user-1",
+		AppID:      "app-id-1",
+		TenantID:   tenantID,
+		EPSlug:     slug,
+		AppEnabled: true,
+		EPEnabled:  true,
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModeUser,
+	}
+}
+
+// TestAccessModeUser_ValidJWT_Admitted verifies that a correctly-signed JWT
+// with a matching tenant is admitted and UserID is propagated to the handle.
+func TestAccessModeUser_ValidJWT_Admitted(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+	tenantID := "tenant-abc"
+	userID := int64(42)
+
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(userJWTEP("slug", tenantID), &fakeAuth{}, g, s, r, tmp)
+	lc.WithJWTSecret(secret)
+
+	tok := mintHS256JWT(secret, userID, tenantID, 0)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: tok})
+	require.NoError(t, err)
+	require.NotNil(t, h)
+	assert.Equal(t, userID, h.UserID, "UserID must be propagated from JWT sub claim")
+	assert.True(t, r.createCalled)
+}
+
+// TestAccessModeUser_InvalidJWT_Rejected verifies that a tampered/invalid JWT
+// is rejected with 401 before any gate or session operations.
+func TestAccessModeUser_InvalidJWT_Rejected(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+	tenantID := "tenant-abc"
+
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	lc := buildLifecycle(userJWTEP("slug", tenantID), &fakeAuth{}, g, s, r, nil)
+	lc.WithJWTSecret(secret)
+
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "not.a.jwt"})
+	require.Error(t, err)
+	assert.Nil(t, h)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrUnauthorized, ae.Kind)
+	assert.False(t, g.checkCalled, "gate.Check must not be called for invalid JWT")
+	assert.False(t, r.createCalled)
+}
+
+// TestAccessModeUser_TenantMismatch_Rejected verifies that a valid JWT whose
+// tenant_id doesn't match the EP's tenant is rejected with 403.
+func TestAccessModeUser_TenantMismatch_Rejected(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	// EP belongs to "tenant-abc"; JWT claims "tenant-xyz" (attacker's tenant).
+	lc := buildLifecycle(userJWTEP("slug", "tenant-abc"), &fakeAuth{}, g, s, r, nil)
+	lc.WithJWTSecret(secret)
+
+	tok := mintHS256JWT(secret, 99, "tenant-xyz", 0)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: tok})
+	require.Error(t, err)
+	assert.Nil(t, h)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrForbidden, ae.Kind, "cross-tenant JWT must yield 403")
+	assert.False(t, g.checkCalled, "gate.Check must not be called for cross-tenant JWT")
+}
+
+// TestAccessModeUser_NoToken_Rejected verifies that a missing token on an
+// AccessModeUser EP yields 401 without reaching the gate.
+func TestAccessModeUser_NoToken_Rejected(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	lc := buildLifecycle(userJWTEP("slug", "tenant-abc"), &fakeAuth{}, g, s, r, nil)
+	lc.WithJWTSecret(secret)
+
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"}) // no RawToken
+	require.Error(t, err)
+	assert.Nil(t, h)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrUnauthorized, ae.Kind)
+	assert.False(t, g.checkCalled)
+}
+
+// TestAccessModeUser_NoSecret_Rejected verifies that an AccessModeUser EP with
+// no JWT secret configured rejects all requests with 401. This prevents
+// misconfigured deployments from accidentally admitting anyone.
+func TestAccessModeUser_NoSecret_Rejected(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+	tenantID := "tenant-abc"
+
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	// WithJWTSecret NOT called — secret is nil/empty.
+	lc := buildLifecycle(userJWTEP("slug", tenantID), &fakeAuth{}, g, s, r, nil)
+
+	tok := mintHS256JWT(secret, 42, tenantID, 0)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: tok})
+	require.Error(t, err)
+	assert.Nil(t, h)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrUnauthorized, ae.Kind, "missing JWT secret must yield 401, not a server error")
+	assert.False(t, g.checkCalled)
+}
+
+// TestAccessModeUser_UserIDStoredOnRun verifies that the UserID extracted from
+// the JWT is stored on the created run record (enabling per-user history isolation).
+func TestAccessModeUser_UserIDStoredOnRun(t *testing.T) {
+	secret := []byte("test-secret-32-bytes-padded-here")
+	tenantID := "tenant-abc"
+	userID := int64(77)
+
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(userJWTEP("slug", tenantID), &fakeAuth{}, g, s, r, tmp)
+	lc.WithJWTSecret(secret)
+
+	tok := mintHS256JWT(secret, userID, tenantID, 0)
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: tok})
+	require.NoError(t, err)
+	require.True(t, r.createCalled, "CreateRun must be called")
+	assert.Equal(t, userID, r.lastRun.UserID, "UserID must be stored on the run record")
 }

@@ -1,5 +1,5 @@
 # End-User Authentication at Runtime Entry Points
-# Status: Design v3 — code-verified, security-reviewed
+# Status: Design v4 — three security points verified, gaps documented
 # Last updated: 2026-09-08
 
 ---
@@ -182,19 +182,72 @@ Authorization for a managed EP follows the same `allowed_principals` model. The 
 
 ---
 
+## Security Verification — Three Questions (answered 2026-09-08)
+
+### Q1: Where is permission to invoke a specific application enforced?
+
+**Verified:** `CheckAccess` in `epconfig/epconfig.go:457` enforces:
+- EP enabled/disabled
+- App enabled/disabled
+- Token-level blocklist (`them.access_tokens.blocked`)
+- User-level blocklist (`them.users.blocked`)
+
+**Gap confirmed:** There is NO check of principal type (internal vs external vs end-user) against any EP-level policy. Any credential type that passes authentication can reach any EP that accepts its access mode. `allowed_principals` does not exist. This is the Phase 3 gap — intentionally deferred, not overlooked.
+
+**Safe for Phase 2?** Yes — Phase 2 only adds `AccessModeUser` for the-M user JWTs. Since Phase 2 EPs will be explicitly configured to `AccessModeUser`, a bearer-token caller cannot reach them (access mode mismatch rejects at `Lifecycle.Admit`). The inverse (JWT caller reaching `AccessModeToken` EPs) is also blocked by access mode. The principal-type guard (`allowed_principals`) becomes necessary only when Phase 4 bank JWTs are active and a single EP might accept both internal and external callers.
+
+---
+
+### Q2: How does history avoid collisions between identity namespaces?
+
+**Verified:** `history/pgx.go:LoadHistory` filter:
+```sql
+AND ($3 = '' OR t.external_user_id = $3)
+```
+
+When `externalUserID = ""` (internal sessions), the filter is **skipped** — all tasks for `context_id + tenant_id` are visible. This is intentional: internal team members share history across a context.
+
+**Collision analysis:**
+- `user_id`-based and `external_user_id`-based identities are **different columns on `them.tasks`**. They cannot collide at the SQL level.
+- `user_id = 42` (internal) and `external_user_id = "42"` (end-user) within the same tenant **will share history** if they use the same `context_id` and the internal call arrives with `externalUserID = ""`.
+- For Phase 4 (bank JWTs), cross-issuer collision is bounded by `tenant_id` — a tenant can only configure one JWKS issuer, so two different issuers cannot produce the same `external_user_id` within one tenant.
+
+**Remaining gap (Phase 2):** Internal sessions with `externalUserID = ""` return the full context history, which would include end-user turns if an internal user reuses an end-user's `context_id`. The fix (Phase 2): write `user_id` to `them.tasks` and add a `user_id` filter for internal sessions, matching the `external_user_id` pattern. This prevents internal sessions from accidentally reading end-user history.
+
+---
+
+### Q3: How is the authenticated tenant checked against the entry point's consuming tenant, including managed apps?
+
+**Verified:** `epconfig/pgx.go:epConfigQuery`:
+```sql
+WHERE ep.tenant_id = $1::uuid AND a.slug = $2 AND ep.slug = $3
+```
+
+`tenantID` comes from: (1) URL slug → DB lookup, (2) bearer token `TenantID` claim, (3) bootstrap fallback. The DB query enforces the boundary at fetch time — a mismatched tenant gets a 404/401 before any execution starts.
+
+**Managed app gap confirmed:** `managed_app_bindings` links `(app_id, tenant_id)` but has no entry_point column. The entry_points for a managed app live under the **platform tenant**'s `tenant_id`. A consuming tenant's URL slug resolves to their own `tenant_id`, which cannot match the platform's `ep.tenant_id`. Therefore:
+
+> **Managed apps are not reachable at runtime today.** The binding exists in DB but there is no URL routing mechanism that lets a consuming tenant call a managed app's entry point.
+
+The fix requires either: (a) provisioning replicated entry_point rows per binding with the consuming tenant's `tenant_id`, or (b) extending `epConfigQuery` to JOIN `managed_app_bindings` when `app_type = 'managed'` and the requesting tenant has an active binding.
+
+Option (b) is smaller. This is a **Phase 5** gap — out of scope for Phases 1–4.
+
+---
+
 ## Gaps vs Existing Functionality
 
-| Capability | Exists today | Gap |
-|---|---|---|
-| Tenant isolation on runs/tasks | ✅ `tenant_id` enforced | — |
-| External-user history isolation | ✅ Phase 1 (external_user_id filter) | — |
-| Internal-user history isolation | ❌ | `user_id` not stored on runs; no per-user filter |
-| Dashboard access gate | ✅ `dashboard_access` field blocks `'none'` | No `'none'` role exists for runtime-only users |
-| Runtime-only user role | ❌ | No role with `dashboard_access='none'` |
-| The-M user JWT at WS/SSE entry points | ❌ | `AccessModeUser` not implemented |
-| Bank JWT / JWKS validation | ❌ | `JWKSAuthenticator` not implemented |
-| Principal type guard on EP | ❌ | `allowed_principals` not implemented |
-| Managed app runtime distinction | ❌ | `app_type` not used at runtime |
+| Capability | Exists today | Gap | Phase |
+|---|---|---|---|
+| Tenant isolation on runs/tasks | ✅ `tenant_id` enforced via `epConfigQuery` | — | done |
+| External-user history isolation | ✅ Phase 1 (`external_user_id` filter) | — | 1 |
+| Internal-user history isolation | ✅ Phase 2 (`user_id` on tasks/runs; dual-column SQL filter) | — | 2 |
+| Dashboard access gate | ✅ `dashboard_access` field blocks `'none'` | — | 2 |
+| Runtime-only user role | ✅ Phase 2 (`end_user` role seeded, migration 087) | — | 2 |
+| The-M user JWT at WS/SSE entry points | ✅ Phase 2 (`AccessModeUser = "user_jwt"`, lifecycle step 3.5) | **Authorization rule:** any authenticated member of the EP's tenant can invoke any `AccessModeUser` EP. `allowed_principals` (Phase 3) is the scheduled fix for per-EP principal restrictions. | 2 |
+| Bank JWT / JWKS validation | ❌ | `JWKSAuthenticator` not implemented | 4 |
+| Principal type guard on EP | ❌ | `allowed_principals` not implemented | 3 |
+| Managed app runtime routing | ❌ | `epConfigQuery` uses `ep.tenant_id` — managed EP not reachable by consuming tenant | 5 |
 
 ---
 
@@ -209,9 +262,12 @@ Authorization for a managed EP follows the same `allowed_principals` model. The 
 
 ---
 
-### Phase 2 — The-M user JWT at entry points + runtime-only role
+### Phase 2 — The-M user JWT at entry points + runtime-only role + internal history isolation ✅ COMPLETE (2026-09-08)
 
-**What it enables:** Direct end users with a the-M account (via SSO or local login) can call WS/SSE entry points using their dashboard JWT — no separate bearer token needed. The bank's internal team can also use this path for testing without creating separate tokens.
+**What it enables:**
+1. Direct end users with a the-M account can call WS/SSE entry points using their dashboard JWT — no bearer token needed.
+2. A runtime-only `end_user` role prevents these users from reaching the dashboard.
+3. Internal sessions (empty `externalUserID`) are isolated from end-user history by storing `user_id` on tasks and filtering it.
 
 **Schema changes:**
 ```sql
@@ -220,25 +276,43 @@ INSERT INTO auth_service.roles (name, description, dashboard_access, rate_limit,
 VALUES ('end_user', 'Runtime-only access, no dashboard', 'none', 1000, 10.00, 3600)
 ON CONFLICT (name) DO NOTHING;
 
--- user_id on runs for attribution
+-- user_id on runs for analytics attribution
 ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS user_id INTEGER;
+
+-- user_id on tasks for history isolation (mirrors external_user_id pattern)
+ALTER TABLE them.tasks ADD COLUMN IF NOT EXISTS user_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_tasks_user ON them.tasks(user_id) WHERE user_id IS NOT NULL;
 ```
 
 **Go changes:**
 - `epconfig`: add `AccessModeUser = "user_jwt"` constant.
-- `Lifecycle.Admit`: when `AccessMode == AccessModeUser`, validate bearer as HS256 JWT via `auth.ValidateHS256JWT`; populate `RuntimeIdentity.UserID` from `claims.UserID`; set `TenantID` from `claims.TenantID`.
+- `Lifecycle.Admit` (WS/SSE handlers): when `AccessMode == AccessModeUser`, validate bearer as HS256 JWT via `auth.ValidateHS256JWT`; populate `RuntimeIdentity.UserID` from `claims.UserID`; set `TenantID` from `claims.TenantID`.
 - `runrecorder.CreateRun`: write `user_id` when set.
+- `history/pgx.go:LoadHistory`: add `userID int64` param; when `userID != 0`, add `AND t.user_id = $N` filter. When both `userID` and `externalUserID` are non-empty, only `externalUserID` is used (JWKS callers do not have a the-M user ID).
+- `history/pgx.go:resolveRootTaskID`: INSERT now includes `user_id` when set.
 - Service `Login`: the `ErrDashboardAccessDenied` check blocks `dashboard_access='none'` users from logging in via `/auth/login`. For runtime-only users, a separate `/auth/runtime-login` endpoint issues a JWT without the `dashboard_access` gate.
 
-**Dashboard protection:** `RequireTenantAdmin` already rejects `viewer` — a `viewer` JWT cannot reach any admin route. An `end_user` role JWT would also be rejected at admin routes since it carries membership role `viewer` or a new `end_user` value not in the `{admin, super_admin}` allowlist.
+**Dashboard protection:** `RequireTenantAdmin` already rejects `viewer` — an `end_user` JWT cannot reach any admin route.
 
-**Effort:** ~1 day. Low risk — additive change, no existing path modified.
+**Identity isolation invariant after Phase 2:**
+
+| Session type | `user_id` filter | `external_user_id` filter | Effect |
+|---|---|---|---|
+| Internal (bearer token, no end-user) | `user_id = N` | empty (skip) | Sees only that user's turns |
+| Backend-asserted end user | 0 (skip) | `external_user_id = X` | Sees only that end-user's turns |
+| The-M user JWT | `user_id = N` | empty (skip) | Sees only that user's turns |
+
+**Effort:** ~1.5 days. Low risk — additive, no existing path broken.
 
 **Acceptance tests:**
 - `TestAccessModeUser_ValidJWT_Admitted` — valid HS256 JWT → 101 WS upgrade.
 - `TestAccessModeUser_InvalidJWT_Rejected` — tampered JWT → 401.
+- `TestAccessModeUser_EndUserRole_DashboardDenied` — `end_user` role JWT → 403 on `/auth/login`.
 - `TestAccessModeUser_ViewerJWT_AdminRoute_Rejected` — viewer JWT → 403 on admin route.
 - `TestAccessModeUser_UserIDStoredOnRun` — run row has correct `user_id`.
+- `TestHistory_InternalSession_CannotReadEndUserTurns` — internal `user_id=42` with shared `context_id` cannot read tasks written by `external_user_id="alice"`.
+- `TestHistory_EndUser_CannotReadInternalTurns` — `external_user_id="alice"` cannot read tasks written by `user_id=42`.
+- `TestTenantIsolation_MismatchedTenantRejects401` — bearer token from tenant A cannot reach EP in tenant B.
 
 ---
 
@@ -308,16 +382,47 @@ CREATE TABLE them.tenant_runtime_config (
 
 ---
 
+### Phase 5 — Managed app runtime routing
+
+**What it enables:** A consuming tenant can call a managed (platform-owned) app's entry point. Today this is not possible because `epConfigQuery` resolves by `ep.tenant_id` which is the platform tenant's ID, not the consuming tenant's.
+
+**Root cause:** `managed_app_bindings(app_id, tenant_id)` has no entry_point column. Entry points are always owned by the application's tenant. A consuming tenant has no entry_point rows for a managed app.
+
+**Proposed fix (option B — smaller):** Extend `epconfig/pgx.go:epConfigQuery` to fall back to a managed-app JOIN when the primary tenant lookup yields no row:
+
+```sql
+-- After primary lookup fails, try managed app path:
+SELECT ep.*, a.*
+FROM them.entry_points ep
+JOIN them.applications a ON ep.app_id = a.id
+JOIN them.managed_app_bindings mab ON mab.app_id = a.id
+WHERE a.app_type = 'managed'
+  AND mab.tenant_id = $1::uuid     -- consuming tenant's ID
+  AND mab.enabled = true
+  AND a.slug = $2
+  AND ep.slug = $3
+```
+
+The `TenantID` on the returned `EPConfig` must be set to the **consuming tenant's** ID, not the platform's.
+
+**Effort:** ~1 day. Moderate risk — changes the core EP resolution path; needs integration tests against a real managed app binding.
+
+**Out of scope for Phases 1–4.** Managed app routing is a separate concern from end-user authentication.
+
+---
+
 ## Build Order and Dependencies
 
 ```
 Phase 1 (done)  — external_user_id + is_backend + history isolation
-Phase 2         — the-M user JWT at entry points + runtime-only role
+Phase 2         — the-M user JWT at entry points + runtime-only role + internal history isolation
 Phase 3         — allowed_principals guard on EPs
 Phase 4         — Bank JWT / JWKS validation
+Phase 5         — Managed app runtime routing (epConfigQuery JOIN on managed_app_bindings)
 ```
 
 Phase 2 and 3 are independent and can be done in either order.
 Phase 4 depends on Phase 3 (needs `allowed_principals = 'external'` to safely restrict JWKS-validated EPs).
+Phase 5 is independent — it touches only `epconfig/pgx.go` and has no dependency on Phases 2–4.
 
 Phase 2 also unblocks the "platform-as-product" pattern immediately — direct end users can sign up and use agents with their own account, fully isolated history, and no dashboard access.

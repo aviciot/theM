@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-08 (end-user auth Phase 1 complete — next: Change 4 Group Mapping UI or Phase 2)
+# Last updated: 2026-09-08 (end-user auth Phase 2 complete — next: apply migrations or Phase 3)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -323,20 +323,78 @@ What was built:
 
 **What Phase 1 enables:** A backend service (e.g. bank's app backend) can present a token with `is_backend=true` and include `X-External-User: customer-123` — all runs and tasks are tagged with `external_user_id`. `LoadHistory` filters by `external_user_id` when non-empty, preventing user A from reading user B's history with the same `context_id`.
 
-**What Phase 2 requires:** Add `allowed_principals` to entry points to restrict which principals may call a given EP. See `docs/END_USER_AUTH_PLAN.md`.
+**Security verification (2026-09-08) — three gaps confirmed against code:**
 
-**What Phase 3 requires:** `JWKSAuthenticator` + `tenant_runtime_config` for JWKS-validated end-user JWTs (Approach B from plan). Also requires `is_backend` token to be created in the admin UI.
+1. **Application authorization** — `CheckAccess` has no principal-type guard. Safe for Phase 2 because `AccessModeUser` mismatch rejects at admit time before `CheckAccess`. `allowed_principals` is Phase 3.
+
+2. **History namespace collision** — `user_id` and `external_user_id` are different columns; same-value collision is impossible at SQL level. However: empty `externalUserID` skips the filter, so an internal session can read end-user turns sharing the same `context_id`. Fix: Phase 2 adds `user_id` to `them.tasks` and a per-user filter for internal sessions.
+
+3. **Managed app consuming-tenant check** — `epConfigQuery` uses `ep.tenant_id = $1`. Managed app entry_points are owned by the platform tenant. A consuming tenant's URL slug will not match → managed apps are NOT reachable at runtime today. This is a separate Phase 5 gap (extend `epConfigQuery` to JOIN `managed_app_bindings`). Out of scope for Phases 1–4.
+
+**Plan updated:** `docs/END_USER_AUTH_PLAN.md` is now v4 with verified gap analysis.
+
+**What Phase 2 requires (revised):** the-M user JWT at entry points (`AccessModeUser`), `end_user` runtime-only role, `user_id` on `them.tasks` for internal history isolation, regression tests for all three boundary types. See `docs/END_USER_AUTH_PLAN.md`.
+
+**What Phase 3 requires:** `allowed_principals` column on entry_points + enforcement in `CheckAccess`.
+
+**What Phase 4 requires:** `JWKSAuthenticator` + `tenant_runtime_config` for bank-issued JWTs.
+
+**What Phase 5 requires:** `epConfigQuery` JOIN on `managed_app_bindings` so consuming tenants can reach managed app entry points.
+
+### End-user auth Phase 2 — COMPLETE (2026-09-08)
+
+**Migrations:**
+- `db/086_phase2_user_history.sql`: `them.tasks.user_id INT` + `them.runs.user_id INT` (index on each WHERE NOT NULL)
+- `db/087_end_user_role.sql`: seed `auth_service.roles` with `end_user` (dashboard_access='none', rate_limit=1000, cost_limit_daily=$10, token_expiry=3600)
+
+**Go changes:**
+- `go/internal/epconfig/epconfig.go`: `AccessModeUser = "user_jwt"` constant
+- `go/internal/domain/domain.go`: `UserID int64` on `Run`
+- `go/internal/execution/request.go`: `UserID int64` on `ExecutionRequest` + `ExecutionHandle`
+- `go/internal/execution/lifecycle.go`: step 3.5 — when `AccessMode==AccessModeUser`, validate HS256 JWT via `auth.ValidateHS256JWT`, assert `claims.TenantID == EP.TenantID`, set `req.UserID = claims.UserID`. `jwtSecret []byte` field + `WithJWTSecret(secret []byte)` added. Wired in `cmd/them/main.go` with `cfg.JWTSecret || cfg.SecretKey`.
+- `go/internal/runrecorder/recorder.go`: `user_id` written in `CreateRun` INSERT ($10 arg)
+- `go/internal/history/pgx.go`: all 5 functions gain `userID int64` parameter; dual-column SQL filter: `AND ($3 = '' OR t.external_user_id = $3) AND ($3 != '' OR $4 = 0 OR t.user_id = $4)`. `resolveRootTaskID` INSERT gains `user_id` column.
+- `go/internal/orchestrator/orchestrator.go` + `summary.go`: interfaces + call sites updated for new signatures
+- `go/internal/temporal/workflow.go` + `activities.go`: `UserID int64` in `WorkflowInput` and `RunContext`
+- `go/internal/ws/handler.go` + `go/internal/sse/handler.go`: `UserID: handle.UserID` in `WorkflowInput`
+
+**AccessModeUser authorization rule (documented):**  
+Any authenticated member of the EP's tenant can invoke any `AccessModeUser` entry point. JWT validity + tenant match is the only gate. `allowed_principals` (Phase 3) is the scheduled fix for per-EP principal restrictions.
+
+**History isolation invariant (dual-column):**
+- `externalUserID != ""` → filter by `t.external_user_id` (external/backend runs)
+- `externalUserID == ""` AND `userID != 0` → filter by `t.user_id` (internal THE-M user runs)
+- Both empty → no user filter (service-token / anonymous runs)
+- Legacy rows (both NULL) excluded from user-scoped queries by SQL NULL semantics ✓
+
+**Tests added:**
+- `internal/execution/lifecycle_test.go`: `TestAccessModeUser_ValidJWT_Admitted`, `TestAccessModeUser_InvalidJWT_Rejected`, `TestAccessModeUser_TenantMismatch_Rejected`, `TestAccessModeUser_NoToken_Rejected`, `TestAccessModeUser_NoSecret_Rejected`, `TestAccessModeUser_UserIDStoredOnRun`
+- `internal/history/pgx_test.go`: `TestHistory_UserA_CannotReadUserB`, `TestHistory_InternalCannotReadExternalUser`, `TestHistory_LegacyRows_NotLeakedToUser`; existing tests updated to match new SQL signatures
+
+**`go test ./...` — 54 packages, 0 failures.**
 
 ---
 
 ### Next recommended task
 
-**Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
+**Option A — Apply Phase 2 migrations to live DB** (prerequisite for Phase 3)
+```bash
+docker cp db/086_phase2_user_history.sql them-postgres:/tmp/them_086.sql
+docker cp db/087_end_user_role.sql them-postgres:/tmp/them_087.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_086.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_087.sql
+```
+Then rebuild and restart `them-go-bridge` and `them-go-worker`.
+
+**Option B — End-user auth Phase 3** (`allowed_principals` guard on entry points)
+- Schema: `ALTER TABLE them.entry_points ADD COLUMN allowed_principals TEXT DEFAULT 'internal' CHECK (...)`
+- Go: enforce in `Lifecycle.Admit` after EPConfig resolution
+- See `docs/END_USER_AUTH_PLAN.md` Phase 3 for full spec
+
+**Option C — Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
 - Requires backend: extend `idp_config` JSONB (`groups_claim`, `unmatched_action`), tenant-scoped `/api/v1/tenant/group-mappings` API, OIDC handler update.
 - Frontend: add Group Mappings section to SSO tab in `frontend/src/app/tenant/settings/page.tsx`.
 - See full spec in `docs/IAM_UI_SPEC.md` (Change 4 section).
-
-Or move to the next major feature beyond IAM.
 
 Key reminders:
 - Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.

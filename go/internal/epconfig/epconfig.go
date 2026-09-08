@@ -63,6 +63,12 @@ const AccessModePublic = "public"
 // AccessModeToken means a valid bearer token is required (default).
 const AccessModeToken = "token"
 
+// AccessModeUser means a valid the-M HS256 user JWT is required.
+// Any authenticated member of the entry point's tenant can call this EP.
+// Use allowed_principals (Phase 3) to restrict to specific principal types.
+// Current rule: authentication (valid JWT + correct tenant) is the only gate.
+const AccessModeUser = "user_jwt"
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Sentinel errors
 // ──────────────────────────────────────────────────────────────────────────────
@@ -94,7 +100,7 @@ type EPConfig struct {
 	AppEnabled    bool
 	EPEnabled     bool
 	EPType        string // "websocket" | "sse" | etc.
-	AccessMode    string // "public" | "token"
+	AccessMode    string // "public" | "token" | "user_jwt"
 
 	// Orchestrator binding (SEC-04).
 	// AppOrchestratorID is the UUID of the bound app_orchestrators row.
@@ -177,6 +183,9 @@ func parseAccessPolicy(logger *slog.Logger, data []byte) string {
 	}
 	if p.Mode == AccessModePublic {
 		return AccessModePublic
+	}
+	if p.Mode == AccessModeUser {
+		return AccessModeUser
 	}
 	return AccessModeToken
 }

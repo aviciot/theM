@@ -27,6 +27,9 @@ type ExecutionRequest struct {
 	ContextID      string         // caller-supplied; empty → Lifecycle generates UUID v4
 	InstanceID     string         // pod/replica identity for session record
 	ExternalUserID string         // end-user identity: only set when caller's token has is_backend=true
+	// UserID is the the-M internal user ID, populated from AccessModeUser JWT claims.
+	// Zero for service-token, public, and bank-JWT (Phase 4) runs.
+	UserID int64
 }
 
 // ExecutionHandle is the admission ticket returned by Admit on success.
@@ -42,6 +45,8 @@ type ExecutionHandle struct {
 	InstanceID     string
 	EPConfig       *epconfig.EPConfig
 	ExternalUserID string // end-user identity; empty for internal/service-token runs
+	// UserID is the the-M internal user ID from AccessModeUser JWT. Zero otherwise.
+	UserID int64
 
 	// internal gate state — used by Release only
 	gateAdmitted bool
