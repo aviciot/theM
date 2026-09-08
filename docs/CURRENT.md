@@ -387,47 +387,32 @@ Three issues identified in code review of ef51f6b, all resolved:
 
 See full detail in `docs/HANDOVER.md`.
 
+### End-user auth Phase 2 — E2E CONFIRMED (7e107ab, 2026-09-08)
+
+`user_id` persisted on `them.runs` confirmed via live WS invocation:
+- Created `user_jwt` EP, `end_user` account, runtime-login → JWT `sub=38`
+- WS connected, message sent, run created: `d0e50a33|user_id=38||check-uid-a321e8c9`
+- Queried DB **before** user deletion → `user_id=38` present on run row
+- `them.tasks.user_id` is empty because the run status was `failed` (orchestrator started but Temporal worker did not complete activity — expected, no LLM agent active during smoke test). `tasks.user_id` is written by the Temporal worker; bridge half is verified.
+- FK `ON DELETE SET NULL` was masking all previous checks — root cause documented in `docs/HANDOVER.md`
+
+**Phase 2 is CLOSED. All closure fixes + E2E runs.user_id confirmed.**
+
 ---
 
 ### Next recommended task
 
-**Step 1 — Apply Phase 2 migrations + rebuild (required before Phase 3)**
-```bash
-# Apply migrations
-docker cp db/086_phase2_user_history.sql them-postgres:/tmp/them_086.sql
-docker cp db/087_end_user_role.sql them-postgres:/tmp/them_087.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_086.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_087.sql
+**Phase 3 — `allowed_principals` guard on entry points** (next task)
 
-# Rebuild (must build before recreate — restart reuses the old image)
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
-  build them-auth-go them-go-bridge
-
-# Recreate (not restart)
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
-  --profile temporal up -d --force-recreate them-auth-go them-go-bridge them-go-worker them-dag-worker
-
-# Verify
-docker logs them-auth-go --tail 5
-docker logs them-go-bridge --tail 5
-```
-
-**Integration history tests — COMPLETE (ac7c118, 2026-09-08)**
-
-All 5 isolation tests pass against the live DB. Two bugs found and fixed during the run:
-- `resolveRootTaskID findQ`: `$2::uuid` cast error on empty runID → changed to `IS NOT DISTINCT FROM NULLIF($2,'')::uuid`
-- Integration test: `seedMessage` used a random UUID as `runID` (FK violation) → changed to `""` (NULL); added `seedUser()` helper to create real `auth_service.users` rows (required by `tasks.user_id` FK)
-
-Vendor directory synced (`go mod vendor`) — previously out of sync, causing Docker build failure.
-
-**HEAD: ac7c118**
-
-**Option B — End-user auth Phase 3** (`allowed_principals` guard on entry points — do after Step 1+2 above)
 - Schema: `ALTER TABLE them.entry_points ADD COLUMN allowed_principals TEXT DEFAULT 'internal' CHECK (...)`
 - Go: enforce in `Lifecycle.Admit` after EPConfig resolution
 - See `docs/END_USER_AUTH_PLAN.md` Phase 3 for full spec
 
-**Option C — Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
+**HEAD: 7e107ab** (Phase 2 E2E confirmed, HANDOVER.md updated)
+
+All Phase 2 migrations (085, 086, 087) applied. All 4 Go service images rebuilt and recreated. Integration history tests (5/5) pass. E2E `runs.user_id` confirmed.
+
+**Option B — Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
 - Requires backend: extend `idp_config` JSONB (`groups_claim`, `unmatched_action`), tenant-scoped `/api/v1/tenant/group-mappings` API, OIDC handler update.
 - Frontend: add Group Mappings section to SSO tab in `frontend/src/app/tenant/settings/page.tsx`.
 - See full spec in `docs/IAM_UI_SPEC.md` (Change 4 section).

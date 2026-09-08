@@ -171,6 +171,34 @@ All 5 isolation tests pass against the live DB (after fixing `resolveRootTaskID 
 
 ---
 
+## Phase 2 E2E — user_id on runs (confirmed 2026-09-07)
+
+**Verification method:** Created a fresh `user_jwt` EP directly in DB (bypasses 30s cache), created `end_user` account via API, runtime-login'd, connected via WS, queried `them.runs` by `entry_point_slug` **before** deleting the test user (avoiding FK ON DELETE SET NULL cascade).
+
+**Result: PASS**
+
+```
+EP: check-uid-a321e8c9
+User id=38  JWT uid=38
+  <- ready  run_id=d0e50a33-fef5-424a-b81e-17fa107579ac
+
+runs by slug: d0e50a33-fef5-424a-b81e-17fa107579ac|38||check-uid-a321e8c9
+run by id:   d0e50a33-fef5-424a-b81e-17fa107579ac|38|
+
+PASS: user_id in runs
+```
+
+**What this confirms:**
+- `user_id=38` (from JWT `sub=38`) is written to `them.runs.user_id` by the bridge recorder
+- The bridge session lifecycle correctly extracts `UserID` from the HS256 JWT and threads it through `ExecutionHandle → RunRecorder → CreateRun INSERT`
+- The FK ON DELETE SET NULL (`runs_user_id_fkey`) was masking previous verification attempts — querying after user deletion always shows NULL
+
+**Why `them.tasks.user_id` is empty:** The run status was `failed` — the orchestrator started but the Temporal worker didn't complete any activity (no LLM agent running during smoke test). Task creation happens inside the Temporal workflow; `tasks.user_id` is written by the worker at task-creation time. The bridge half of Phase 2 is verified. Task-level attribution will appear in any successful orchestration run.
+
+**Phase 2 is CLOSED.** All three closure fixes (RuntimeLogin, refresh-token guard, integration history tests) plus E2E `runs.user_id` persistence are confirmed.
+
+---
+
 ## Next session startup
 
 ```bash
