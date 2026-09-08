@@ -1,0 +1,247 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package jsonrpc provides JSON-RPC 2.0 protocol implementation for A2A.
+package jsonrpc
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/errordetails"
+	"github.com/a2aproject/a2a-go/v2/internal/utils"
+)
+
+// JSON-RPC 2.0 protocol constants
+const (
+	Version = "2.0"
+
+	// HTTP headers
+	ContentJSON = "application/json"
+
+	// JSON-RPC method names per A2A spec §7
+	MethodMessageSend          = "SendMessage"
+	MethodMessageStream        = "SendStreamingMessage"
+	MethodTasksGet             = "GetTask"
+	MethodTasksList            = "ListTasks"
+	MethodTasksCancel          = "CancelTask"
+	MethodTasksResubscribe     = "SubscribeToTask"
+	MethodPushConfigGet        = "GetTaskPushNotificationConfig"
+	MethodPushConfigSet        = "CreateTaskPushNotificationConfig"
+	MethodPushConfigList       = "ListTaskPushNotificationConfigs"
+	MethodPushConfigDelete     = "DeleteTaskPushNotificationConfig"
+	MethodGetExtendedAgentCard = "GetExtendedAgentCard"
+)
+
+// Error represents a JSON-RPC 2.0 error object.
+// TODO(yarolegovich): Convert to transport-agnostic error format so Client can use errors.Is(err, a2a.ErrMethodNotFound).
+// This needs to be implemented across all transports (currently not in grpc either).
+type Error struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// Error implements the error interface for jsonrpcError.
+func (e *Error) Error() string {
+	if len(e.Data) > 0 {
+		return fmt.Sprintf("jsonrpc error %d: %s (data: %s)", e.Code, e.Message, string(e.Data))
+	}
+	return fmt.Sprintf("jsonrpc error %d: %s", e.Code, e.Message)
+}
+
+var codeToError = map[int]error{
+	-32700: a2a.ErrParseError,
+	-32600: a2a.ErrInvalidRequest,
+	-32601: a2a.ErrMethodNotFound,
+	-32602: a2a.ErrInvalidParams,
+	-32603: a2a.ErrInternalError,
+	-32000: a2a.ErrServerError,
+	-32001: a2a.ErrTaskNotFound,
+	-32002: a2a.ErrTaskNotCancelable,
+	-32003: a2a.ErrPushNotificationNotSupported,
+	-32004: a2a.ErrUnsupportedOperation,
+	-32005: a2a.ErrUnsupportedContentType,
+	-32006: a2a.ErrInvalidAgentResponse,
+	-32007: a2a.ErrExtendedCardNotConfigured,
+	-32008: a2a.ErrExtensionSupportRequired,
+	-32009: a2a.ErrVersionNotSupported,
+	-31401: a2a.ErrUnauthenticated,
+	-31403: a2a.ErrUnauthorized,
+}
+
+// FromJSONRPCError converts a JSON-RPC error to an [a2a.Error].
+func FromJSONRPCError(e *Error) error {
+	if e == nil {
+		return nil
+	}
+	err, ok := codeToError[e.Code]
+	if !ok {
+		err = a2a.ErrInternalError
+	}
+
+	msg := e.Message
+	if len(msg) == 0 {
+		msg = err.Error()
+	}
+
+	result := a2a.NewError(err, msg)
+
+	var typedDetails []*errordetails.Typed
+	if len(e.Data) > 0 {
+		var parsedDetails []*errordetails.Typed
+		if json.Unmarshal(e.Data, &parsedDetails) == nil {
+			typedDetails = parsedDetails
+		} else { // parse error data leniently for A2A v0.3 compatibility
+			var singleDetail map[string]any
+			var d errordetails.Typed
+			if json.Unmarshal(e.Data, &d) == nil {
+				typedDetails = []*errordetails.Typed{&d}
+			} else if json.Unmarshal(e.Data, &singleDetail) == nil {
+				typedDetails = []*errordetails.Typed{errordetails.NewFromStruct(singleDetail)}
+			}
+		}
+	}
+
+	var nonErrorInfoDetails []*errordetails.Typed
+	firstStruct := true
+
+	for _, d := range typedDetails {
+		if d.TypeURL == errordetails.ErrorInfoType {
+			if rawMeta, ok := d.Value["metadata"]; ok {
+				m, ok := utils.ToStringMap(rawMeta)
+				if ok {
+					result = result.WithErrorInfoMeta(m)
+				}
+			}
+		} else {
+			if firstStruct {
+				result = result.WithDetails(d.Value)
+				firstStruct = false
+			}
+			nonErrorInfoDetails = append(nonErrorInfoDetails, d)
+		}
+	}
+	result.TypedDetails = append(result.TypedDetails, nonErrorInfoDetails...)
+	return result
+}
+
+// ToJSONRPCError converts an error to a JSON-RPC [Error].
+func ToJSONRPCError(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	var jsonrpcErr *Error
+	if errors.As(err, &jsonrpcErr) {
+		return jsonrpcErr
+	}
+
+	code := -32603
+	reason := "INTERNAL_ERROR"
+	var data []*errordetails.Typed
+
+	var a2aErr *a2a.Error
+	metadata := map[string]string{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	for c, target := range codeToError {
+		if errors.Is(err, target) {
+			code = c
+			reason = a2a.ErrorReason(target)
+			break
+		}
+	}
+
+	if errors.As(err, &a2aErr) {
+		if len(a2aErr.Details) > 0 {
+			data = append(data, errordetails.NewFromStruct(a2aErr.Details))
+		}
+		for _, d := range a2aErr.TypedDetails {
+			if d.TypeURL == errordetails.ErrorInfoType {
+				if rawMeta, ok := d.Value["metadata"]; ok {
+					m, ok := utils.ToStringMap(rawMeta)
+					if ok {
+						maps.Copy(metadata, m)
+					}
+				}
+			} else {
+				data = append(data, d)
+			}
+		}
+	}
+
+	errorInfo := errordetails.NewErrorInfo(reason, a2a.ProtocolDomain, metadata)
+	data = append(data, errorInfo)
+
+	var rawData json.RawMessage
+	if len(data) > 0 {
+		rawData, _ = json.Marshal(data)
+	}
+
+	return &Error{
+		Code:    code,
+		Message: err.Error(),
+		Data:    rawData,
+	}
+}
+
+// IsValidID checks if the given ID is valid for a JSON-RPC request.
+func IsValidID(id any) bool {
+	if id == nil {
+		return true
+	}
+	switch id.(type) {
+	case string, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+// ServerRequest represents a JSON-RPC 2.0 server request.
+type ServerRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	ID      any             `json:"id"`
+}
+
+// ServerResponse represents a JSON-RPC 2.0 server response.
+type ServerResponse struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      any    `json:"id"`
+	Result  any    `json:"result,omitempty"`
+	Error   *Error `json:"error,omitempty"`
+}
+
+// ClientRequest represents a JSON-RPC 2.0 client request.
+type ClientRequest struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
+	ID      string `json:"id"`
+}
+
+// ClientResponse represents a JSON-RPC 2.0 client response.
+type ClientResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *Error          `json:"error,omitempty"`
+}

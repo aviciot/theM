@@ -1,0 +1,145 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package taskexec
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/eventqueue"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/workqueue"
+	"github.com/a2aproject/a2a-go/v2/internal/eventpipe"
+	"github.com/a2aproject/a2a-go/v2/log"
+)
+
+type workQueueHandler struct {
+	queueManager      eventqueue.Manager
+	taskStore         taskstore.Store
+	factory           Factory
+	panicHandler      PanicHandlerFn
+	inactivityTimeout time.Duration
+}
+
+func newWorkQueueHandler(cfg DistributedManagerConfig) *workQueueHandler {
+	backend := &workQueueHandler{
+		queueManager:      cfg.QueueManager,
+		taskStore:         cfg.TaskStore,
+		factory:           cfg.Factory,
+		panicHandler:      cfg.PanicHandler,
+		inactivityTimeout: cfg.AgentInactivityTimeout,
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+
+	cfg.WorkQueue.RegisterHandler(workqueue.HandlerConfig{
+		Limiter: cfg.ConcurrencyConfig,
+	}, func(ctx context.Context, p *workqueue.Payload) (a2a.SendMessageResult, error) {
+		attrs := []any{
+			slog.String("task_id", string(p.TaskID)),
+			slog.String("work_type", string(p.Type)),
+		}
+
+		if p.ExecuteRequest != nil && p.ExecuteRequest.Message != nil {
+			attrs = append(attrs, slog.String("message_id", p.ExecuteRequest.Message.ID))
+		}
+
+		if cfg.ContextCodec != nil && p.CallContext != nil {
+			localCtx, err := cfg.ContextCodec.Decode(ctx, p.CallContext)
+			if err != nil {
+				return nil, fmt.Errorf("context decoding failed: %w", err)
+			}
+			ctx = localCtx
+		}
+
+		ctx = log.AttachLogger(ctx, cfg.Logger.WithGroup("a2a").With(attrs...))
+
+		return backend.handle(ctx, p)
+	})
+	return backend
+}
+
+func (b *workQueueHandler) handle(ctx context.Context, payload *workqueue.Payload) (a2a.SendMessageResult, error) {
+	pipe := eventpipe.NewLocal()
+	defer pipe.Close()
+
+	tracker := newInactivityTracker(b.inactivityTimeout)
+	producerWriter := newActivityTrackingWriter(pipe.Writer, tracker)
+
+	var eventProducer eventProducerFn
+	var eventProcessor Processor
+	var cleaner Cleaner
+
+	switch payload.Type {
+	case workqueue.PayloadTypeExecute:
+		if payload.ExecuteRequest == nil {
+			return nil, fmt.Errorf("execution request not set: %w", workqueue.ErrMalformedPayload)
+		}
+		executor, processor, localCleaner, err := b.factory.CreateExecutor(ctx, payload.TaskID, payload.ExecuteRequest)
+		if err != nil {
+			return nil, fmt.Errorf("executor setup failed: %w", err)
+		}
+		eventProducer = func(ctx context.Context) error { return executor.Execute(ctx, producerWriter) }
+		eventProcessor = processor
+		cleaner = localCleaner
+
+	case workqueue.PayloadTypeCancel:
+		if payload.CancelRequest == nil {
+			return nil, fmt.Errorf("cancelation request not set: %w", workqueue.ErrMalformedPayload)
+		}
+		canceler, processor, localCleaner, err := b.factory.CreateCanceler(ctx, payload.CancelRequest)
+		if err != nil {
+			return nil, fmt.Errorf("canceler setup failed: %w", err)
+		}
+		eventProducer = func(ctx context.Context) error { return canceler.Cancel(ctx, producerWriter) }
+		eventProcessor = processor
+		cleaner = localCleaner
+
+	default:
+		// do not return non-retryable ErrMalformedPayload, the process might be running outdated code
+		return nil, fmt.Errorf("unknown payload type: %q", payload.Type)
+	}
+
+	queue, err := b.queueManager.CreateWriter(ctx, payload.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create a queue: %w", err)
+	}
+
+	defer func() {
+		if closeErr := queue.Close(); closeErr != nil {
+			log.Warn(ctx, "queue close failed", "error", closeErr)
+		}
+	}()
+
+	handler := &executionHandler{
+		agentEvents:       pipe.Reader,
+		handledEventQueue: queue,
+		handleEventFn:     eventProcessor.Process,
+		handleErrorFn:     eventProcessor.ProcessError,
+	}
+
+	var heartbeater workqueue.Heartbeater
+	if hb, ok := workqueue.HeartbeaterFrom(ctx); ok {
+		heartbeater = hb
+	}
+
+	result, err := runProducerConsumer(ctx, eventProducer, handler.processEvents, heartbeater, b.panicHandler, tracker)
+	cleaner.Cleanup(ctx, result, err)
+	return result, err
+}

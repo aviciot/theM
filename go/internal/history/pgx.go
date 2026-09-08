@@ -241,11 +241,13 @@ ON CONFLICT (task_id, seq) DO NOTHING`
 // externalUserID and userID are stored on the task row so history reads can filter per identity.
 func (s *Store) resolveRootTaskID(ctx context.Context, contextID, runID, tenantID, externalUserID string, userID int64) (string, error) {
 	// Try to find an existing task first, scoped to tenantID when non-empty.
+	// NULLIF($2,'')::uuid avoids a cast error when runID is empty; NULL=NULL
+	// comparison uses IS NOT DISTINCT FROM so both sides NULL matches.
 	const findQ = `
 SELECT id::text
 FROM them.tasks
 WHERE context_id = $1::uuid
-  AND (run_id = $2::uuid OR ($2 = '' AND run_id IS NULL))
+  AND run_id IS NOT DISTINCT FROM NULLIF($2, '')::uuid
   AND ($3 = '' OR tenant_id = $3::uuid)
 LIMIT 1`
 	row := s.pool.QueryRow(ctx, findQ, contextID, runID, tenantID)

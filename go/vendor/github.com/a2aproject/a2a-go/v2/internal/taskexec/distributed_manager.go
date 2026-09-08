@@ -1,0 +1,245 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package taskexec
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/eventqueue"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/workqueue"
+	"github.com/a2aproject/a2a-go/v2/internal/taskupdate"
+	"github.com/a2aproject/a2a-go/v2/log"
+)
+
+// DistributedManagerConfig contains configuration for A2A task execution
+// mode where work is distributed across an A2A cluster.
+type DistributedManagerConfig struct {
+	WorkQueue         workqueue.Queue
+	QueueManager      eventqueue.Manager
+	Factory           Factory
+	TaskStore         taskstore.Store
+	ConcurrencyConfig limiter.ConcurrencyConfig
+	Logger            *slog.Logger
+	PanicHandler      PanicHandlerFn
+	ContextCodec      ContextCodec
+	// AgentInactivityTimeout, if positive, terminates an execution when the
+	// agent's producer has not written any events to the pipe for the
+	// configured duration. The terminating cause is [ErrAgentInactivityTimeout].
+	// A value of 0 disables the watcher, preserving prior behavior.
+	AgentInactivityTimeout time.Duration
+}
+
+type distributedManager struct {
+	workHandler  *workQueueHandler
+	workQueue    workqueue.Queue
+	queueManager eventqueue.Manager
+	taskStore    taskstore.Store
+	ctxCodec     ContextCodec
+}
+
+var _ Manager = (*distributedManager)(nil)
+
+// NewDistributedManager creates a new [Manager] instance which uses WorkQueue for work distribution across A2A cluster.
+func NewDistributedManager(cfg DistributedManagerConfig) Manager {
+	frontend := &distributedManager{
+		workHandler:  newWorkQueueHandler(cfg),
+		queueManager: cfg.QueueManager,
+		workQueue:    cfg.WorkQueue,
+		taskStore:    cfg.TaskStore,
+		ctxCodec:     cfg.ContextCodec,
+	}
+	return frontend
+}
+
+func (m *distributedManager) Resubscribe(ctx context.Context, taskID a2a.TaskID) (Subscription, error) {
+	if _, err := m.taskStore.Get(ctx, taskID); err != nil {
+		return nil, a2a.ErrTaskNotFound
+	}
+	queue, err := m.queueManager.CreateReader(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get event queue: %w", err)
+	}
+	return newRemoteSubscription(queue, m.taskStore, taskID), nil
+}
+
+func (m *distributedManager) Execute(ctx context.Context, req *a2a.SendMessageRequest) (Subscription, error) {
+	if req == nil || req.Message == nil {
+		return nil, fmt.Errorf("message is required: %w", a2a.ErrInvalidParams)
+	}
+
+	var requestedTaskID a2a.TaskID
+	isNewTask := req.Message.TaskID == ""
+	if isNewTask {
+		requestedTaskID = a2a.NewTaskID()
+	} else {
+		requestedTaskID = req.Message.TaskID
+	}
+
+	msg := req.Message
+	if !isNewTask {
+		taskStoreTask, err := m.taskStore.Get(ctx, msg.TaskID)
+		if err != nil {
+			return nil, fmt.Errorf("task loading failed: %w", err)
+		}
+		storedTask := taskStoreTask.Task
+		if storedTask == nil {
+			return nil, a2a.ErrTaskNotFound
+		}
+
+		if msg.ContextID != "" && msg.ContextID != storedTask.ContextID {
+			return nil, fmt.Errorf("message contextID different from task contextID: %w", a2a.ErrInvalidParams)
+		}
+
+		if storedTask.Status.State.Terminal() {
+			return nil, fmt.Errorf("task in a terminal state %q: %w", storedTask.Status.State, a2a.ErrInvalidParams)
+		}
+	}
+
+	encodedCtx, err := m.encodeContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Subscribe before submitting work so that a fast (eg. in-memory) workqueue
+	// implementation cannot broadcast an event before there's a reader
+	queue, err := m.queueManager.CreateReader(ctx, requestedTaskID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to execution events: %w", err)
+	}
+
+	taskID, err := m.workQueue.Write(ctx, &workqueue.Payload{
+		Type:           workqueue.PayloadTypeExecute,
+		TaskID:         requestedTaskID,
+		ExecuteRequest: req,
+		CallContext:    encodedCtx,
+	})
+	if err != nil {
+		safeCloseReader(ctx, queue)
+		return nil, fmt.Errorf("failed to create work item: %w", err)
+	}
+
+	if taskID != requestedTaskID {
+		safeCloseReader(ctx, queue)
+
+		if req.Message.TaskID != "" {
+			return nil, fmt.Errorf("bug: work queue task id override only allowed for new tasks")
+		}
+		log.Info(ctx, "work queue task id override", "provided", string(requestedTaskID), "used", taskID)
+
+		queue, err = m.queueManager.CreateReader(ctx, taskID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to subscribe to execution events after task id override: %w", err)
+		}
+	}
+
+	return newRemoteSubscription(queue, m.taskStore, taskID), nil
+}
+
+func (m *distributedManager) Cancel(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	storedTask, err := m.taskStore.Get(ctx, req.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load a task: %w", err)
+	}
+
+	task := storedTask.Task
+	if task.Status.State == a2a.TaskStateCanceled {
+		return task, nil
+	}
+
+	if task.Status.State.Terminal() {
+		return nil, fmt.Errorf("task in non-cancelable state %q: %w", task.Status.State, a2a.ErrTaskNotCancelable)
+	}
+
+	queue, err := m.queueManager.CreateReader(ctx, req.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get or create queue: %w", err)
+	}
+
+	encodedCtx, err := m.encodeContext(ctx)
+	if err != nil {
+		safeCloseReader(ctx, queue)
+		return nil, err
+	}
+
+	taskID, err := m.workQueue.Write(ctx, &workqueue.Payload{
+		Type:          workqueue.PayloadTypeCancel,
+		TaskID:        req.ID,
+		CancelRequest: req,
+		CallContext:   encodedCtx,
+	})
+	if err != nil {
+		// if cancelation lease is already taken we can tap into the running cancellation events
+		if !errors.Is(err, workqueue.ErrLeaseAlreadyTaken) {
+			return nil, fmt.Errorf("failed to create work item: %w", err)
+		}
+	} else if taskID != req.ID {
+		return nil, fmt.Errorf("bug: work-queue task id override is only allowed for executions")
+	}
+
+	subscription := newRemoteSubscription(queue, m.taskStore, req.ID)
+
+	var subscriptionErr error
+	for event, err := range subscription.Events(ctx) {
+		if err != nil {
+			subscriptionErr = err
+			break
+		}
+		if taskupdate.IsFinal(event) {
+			if result, ok := event.(*a2a.Task); ok {
+				return convertToCancelationResult(ctx, result, nil)
+			}
+			break
+		}
+	}
+
+	storedTask, err = m.taskStore.Get(ctx, req.ID)
+	if err != nil {
+		if subscriptionErr == nil {
+			return nil, fmt.Errorf("failed to load a task: %w", err)
+		} else {
+			return nil, fmt.Errorf("failed to load a task after subscription error: %w: %w", err, subscriptionErr)
+		}
+	}
+
+	if subscriptionErr != nil {
+		log.Warn(ctx, "cancelation subscription error, fallback to taskstore state", "error", subscriptionErr)
+	}
+
+	return convertToCancelationResult(ctx, storedTask.Task, nil)
+}
+
+func (m *distributedManager) encodeContext(ctx context.Context) (map[string]any, error) {
+	if m.ctxCodec == nil {
+		return nil, nil
+	}
+	r, err := m.ctxCodec.Encode(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("context encoding failed: %w", err)
+	}
+	return r, nil
+}
+
+func safeCloseReader(ctx context.Context, r eventqueue.Reader) {
+	if closeErr := r.Close(); closeErr != nil {
+		log.Warn(ctx, "event queue reader close failed", "error", closeErr)
+	}
+}

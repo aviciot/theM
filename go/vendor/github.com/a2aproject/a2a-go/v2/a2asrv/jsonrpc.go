@@ -1,0 +1,383 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package a2asrv
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"iter"
+	"net/http"
+	"runtime/debug"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/internal/jsonrpc"
+	"github.com/a2aproject/a2a-go/v2/internal/sse"
+	"github.com/a2aproject/a2a-go/v2/log"
+)
+
+type jsonrpcHandler struct {
+	handler RequestHandler
+	cfg     *TransportConfig
+}
+
+// NewJSONRPCHandler creates an [http.Handler] which implements JSONRPC A2A protocol binding.
+func NewJSONRPCHandler(handler RequestHandler, options ...TransportOption) http.Handler {
+	h := &jsonrpcHandler{handler: handler, cfg: &TransportConfig{}}
+	for _, option := range options {
+		option(h.cfg)
+	}
+	return h
+}
+
+// ServeHTTP implements http.Handler.
+func (h *jsonrpcHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	ctx, _ = NewCallContext(ctx, NewServiceParams(req.Header))
+
+	if req.Method != "POST" {
+		h.writeJSONRPCError(ctx, rw, a2a.ErrInvalidRequest, nil)
+		return
+	}
+
+	defer func() {
+		if err := req.Body.Close(); err != nil {
+			log.Error(ctx, "failed to close request body", err)
+		}
+	}()
+
+	var payload jsonrpc.ServerRequest
+	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+		h.writeJSONRPCError(ctx, rw, handleUnmarshalError(err), nil)
+		return
+	}
+
+	if !jsonrpc.IsValidID(payload.ID) {
+		h.writeJSONRPCError(ctx, rw, a2a.ErrInvalidRequest, nil)
+		return
+	}
+
+	if payload.JSONRPC != jsonrpc.Version {
+		h.writeJSONRPCError(ctx, rw, a2a.ErrInvalidRequest, payload.ID)
+		return
+	}
+
+	if payload.Method == jsonrpc.MethodTasksResubscribe || payload.Method == jsonrpc.MethodMessageStream {
+		h.handleStreamingRequest(ctx, rw, &payload)
+	} else {
+		h.handleRequest(ctx, rw, &payload)
+	}
+}
+
+func (h *jsonrpcHandler) handleRequest(ctx context.Context, rw http.ResponseWriter, req *jsonrpc.ServerRequest) {
+	defer func() {
+		if r := recover(); r != nil {
+			if h.cfg.PanicHandler == nil {
+				panic(r)
+			}
+			err := h.cfg.PanicHandler(r)
+			if err != nil {
+				h.writeJSONRPCError(ctx, rw, err, req.ID)
+				return
+			}
+		}
+	}()
+
+	var result any
+	var err error
+	switch req.Method {
+	case jsonrpc.MethodTasksGet:
+		result, err = h.onGetTask(ctx, req.Params)
+	case jsonrpc.MethodTasksList:
+		result, err = h.onListTasks(ctx, req.Params)
+	case jsonrpc.MethodMessageSend:
+		var res a2a.SendMessageResult
+		res, err = h.onSendMessage(ctx, req.Params)
+		if err == nil {
+			result = a2a.StreamResponse{Event: res}
+		}
+	case jsonrpc.MethodTasksCancel:
+		result, err = h.onCancelTask(ctx, req.Params)
+	case jsonrpc.MethodPushConfigGet:
+		result, err = h.onGetTaskPushConfig(ctx, req.Params)
+	case jsonrpc.MethodPushConfigList:
+		result, err = h.onListTaskPushConfigs(ctx, req.Params)
+	case jsonrpc.MethodPushConfigSet:
+		result, err = h.onSetTaskPushConfig(ctx, req.Params)
+	case jsonrpc.MethodPushConfigDelete:
+		err = h.onDeleteTaskPushConfig(ctx, req.Params)
+	case jsonrpc.MethodGetExtendedAgentCard:
+		result, err = h.onGetExtendedAgentCard(ctx, req.Params)
+	case "":
+		err = a2a.ErrInvalidRequest
+	default:
+		err = a2a.ErrMethodNotFound
+	}
+
+	if err != nil {
+		h.writeJSONRPCError(ctx, rw, err, req.ID)
+		return
+	}
+
+	rw.Header().Set("Content-Type", "application/json")
+	resp := jsonrpc.ServerResponse{JSONRPC: jsonrpc.Version, ID: req.ID, Result: result}
+	if err := json.NewEncoder(rw).Encode(resp); err != nil {
+		log.Error(ctx, "failed to encode response", err)
+	}
+}
+
+func (h *jsonrpcHandler) handleStreamingRequest(ctx context.Context, rw http.ResponseWriter, req *jsonrpc.ServerRequest) {
+	sseWriter, err := sse.NewWriter(rw)
+	if err != nil {
+		h.writeJSONRPCError(ctx, rw, err, req.ID)
+		return
+	}
+
+	sseWriter.WriteHeaders()
+
+	sseChan, panicChan := make(chan []byte), make(chan error, 1)
+	requestCtx, cancelExecCtx := context.WithCancel(ctx)
+	defer cancelExecCtx()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicChan <- fmt.Errorf("%v\n%s", r, debug.Stack())
+			} else {
+				// Only close if not panice, otherwise <-sseChan would compete with <-panicChan in select
+				close(sseChan)
+			}
+		}()
+
+		var events iter.Seq2[a2a.Event, error]
+		switch req.Method {
+		case jsonrpc.MethodTasksResubscribe:
+			events = h.onResubscribeToTask(requestCtx, req.Params)
+		case jsonrpc.MethodMessageStream:
+			events = h.onSendMessageStream(requestCtx, req.Params)
+		default:
+			events = func(yield func(a2a.Event, error) bool) { yield(nil, a2a.ErrMethodNotFound) }
+		}
+		eventSeqToSSEDataStream(requestCtx, req, sseChan, events)
+	}()
+
+	// Set up keep-alive ticker if enabled (interval > 0)
+	var keepAliveTicker *time.Ticker
+	var keepAliveChan <-chan time.Time
+	if h.cfg.KeepAliveInterval > 0 {
+		keepAliveTicker = time.NewTicker(h.cfg.KeepAliveInterval)
+		defer keepAliveTicker.Stop()
+		keepAliveChan = keepAliveTicker.C
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-panicChan:
+			if h.cfg.PanicHandler == nil {
+				panic(err)
+			}
+			data, ok := marshalJSONRPCError(req, h.cfg.PanicHandler(err))
+			if !ok {
+				log.Error(ctx, "failed to marshal error response", err)
+				return
+			}
+			if err := sseWriter.WriteData(ctx, data); err != nil {
+				log.Error(ctx, "failed to write an event", err)
+			}
+			// Prevent the handler from hanging
+			return
+		case <-keepAliveChan:
+			if err := sseWriter.WriteKeepAlive(ctx); err != nil {
+				log.Error(ctx, "failed to write keep-alive", err)
+				return
+			}
+		case data, ok := <-sseChan:
+			if !ok {
+				return
+			}
+			if err := sseWriter.WriteData(ctx, data); err != nil {
+				log.Error(ctx, "failed to write an event", err)
+				return
+			}
+		}
+	}
+}
+
+func eventSeqToSSEDataStream(ctx context.Context, req *jsonrpc.ServerRequest, sseChan chan []byte, events iter.Seq2[a2a.Event, error]) {
+	handleError := func(err error) {
+		bytes, ok := marshalJSONRPCError(req, err)
+		if !ok {
+			log.Error(ctx, "failed to marshal error response", err)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case sseChan <- bytes:
+		}
+	}
+
+	for event, err := range events {
+		if err != nil {
+			handleError(err)
+			return
+		}
+
+		resp := jsonrpc.ServerResponse{JSONRPC: jsonrpc.Version, ID: req.ID, Result: a2a.StreamResponse{Event: event}}
+		bytes, err := json.Marshal(resp)
+		if err != nil {
+			handleError(err)
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case sseChan <- bytes:
+		}
+	}
+}
+
+func (h *jsonrpcHandler) onGetTask(ctx context.Context, raw json.RawMessage) (*a2a.Task, error) {
+	var query a2a.GetTaskRequest
+	if err := json.Unmarshal(raw, &query); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.GetTask(ctx, &query)
+}
+
+func (h *jsonrpcHandler) onListTasks(ctx context.Context, raw json.RawMessage) (*a2a.ListTasksResponse, error) {
+	var request a2a.ListTasksRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.ListTasks(ctx, &request)
+}
+
+func (h *jsonrpcHandler) onCancelTask(ctx context.Context, raw json.RawMessage) (*a2a.Task, error) {
+	var id a2a.CancelTaskRequest
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.CancelTask(ctx, &id)
+}
+
+func (h *jsonrpcHandler) onSendMessage(ctx context.Context, raw json.RawMessage) (a2a.SendMessageResult, error) {
+	var message a2a.SendMessageRequest
+	if err := json.Unmarshal(raw, &message); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.SendMessage(ctx, &message)
+}
+
+func (h *jsonrpcHandler) onResubscribeToTask(ctx context.Context, raw json.RawMessage) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		var id a2a.SubscribeToTaskRequest
+		if err := json.Unmarshal(raw, &id); err != nil {
+			yield(nil, handleUnmarshalError(err))
+			return
+		}
+		for event, err := range h.handler.SubscribeToTask(ctx, &id) {
+			if !yield(event, err) {
+				return
+			}
+		}
+	}
+}
+
+func (h *jsonrpcHandler) onSendMessageStream(ctx context.Context, raw json.RawMessage) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		var message a2a.SendMessageRequest
+		if err := json.Unmarshal(raw, &message); err != nil {
+			yield(nil, handleUnmarshalError(err))
+			return
+		}
+		for event, err := range h.handler.SendStreamingMessage(ctx, &message) {
+			if !yield(event, err) {
+				return
+			}
+		}
+	}
+}
+
+func (h *jsonrpcHandler) onGetTaskPushConfig(ctx context.Context, raw json.RawMessage) (*a2a.PushConfig, error) {
+	var params a2a.GetTaskPushConfigRequest
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.GetTaskPushConfig(ctx, &params)
+}
+
+func (h *jsonrpcHandler) onListTaskPushConfigs(ctx context.Context, raw json.RawMessage) (*a2a.ListTaskPushConfigResponse, error) {
+	var params a2a.ListTaskPushConfigRequest
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.ListTaskPushConfigs(ctx, &params)
+}
+
+func (h *jsonrpcHandler) onSetTaskPushConfig(ctx context.Context, raw json.RawMessage) (*a2a.PushConfig, error) {
+	var params a2a.PushConfig
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.CreateTaskPushConfig(ctx, &params)
+}
+
+func (h *jsonrpcHandler) onDeleteTaskPushConfig(ctx context.Context, raw json.RawMessage) error {
+	var params a2a.DeleteTaskPushConfigRequest
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return handleUnmarshalError(err)
+	}
+	return h.handler.DeleteTaskPushConfig(ctx, &params)
+}
+
+func (h *jsonrpcHandler) onGetExtendedAgentCard(ctx context.Context, raw json.RawMessage) (*a2a.AgentCard, error) {
+	var params a2a.GetExtendedAgentCardRequest
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, handleUnmarshalError(err)
+	}
+	return h.handler.GetExtendedAgentCard(ctx, &params)
+}
+
+func marshalJSONRPCError(req *jsonrpc.ServerRequest, err error) ([]byte, bool) {
+	jsonrpcErr := jsonrpc.ToJSONRPCError(err)
+	resp := jsonrpc.ServerResponse{JSONRPC: jsonrpc.Version, ID: req.ID, Error: jsonrpcErr}
+	bytes, err := json.Marshal(resp)
+	if err != nil {
+		return nil, false
+	}
+	return bytes, true
+}
+
+func handleUnmarshalError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return fmt.Errorf("%w: %w", a2a.ErrInvalidParams, err)
+	}
+	return fmt.Errorf("%w: %w", a2a.ErrParseError, err)
+}
+
+func (h *jsonrpcHandler) writeJSONRPCError(ctx context.Context, rw http.ResponseWriter, err error, reqID any) {
+	jsonrpcErr := jsonrpc.ToJSONRPCError(err)
+	resp := jsonrpc.ServerResponse{JSONRPC: jsonrpc.Version, Error: jsonrpcErr, ID: reqID}
+	rw.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(rw).Encode(resp); err != nil {
+		log.Error(ctx, "failed to send error response", err)
+	}
+}

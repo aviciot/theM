@@ -1,0 +1,103 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package a2asrv
+
+import (
+	"context"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/a2aproject/a2a-go/v2/log"
+)
+
+// ExecutorContextInterceptor defines an extension point for modifying the information which
+// gets passed to the agent when it is invoked.
+type ExecutorContextInterceptor interface {
+	// Intercept can modify the [ExecutorContext] before it gets passed to the [AgentExecutor].
+	Intercept(ctx context.Context, execCtx *ExecutorContext) (context.Context, error)
+}
+
+// WithExecutorContextInterceptor overrides the default ExecutorContextInterceptor with a custom implementation.
+func WithExecutorContextInterceptor(interceptor ExecutorContextInterceptor) RequestHandlerOption {
+	return func(ih *InterceptedHandler, h *defaultRequestHandler) {
+		h.reqContextInterceptors = append(h.reqContextInterceptors, interceptor)
+	}
+}
+
+// ExecutorContext provides information about an incoming A2A request to [AgentExecutor].
+type ExecutorContext struct {
+	// A message which triggered the execution. nil for cancelation request.
+	Message *a2a.Message
+	// TaskID is an ID of the task or a newly generated UUIDv4 in case Message did not reference any Task.
+	TaskID a2a.TaskID
+	// StoredTask is present if request message specified a TaskID.
+	StoredTask *a2a.Task
+	// RelatedTasks can be present when Message includes Task references and RequestContextBuilder is configured to load them.
+	RelatedTasks []*a2a.Task
+	// ContextID is a server-generated identifier for maintaining context across multiple related tasks or interactions. Matches the Task ContextID.
+	ContextID string
+	// Metadata of the request which triggered the call.
+	Metadata map[string]any
+	// User who made the request which triggered the execution.
+	User *User
+	// ServiceParams of the request which triggered the execution.
+	ServiceParams *ServiceParams
+	// Tenant is an optional ID of the agent owner.
+	Tenant string
+}
+
+var _ a2a.TaskInfoProvider = (*ExecutorContext)(nil)
+
+// TaskInfo returns information used for associating events with a task.
+func (ec *ExecutorContext) TaskInfo() a2a.TaskInfo {
+	return a2a.TaskInfo{TaskID: ec.TaskID, ContextID: ec.ContextID}
+}
+
+// ReferencedTasksLoader implements [ExecutorContextInterceptor]. It populates [ExecutorContext.RelatedTasks]
+// with Tasks referenced in the [a2a.Message.ReferenceTasks] of the message which triggered the agent execution.
+type ReferencedTasksLoader struct {
+	Store taskstore.Store
+}
+
+var _ ExecutorContextInterceptor = (*ReferencedTasksLoader)(nil)
+
+// Intercept implements [ExecutorContextInterceptor].
+// It loads referenced tasks from the task store and populates [ExecutorContext.RelatedTasks].
+func (ri *ReferencedTasksLoader) Intercept(ctx context.Context, execCtx *ExecutorContext) (context.Context, error) {
+	msg := execCtx.Message
+	if msg == nil {
+		return ctx, nil
+	}
+
+	if len(msg.ReferenceTasks) == 0 {
+		return ctx, nil
+	}
+
+	tasks := make([]*a2a.Task, 0, len(msg.ReferenceTasks))
+	for _, taskID := range msg.ReferenceTasks {
+		storedTask, err := ri.Store.Get(ctx, taskID)
+		if err != nil {
+			log.Info(ctx, "failed to get a referenced task", "referenced_task_id", taskID)
+			continue
+		}
+		tasks = append(tasks, storedTask.Task)
+	}
+
+	if len(tasks) > 0 {
+		execCtx.RelatedTasks = tasks
+	}
+
+	return ctx, nil
+}

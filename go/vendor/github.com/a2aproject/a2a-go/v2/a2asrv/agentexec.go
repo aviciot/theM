@@ -1,0 +1,520 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package a2asrv
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"iter"
+	"slices"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/push"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/a2aproject/a2a-go/v2/internal/eventpipe"
+	"github.com/a2aproject/a2a-go/v2/internal/taskexec"
+	"github.com/a2aproject/a2a-go/v2/internal/taskupdate"
+	"github.com/a2aproject/a2a-go/v2/log"
+)
+
+// AgentExecutor implementations translate agent outputs to A2A events.
+// AgentExecutor can optionally implement [AgentExecutionCleaner] if some logic needs to run
+// after both successful and failed executions.
+// The provided [ExecutorContext] should be used as a [a2a.TaskInfoProvider] argument
+// for [a2a.Event]-s constructor functions, for example:
+//
+//	a2a.NewSubmittedTask(execCtx, a2a.TaskStateSubmitted, nil)
+//	a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil)
+//	a2a.NewArtifactEvent(execCtx, parts...)
+//	a2a.NewArtifactUpdateEvent(execCtx, artifactID, parts...)
+//
+// For streaming responses [a2a.TaskArtifactUpdatEvent]-s should be emitted.
+// A2A server stops processing events after one of these events:
+//   - An [a2a.Message] with any payload.
+//   - An [a2a.Task] or [a2a.TaskStatusUpdateEvent] with a [a2a.TaskState.Terminal] equal to true.
+//   - An [a2a.Task] or [a2a.TaskStatusUpdateEvent] in [a2a.TaskStateInputRequired] state.
+//
+// In general, the executor should not emit an error after the first event was emitted,
+// but an [a2a.TaskStatusUpdateEvent] with a failed state.
+//
+// The following code can be used as a streaming implementation template with generateOutputs and toParts missing:
+//
+//	func Execute(ctx context.Context, execCtx *ExecutorContext) iter.Seq2[a2a.Event, error] {
+//		return func(yield func(a2a.Event, error) bool) {
+//			if execCtx.StoredTask == nil {
+//				if !yield(a2a.NewSubmittedTask(execCtx, a2a.TaskStateSubmitted, nil), nil) {
+//					return
+//				}
+//			}
+//
+//			/* performs the necessary setup */
+//
+//			if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
+//				return
+//			}
+//
+//			var artifactID a2a.ArtifactID
+//			for output, err := range generateOutputs() {
+//				if err != nil {
+//					event := a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, toErrorMessage(err))
+//					if !yield(event, nil) {
+//						return
+//					}
+//				}
+//
+//				parts := toParts(output)
+//				var event *a2a.TaskArtifactUpdateEvent
+//				if artifactID == "" {
+//					event = a2a.NewArtifactEvent(execCtx, parts...)
+//					artifactID = event.Artifact.ID
+//				} else {
+//					event = a2a.NewArtifactUpdateEvent(execCtx, artifactID, parts...)
+//				}
+//
+//				if !yield(event, nil) {
+//					return
+//				}
+//			}
+//
+//			if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil) {
+//				return
+//			}
+//		}
+//	}
+type AgentExecutor interface {
+	// Execute invokes the agent passing information about the request which triggered the execution,
+	// translates agent outputs to A2A events and emits them for processing.
+	// Every invocation runs in a dedicated goroutine.
+	//
+	// Failures should generally be reported by writing events carrying the cancelation information
+	// and task state. An error should be returned in special cases or before a task was created.
+	Execute(ctx context.Context, execCtx *ExecutorContext) iter.Seq2[a2a.Event, error]
+
+	// Cancel is called when a client requests the agent to stop working on a task.
+	// The simplest implementation can emit an [a2a.TaskStatusUpdateEvent] with [a2a.TaskStateCanceled].
+	//
+	// Optimistic concurrent control is used during task store updates to prevent concurrent writes
+	// and propagate cancelation signal in a server cluster when execution and cancelation is handled
+	// by different processes.
+	//
+	// TaskStatusUpdateEvent with a failed state is handled differently in terms
+	// of retries. If a concurrent task modification is detected server stack will re-fetch
+	// the latest state from the task store and retry update request.
+	//
+	// If the event gets applied during an active execution, the next execution update will
+	// fail on OCC and execution will be canceled.
+	//
+	// An error should be returned if the cancelation request cannot be processed.
+	Cancel(ctx context.Context, execCtx *ExecutorContext) iter.Seq2[a2a.Event, error]
+}
+
+// AgentExecutorFunc is a helper for creating an [AgentExecutor] implementation with the default
+// cancelation logic which only attempts to apply TaskStateCanceled status update to a task.
+type AgentExecutorFunc func(context.Context, *ExecutorContext) iter.Seq2[a2a.Event, error]
+
+var _ AgentExecutor = (AgentExecutorFunc)(nil)
+
+// Execute implements [AgentExecutor.Execute].
+func (fn AgentExecutorFunc) Execute(ctx context.Context, execCtx *ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return fn(ctx, execCtx)
+}
+
+// Cancel implements [AgentExecutor.Cancel].
+func (AgentExecutorFunc) Cancel(ctx context.Context, execCtx *ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
+	}
+}
+
+// AgentExecutionCleaner is an optional interface [AgentExecutor] can implement to perform cleanup after execution finishes.
+type AgentExecutionCleaner interface {
+	// Cleanup is called after an agent execution completes with either result or an error.
+	Cleanup(ctx context.Context, execCtx *ExecutorContext, result a2a.SendMessageResult, err error)
+}
+
+type factory struct {
+	taskStore          taskstore.Store
+	pushSender         push.Sender
+	pushConfigStore    push.ConfigStore
+	agent              AgentExecutor
+	interceptors       []ExecutorContextInterceptor
+	taskRetrySupported bool
+}
+
+var _ taskexec.Factory = (*factory)(nil)
+
+// CreateExecutor creates a new task executor for the given task ID and request parameters.
+func (f *factory) CreateExecutor(ctx context.Context, tid a2a.TaskID, params *a2a.SendMessageRequest) (taskexec.Executor, taskexec.Processor, taskexec.Cleaner, error) {
+	execCtx, err := f.loadExecutionContext(ctx, tid, params)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load exec ctx: %w", err)
+	}
+
+	if callCtx, ok := CallContextFrom(ctx); ok {
+		execCtx.ctx.User = callCtx.User
+		execCtx.ctx.ServiceParams = callCtx.ServiceParams()
+		execCtx.ctx.Tenant = callCtx.Tenant()
+	}
+
+	if params.Config != nil && params.Config.PushConfig != nil {
+		if f.pushConfigStore == nil || f.pushSender == nil {
+			return nil, nil, nil, fmt.Errorf("bug: message with push config received bug push is not configured: %w", a2a.ErrPushNotificationNotSupported)
+		}
+		if _, err := f.pushConfigStore.Save(ctx, tid, params.Config.PushConfig); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to save push config for task %s: %w", tid, err)
+		}
+	}
+
+	executor := &executor{agent: f.agent, execCtx: execCtx.ctx, interceptors: f.interceptors}
+	processor := newProcessor(
+		taskupdate.NewManager(f.taskStore, execCtx.ctx.TaskInfo(), execCtx.task),
+		f.pushConfigStore,
+		f.pushSender,
+		execCtx.ctx,
+		f.taskStore,
+	)
+	return executor, processor, &cleaner{agent: f.agent, execCtx: execCtx.ctx}, nil
+}
+
+type executionContext struct {
+	ctx  *ExecutorContext
+	task *taskstore.StoredTask
+}
+
+// loadExecutionContext returns the information necessary for creating agent executor and agent event processor.
+func (f *factory) loadExecutionContext(ctx context.Context, tid a2a.TaskID, params *a2a.SendMessageRequest) (*executionContext, error) {
+	message := params.Message
+
+	if message.TaskID == "" && !f.taskRetrySupported {
+		return f.createNewExecutionContext(tid, params)
+	}
+
+	taskStoreTask, err := f.taskStore.Get(ctx, tid)
+	if message.TaskID == "" && errors.Is(err, a2a.ErrTaskNotFound) {
+		return f.createNewExecutionContext(tid, params)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("task loading failed: %w", err)
+	}
+
+	storedTask, lastVersion := taskStoreTask.Task, taskStoreTask.Version
+	if message.TaskID != "" && message.TaskID != tid {
+		return nil, fmt.Errorf("bug: message task id different from executor task id")
+	}
+
+	if storedTask == nil {
+		return nil, fmt.Errorf("bug: nil task returned instead of ErrTaskNotFound")
+	}
+
+	if message.ContextID != "" && message.ContextID != storedTask.ContextID {
+		return nil, fmt.Errorf("message contextID different from task contextID: %w", a2a.ErrInvalidParams)
+	}
+
+	if storedTask.Status.State.Terminal() {
+		return nil, fmt.Errorf("task in a terminal state %q: %w", storedTask.Status.State, a2a.ErrInvalidParams)
+	}
+
+	updateHistory := !slices.ContainsFunc(storedTask.History, func(m *a2a.Message) bool {
+		return m.ID == message.ID // message will already be present if we're retrying execution
+	})
+
+	if updateHistory {
+		storedTask.History = append(storedTask.History, message)
+		lastVersion, err = f.taskStore.Update(ctx, &taskstore.UpdateRequest{
+			Task:        storedTask,
+			Event:       message,
+			PrevVersion: lastVersion,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("task message history update failed: %w", err)
+		}
+	} else {
+		log.Debug(ctx, "history update skipped because message was already in history")
+	}
+
+	return &executionContext{
+		ctx: &ExecutorContext{
+			Message:    message,
+			StoredTask: storedTask,
+			TaskID:     storedTask.ID,
+			ContextID:  storedTask.ContextID,
+			Metadata:   params.Metadata,
+			Tenant:     params.Tenant,
+		},
+		task: &taskstore.StoredTask{
+			Task:    storedTask,
+			Version: lastVersion,
+		},
+	}, nil
+}
+
+func (f *factory) createNewExecutionContext(tid a2a.TaskID, params *a2a.SendMessageRequest) (*executionContext, error) {
+	msg := params.Message
+	contextID := msg.ContextID
+	if contextID == "" {
+		contextID = a2a.NewContextID()
+	}
+	execCtx := &ExecutorContext{
+		Message:   msg,
+		TaskID:    tid,
+		ContextID: contextID,
+		Metadata:  params.Metadata,
+	}
+	return &executionContext{ctx: execCtx, task: nil}, nil
+}
+
+// CreateCanceler creates a new task canceler for the given cancel request.
+func (f *factory) CreateCanceler(ctx context.Context, params *a2a.CancelTaskRequest) (taskexec.Canceler, taskexec.Processor, taskexec.Cleaner, error) {
+	storedTask, err := f.taskStore.Get(ctx, params.ID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load a task: %w", err)
+	}
+
+	task, version := storedTask.Task, storedTask.Version
+	if task.Status.State.Terminal() && task.Status.State != a2a.TaskStateCanceled {
+		return nil, nil, nil, fmt.Errorf("task in non-cancelable state %s: %w", task.Status.State, a2a.ErrTaskNotCancelable)
+	}
+
+	execCtx := &ExecutorContext{
+		TaskID:     task.ID,
+		StoredTask: task,
+		ContextID:  task.ContextID,
+		Metadata:   params.Metadata,
+	}
+	if callCtx, ok := CallContextFrom(ctx); ok {
+		execCtx.User = callCtx.User
+		execCtx.ServiceParams = callCtx.ServiceParams()
+		execCtx.Tenant = callCtx.Tenant()
+	}
+
+	canceler := &canceler{agent: f.agent, execCtx: execCtx, task: task, interceptors: f.interceptors}
+	updateManager := taskupdate.NewManager(f.taskStore, execCtx.TaskInfo(), &taskstore.StoredTask{Task: task, Version: version})
+	processor := newProcessor(updateManager, f.pushConfigStore, f.pushSender, execCtx, f.taskStore)
+	return canceler, processor, &cleaner{agent: f.agent, execCtx: execCtx}, nil
+}
+
+type executor struct {
+	agent        AgentExecutor
+	execCtx      *ExecutorContext
+	interceptors []ExecutorContextInterceptor
+}
+
+var _ taskexec.Executor = (*executor)(nil)
+
+// Execute invokes the agent execution logic and writes events to the provided writer.
+func (e *executor) Execute(ctx context.Context, q eventpipe.Writer) error {
+	var err error
+	for _, interceptor := range e.interceptors {
+		ctx, err = interceptor.Intercept(ctx, e.execCtx)
+		if err != nil {
+			return fmt.Errorf("interceptor failed: %w", err)
+		}
+	}
+
+	for event, err := range e.agent.Execute(ctx, e.execCtx) {
+		if err != nil {
+			return err
+		}
+		if err := q.Write(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type cleaner struct {
+	agent   AgentExecutor
+	execCtx *ExecutorContext
+}
+
+// Cleanup is called after an agent execution finishes with either result or an error.
+func (e *cleaner) Cleanup(ctx context.Context, result a2a.SendMessageResult, err error) {
+	isCancelation := e.execCtx.Message == nil
+	if err != nil {
+		if isCancelation {
+			log.Warn(ctx, "task cancelation failed", "cause", err)
+		} else {
+			log.Warn(ctx, "agent execution failed", "cause", err)
+		}
+	} else {
+		if isCancelation {
+			if t, ok := result.(*a2a.Task); ok && t.Status.State != a2a.TaskStateCanceled {
+				log.Warn(ctx, "task cancelation failed, resolving to a different state", "state", t.Status.State)
+			}
+		}
+	}
+
+	if cleaner, ok := e.agent.(AgentExecutionCleaner); ok {
+		cleaner.Cleanup(ctx, e.execCtx, result, err)
+	}
+}
+
+type canceler struct {
+	agent        AgentExecutor
+	task         *a2a.Task
+	execCtx      *ExecutorContext
+	interceptors []ExecutorContextInterceptor
+}
+
+var _ taskexec.Canceler = (*canceler)(nil)
+
+// Cancel invokes the agent cancellation logic and writes events to the provided writer.
+func (c *canceler) Cancel(ctx context.Context, q eventpipe.Writer) error {
+	if c.task.Status.State == a2a.TaskStateCanceled {
+		return q.Write(ctx, c.task)
+	}
+
+	var err error
+	for _, interceptor := range c.interceptors {
+		ctx, err = interceptor.Intercept(ctx, c.execCtx)
+		if err != nil {
+			return fmt.Errorf("interceptor failed: %w", err)
+		}
+	}
+
+	for event, err := range c.agent.Cancel(ctx, c.execCtx) {
+		if err != nil {
+			return err
+		}
+		if err := q.Write(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type processor struct {
+	// Processor is running in event consumer goroutine, but request context loading
+	// happens in event consumer goroutine. Once request context is loaded and validate the processor
+	// gets initialized.
+	updateManager   *taskupdate.Manager
+	pushConfigStore push.ConfigStore
+	pushSender      push.Sender
+	execCtx         *ExecutorContext
+	store           taskstore.Store
+}
+
+var _ taskexec.Processor = (*processor)(nil)
+
+func newProcessor(updateManager *taskupdate.Manager, pushStore push.ConfigStore, sender push.Sender, execCtx *ExecutorContext, store taskstore.Store) *processor {
+	return &processor{
+		updateManager:   updateManager,
+		pushConfigStore: pushStore,
+		pushSender:      sender,
+		execCtx:         execCtx,
+		store:           store,
+	}
+}
+
+// Process implements taskexec.Processor interface method.
+// A (nil, nil) result means the processing should continue.
+// A non-nill result becomes the result of the execution.
+func (p *processor) Process(ctx context.Context, event a2a.Event) (*taskexec.ProcessorResult, error) {
+	versioned, processingErr := p.updateManager.Process(ctx, event)
+
+	if processingErr != nil && errors.Is(processingErr, taskstore.ErrConcurrentModification) {
+		log.Debug(ctx, "occ conflict detected, reloading task")
+
+		storedTask, err := p.store.Get(ctx, p.execCtx.TaskID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load a task: %w: %w", err, processingErr)
+		}
+		if !storedTask.Task.Status.State.Terminal() {
+			return nil, fmt.Errorf("parallel active execution: %w", processingErr)
+		}
+
+		log.Debug(ctx, "occ conflict resolved to terminal state", "state", storedTask.Task.Status.State)
+
+		return &taskexec.ProcessorResult{
+			ExecutionResult:       storedTask.Task,
+			EventOverride:         storedTask.Task,
+			TaskVersion:           storedTask.Version,
+			ExecutionFailureCause: processingErr,
+		}, nil
+	}
+
+	if processingErr != nil {
+		return p.setTaskFailed(ctx, event, processingErr)
+	}
+
+	if msg, ok := event.(*a2a.Message); ok {
+		if err := p.sendPushNotifications(ctx, event); err != nil {
+			return nil, fmt.Errorf("failed to send push notification for message response: %w", err)
+		}
+		return &taskexec.ProcessorResult{ExecutionResult: msg}, nil
+	}
+
+	if err := p.sendPushNotifications(ctx, event); err != nil {
+		return p.setTaskFailed(ctx, event, err)
+	}
+
+	task := versioned.Task
+	result := &taskexec.ProcessorResult{TaskVersion: versioned.Version}
+	if taskupdate.IsFinal(event) {
+		result.ExecutionResult = task
+	}
+	return result, nil
+}
+
+// ProcessError implements taskexec.ProcessError interface method.
+// Here we can try handling producer or queue error by moving the task to failed state and making it the execution result.
+func (p *processor) ProcessError(ctx context.Context, cause error) (a2a.SendMessageResult, error) {
+	versioned, err := p.updateManager.SetTaskFailed(ctx, nil, cause)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Warn(ctx, "task moved to failed state due to an error", "cause", cause)
+
+	return versioned.Task, nil
+}
+
+func (p *processor) setTaskFailed(ctx context.Context, event a2a.Event, cause error) (*taskexec.ProcessorResult, error) {
+	versioned, err := p.updateManager.SetTaskFailed(ctx, event, cause)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Warn(ctx, "task moved to failed state due to a processor error", "cause", cause)
+
+	return &taskexec.ProcessorResult{
+		ExecutionResult:       versioned.Task,
+		EventOverride:         versioned.Task,
+		TaskVersion:           versioned.Version,
+		ExecutionFailureCause: cause,
+	}, nil
+}
+
+func (p *processor) sendPushNotifications(ctx context.Context, event a2a.Event) error {
+	if p.pushSender == nil || p.pushConfigStore == nil {
+		return nil
+	}
+	taskID := p.execCtx.TaskID
+
+	configs, err := p.pushConfigStore.List(ctx, taskID)
+	if err != nil {
+		return err
+	}
+
+	// TODO(yarolegovich): consider dispatching in parallel with max concurrent calls cap
+	for _, config := range configs {
+		if err := p.pushSender.SendPush(ctx, config, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}

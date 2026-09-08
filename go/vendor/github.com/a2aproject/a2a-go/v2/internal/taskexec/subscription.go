@@ -1,0 +1,191 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package taskexec
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"iter"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/eventqueue"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/a2aproject/a2a-go/v2/internal/taskupdate"
+	"github.com/a2aproject/a2a-go/v2/log"
+)
+
+type localSubscription struct {
+	execution     *localExecution
+	queue         eventqueue.Reader
+	store         taskstore.Store
+	startWithTask bool
+	consumed      bool
+}
+
+var _ Subscription = (*localSubscription)(nil)
+
+func newLocalSubscription(e *localExecution, q eventqueue.Reader) *localSubscription {
+	return &localSubscription{execution: e, queue: q, store: e.store}
+}
+
+func (s *localSubscription) TaskID() a2a.TaskID {
+	return s.execution.tid
+}
+
+func (s *localSubscription) Events(ctx context.Context) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		if s.consumed {
+			yield(nil, fmt.Errorf("subscription already consumed"))
+			return
+		}
+		s.consumed = true
+
+		log.Debug(ctx, "local subscription created")
+
+		defer func() {
+			if err := s.queue.Close(); err != nil {
+				log.Warn(ctx, "local subscription queue close failed", "error", err)
+			} else {
+				log.Debug(ctx, "local subscription destroyed")
+			}
+		}()
+
+		emittedTaskVersion := taskstore.TaskVersionMissing
+		if s.startWithTask {
+			storedTask, err := s.store.Get(ctx, s.execution.tid)
+			if err != nil && !errors.Is(err, a2a.ErrTaskNotFound) {
+				yield(nil, fmt.Errorf("task snapshot loading failed: %w", err))
+				return
+			}
+
+			if storedTask != nil {
+				if !yield(storedTask.Task, nil) {
+					return
+				}
+				if storedTask.Task.Status.State.Terminal() {
+					return
+				}
+				emittedTaskVersion = storedTask.Version
+			}
+		}
+
+		for {
+			msg, err := s.queue.Read(ctx)
+			if errors.Is(err, eventqueue.ErrQueueClosed) {
+				log.Info(ctx, "local subscription queue closed, falling back to promise")
+				break
+			}
+
+			if err != nil {
+				log.Debug(ctx, "local subscription error", "error", err)
+				yield(nil, fmt.Errorf("queue read failed: %w", err))
+				return
+			}
+
+			if !msg.TaskVersion.After(emittedTaskVersion) {
+				log.Info(ctx, "skipping old event", "version", msg.TaskVersion, "emitted", emittedTaskVersion)
+				continue
+			}
+
+			event := msg.Event
+			if !yield(event, nil) {
+				return
+			}
+			if taskupdate.IsFinal(event) {
+				return
+			}
+		}
+
+		// execution might not report the terminal event in case execution context.Context was canceled which
+		// might happen if event producer panics.
+		log.Debug(ctx, "subscription waiting for execution promise")
+		yield(s.execution.result.wait(ctx))
+	}
+}
+
+type remoteSubscription struct {
+	tid      a2a.TaskID
+	store    taskstore.Store
+	queue    eventqueue.Reader
+	consumed bool
+}
+
+var _ Subscription = (*remoteSubscription)(nil)
+
+func newRemoteSubscription(queue eventqueue.Reader, store taskstore.Store, tid a2a.TaskID) *remoteSubscription {
+	return &remoteSubscription{tid: tid, queue: queue, store: store}
+}
+
+func (s *remoteSubscription) TaskID() a2a.TaskID {
+	return s.tid
+}
+
+func (s *remoteSubscription) Events(ctx context.Context) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		if s.consumed {
+			yield(nil, fmt.Errorf("subscription already consumed"))
+			return
+		}
+		s.consumed = true
+
+		log.Debug(ctx, "remote subscription created")
+
+		defer func() {
+			if err := s.queue.Close(); err != nil {
+				log.Warn(ctx, "remote subscription queue close failed", "error", err)
+			} else {
+				log.Debug(ctx, "remote subscription destroyed")
+			}
+		}()
+
+		storedTask, err := s.store.Get(ctx, s.tid)
+		if err != nil && !errors.Is(err, a2a.ErrTaskNotFound) {
+			yield(nil, fmt.Errorf("task snapshot loading failed: %w", err))
+			return
+		}
+
+		snapshotVersion := taskstore.TaskVersionMissing
+		if storedTask != nil {
+			task := storedTask.Task
+			if !yield(task, nil) {
+				return
+			}
+			if task.Status.State.Terminal() {
+				return
+			}
+			snapshotVersion = storedTask.Version
+		}
+
+		for {
+			msg, err := s.queue.Read(ctx)
+			if err != nil {
+				log.Debug(ctx, "remote subscription error", "error", err)
+				yield(nil, err)
+				return
+			}
+			if msg.TaskVersion != taskstore.TaskVersionMissing && !msg.TaskVersion.After(snapshotVersion) {
+				log.Info(ctx, "skipping old event", "event", msg.Event, "version", msg.TaskVersion)
+				continue
+			}
+			if !yield(msg.Event, nil) {
+				return
+			}
+			if taskupdate.IsFinal(msg.Event) {
+				return
+			}
+		}
+	}
+}

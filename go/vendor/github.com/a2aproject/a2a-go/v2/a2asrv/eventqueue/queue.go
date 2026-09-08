@@ -1,0 +1,103 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package eventqueue
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+)
+
+// ErrQueueClosed indicates that the event queue has been closed.
+var ErrQueueClosed = errors.New("queue is closed")
+
+// ErrInactivityTimeout indicates that the event queue has timed out due to inactivity.
+var ErrInactivityTimeout = errors.New("queue read timeout due to inactivity")
+
+// Message represents the data broadcasted to event subscribers through event queue.
+type Message struct {
+	// Event is the event which was applied to task store.
+	Event a2a.Event
+	// TaskVersion is the version of the task after event was applied.
+	TaskVersion taskstore.TaskVersion
+	// Protocol is the version of the protocol which emitting process running.
+	Protocol a2a.ProtocolVersion
+}
+
+// messageJSON is the JSON-serializable representation of Message.
+// It uses a2a.StreamResponse as an intermediate type for the Event field
+// so that a2a.Event (an interface) survives a JSON roundtrip.
+type messageJSON struct {
+	Event       a2a.StreamResponse    `json:"event"`
+	TaskVersion taskstore.TaskVersion `json:"taskVersion"`
+	Protocol    a2a.ProtocolVersion   `json:"protocol"`
+}
+
+// ErrNilEvent indicates that a Message has a nil Event field, which is an invalid state.
+var ErrNilEvent = errors.New("Message.Event is nil")
+
+// MarshalJSON implements json.Marshaler.
+func (m Message) MarshalJSON() ([]byte, error) {
+	if m.Event == nil {
+		return nil, ErrNilEvent
+	}
+	return json.Marshal(messageJSON{
+		Event:       a2a.StreamResponse{Event: m.Event},
+		TaskVersion: m.TaskVersion,
+		Protocol:    m.Protocol,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	var wrapper messageJSON
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return err
+	}
+	if wrapper.Event.Event == nil {
+		return ErrNilEvent
+	}
+	m.Event = wrapper.Event.Event
+	m.TaskVersion = wrapper.TaskVersion
+	m.Protocol = wrapper.Protocol
+	return nil
+}
+
+// Reader defines the interface for reading events from a queue.
+// A2A server stack reads events written by [a2asrv.AgentExecutor].
+type Reader interface {
+	// Read dequeues an event or blocks if the queue is empty.
+	// TaskVersion is expected to be the same as was provided to [Writer.WriteVersioned].
+	Read(ctx context.Context) (*Message, error)
+
+	// Close shuts down a connection to the queue.
+	Close() error
+}
+
+// Writer defines the interface for writing events to a queue.
+// [a2asrv.AgentExecutor] translates agent responses to Messages, Tasks or Task update events.
+type Writer interface {
+	// Write enqueues an event or blocks if a bounded queue is full.
+	//
+	// Kept to maintain AgentExecutor API until a breaking SDK release.
+	// The code other than AgentExecutor must use WriteVersioned.
+	Write(ctx context.Context, msg *Message) error
+
+	// Close shuts down a connection to the queue.
+	Close() error
+}

@@ -1,0 +1,924 @@
+// Copyright 2025 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package a2a
+
+import (
+	"encoding/gob"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// ProtocolDomain is the domain used for A2A protocol.
+const ProtocolDomain = "a2a-protocol.org"
+
+// ProtocolVersion is a string constant which represents a version of the protocol.
+type ProtocolVersion string
+
+// Version is the protocol version which SDK implements.
+const Version ProtocolVersion = "1.0"
+
+// TaskInfoProvider provides information about the Task.
+type TaskInfoProvider interface {
+	// TaskInfo returns information about the task.
+	TaskInfo() TaskInfo
+}
+
+// MetadataCarrier provides access to extensions metadata container.
+type MetadataCarrier interface {
+	// Meta returns the metadata container.
+	Meta() map[string]any
+	// SetMeta sets the metadata value for the provided key.
+	SetMeta(k string, v any)
+}
+
+// TaskInfo represents information about the Task and the group of interactions it belongs to.
+// Values might be empty which means the TaskInfoProvider is not associated with any tasks.
+// An example would be the first user message.
+type TaskInfo struct {
+	// TaskID is an id of the task.
+	TaskID TaskID
+	// ContextID is an id of the interactions group the task belong to.
+	ContextID string
+}
+
+// TaskInfo implements TaskInfoProvider so that the struct can be passed to core type constructor functions.
+// For example: a2a.NewMessageForTask(role, a2a.TaskInfo{...}).
+func (ti TaskInfo) TaskInfo() TaskInfo {
+	return ti
+}
+
+// SendMessageResult represents a response for non-streaming message send.
+type SendMessageResult interface {
+	Event
+
+	isSendMessageResult()
+}
+
+func (*Task) isSendMessageResult()    {}
+func (*Message) isSendMessageResult() {}
+
+// Event interface is used to represent types that can be sent over a streaming connection.
+type Event interface {
+	TaskInfoProvider
+	MetadataCarrier
+
+	isEvent()
+}
+
+func (*Message) isEvent()                 {}
+func (*Task) isEvent()                    {}
+func (*TaskStatusUpdateEvent) isEvent()   {}
+func (*TaskArtifactUpdateEvent) isEvent() {}
+
+// StreamResponse is a wrapper around Event that can be sent over a streaming connection.
+// with a single field matching the event type name.
+type StreamResponse struct {
+	// Event is the event to be sent over the streaming connection.
+	Event
+}
+
+type event struct {
+	Message        *Message                 `json:"message,omitempty"`
+	Task           *Task                    `json:"task,omitempty"`
+	StatusUpdate   *TaskStatusUpdateEvent   `json:"statusUpdate,omitempty"`
+	ArtifactUpdate *TaskArtifactUpdateEvent `json:"artifactUpdate,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler.
+func (sr StreamResponse) MarshalJSON() ([]byte, error) {
+	wrapper := &event{}
+	switch v := sr.Event.(type) {
+	case *Message:
+		wrapper.Message = v
+	case *Task:
+		wrapper.Task = v
+	case *TaskStatusUpdateEvent:
+		wrapper.StatusUpdate = v
+	case *TaskArtifactUpdateEvent:
+		wrapper.ArtifactUpdate = v
+	default:
+		return nil, fmt.Errorf("unknown event type: %T", v)
+	}
+	return json.Marshal(wrapper)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (sr *StreamResponse) UnmarshalJSON(data []byte) error {
+	var wrapper event
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return fmt.Errorf("failed to unmarshal event: %w", err)
+	}
+	var n int
+	if wrapper.Message != nil {
+		sr.Event = wrapper.Message
+		n++
+	}
+	if wrapper.Task != nil {
+		sr.Event = wrapper.Task
+		n++
+	}
+	if wrapper.StatusUpdate != nil {
+		sr.Event = wrapper.StatusUpdate
+		n++
+	}
+	if wrapper.ArtifactUpdate != nil {
+		sr.Event = wrapper.ArtifactUpdate
+		n++
+	}
+	if n == 0 {
+		return fmt.Errorf("unknown event type: %v", jsonKeys(data))
+	}
+	if n != 1 {
+		return fmt.Errorf("expected exactly one event type, got %d", n)
+	}
+	return nil
+}
+
+// MessageRole represents a set of possible values that identify the message sender.
+type MessageRole string
+
+// MessageRole constants.
+const (
+	// MessageRoleUnspecified is an unspecified message role.
+	MessageRoleUnspecified MessageRole = ""
+	// MessageRoleAgent is an agent message role.
+	MessageRoleAgent MessageRole = "ROLE_AGENT"
+	// MessageRoleUser is a user message role.
+	MessageRoleUser MessageRole = "ROLE_USER"
+)
+
+// String implements fmt.Stringer.
+func (mr MessageRole) String() string {
+	if mr == MessageRoleUnspecified {
+		return "ROLE_UNSPECIFIED"
+	}
+	return string(mr)
+}
+
+// MarshalJSON implements json.Marshaler.
+func (mr MessageRole) MarshalJSON() ([]byte, error) {
+	return json.Marshal(mr.String())
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (mr *MessageRole) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if s == "ROLE_UNSPECIFIED" {
+		*mr = MessageRoleUnspecified
+		return nil
+	}
+	*mr = MessageRole(s)
+	return nil
+}
+
+// NewMessageID generates a new random message identifier.
+func NewMessageID() string {
+	return newUUIDString()
+}
+
+var _ Event = (*Message)(nil)
+
+// Message represents a single message in the conversation between a user and an agent.
+type Message struct {
+	// ID is a unique identifier for the message, typically a UUID, generated by the sender.
+	ID string `json:"messageId" yaml:"messageId" mapstructure:"messageId"`
+
+	// ContextID is the context identifier for this message, used to group related interactions.
+	// An empty string means the message doesn't reference any context.
+	ContextID string `json:"contextId,omitempty" yaml:"contextId,omitempty" mapstructure:"contextId,omitempty"`
+
+	// Extensions are the URIs of extensions that are relevant to this message.
+	Extensions []string `json:"extensions,omitempty" yaml:"extensions,omitempty" mapstructure:"extensions,omitempty"`
+
+	// Metadata is an optional metadata for extensions. The key is an extension-specific identifier.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+
+	// Parts is an array of content parts that form the message body. A message can be
+	// composed of multiple parts of different types (e.g., text and files).
+	Parts ContentParts `json:"parts" yaml:"parts" mapstructure:"parts"`
+
+	// ReferenceTasks is a list of other task IDs that this message references for additional context.
+	ReferenceTasks []TaskID `json:"referenceTaskIds,omitempty" yaml:"referenceTaskIds,omitempty" mapstructure:"referenceTaskIds,omitempty"`
+
+	// Role identifies the sender of the message.
+	Role MessageRole `json:"role" yaml:"role" mapstructure:"role"`
+
+	// TaskID is the identifier of the task this message is part of. Can be omitted for the
+	// first message of a new task.
+	// An empty string means the message doesn't reference any Task.
+	TaskID TaskID `json:"taskId,omitempty" yaml:"taskId,omitempty" mapstructure:"taskId,omitempty"`
+}
+
+// NewMessage creates a new message with a random identifier.
+func NewMessage(role MessageRole, parts ...*Part) *Message {
+	return &Message{
+		ID:    NewMessageID(),
+		Role:  role,
+		Parts: parts,
+	}
+}
+
+// NewMessageForTask creates a new message with a random identifier that references the provided Task.
+func NewMessageForTask(role MessageRole, infoProvider TaskInfoProvider, parts ...*Part) *Message {
+	taskInfo := infoProvider.TaskInfo()
+	return &Message{
+		ID:        NewMessageID(),
+		Role:      role,
+		TaskID:    taskInfo.TaskID,
+		ContextID: taskInfo.ContextID,
+		Parts:     parts,
+	}
+}
+
+// Meta implements MetadataCarrier.
+func (m *Message) Meta() map[string]any {
+	return m.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (m *Message) SetMeta(k string, v any) {
+	setMeta(&m.Metadata, k, v)
+}
+
+// TaskInfo implements TaskInfoProvider.
+func (m *Message) TaskInfo() TaskInfo {
+	return TaskInfo{TaskID: m.TaskID, ContextID: m.ContextID}
+}
+
+// TaskID is a unique identifier for the task, generated by the server for a new task.
+type TaskID string
+
+// NewTaskID generates a new random task identifier.
+func NewTaskID() TaskID {
+	return TaskID(newUUIDString())
+}
+
+// NewContextID generates a new random context identifier.
+func NewContextID() string {
+	return newUUIDString()
+}
+
+// TaskState defines a set of possible task states.
+type TaskState string
+
+const (
+	// TaskStateUnspecified represents a missing TaskState value.
+	TaskStateUnspecified TaskState = ""
+	// TaskStateAuthRequired means the task requires authentication to proceed.
+	TaskStateAuthRequired TaskState = "TASK_STATE_AUTH_REQUIRED"
+	// TaskStateCanceled means the task has been canceled by the user.
+	TaskStateCanceled TaskState = "TASK_STATE_CANCELED"
+	// TaskStateCompleted means the task has been successfully completed.
+	TaskStateCompleted TaskState = "TASK_STATE_COMPLETED"
+	// TaskStateFailed means the task failed due to an error during execution.
+	TaskStateFailed TaskState = "TASK_STATE_FAILED"
+	// TaskStateInputRequired means the task is paused and waiting for input from the user.
+	TaskStateInputRequired TaskState = "TASK_STATE_INPUT_REQUIRED"
+	// TaskStateRejected means the task was rejected by the agent and was not started.
+	TaskStateRejected TaskState = "TASK_STATE_REJECTED"
+	// TaskStateSubmitted means the task has been submitted and is awaiting execution.
+	TaskStateSubmitted TaskState = "TASK_STATE_SUBMITTED"
+	// TaskStateWorking means The agent is actively working on the task.
+	TaskStateWorking TaskState = "TASK_STATE_WORKING"
+)
+
+// String implements fmt.Stringer.
+func (ts TaskState) String() string {
+	if ts == TaskStateUnspecified {
+		return "TASK_STATE_UNSPECIFIED"
+	}
+	return string(ts)
+}
+
+// MarshalJSON implements json.Marshaler.
+func (ts TaskState) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ts.String())
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (ts *TaskState) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if s == "TASK_STATE_UNSPECIFIED" {
+		*ts = TaskStateUnspecified
+		return nil
+	}
+	*ts = TaskState(s)
+	return nil
+}
+
+// Terminal returns true for states in which a Task becomes immutable, i.e. no further
+// changes to the Task are permitted.
+func (ts TaskState) Terminal() bool {
+	return ts == TaskStateCompleted ||
+		ts == TaskStateCanceled ||
+		ts == TaskStateFailed ||
+		ts == TaskStateRejected
+}
+
+var _ Event = (*Task)(nil)
+
+// Task represents a single, stateful operation or conversation between a client and an agent.
+type Task struct {
+	// ID is a unique identifier for the task, generated by the server for a new task.
+	ID TaskID `json:"id" yaml:"id" mapstructure:"id"`
+
+	// Artifacts is a collection of artifacts generated by the agent during the execution of the task.
+	Artifacts []*Artifact `json:"artifacts,omitempty" yaml:"artifacts,omitempty" mapstructure:"artifacts,omitempty"`
+
+	// ContextID is a server-generated identifier for maintaining context across multiple related
+	// tasks or interactions. Required to be non empty.
+	ContextID string `json:"contextId" yaml:"contextId" mapstructure:"contextId"`
+
+	// History is an array of messages exchanged during the task, representing the conversation history.
+	History []*Message `json:"history,omitempty" yaml:"history,omitempty" mapstructure:"history,omitempty"`
+
+	// Metadata is an optional metadata for extensions. The key is an extension-specific identifier.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+
+	// Status is the current status of the task, including its state and a descriptive message.
+	Status TaskStatus `json:"status" yaml:"status" mapstructure:"status"`
+}
+
+// NewSubmittedTask is a utility for creating a Task in submitted state from the initial Message.
+// New values are generated for task and context id when they are missing.
+func NewSubmittedTask(infoProvider TaskInfoProvider, initialMessage *Message) *Task {
+	taskInfo := infoProvider.TaskInfo()
+	taskID := taskInfo.TaskID
+	if taskID == "" {
+		taskID = NewTaskID()
+	}
+	contextID := taskInfo.ContextID
+	if contextID == "" {
+		contextID = NewContextID()
+	}
+	return &Task{
+		ID:        taskID,
+		ContextID: contextID,
+		Status:    TaskStatus{State: TaskStateSubmitted},
+		History:   []*Message{initialMessage},
+	}
+}
+
+// TaskStatus represents the status of a task at a specific point in time.
+type TaskStatus struct {
+	// Message is an optional, human-readable message providing more details about the current status.
+	Message *Message `json:"message,omitempty" yaml:"message,omitempty" mapstructure:"message,omitempty"`
+
+	// State is the current state of the task's lifecycle.
+	State TaskState `json:"state" yaml:"state" mapstructure:"state"`
+
+	// Timestamp is a datetime indicating when this status was recorded.
+	Timestamp *time.Time `json:"timestamp,omitempty" yaml:"timestamp,omitempty" mapstructure:"timestamp,omitempty"`
+}
+
+// Meta implements MetadataCarrier.
+func (t *Task) Meta() map[string]any {
+	return t.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (t *Task) SetMeta(k string, v any) {
+	setMeta(&t.Metadata, k, v)
+}
+
+// TaskInfo implements TaskInfoProvider.
+func (t *Task) TaskInfo() TaskInfo {
+	return TaskInfo{TaskID: t.ID, ContextID: t.ContextID}
+}
+
+// ArtifactID is a unique identifier for the artifact within the scope of the task.
+type ArtifactID string
+
+// NewArtifactID generates a new random artifact identifier.
+func NewArtifactID() ArtifactID {
+	return ArtifactID(newUUIDString())
+}
+
+// Artifact represents a file, data structure, or other resource generated by an agent during a task.
+type Artifact struct {
+	// ID is a unique identifier for the artifact within the scope of the task.
+	ID ArtifactID `json:"artifactId" yaml:"artifactId" mapstructure:"artifactId"`
+
+	// Description is an optional, human-readable description of the artifact.
+	Description string `json:"description,omitempty" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Extensions are the URIs of extensions that are relevant to this artifact.
+	Extensions []string `json:"extensions,omitempty" yaml:"extensions,omitempty" mapstructure:"extensions,omitempty"`
+
+	// Metadata is an optional metadata for extensions. The key is an extension-specific identifier.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+
+	// Name is an optional, human-readable name for the artifact.
+	Name string `json:"name,omitempty" yaml:"name,omitempty" mapstructure:"name,omitempty"`
+
+	// Parts is an array of content parts that make up the artifact.
+	Parts ContentParts `json:"parts" yaml:"parts" mapstructure:"parts"`
+}
+
+// Meta implements MetadataCarrier.
+func (a *Artifact) Meta() map[string]any {
+	return a.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (a *Artifact) SetMeta(k string, v any) {
+	setMeta(&a.Metadata, k, v)
+}
+
+var _ Event = (*TaskArtifactUpdateEvent)(nil)
+
+// TaskArtifactUpdateEvent is an event sent by the agent to notify the client that an artifact has been
+// generated or updated. This is typically used in streaming models.
+type TaskArtifactUpdateEvent struct {
+	// Append indicates if the content of this artifact should be appended to a previously sent
+	// artifact with the same ID.
+	Append bool `json:"append,omitempty" yaml:"append,omitempty" mapstructure:"append,omitempty"`
+
+	// Artifact is the artifact that was generated or updated.
+	Artifact *Artifact `json:"artifact" yaml:"artifact" mapstructure:"artifact"`
+
+	// ContextID is the context ID associated with the task. Required to be non-empty.
+	ContextID string `json:"contextId" yaml:"contextId" mapstructure:"contextId"`
+
+	// LastChunk indicates if this is the final chunk of the artifact.
+	LastChunk bool `json:"lastChunk,omitempty" yaml:"lastChunk,omitempty" mapstructure:"lastChunk,omitempty"`
+
+	// TaskID is the ID of the task this artifact belongs to.
+	TaskID TaskID `json:"taskId" yaml:"taskId" mapstructure:"taskId"`
+
+	// Metadata is an optional metadata for extensions.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+}
+
+// Meta implements MetadataCarrier.
+func (e *TaskArtifactUpdateEvent) Meta() map[string]any {
+	return e.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (e *TaskArtifactUpdateEvent) SetMeta(k string, v any) {
+	setMeta(&e.Metadata, k, v)
+}
+
+// TaskInfo implements TaskInfoProvider.
+func (e *TaskArtifactUpdateEvent) TaskInfo() TaskInfo {
+	return TaskInfo{TaskID: e.TaskID, ContextID: e.ContextID}
+}
+
+// NewArtifactEvent create a TaskArtifactUpdateEvent for an Artifact with a random ID.
+func NewArtifactEvent(infoProvider TaskInfoProvider, parts ...*Part) *TaskArtifactUpdateEvent {
+	taskInfo := infoProvider.TaskInfo()
+	return &TaskArtifactUpdateEvent{
+		ContextID: taskInfo.ContextID,
+		TaskID:    taskInfo.TaskID,
+		Artifact: &Artifact{
+			ID:    NewArtifactID(),
+			Parts: parts,
+		},
+	}
+}
+
+// NewArtifactUpdateEvent creates a TaskArtifactUpdateEvent that represents an update of the artifact with the provided ID.
+func NewArtifactUpdateEvent(infoProvider TaskInfoProvider, id ArtifactID, parts ...*Part) *TaskArtifactUpdateEvent {
+	taskInfo := infoProvider.TaskInfo()
+	return &TaskArtifactUpdateEvent{
+		ContextID: taskInfo.ContextID,
+		TaskID:    taskInfo.TaskID,
+		Append:    true,
+		Artifact: &Artifact{
+			ID:    id,
+			Parts: parts,
+		},
+	}
+}
+
+var _ Event = (*TaskStatusUpdateEvent)(nil)
+
+// TaskStatusUpdateEvent is an event sent by the agent to notify the client of a change in a task's status.
+// This is typically used in streaming or subscription models.
+type TaskStatusUpdateEvent struct {
+	// ContextID is the context ID associated with the task. Required to be non-empty.
+	ContextID string `json:"contextId" yaml:"contextId" mapstructure:"contextId"`
+
+	// Status is the new status of the task.
+	Status TaskStatus `json:"status" yaml:"status" mapstructure:"status"`
+
+	// TaskID is the ID of the task that was updated.
+	TaskID TaskID `json:"taskId" yaml:"taskId" mapstructure:"taskId"`
+
+	// Metadata is an optional metadata for extensions.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+}
+
+// NewStatusUpdateEvent creates a TaskStatusUpdateEvent that references the provided Task.
+func NewStatusUpdateEvent(infoProvider TaskInfoProvider, state TaskState, msg *Message) *TaskStatusUpdateEvent {
+	now := time.Now()
+	taskInfo := infoProvider.TaskInfo()
+	return &TaskStatusUpdateEvent{
+		ContextID: taskInfo.ContextID,
+		TaskID:    taskInfo.TaskID,
+		Status: TaskStatus{
+			State:     state,
+			Message:   msg,
+			Timestamp: &now,
+		},
+	}
+}
+
+// Meta implements MetadataCarrier.
+func (e *TaskStatusUpdateEvent) Meta() map[string]any {
+	return e.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (e *TaskStatusUpdateEvent) SetMeta(k string, v any) {
+	setMeta(&e.Metadata, k, v)
+}
+
+// TaskInfo implements TaskInfoProvider.
+func (e *TaskStatusUpdateEvent) TaskInfo() TaskInfo {
+	return TaskInfo{TaskID: e.TaskID, ContextID: e.ContextID}
+}
+
+// ContentParts is an array of content parts that form the message body or an artifact.
+type ContentParts []*Part
+
+// MarshalJSON implements json.Marshaler.
+func (j ContentParts) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]*Part(j))
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ContentParts) UnmarshalJSON(b []byte) error {
+	var parts []*Part
+	if err := json.Unmarshal(b, &parts); err != nil {
+		return err
+	}
+	*j = ContentParts(parts)
+	return nil
+}
+
+// Part is a discriminated union representing a part of a message or artifact, which can
+// be text, a file, or structured data.
+type Part struct {
+	// Types that are valid to be assigned to Content are [Text], [Raw], [Data], [URL].
+	Content PartContent `json:"content" yaml:"content" mapstructure:"content"`
+
+	// Filename is an optional name for the file (e.g., "document.pdf").
+	Filename string `json:"filename,omitempty" yaml:"filename,omitempty" mapstructure:"filename,omitempty"`
+
+	// MediaType is the media type of the part content (e.g. "text/plain", "image/png", "application/json").
+	// This field is available for all part types.
+	MediaType string `json:"mediaType,omitempty" yaml:"mediaType,omitempty" mapstructure:"mediaType,omitempty"`
+
+	// Metadata is the optional metadata associated with this part.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+}
+
+// NewTextPart creates a Part that contains text.
+func NewTextPart(text string) *Part {
+	return &Part{Content: Text(text)}
+}
+
+// NewRawPart creates a Part that contains raw bytes.
+func NewRawPart(raw []byte) *Part {
+	return &Part{Content: Raw(raw)}
+}
+
+// NewFileURLPart creates a Part that contains a URL.
+func NewFileURLPart(url URL, mimeType string) *Part {
+	return &Part{Content: URL(url), MediaType: mimeType}
+}
+
+// NewDataPart creates a Part that contains structured data.
+func NewDataPart(data any) *Part {
+	return &Part{Content: Data{Value: data}}
+}
+
+// Text is a helper that returns the text content of the part if it is a Text part.
+func (p *Part) Text() string {
+	if v, ok := p.Content.(Text); ok {
+		return string(v)
+	}
+	return ""
+}
+
+// Raw is a helper that returns the raw content of the part if it is a Raw part.
+func (p *Part) Raw() []byte {
+	if v, ok := p.Content.(Raw); ok {
+		return []byte(v)
+	}
+	return nil
+}
+
+// Data is a helper that returns the data content of the part if it is a Data part.
+func (p *Part) Data() any {
+	if v, ok := p.Content.(Data); ok {
+		return v.Value
+	}
+	return nil
+}
+
+// URL is a helper that returns the URL content of the part if it is a URL part.
+func (p *Part) URL() URL {
+	if v, ok := p.Content.(URL); ok {
+		return v
+	}
+	return ""
+}
+
+// PartContent is a sealed discriminated type union for supported part content types.
+// It exists to specify which types can be assigned to the [Part.Content] field.
+type PartContent interface {
+	isPartContent()
+}
+
+func (Text) isPartContent() {}
+func (Raw) isPartContent()  {}
+func (Data) isPartContent() {}
+func (URL) isPartContent()  {}
+
+func init() {
+	gob.Register(Text(""))
+	gob.Register(Raw{})
+	gob.Register(Data{})
+	gob.Register(URL(""))
+}
+
+// Text represents content of a Part carrying text.
+type Text string
+
+// Raw represents content of a Part carrying raw bytes.
+type Raw []byte
+
+// URL represents content of a Part carrying a URL.
+type URL string
+
+// Data represents content of a Part carrying structured data.
+type Data struct {
+	Value any
+}
+
+type part struct {
+	Text      *Text          `json:"text,omitempty"`
+	Raw       *Raw           `json:"raw,omitempty"`
+	Data      *any           `json:"data,omitempty"`
+	URL       *URL           `json:"url,omitempty"`
+	Filename  string         `json:"filename,omitempty"`
+	MediaType string         `json:"mediaType,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// MarshalJSON custom serializer that flattens Content into the Part object.
+func (p Part) MarshalJSON() ([]byte, error) {
+	wrapper := &part{
+		Filename:  p.Filename,
+		MediaType: p.MediaType,
+		Metadata:  p.Metadata,
+	}
+	switch v := p.Content.(type) {
+	case Text:
+		wrapper.Text = &v
+	case Raw:
+		wrapper.Raw = &v
+	case Data:
+		wrapper.Data = &v.Value
+	case URL:
+		if v != "" {
+			wrapper.URL = &v
+		}
+	}
+
+	return json.Marshal(wrapper)
+}
+
+// UnmarshalJSON custom deserializer that hydrates Content from flattened fields.
+func (p *Part) UnmarshalJSON(b []byte) error {
+	var wrapper part
+	if err := json.Unmarshal(b, &wrapper); err != nil {
+		return err
+	}
+
+	p.Filename = wrapper.Filename
+	p.MediaType = wrapper.MediaType
+	p.Metadata = wrapper.Metadata
+
+	var content PartContent
+	var n int
+	if wrapper.Text != nil {
+		content = *wrapper.Text
+		n++
+	}
+	if wrapper.Raw != nil {
+		content = *wrapper.Raw
+		n++
+	}
+	if wrapper.Data != nil {
+		content = Data{Value: *wrapper.Data}
+		n++
+	}
+	if wrapper.URL != nil && *wrapper.URL != "" {
+		content = *wrapper.URL
+		n++
+	}
+
+	if n == 0 {
+		return fmt.Errorf("unknown part content type: %v", jsonKeys(b))
+	}
+	if n > 1 {
+		return fmt.Errorf("expected exactly one of text, raw, data, or url, got %d", n)
+	}
+
+	p.Content = content
+
+	return nil
+}
+
+// Meta implements MetadataCarrier.
+func (p Part) Meta() map[string]any {
+	return p.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (p *Part) SetMeta(k string, v any) {
+	setMeta(&p.Metadata, k, v)
+}
+
+// SendMessageConfig defines configuration options for a `message/send` or `message/stream` request.
+type SendMessageConfig struct {
+	// AcceptedOutputModes is a list of output MIME types the client is prepared to accept in the response.
+	AcceptedOutputModes []string `json:"acceptedOutputModes,omitempty" yaml:"acceptedOutputModes,omitempty" mapstructure:"acceptedOutputModes,omitempty"`
+
+	// ReturnImmediately indicates if the operation should return immediately after creating the task.
+	ReturnImmediately bool `json:"returnImmediately,omitempty" yaml:"returnImmediately,omitempty" mapstructure:"returnImmediately,omitempty"`
+
+	// HistoryLength is the number of most recent messages from the task's history to retrieve in the response.
+	HistoryLength *int `json:"historyLength,omitempty" yaml:"historyLength,omitempty" mapstructure:"historyLength,omitempty"`
+
+	// PushConfig is configuration for the agent to send push notifications for updates after the initial response.
+	PushConfig *PushConfig `json:"taskPushNotificationConfig,omitempty" yaml:"taskPushNotificationConfig,omitempty" mapstructure:"taskPushNotificationConfig,omitempty"`
+}
+
+// SendMessageRequest defines the request to send a message to an agent. This can be used
+// to create a new task, continue an existing one, or restart a task.
+type SendMessageRequest struct {
+	// Tenant is an optional ID of the agent owner.
+	Tenant string `json:"tenant,omitempty" yaml:"tenant,omitempty" mapstructure:"tenant,omitempty"`
+
+	// Config is an optional configuration for the send request.
+	Config *SendMessageConfig `json:"configuration,omitempty" yaml:"configuration,omitempty" mapstructure:"configuration,omitempty"`
+
+	// Message is the message object being sent to the agent.
+	Message *Message `json:"message" yaml:"message" mapstructure:"message"`
+
+	// Metadata is an optional metadata for extensions.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+}
+
+// Meta implements MetadataCarrier.
+func (p *SendMessageRequest) Meta() map[string]any {
+	return p.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (p *SendMessageRequest) SetMeta(k string, v any) {
+	setMeta(&p.Metadata, k, v)
+}
+
+func setMeta(m *map[string]any, k string, v any) {
+	if *m == nil {
+		*m = make(map[string]any)
+	}
+	(*m)[k] = v
+}
+
+// Time-based UUID generally improves index update performance if ID field is indexed in a persistent store.
+func newUUIDString() string {
+	return uuid.Must(uuid.NewV7()).String()
+}
+
+// GetTaskRequest defines the parameters for a request to get a task.
+type GetTaskRequest struct {
+	// Tenant is an optional ID of the agent owner.
+	Tenant string `json:"tenant,omitempty" yaml:"tenant,omitempty" mapstructure:"tenant,omitempty"`
+
+	// ID is the ID of the task to get.
+	ID TaskID `json:"id" yaml:"id" mapstructure:"id"`
+
+	// HistoryLength is the number of most recent messages from the task's history to retrieve.
+	HistoryLength *int `json:"historyLength,omitempty" yaml:"historyLength,omitempty" mapstructure:"historyLength,omitempty"`
+}
+
+// GetExtendedAgentCardRequest defines the parameters for a request to get an extended agent card.
+type GetExtendedAgentCardRequest struct {
+	// Tenant is an optional ID of the agent owner.
+	Tenant string `json:"tenant,omitempty" yaml:"tenant,omitempty" mapstructure:"tenant,omitempty"`
+}
+
+// ListTasksRequest defines the parameters for a request to list tasks.
+type ListTasksRequest struct {
+	// Tenant is an optional ID of the agent owner.
+	Tenant string `json:"tenant,omitempty" yaml:"tenant,omitempty" mapstructure:"tenant,omitempty"`
+
+	// ContextID is the ID of the context to list tasks for.
+	ContextID string `json:"contextId,omitempty" yaml:"contextId,omitempty" mapstructure:"contextId,omitempty"`
+
+	// Status is the current state of the tasks to list.
+	Status TaskState `json:"status,omitempty" yaml:"status,omitempty" mapstructure:"status,omitempty"`
+
+	// PageSize is the maximum number of tasks to return in the response.
+	// Must be between 1 and 100. If not set, the default value is 50.
+	PageSize int `json:"pageSize,omitempty" yaml:"pageSize,omitempty" mapstructure:"pageSize,omitempty"`
+
+	// PageToken is the token for retrieving the next page of results.
+	PageToken string `json:"pageToken,omitempty" yaml:"pageToken,omitempty" mapstructure:"pageToken,omitempty"`
+
+	// HistoryLength is the number of most recent messages from the task's history to retrieve in the response.
+	HistoryLength *int `json:"historyLength,omitempty" yaml:"historyLength,omitempty" mapstructure:"historyLength,omitempty"`
+
+	// StatusTimestampAfter is the time to list tasks updated after.
+	StatusTimestampAfter *time.Time `json:"statusTimestampAfter,omitempty" yaml:"statusTimestampAfter,omitempty" mapstructure:"statusTimestampAfter,omitempty"`
+
+	// IncludeArtifacts is whether to include artifacts in the response.
+	IncludeArtifacts bool `json:"includeArtifacts,omitempty" yaml:"includeArtifacts,omitempty" mapstructure:"includeArtifacts,omitempty"`
+}
+
+// ListTasksResponse defines the response for a request to tasks/list.
+type ListTasksResponse struct {
+	// Tasks is the list of tasks matching the specified criteria.
+	Tasks []*Task `json:"tasks" yaml:"tasks" mapstructure:"tasks"`
+
+	// TotalSize is the total number of tasks available (before pagination).
+	TotalSize int `json:"totalSize" yaml:"totalSize" mapstructure:"totalSize"`
+
+	// PageSize is the maximum number of tasks returned in the response.
+	PageSize int `json:"pageSize" yaml:"pageSize" mapstructure:"pageSize"`
+
+	// NextPageToken is the token for retrieving the next page of results.
+	// Empty string if no more results.
+	NextPageToken string `json:"nextPageToken" yaml:"nextPageToken" mapstructure:"nextPageToken"`
+}
+
+// CancelTaskRequest represents a request to cancel a task.
+type CancelTaskRequest struct {
+	// Tenant is an optional ID of the agent owner.
+	Tenant string `json:"tenant,omitempty" yaml:"tenant,omitempty" mapstructure:"tenant,omitempty"`
+
+	// ID is the ID of the task to cancel.
+	ID TaskID `json:"id" yaml:"id" mapstructure:"id"`
+
+	// Metadata is an optional metadata for extensions. The key is an extension-specific identifier.
+	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty" mapstructure:"metadata,omitempty"`
+}
+
+// Meta implements MetadataCarrier.
+func (r *CancelTaskRequest) Meta() map[string]any {
+	return r.Metadata
+}
+
+// SetMeta implements MetadataCarrier.
+func (r *CancelTaskRequest) SetMeta(k string, v any) {
+	setMeta(&r.Metadata, k, v)
+}
+
+// SubscribeToTaskRequest represents a request to subscribe to task events.
+type SubscribeToTaskRequest struct {
+	// Tenant is an optional ID of the agent owner.
+	Tenant string `json:"tenant,omitempty" yaml:"tenant,omitempty" mapstructure:"tenant,omitempty"`
+
+	// ID is the ID of the task to subscribe to.
+	ID TaskID `json:"id" yaml:"id" mapstructure:"id"`
+}
+
+func jsonKeys(data []byte) []string {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	return keys
+}
