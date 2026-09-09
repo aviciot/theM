@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { themApi, type Application, type EntryPoint } from '@/lib/api';
 import type { AppLiveness } from '../types';
 import { C, APP_CARD_STYLES } from '../constants';
@@ -46,6 +47,7 @@ export function AppCard({
   onDelete: (a: Application) => void;
   onRename: (a: Application) => void;
 }) {
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [synthesizing, setSynthesizing] = useState<string | null>(null); // ep id
@@ -329,7 +331,7 @@ export function AppCard({
         {/* Monitor (unified — replaces separate Sessions + Monitor) */}
         <button
           className="app-card-btn"
-          onClick={() => onMonitor(app)}
+          onClick={() => router.push(`/admin/applications/${app.id}/monitor`)}
           title="Live Monitor — sessions, topology & event feeds"
           style={{
             flex: '2 1 80px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -348,7 +350,7 @@ export function AppCard({
         </button>
 
         {/* Builder (was "Definition") */}
-        <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
+        <button className="app-card-btn app-card-btn--open" onClick={() => router.push(`/admin/applications/${app.id}/builder`)}
           style={{ flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 15 }}>hub</span>
           Builder
@@ -357,7 +359,7 @@ export function AppCard({
         {/* Runtime */}
         <button
           className="app-card-btn"
-          onClick={() => onRuntime(app)}
+          onClick={() => router.push(`/admin/applications/${app.id}/runtime`)}
           title="Runtime policy"
           style={{
             flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
@@ -375,7 +377,7 @@ export function AppCard({
         {/* MCP Credentials */}
         <button
           className="app-card-btn"
-          onClick={() => onMCPCredentials(app)}
+          onClick={() => router.push(`/admin/applications/${app.id}/mcp-credentials`)}
           title="MCP Credentials"
           style={{
             flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
