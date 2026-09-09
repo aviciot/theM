@@ -41,14 +41,14 @@ func (r *tenantFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	// Support both 8-column (GetTenant) and 10-column (GetTenantDetail/PatchTenant) scans.
-	// 8-col:  id, slug, display_name, enabled, is_bootstrap, email_domain, created_at, updated_at
-	// 10-col: id, slug, display_name, enabled, is_bootstrap, idp_configured, idp_config, email_domain, created_at, updated_at
+	// Support three scan widths:
+	// 9-col  (ListTenants/GetTenant): id, slug, display_name, enabled, is_bootstrap, idp_configured, email_domain, created_at, updated_at
+	// 10-col (GetTenantDetail/PatchTenant): id, slug, display_name, enabled, is_bootstrap, idp_configured, idp_config, email_domain, created_at, updated_at
 	var vals []any
 	if len(dest) >= 10 {
 		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, testNow, testNow}
 	} else {
-		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.emailDomain, testNow, testNow}
+		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.emailDomain, testNow, testNow}
 	}
 	for i, d := range dest {
 		if i >= len(vals) {
