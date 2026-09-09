@@ -9,6 +9,11 @@ import type { VoiceDraft } from './RuntimeVoicePanel';
 
 type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string; base_url?: string };
 const LOCAL_PROVIDERS = new Set(['ollama', 'vllm', 'lmstudio']);
+const LOCAL_URL_PLACEHOLDER: Record<string, string> = {
+  ollama:   'http://localhost:11434',
+  vllm:     'http://localhost:8000',
+  lmstudio: 'http://localhost:1234',
+};
 type OrchMeta    = { id: string; name: string; displayName: string };
 type EPLLMDraft  = { provider: string; model: string };
 type EPSumDraft  = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
@@ -341,12 +346,20 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
             const canSave = isLocal
               ? !!(keyInputs[provider] ?? '').trim() || !!(baseUrlInputs[provider] ?? '').trim()
               : !!(keyInputs[provider] ?? '').trim();
+            const localBadgeLabel = (() => {
+              if (!isLocal || !status.key_set) return null;
+              const url = status.base_url;
+              if (!url) return 'set';
+              try { return new URL(url).host; } catch { return url; }
+            })();
             return (
               <div key={provider} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.07)'}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 130, flexShrink: 0 }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{provider}</span>
-                    {status.key_set ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${status.key_hint ?? ''}`) : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
+                    {status.key_set
+                      ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', localBadgeLabel ?? `set ···${status.key_hint ?? ''}`)
+                      : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
                   </div>
                   <input type="password" placeholder={isLocal ? 'API key (optional)' : status.key_set ? 'Replace key…' : 'Paste API key…'} value={keyInputs[provider] ?? ''} onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160 }} />
                   {saveBtn(() => handleSaveKey(provider), isBusy, !canSave)}
@@ -359,7 +372,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
                     <div style={{ width: 130, flexShrink: 0 }}>
                       <span style={{ fontSize: 11, color: C.textMuted }}>Endpoint URL</span>
                     </div>
-                    <input type="text" placeholder={`e.g. http://localhost:11434`} value={baseUrlInputs[provider] ?? ''} onChange={e => setBaseUrlInputs(bu => ({ ...bu, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160, fontFamily: 'monospace', fontSize: 12 }} />
+                    <input type="text" placeholder={LOCAL_URL_PLACEHOLDER[provider] ?? 'http://localhost:8080'} value={baseUrlInputs[provider] ?? ''} onChange={e => setBaseUrlInputs(bu => ({ ...bu, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160, fontFamily: 'monospace', fontSize: 12 }} />
                   </div>
                 )}
                 {testMsg && <div style={{ marginTop: 6, fontSize: 12, color: isTestErr ? C.error : C.green, fontWeight: 600, paddingLeft: 138 }}>{testMsg}</div>}
