@@ -63,6 +63,7 @@ export function AgentCard({
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const isInternal = agent.tags?.includes('internal') ?? false;
   const isLocked = isInternal || (agent.tags?.includes('locked') ?? false);
@@ -320,62 +321,68 @@ export function AgentCard({
 
       {/* ── Description ── */}
       <p style={{
-        fontSize: '13px', color: 'var(--tm-card-text-muted)', lineHeight: 1.55, margin: 0,
+        fontSize: '13px', color: 'var(--tm-card-text-muted)', lineHeight: 1.5, margin: 0,
         display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-        minHeight: '40px',
       }}>
         {agent.description || <span style={{ opacity: 0.35 }}>No description</span>}
       </p>
 
-      {/* ── Stats tiles ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-        <div style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>hub</span>
-          <div>
-            <p style={{ fontSize: '15px', fontWeight: 700, color: 'var(--tm-card-text)', margin: 0, lineHeight: 1 }}>
-              {agent.skills && agent.skills.length > 0 ? agent.skills.length : '—'}
-            </p>
-            <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>skills</p>
-          </div>
-        </div>
-        <div style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>sync</span>
-          <div>
-            <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--tm-card-text)', margin: 0, lineHeight: 1, whiteSpace: 'nowrap' }}>
-              {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
-            </p>
-            <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>last sync</p>
-          </div>
-        </div>
-        <div style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>person</span>
-          <div>
-            <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--tm-card-text)', margin: 0, lineHeight: 1, whiteSpace: 'nowrap' }}>
-              {agent.created_by_username || '—'}
-            </p>
-            <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>created by</p>
-          </div>
-        </div>
-      </div>
+      {/* ── Detail toggle ── */}
+      <button
+        onClick={() => setShowDetails(v => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none',
+          cursor: 'pointer', padding: 0, color: 'var(--tm-card-text-muted)', fontSize: '11px',
+          fontWeight: 600, letterSpacing: '0.04em', transition: 'color 150ms ease', alignSelf: 'flex-start',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--tm-card-text)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--tm-card-text-muted)')}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
+          {showDetails ? 'expand_less' : 'expand_more'}
+        </span>
+        {showDetails ? 'Less' : 'Details'}
+      </button>
 
-      {/* ── Endpoint field ── */}
-      <div>
-        <p style={{ fontSize: '9px', fontWeight: 700, color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 5px 0' }}>Endpoint</p>
-        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', borderRadius: '8px', padding: '7px 10px', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--tm-card-text-hint)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-            {agent.endpoint_url || '—'}
-          </span>
-          <button onClick={copyEndpoint} title="Copy" style={{
-            background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, padding: '2px 4px',
-            color: copied ? '#34d399' : 'var(--tm-card-text-muted)', fontSize: '14px', transition: 'color 150ms ease',
-          }}>
-            {copied
-              ? <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>check</span>
-              : <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>content_copy</span>
-            }
-          </button>
+      {/* ── Expandable details: stats + endpoint ── */}
+      {showDetails && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+            <div style={{ padding: '8px 10px', borderRadius: '8px', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '14px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>hub</span>
+              <div>
+                <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--tm-card-text)', margin: 0, lineHeight: 1 }}>
+                  {agent.skills && agent.skills.length > 0 ? agent.skills.length : '—'}
+                </p>
+                <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>skills</p>
+              </div>
+            </div>
+            <div style={{ padding: '8px 10px', borderRadius: '8px', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '14px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>sync</span>
+              <div>
+                <p style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-card-text)', margin: 0, lineHeight: 1, whiteSpace: 'nowrap' }}>
+                  {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
+                </p>
+                <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>last sync</p>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)', borderRadius: '8px', padding: '7px 10px', gap: '6px' }}>
+            <span style={{ fontSize: '10px', color: 'var(--tm-card-text-hint)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {agent.endpoint_url || '—'}
+            </span>
+            <button onClick={copyEndpoint} title="Copy endpoint" style={{
+              background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, padding: '2px 4px',
+              color: copied ? '#34d399' : 'var(--tm-card-text-muted)', transition: 'color 150ms ease',
+            }}>
+              {copied
+                ? <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>check</span>
+                : <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>content_copy</span>
+              }
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Test result inline ── */}
       {testResult && testResult !== 'testing' && (() => {

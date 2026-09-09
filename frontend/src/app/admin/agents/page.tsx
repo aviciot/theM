@@ -6,7 +6,7 @@ import AuthGuard from '@/components/AuthGuard';
 import ChromaGrid from '@/components/ChromaGrid';
 import { themApi, getPreferences, setPreferences, type Agent, type AgentDefinition, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
 import { type AgentFolder, type FolderState, loadFoldersLocal, saveFoldersLocal, genId, EMPTY_FORM, type CardDiff, buildDiff } from './agentTypes';
-import { agentCategory } from './agentUtils';
+import { agentCategory, categoryAccent, agentIcon, timeAgo } from './agentUtils';
 import { AgentCard, _inFlightScans } from './AgentCard';
 import { FolderHeader } from './FolderHeader';
 import { AgentModals } from './AgentModals';
@@ -64,6 +64,9 @@ export default function AdminAgentsPage() {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [pendingFolder, setPendingFolder] = useState<{ agentA: Agent; agentB: Agent } | null>(null);
   const [folderNameInput, setFolderNameInput] = useState('');
+  const [listView, setListView] = useState<boolean>(() => {
+    try { return localStorage.getItem('tm-agents-view') === 'list'; } catch { return false; }
+  });
 
   useEffect(() => {
     getPreferences().then(prefs => {
@@ -544,12 +547,116 @@ export default function AdminAgentsPage() {
               {CATEGORY_PILLS.map((cat) => (
                 <button key={cat} onClick={() => setActiveCategory(cat)} className={activeCategory === cat ? 'filter-pill-active' : 'filter-pill'}>{cat}</button>
               ))}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px' }}>
+                <button
+                  title="Grid view"
+                  onClick={() => { setListView(false); try { localStorage.setItem('tm-agents-view', 'grid'); } catch {} }}
+                  style={{ width: '30px', height: '30px', borderRadius: '7px', border: '1px solid', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 150ms ease', background: !listView ? 'rgba(0,209,255,0.12)' : 'transparent', borderColor: !listView ? 'rgba(0,209,255,0.4)' : 'rgba(255,255,255,0.08)', color: !listView ? '#00d1ff' : 'var(--tm-card-text-muted)' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>grid_view</span>
+                </button>
+                <button
+                  title="List view"
+                  onClick={() => { setListView(true); try { localStorage.setItem('tm-agents-view', 'list'); } catch {} }}
+                  style={{ width: '30px', height: '30px', borderRadius: '7px', border: '1px solid', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 150ms ease', background: listView ? 'rgba(0,209,255,0.12)' : 'transparent', borderColor: listView ? 'rgba(0,209,255,0.4)' : 'rgba(255,255,255,0.08)', color: listView ? '#00d1ff' : 'var(--tm-card-text-muted)' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>view_list</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Card grid */}
+          {/* Card grid / list */}
           {(() => {
             const isFiltering = searchTerm.trim() !== '' || activeCategory !== 'All';
+
+            // ── List view ──────────────────────────────────────────────────────
+            if (listView) {
+              const displayAgents = isFiltering ? filteredAgents : agents;
+              return (
+                <div style={{ padding: '0 32px 48px' }}>
+                  {loading && <div style={{ padding: '80px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>Loading agents…</div>}
+                  {!loading && displayAgents.length === 0 && <div style={{ padding: '60px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>{isFiltering ? 'No agents match your filter' : 'No agents yet'}</div>}
+                  {!loading && displayAgents.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {/* Header row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 80px 90px 90px auto', alignItems: 'center', gap: '12px', padding: '6px 14px', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--tm-card-text-muted)' }}>
+                        <span>Agent</span><span>Status</span><span>Skills</span><span>Last Sync</span><span>Security</span><span style={{ width: '180px' }}>Actions</span>
+                      </div>
+                      {displayAgents.map(agent => {
+                        const isInternal = agent.tags?.includes('internal') ?? false;
+                        const isLocked = isInternal || (agent.tags?.includes('locked') ?? false);
+                        const category = agentCategory(agent);
+                        const acc = isInternal ? { color: '#a0f0d0', border: 'rgba(160,240,208,0.45)', glow: 'rgba(160,240,208,0.18)' } : categoryAccent(category);
+                        const ico = agent.icon || agentIcon(agent, category);
+                        const sr = scanResults[agent.id];
+                        const tr = testResults[agent.id];
+                        return (
+                          <div key={agent.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 80px 90px 90px auto', alignItems: 'center', gap: '12px', padding: '10px 14px', background: 'var(--tm-card)', border: '1px solid var(--tm-card-border)', borderRadius: '10px', transition: 'border-color 150ms ease' }}>
+                            {/* Name + icon */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                              <div style={{ width: '32px', height: '32px', flexShrink: 0, borderRadius: '8px', background: `radial-gradient(circle at 30% 25%, ${acc.glow}, transparent 65%), linear-gradient(145deg, var(--tm-inset), var(--tm-inset-deep))`, border: `1px solid ${acc.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: '16px', color: acc.color }}>{ico}</span>
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.display_name}</div>
+                                <div style={{ fontSize: '10px', color: 'var(--tm-card-text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'monospace' }}>{agent.endpoint_url}</div>
+                              </div>
+                            </div>
+                            {/* Status */}
+                            <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '9999px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: agent.enabled ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.12)', color: agent.enabled ? '#34d399' : '#64748b', border: `1px solid ${agent.enabled ? 'rgba(16,185,129,0.28)' : 'rgba(100,116,139,0.22)'}` }}>
+                              {agent.enabled && <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#34d399', boxShadow: '0 0 4px #34d399', display: 'inline-block' }} />}
+                              {agent.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                            {/* Skills */}
+                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text)' }}>{agent.skills?.length || '—'}</span>
+                            {/* Last sync */}
+                            <span style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)' }}>{agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}</span>
+                            {/* Security */}
+                            <span>
+                              {sr && sr !== 'scanning' ? (
+                                <button onClick={() => { const r = scanResults[agent.id]; if (r && r !== 'scanning') setScanModal({ agent, result: r }); }} style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '5px', cursor: 'pointer', border: '1px solid', background: 'transparent', color: sr.risk === 'low' ? '#34d399' : sr.risk === 'medium' ? '#f59e0b' : '#f87171', borderColor: sr.risk === 'low' ? 'rgba(16,185,129,0.3)' : sr.risk === 'medium' ? 'rgba(245,158,11,0.3)' : 'rgba(248,113,113,0.3)' }}>
+                                  {sr.score} · {sr.risk}
+                                </button>
+                              ) : sr === 'scanning' ? (
+                                <span style={{ fontSize: '10px', color: '#00d1ff' }}>scanning…</span>
+                              ) : (
+                                <span style={{ fontSize: '10px', color: 'var(--tm-card-text-muted)' }}>—</span>
+                              )}
+                            </span>
+                            {/* Actions */}
+                            <div style={{ display: 'flex', gap: '6px', width: '180px' }}>
+                              <button onClick={() => handleTest(agent)} disabled={tr === 'testing'} className="card-action-btn card-action-btn--primary" style={{ flex: 1, padding: '6px 4px', fontSize: '11px' }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>play_arrow</span>
+                                {tr === 'testing' ? '…' : 'Test'}
+                              </button>
+                              <button onClick={() => handleRowDiscover(agent)} disabled={!!rowDiscoverState[agent.id]} className={`card-action-btn card-action-btn--secondary${rowDiscoverState[agent.id] ? ' is-loading' : ''}`} style={{ flex: 1, padding: '6px 4px', fontSize: '11px' }}>
+                                <span className={`material-symbols-outlined${rowDiscoverState[agent.id] ? ' spin' : ''}`} style={{ fontSize: '13px' }}>{rowDiscoverState[agent.id] ? 'sync' : 'radar'}</span>
+                                {rowDiscoverState[agent.id] ? '…' : 'Discover'}
+                              </button>
+                              <button onClick={() => handleScan(agent)} disabled={sr === 'scanning'} className="card-action-btn card-action-btn--scan" style={{ flex: 1, padding: '6px 4px', fontSize: '11px' }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>security</span>
+                                {sr === 'scanning' ? '…' : 'Scan'}
+                              </button>
+                              <button onClick={() => openEdit(agent)} className="card-action-btn card-action-btn--secondary" style={{ width: '30px', padding: '6px 0', fontSize: '11px' }} title="Edit">
+                                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>edit</span>
+                              </button>
+                              {!isLocked && (
+                                <button onClick={() => setDeleteTarget(agent)} className="card-action-btn" style={{ width: '30px', padding: '6px 0', fontSize: '11px', background: 'transparent', border: '1px solid rgba(220,38,38,0.22)', color: '#f87171' }} title="Delete">
+                                  <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>delete</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            // ── Grid view (filtered) ───────────────────────────────────────────
             if (isFiltering) {
               return (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', padding: '0 32px 48px' }}>
@@ -574,14 +681,14 @@ export default function AdminAgentsPage() {
                   return (
                     <>
                       {collapsedFolders.length > 0 && (
-                        <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '20px' }}>
                           {collapsedFolders.map(folder => {
                             const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
                             return (
                               <FolderHeader key={folder.id} folder={folder} folderAgents={folderAgents} count={folderAgents.length} isDragOver={dragOverId === `folder:${folder.id}`} onToggleCollapse={() => toggleFolderCollapse(folder.id)} onRename={(name) => renameFolderInline(folder.id, name)} onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }} onDragLeave={() => setDragOverId(null)} onDrop={(e) => { e.preventDefault(); setDragOverId(null); const id = e.dataTransfer.getData('agentId'); if (id) handleDropOntoFolder(id, folder.id); }} />
                             );
                           })}
-                        </ChromaGrid>
+                        </div>
                       )}
 
                       {expandedFolders.map(folder => {
