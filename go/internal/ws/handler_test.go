@@ -27,6 +27,7 @@ import (
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
 	wshandler "github.com/aviciot/them/internal/ws"
 )
@@ -1116,6 +1117,86 @@ func TestWS_StartFailure_RunMarkedFailed(t *testing.T) {
 	finalStatus, hasUpdate := capRec.lastStatus()
 	require.True(t, hasUpdate, "UpdateRunStatus must be called after Start failure")
 	assert.Equal(t, domain.RunStatusFailed, finalStatus, "run must be marked failed after Start failure")
+}
+
+// dialWSWithHeaders dials a WS endpoint with arbitrary extra headers (e.g. X-External-User).
+func dialWSWithHeaders(t *testing.T, server *httptest.Server, path string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + path
+	dialer := websocket.Dialer{HandshakeTimeout: 3 * time.Second}
+	return dialer.Dial(wsURL, headers)
+}
+
+// 25. Backend token on tenant-slug path: X-External-User IS propagated.
+// Regression for the identity propagation bug where resolved_tenant_id skipped
+// tokenInfo population, causing IsBackend to always be false on the slug path.
+func TestWS_SlugPath_BackendToken_ExternalUserPropagated(t *testing.T) {
+	capRec := &captureRunCreator{}
+	authn := &fakeAuth{token: "backend-tok", info: &auth.TokenInfo{TokenID: 99, IsBackend: true}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:            "ep1",
+		EPType:            "websocket",
+		AccessMode:        epconfig.AccessModePublic,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          tenantctx.BootstrapTenantID,
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
+		OrchestratorName:  "test-orchestrator",
+	}}
+	b := &wsBuilder{authn: authn, epLoader: ep, recorder: capRec}
+	h, _ := b.build()
+	// No slugResolver → resolveSlug falls back to BootstrapTenantID, simulating slug routing.
+	srv := httptest.NewServer(h.AppsWSRoute())
+	defer srv.Close()
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer backend-tok")
+	headers.Set("X-External-User", "alice@example.com")
+	conn, _, err := dialWSWithHeaders(t, srv, "/my-tenant/apps/myapp/ep1/ws", headers)
+	require.NoError(t, err)
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must be called")
+	assert.Equal(t, "alice@example.com", run.ExternalUserID,
+		"X-External-User must be propagated when IsBackend=true on slug-resolved path")
+}
+
+// 26. Non-backend token on tenant-slug path: X-External-User is ignored.
+// A mobile/browser token must never accept the X-External-User assertion.
+func TestWS_SlugPath_NonBackendToken_ExternalUserIgnored(t *testing.T) {
+	capRec := &captureRunCreator{}
+	authn := &fakeAuth{token: "user-tok", info: &auth.TokenInfo{TokenID: 7, IsBackend: false}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:            "ep1",
+		EPType:            "websocket",
+		AccessMode:        epconfig.AccessModePublic,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          tenantctx.BootstrapTenantID,
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
+		OrchestratorName:  "test-orchestrator",
+	}}
+	b := &wsBuilder{authn: authn, epLoader: ep, recorder: capRec}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.AppsWSRoute())
+	defer srv.Close()
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer user-tok")
+	headers.Set("X-External-User", "attacker@example.com")
+	conn, _, err := dialWSWithHeaders(t, srv, "/my-tenant/apps/myapp/ep1/ws", headers)
+	require.NoError(t, err)
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must be called")
+	assert.Equal(t, "", run.ExternalUserID,
+		"X-External-User must be ignored when IsBackend=false on slug-resolved path")
 }
 
 // failingTemporalClient always returns an error from ExecuteWorkflow.

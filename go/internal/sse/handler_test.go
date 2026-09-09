@@ -28,6 +28,7 @@ import (
 	"github.com/aviciot/them/internal/session"
 	ssehandler "github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
 )
 
@@ -1159,4 +1160,88 @@ func TestSSEFileEventForwardedAsArtifactUpdate(t *testing.T) {
 	assert.Equal(t, "report.pdf", artifactEv["filename"])
 	assert.Equal(t, "application/pdf", artifactEv["content_type"])
 	assert.Equal(t, "https://example.com/files/report.pdf", artifactEv["url"])
+}
+
+// SSE-SLUG-01. Backend token on tenant-slug path: X-External-User IS propagated.
+// Regression for the identity propagation bug where resolved_tenant_id skipped
+// tokenInfo population, causing IsBackend to always be false on the slug path.
+func TestSSE_SlugPath_BackendToken_ExternalUserPropagated(t *testing.T) {
+	capRec := &captureRunCreator{}
+	authn := &fakeAuth{token: "backend-tok", info: &auth.TokenInfo{TokenID: 99, IsBackend: true}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:            "ep1",
+		EPType:            "sse",
+		AccessMode:        epconfig.AccessModePublic,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          tenantctx.BootstrapTenantID,
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
+		OrchestratorName:  "test-orchestrator",
+	}}
+	b := &sseBuilder{
+		authn:      authn,
+		epLoader:   ep,
+		recorder:   capRec,
+		streamMsgs: []string{`{"type":"done","run_id":"r"}`},
+	}
+	h, _ := b.build()
+	// No slugResolver → resolveSlug falls back to BootstrapTenantID, simulating slug routing.
+	srv := httptest.NewServer(h.AppsSSERoute())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/my-tenant/apps/myapp/ep1/sse?message=hello")
+	req.Header.Set("Authorization", "Bearer backend-tok")
+	req.Header.Set("X-External-User", "alice@example.com")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	collectSSE(t, resp, 3*time.Second)
+
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must be called")
+	assert.Equal(t, "alice@example.com", run.ExternalUserID,
+		"X-External-User must be propagated when IsBackend=true on slug-resolved path")
+}
+
+// SSE-SLUG-02. Non-backend token on tenant-slug path: X-External-User is ignored.
+// A mobile/browser token must never accept the X-External-User assertion.
+func TestSSE_SlugPath_NonBackendToken_ExternalUserIgnored(t *testing.T) {
+	capRec := &captureRunCreator{}
+	authn := &fakeAuth{token: "user-tok", info: &auth.TokenInfo{TokenID: 7, IsBackend: false}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:            "ep1",
+		EPType:            "sse",
+		AccessMode:        epconfig.AccessModePublic,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          tenantctx.BootstrapTenantID,
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
+		OrchestratorName:  "test-orchestrator",
+	}}
+	b := &sseBuilder{
+		authn:      authn,
+		epLoader:   ep,
+		recorder:   capRec,
+		streamMsgs: []string{`{"type":"done","run_id":"r"}`},
+	}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.AppsSSERoute())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/my-tenant/apps/myapp/ep1/sse?message=hello")
+	req.Header.Set("Authorization", "Bearer user-tok")
+	req.Header.Set("X-External-User", "attacker@example.com")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	collectSSE(t, resp, 3*time.Second)
+
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must be called")
+	assert.Equal(t, "", run.ExternalUserID,
+		"X-External-User must be ignored when IsBackend=false on slug-resolved path")
 }

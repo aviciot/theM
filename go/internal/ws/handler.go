@@ -217,18 +217,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 2. Resolve tenant identity for EP config lookup ──────────────────────
 	// Priority order: (1) resolved_tenant_id from AppsWSRoute slug resolution
 	// (2) bearer token TenantID claim (3) bootstrap fallback for /orchestrate path.
-	// Capture tokenInfo here so we can enforce the is_backend check below.
+	//
+	// Token validation is always attempted when a raw token is present so that
+	// tokenInfo.IsBackend is available for the X-External-User check below.
+	// The resolved_tenant_id from the URL slug takes precedence over the token's
+	// own TenantID claim for tenant resolution, but we still need tokenInfo.
 	tenantID := tenantctx.BootstrapTenantID
 	var tokenInfo *auth.TokenInfo
-	if resolved := chi.URLParam(r, "resolved_tenant_id"); resolved != "" {
-		tenantID = resolved
-	} else if rawToken != "" && h.authenticator != nil {
+	if rawToken != "" && h.authenticator != nil {
 		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil {
 			tokenInfo = ti
-			if ti.TenantID != "" {
-				tenantID = ti.TenantID
-			}
 		}
+	}
+	if resolved := chi.URLParam(r, "resolved_tenant_id"); resolved != "" {
+		// Slug-resolved path: trust the URL-derived tenant UUID.
+		tenantID = resolved
+	} else if tokenInfo != nil && tokenInfo.TenantID != "" {
+		// Legacy /orchestrate path: derive tenant from bearer token claim.
+		tenantID = tokenInfo.TenantID
 	}
 
 	// ── 2b. External user identity ────────────────────────────────────────────

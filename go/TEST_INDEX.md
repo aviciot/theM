@@ -560,6 +560,8 @@ Release marks run "failed" when Start never ran (orphan-run prevention).
 | `TestWS_UpgradeFailure_RunMarkedFailed` | R-5.1: Upgrade fails after Admit → Release marks run as failed (orphan prevention) |
 | `TestWS_FirstMessageError_RunMarkedFailed` | R-5.1: Client disconnects before first message → Release marks run as failed |
 | `TestWS_StartFailure_RunMarkedFailed` | R-5.1: Temporal Start fails → Release marks run as failed |
+| `TestWS_SlugPath_BackendToken_ExternalUserPropagated` | Identity bug regression: backend token on `AppsWSRoute` (slug path) → `X-External-User` IS propagated to CreateRun (IsBackend=true survives slug routing) |
+| `TestWS_SlugPath_NonBackendToken_ExternalUserIgnored` | Identity bug regression: non-backend token on `AppsWSRoute` → `X-External-User` is ignored (header cannot be asserted by mobile/browser tokens) |
 
 **Trigger:** any change to `internal/ws/handler.go` or `internal/execution/lifecycle.go`
 
@@ -597,6 +599,8 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestSSE_RunStreamSubscribedBeforeStart` | R-5.2: runEvents subscribe called BEFORE ExecuteWorkflow (bootstrap ordering invariant) |
 | `TestSSE_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
 | `TestSSEFileEventForwardedAsArtifactUpdate` | `file` bus event forwarded as `artifact-update` SSE event with correct filename/content_type/url fields |
+| `TestSSE_SlugPath_BackendToken_ExternalUserPropagated` | Identity bug regression: backend token on `AppsSSERoute` (slug path) → `X-External-User` IS propagated to CreateRun (IsBackend=true survives slug routing) |
+| `TestSSE_SlugPath_NonBackendToken_ExternalUserIgnored` | Identity bug regression: non-backend token on `AppsSSERoute` → `X-External-User` is ignored (header cannot be asserted by mobile/browser tokens) |
 
 **Trigger:** any change to `internal/sse/handler.go` or `internal/execution/lifecycle.go`
 
