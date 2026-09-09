@@ -311,12 +311,23 @@ func (f *runOrchestratorFactory) buildFallback() temporal.OrchestratorRunner {
 // Returns (nil, error) when no per-app key is stored or the provider is unknown —
 // the caller must treat this as a non-retryable run failure.
 func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) (llm.Provider, error) {
-	if cfg.LLMAPIKey == "" {
-		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", cfg.LLMProvider)
+	apiKey := cfg.LLMAPIKey
+	if apiKey == "" {
+		// Fall back to the global env-var key when no per-app key is stored.
+		// Env var name is <UPPER_PROVIDER>_API_KEY (e.g. ANTHROPIC_API_KEY).
+		switch cfg.LLMProvider {
+		case "anthropic":
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		case "openai":
+			apiKey = os.Getenv("OPENAI_API_KEY")
+		}
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime or env", cfg.LLMProvider)
 	}
 	switch cfg.LLMProvider {
 	case "anthropic":
-		return llm.NewAnthropicProvider(cfg.LLMAPIKey, cfg.OrchestratorConfig.Model, 0), nil
+		return llm.NewAnthropicProvider(apiKey, cfg.OrchestratorConfig.Model, 0), nil
 	default:
 		return nil, fmt.Errorf("provider %q is not yet supported in the Go worker", cfg.LLMProvider)
 	}
