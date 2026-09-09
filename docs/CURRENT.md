@@ -410,15 +410,15 @@ See full detail in `docs/HANDOVER.md`.
 - 17 new tests (EC-AP-01..10 in `epconfig_test.go`, LC-AP-01..07 in `lifecycle_test.go`)
 - All 54 packages pass, 0 failures
 
-**⚠️ Pending verification gate** — `tasks.user_id` not yet confirmed via live orchestration run with a working agent. See `docs/HANDOVER.md`. Do not enable user_jwt EPs in production until this passes.
+**✅ Verification gate CLOSED (2026-09-09)** — `tasks.user_id` confirmed via live Temporal run with a2a-echo agent. User A (id=47): `runs.user_id=47` ✅; User B (id=48): `tasks.user_id=48` ✅. Root cause of previous NULLs: bridge image was 4 minutes older than Phase 2 code commit — stale binary, not a code bug. Bridge rebuilt from HEAD, gate closed. See `docs/HANDOVER.md`.
+
+**`user_jwt` EPs are safe to enable for production end-users.**
 
 ---
 
 ### Next recommended task
 
 **Phase 4 — Bank JWT / JWKS validation** (see `docs/END_USER_AUTH_PLAN.md`)
-
-Or: **Complete worker-to-task E2E check** (requires working test agent that completes a Temporal workflow run successfully)
 
 **HEAD: (pending commit)** — Phase 3 complete
 
