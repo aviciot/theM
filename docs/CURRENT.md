@@ -666,14 +666,35 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 
 ---
 
-## LLM key architecture (current)
+## LLM provider support (current) — commit f527ccf
 
+**Fully wired providers (orchestrator worker + canvas agent runtime + dag worker):**
+
+| Provider | Type | Notes |
+|---|---|---|
+| `anthropic` | Cloud | Native Anthropic Messages API |
+| `openai` | Cloud | OpenAI Chat Completions API |
+| `groq` | Cloud | OpenAI-compatible endpoint |
+| `ollama` | Local | No auth header; set `base_url` in `them.llm_providers` |
+| `vllm` | Local | OpenAI-compatible; set `base_url` in `them.llm_providers` |
+| `lmstudio` | Local | OpenAI-compatible; set `base_url` in `them.llm_providers` |
+
+**Not yet wired (UI lists them, backend will error):**
+- `gemini` — different wire format; needs a dedicated implementation
+
+**Key architecture:**
 - Per-app keys stored in `applications.provider_keys` JSONB (AES-GCM encrypted)
 - Format: `{"anthropic": {"ct": "enc:...", "hint": "XXXX"}}` (new) or `{"anthropic": "sk-ant-..."}` (legacy flat)
-- **No global key fallback** — apps with no key get an explicit error (non-retryable Temporal failure)
-- Worker: `resolveProvider` returns error when `cfg.LLMAPIKey == ""`
-- Agent-runtime: `anthropicLLMFactory.NewProvider` returns error when `apiKey == ""`
-- UI: Runtime tab in Applications view → provider + model + API key per app
+- **No global key fallback** — apps with no key get an explicit error (non-retryable Temporal failure), except `ollama` (unauthenticated — empty key is allowed)
+- `them.llm_providers.base_url` is now read at run resolution time and threaded into `RunConfig.LLMBaseURL` / `RunConfig.SummarizerBaseURL`
+- Worker: `resolveProvider` + `resolveSummarizerProvider` dispatch on provider name
+- Agent-runtime / dag-worker: `multiLLMFactory.baseURLs` map carries per-provider custom endpoint URLs
+- UI: Runtime tab → provider + model + API key per app; `ollama/vllm/lmstudio` appear in provider dropdowns
+
+**To add a local LLM (e.g. Ollama):**
+1. Insert a row into `them.llm_providers`: `name='ollama'`, `base_url='http://host.docker.internal:11434/v1'`, `api_key_encrypted=NULL`, `default_model='llama3.2'`
+2. Set the app's Runtime provider to `ollama` and leave the API key field empty (or enter `ollama`)
+3. Rebuild and restart `them-go-bridge`, `them-go-worker`, `them-agent-runtime`
 
 ---
 
