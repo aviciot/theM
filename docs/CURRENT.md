@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (IAM UI Stage 3 — tenant-admin SSO self-service)
+# Last updated: 2026-09-09 (LLM provider support — OpenAI-compatible adapter + local provider UI)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+4d4b232  feat(ui): group Provider Keys into collapsible Cloud / Self-hosted sections
+782af72  feat(ui): smart placeholders + host badge for local LLM providers
+c38dc3f  feat(llm): add base_url support for local providers (ollama/vllm/lmstudio)
+1195548  feat(llm): OpenAI-compatible adapter + multi-provider support
 7f09eb2  feat(iam): tenant-admin self-service SSO group mapping (Stage 3)
-2c930cd  feat(iam): add Group Mappings tab to super-admin tenant panel (Stage 2)
-30c4e1e  docs(iam): add group mapping UI spec + Keycloak test setup guide
-227d1e8  docs: IAM UI spec (3 changes) + INDEX + SSO doc + test index row 38
-d247ce8  test(multitenant): add 74-check automation script covering S0–S11
 ```
 
 ---
@@ -427,6 +427,38 @@ See full detail in `docs/HANDOVER.md`.
 **✅ Verification gate CLOSED (2026-09-09)** — `tasks.user_id` confirmed via live Temporal run with a2a-echo agent. User A (id=47): `runs.user_id=47` ✅; User B (id=48): `tasks.user_id=48` ✅. Root cause of previous NULLs: bridge image was 4 minutes older than Phase 2 code commit — stale binary, not a code bug. Bridge rebuilt from HEAD, gate closed. See `docs/HANDOVER.md`.
 
 **`user_jwt` EPs are safe to enable for production end-users.**
+
+---
+
+### LLM Provider Support — COMPLETE (2026-09-09, 4d4b232)
+
+**New providers:** OpenAI-compatible wire format (streaming SSE, `delta.content`, tool_calls accumulation) wired into all three Go workers.
+
+| Provider | Type | Auth |
+|---|---|---|
+| `anthropic` | Cloud | API key |
+| `openai` | Cloud | API key |
+| `groq` | Cloud | API key |
+| `gemini` | Cloud | not yet wired (listed, key stored, no provider impl) |
+| `ollama` | Self-hosted | none (sentinel key) |
+| `vllm` | Self-hosted | optional |
+| `lmstudio` | Self-hosted | optional |
+| `elevenlabs` | Cloud / voice | API key |
+
+**New files / key changes:**
+- `go/internal/llm/openai.go` — `OpenAIProvider`: streaming SSE, configurable `baseURL`, skips `Authorization` header when `apiKey == "ollama"`. 9 tests (OAI-1..9).
+- `go/internal/temporal/workerconfig/loader.go` — `RunConfig` gains `LLMBaseURL` + `SummarizerBaseURL`; DB fetch includes `base_url` column.
+- `go/cmd/worker/main.go`, `go/cmd/agent-runtime/llm.go`, `go/cmd/dag-worker/main.go` — new cases for openai/groq/ollama/vllm/lmstudio.
+- `go/internal/admin/service/applications.go` + `dal/applications.go` + `admin/applications.go` — `SetProviderKey` accepts `baseURL`; `UpsertProviderBaseURL` / `GetProviderBaseURLs` DAL methods; local providers may omit API key.
+- `frontend/src/app/admin/applications/constants.ts` — `CLOUD_PROVIDERS_LIST`, `LOCAL_PROVIDERS_LIST`, model lists for all new providers.
+- `frontend/src/app/admin/applications/components/RuntimeView.tsx` — Provider Keys section split into two collapsible groups (Cloud / Self-hosted); local providers show Endpoint URL input with per-provider default placeholder; configured local providers show host:port in badge instead of key hint.
+
+**Ollama setup (3 steps):**
+1. Set Endpoint URL to `http://<host>:11434` (leave API key blank)
+2. Hit Save — ollama sentinel key stored, URL persisted
+3. Configure orchestrator to use `ollama` provider + model name (e.g. `llama3.2`)
+
+**All 53 Go packages pass. HEAD: 4d4b232**
 
 ---
 
