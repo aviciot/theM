@@ -32,21 +32,91 @@
       ]
     }
   ],
+  "groups": [
+    {
+      "name": "bank-admins",
+      "path": "/bank-admins"
+    },
+    {
+      "name": "qa",
+      "path": "/qa"
+    },
+    {
+      "name": "developers",
+      "path": "/developers"
+    }
+  ],
   "users": [
     {
       "username": "testuser",
-      "email": "testuser@example.com",
+      "email": "testuser@bank.com",
       "firstName": "Test",
       "lastName": "User",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "testpass",
-          "temporary": false
-        }
-      ]
+      "credentials": [{ "type": "password", "value": "testpass", "temporary": false }]
+    },
+    {
+      "username": "avi",
+      "email": "avi@bank.com",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "avi", "temporary": false }]
+    },
+    {
+      "username": "avi1",
+      "email": "avi1@bank.com",
+      "firstName": "Avi1",
+      "lastName": "Cohen1",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "avi1", "temporary": false }]
+    },
+    {
+      "username": "avi2",
+      "email": "avi2@bank.com",
+      "firstName": "Avi2",
+      "lastName": "Avi2",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "avi2", "temporary": false }]
+    },
+    {
+      "username": "avi3",
+      "email": "avi3@bank.com",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "avi3", "temporary": false }]
+    },
+    {
+      "username": "bankadmin",
+      "email": "bankadmin@bank.com",
+      "firstName": "Bank",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "bankadmin", "temporary": false }],
+      "groups": ["/bank-admins"]
+    },
+    {
+      "username": "qa-user",
+      "email": "qa@bank.com",
+      "firstName": "QA",
+      "lastName": "Engineer",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "qa", "temporary": false }],
+      "groups": ["/qa"]
+    },
+    {
+      "username": "dev",
+      "email": "dev@bank.com",
+      "firstName": "Dev",
+      "lastName": "Engineer",
+      "enabled": true,
+      "emailVerified": false,
+      "credentials": [{ "type": "password", "value": "dev", "temporary": false }],
+      "groups": ["/developers"]
     }
   ]
 }
