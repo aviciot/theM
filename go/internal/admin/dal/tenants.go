@@ -503,6 +503,45 @@ func (d *DB) DeleteGroupMapping(ctx context.Context, tenantID, mappingID string)
 	return err
 }
 
+// TenantResources holds counts of resources owned by a tenant.
+type TenantResources struct {
+	Applications int `json:"applications"`
+	Agents       int `json:"agents"`
+	Users        int `json:"users"`
+}
+
+// GetTenantResources returns counts of apps, agents, and users for a tenant.
+func (d *DB) GetTenantResources(ctx context.Context, id string) (TenantResources, error) {
+	const q = `
+		SELECT
+			(SELECT COUNT(*) FROM them.applications  WHERE tenant_id = $1::uuid)::int,
+			(SELECT COUNT(*) FROM them.agents         WHERE tenant_id = $1::uuid)::int,
+			(SELECT COUNT(*) FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid)::int`
+	var r TenantResources
+	err := d.q.ExecReturning(ctx, q, id).Scan(&r.Applications, &r.Agents, &r.Users)
+	return r, err
+}
+
+// ForceDeleteTenant cascades deletion of all tenant resources then removes the tenant.
+// Deletes: agents, applications (cascades entry_points, runs, etc.), memberships, then tenant row.
+func (d *DB) ForceDeleteTenant(ctx context.Context, id string) error {
+	const delAgents = `DELETE FROM them.agents WHERE tenant_id = $1::uuid`
+	if err := d.q.Exec(ctx, delAgents, id); err != nil {
+		return err
+	}
+	const delApps = `DELETE FROM them.applications WHERE tenant_id = $1::uuid`
+	if err := d.q.Exec(ctx, delApps, id); err != nil {
+		return err
+	}
+	const delMembers = `DELETE FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`
+	if err := d.q.Exec(ctx, delMembers, id); err != nil {
+		return err
+	}
+	const q = `DELETE FROM them.tenants WHERE id = $1::uuid AND is_bootstrap = false RETURNING id`
+	var returned string
+	return d.q.ExecReturning(ctx, q, id).Scan(&returned)
+}
+
 // DeleteTenant deletes a tenant by ID. Fails with pgx.ErrNoRows if not found,
 // or a FK violation error if the tenant still has dependent data (ON DELETE RESTRICT).
 // The bootstrap tenant (is_bootstrap=true) cannot be deleted.

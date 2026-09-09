@@ -31,6 +31,7 @@ func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants/{id}", h.Get)
 	r.Patch("/tenants/{id}", h.Patch)
 	r.Delete("/tenants/{id}", h.DeleteTenant)
+	r.Get("/tenants/{id}/resources", h.GetResources)
 	r.Get("/tenants/{id}/quota", h.GetQuota)
 	r.Put("/tenants/{id}/quota", h.UpsertQuota)
 	r.Get("/tenants/{id}/members", h.ListMembers)
@@ -315,15 +316,37 @@ func (h *TenantsHandler) UpsertGroupMapping(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, m)
 }
 
+// GetResources handles GET /api/v1/admin/tenants/{id}/resources.
+// Returns counts of apps, agents, and users owned by the tenant.
+func (h *TenantsHandler) GetResources(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	res, err := h.db.GetTenantResources(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // DeleteTenant handles DELETE /api/v1/admin/tenants/{id}.
-// The bootstrap tenant and any tenant with dependent data cannot be deleted.
+// With ?force=true: cascades deletion of all tenant resources before removing the tenant.
+// Without ?force: fails with 409 if the tenant still has dependent data.
 func (h *TenantsHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing tenant id")
 		return
 	}
-	err := h.db.DeleteTenant(r.Context(), id)
+	var err error
+	if r.URL.Query().Get("force") == "true" {
+		err = h.db.ForceDeleteTenant(r.Context(), id)
+	} else {
+		err = h.db.DeleteTenant(r.Context(), id)
+	}
 	if dal.IsNoRows(err) {
 		writeError(w, http.StatusNotFound, "tenant not found or cannot be deleted")
 		return

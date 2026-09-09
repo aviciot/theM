@@ -61,6 +61,11 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [genMsg, setGenMsg] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteResources, setDeleteResources] = useState<{ applications: number; agents: number; users: number } | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deletePasswordErr, setDeletePasswordErr] = useState('');
+  const [deletePasswordOk, setDeletePasswordOk] = useState(false);
+  const [verifyingPw, setVerifyingPw] = useState(false);
 
   const [discoveryURL, setDiscoveryURL] = useState('');
   const [clientID, setClientID] = useState('');
@@ -121,10 +126,36 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     }).catch(() => { /* ignore — panel still works, fields just stay blank */ });
   }, [tenant.id]);
 
+  async function openDeleteModal() {
+    setDeletePassword(''); setDeletePasswordErr(''); setDeletePasswordOk(false);
+    setDeleteResources(null);
+    setDeleteConfirm(true);
+    try {
+      const res = await themApi.getTenantResources(tenant.id);
+      setDeleteResources(res);
+    } catch { setDeleteResources({ applications: 0, agents: 0, users: 0 }); }
+  }
+
+  async function verifyAdminPassword() {
+    const pw = deletePassword.trim();
+    if (!pw) return;
+    setVerifyingPw(true); setDeletePasswordErr('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: pw }),
+      });
+      if (res.ok) { setDeletePasswordOk(true); }
+      else { setDeletePasswordErr('Incorrect password'); }
+    } catch { setDeletePasswordErr('Could not verify password'); }
+    finally { setVerifyingPw(false); }
+  }
+
   async function deleteTenantHandler() {
     setDeleting(true); setGenMsg('');
     try {
-      await themApi.deleteTenant(tenant.id);
+      await themApi.deleteTenant(tenant.id, true);
       onDeleted(tenant.id);
     } catch (e) { setGenMsg((e as Error).message || 'Error deleting tenant'); }
     finally { setDeleting(false); setDeleteConfirm(false); }
@@ -281,6 +312,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const row: React.CSSProperties = { marginBottom: '16px' };
 
   return (
+    <>
     <aside style={{
       position: 'fixed', right: 0, top: 0, bottom: 0, width: '400px', zIndex: 50,
       background: 'var(--tm-sidebar)', borderLeft: '1px solid rgba(255,255,255,.08)',
@@ -336,28 +368,9 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
             {!tenant.is_bootstrap && (
               <div style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid rgba(248,113,113,.15)' }}>
                 <p style={{ fontSize: '12px', fontWeight: 600, color: '#f87171', margin: '0 0 10px 0' }}>Danger Zone</p>
-                {!deleteConfirm ? (
-                  <button onClick={() => setDeleteConfirm(true)} style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.25)', color: '#f87171', cursor: 'pointer' }}>
-                    Delete Tenant
-                  </button>
-                ) : (
-                  <div style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.2)', borderRadius: '8px', padding: '14px' }}>
-                    <p style={{ fontSize: '13px', color: '#f87171', margin: '0 0 12px 0', fontWeight: 600 }}>
-                      Delete <strong>{tenant.display_name}</strong>? This cannot be undone.
-                    </p>
-                    <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: '0 0 12px 0' }}>
-                      The tenant must have no applications, agents, or users first.
-                    </p>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => setDeleteConfirm(false)} disabled={deleting} style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,.12)', color: 'var(--tm-card-text-muted)', cursor: 'pointer' }}>
-                        Cancel
-                      </button>
-                      <button onClick={deleteTenantHandler} disabled={deleting} style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'rgba(248,113,113,.15)', border: '1px solid rgba(248,113,113,.3)', color: '#f87171', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.6 : 1 }}>
-                        {deleting ? 'Deleting…' : 'Yes, delete'}
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <button onClick={openDeleteModal} style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.25)', color: '#f87171', cursor: 'pointer' }}>
+                  Delete Tenant
+                </button>
               </div>
             )}
           </>
@@ -585,6 +598,90 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
         )}
       </div>
     </aside>
+
+    {/* Delete confirmation modal */}
+    {deleteConfirm && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
+        <div style={{ width: 440, background: '#0f1117', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 16, padding: 28, boxShadow: '0 24px 64px rgba(0,0,0,0.6)' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f87171' }}>delete_forever</span>
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>Delete tenant</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{tenant.display_name} · {tenant.slug}</div>
+            </div>
+          </div>
+
+          {/* Resource summary */}
+          <div style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)', borderRadius: 10, padding: '12px 14px', marginBottom: 18 }}>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>The following will be permanently deleted:</div>
+            {deleteResources === null ? (
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Loading…</div>
+            ) : (
+              <div style={{ display: 'flex', gap: 20 }}>
+                {[
+                  { label: 'Applications', count: deleteResources.applications, icon: 'grid_view' },
+                  { label: 'Agents', count: deleteResources.agents, icon: 'smart_toy' },
+                  { label: 'Users', count: deleteResources.users, icon: 'group' },
+                ].map(({ label, count, icon }) => (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 15, color: count > 0 ? '#f87171' : 'rgba(255,255,255,0.25)' }}>{icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: count > 0 ? '#f87171' : 'rgba(255,255,255,0.35)' }}>{count}</span>
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>{label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Password verification */}
+          {!deletePasswordOk ? (
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>
+                Enter your admin password to confirm
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={e => { setDeletePassword(e.target.value); setDeletePasswordErr(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') verifyAdminPassword(); }}
+                  placeholder="admin password"
+                  autoFocus
+                  style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: `1px solid ${deletePasswordErr ? 'rgba(248,113,113,0.5)' : 'rgba(255,255,255,0.1)'}`, borderRadius: 8, padding: '8px 12px', color: '#f1f5f9', fontSize: 13, outline: 'none' }}
+                />
+                <button onClick={verifyAdminPassword} disabled={verifyingPw || !deletePassword.trim()}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.08)', color: '#f1f5f9', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: verifyingPw || !deletePassword.trim() ? 0.4 : 1 }}>
+                  {verifyingPw ? '…' : 'Verify'}
+                </button>
+              </div>
+              {deletePasswordErr && <div style={{ fontSize: 12, color: '#f87171', marginTop: 6 }}>{deletePasswordErr}</div>}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 18 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#4ade80' }}>check_circle</span>
+              <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 600 }}>Password verified</span>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => { setDeleteConfirm(false); setDeletePassword(''); setDeletePasswordErr(''); setDeletePasswordOk(false); }}
+              disabled={deleting}
+              style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: 13, cursor: 'pointer' }}>
+              Cancel
+            </button>
+            <button onClick={deleteTenantHandler} disabled={!deletePasswordOk || deleting || deleteResources === null}
+              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: deletePasswordOk ? '#dc2626' : 'rgba(248,113,113,0.15)', color: deletePasswordOk ? '#fff' : '#f87171', fontSize: 13, fontWeight: 700, cursor: !deletePasswordOk || deleting ? 'not-allowed' : 'pointer', opacity: !deletePasswordOk || deleting ? 0.5 : 1, transition: 'all 0.15s' }}>
+              {deleting ? 'Deleting…' : 'Delete everything'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
