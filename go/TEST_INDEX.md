@@ -1451,6 +1451,22 @@ Note: `WorkflowInput.OrchestratorName` is set from `EPConfig.OrchestratorName` (
 
 ---
 
+### S1-29b · Worker LLM provider resolution — `cmd/worker/main_test.go`
+
+**Purpose:** Verifies the `resolveProvider` fallback chain in `runOrchestratorFactory`:
+per-app key takes precedence; env-var key used when app key is absent; hard error when neither is present; unsupported provider returns error.
+
+| Test | What it proves |
+|---|---|
+| `TestResolveProvider_AppKeyUsedWhenSet` | Per-app key → Anthropic provider returned without error |
+| `TestResolveProvider_EnvKeyUsedWhenAppKeyEmpty` | Empty app key + `ANTHROPIC_API_KEY` env → provider returned (fallback works) |
+| `TestResolveProvider_FailsWhenNeitherKeySet` | No app key + no env key → error "no API key configured" |
+| `TestResolveProvider_UnsupportedProviderFails` | Unsupported provider string → error "not yet supported" |
+
+**Trigger:** any change to `cmd/worker/main.go` `resolveProvider`
+
+---
+
 ### S1-61 · Workerconfig provider key format — `internal/temporal/workerconfig/loader_test.go`
 
 **Purpose:** Verifies that `PgxLoader` constructs without panicking and that `RunConfig` zero values
