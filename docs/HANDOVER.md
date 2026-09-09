@@ -109,6 +109,23 @@ Isolation properties:
 
 ---
 
+## Identity propagation bug fix (commit 6843934)
+
+**Bug:** In WS and SSE `ServeHTTP`, the `else-if` that populated `tokenInfo` was skipped whenever `resolved_tenant_id` was set by the slug resolver. Consequence: `tokenInfo.IsBackend` was always `false` on slug-routed paths (`/{tenant_slug}/apps/...`), so `X-External-User` was silently dropped even for valid backend tokens.
+
+**Fix:** Token validation is now unconditionally attempted before the tenant priority block. The slug-derived UUID still takes precedence for tenant resolution, but `tokenInfo` is always populated.
+
+**Regression tests added (commit 6843934, all 54 packages pass):**
+
+| Test | What it proves |
+|---|---|
+| `TestWS_SlugPath_BackendToken_ExternalUserPropagated` | Backend token on `AppsWSRoute` slug path → X-External-User IS propagated |
+| `TestWS_SlugPath_NonBackendToken_ExternalUserIgnored` | Non-backend token on slug path → X-External-User is ignored |
+| `TestSSE_SlugPath_BackendToken_ExternalUserPropagated` | Backend token on `AppsSSERoute` slug path → X-External-User IS propagated |
+| `TestSSE_SlugPath_NonBackendToken_ExternalUserIgnored` | Non-backend token on slug path → X-External-User is ignored |
+
+---
+
 ## What was NOT done (remaining phases)
 
 | Phase | What | Why deferred |
