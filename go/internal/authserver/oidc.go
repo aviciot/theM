@@ -286,6 +286,7 @@ func (h *OIDCHandlers) OIDCStart(w http.ResponseWriter, r *http.Request) {
 		"state":                 {state},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"prompt":                {"login"}, // force IdP login screen — prevents silent re-auth from an active IdP session
 	}.Encode()
 
 	http.Redirect(w, r, authURL, http.StatusFound)
