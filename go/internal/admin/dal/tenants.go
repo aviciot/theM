@@ -534,18 +534,31 @@ func (d *DB) GetTenantResources(ctx context.Context, id string) (TenantResources
 
 // ForceDeleteTenant cascades deletion of all tenant resources then removes the tenant.
 // Deletes in dependency order: leaf tables first, then parent tables, then the tenant row.
+// Also deletes auth_service.users who have no remaining tenant memberships after cleanup
+// (SSO-created users that would otherwise be permanently orphaned).
 func (d *DB) ForceDeleteTenant(ctx context.Context, id string) error {
 	steps := []string{
 		// Leaf tables (no further dependents within the tenant)
-		`DELETE FROM them.run_artifacts          WHERE tenant_id = $1::uuid`,
-		`DELETE FROM them.runs                   WHERE tenant_id = $1::uuid`,
-		`DELETE FROM them.access_tokens          WHERE tenant_id = $1::uuid`,
-		`DELETE FROM them.orchestrators          WHERE tenant_id = $1::uuid`,
-		`DELETE FROM them.component_definitions  WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.run_artifacts           WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.runs                    WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.access_tokens           WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.orchestrators           WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.component_definitions   WHERE tenant_id = $1::uuid`,
 		`DELETE FROM them.application_definitions WHERE tenant_id = $1::uuid`,
 		// applications CASCADE-deletes entry_points, app_agent_bindings, etc.
-		`DELETE FROM them.applications           WHERE tenant_id = $1::uuid`,
-		`DELETE FROM them.agents                 WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.applications            WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.agents                  WHERE tenant_id = $1::uuid`,
+		// Delete orphaned SSO users: users whose only membership was this tenant.
+		// Local users (password_hash IS NOT NULL) are never auto-deleted — an admin
+		// created them intentionally and they may be reused.
+		`DELETE FROM auth_service.users
+		 WHERE password_hash IS NULL
+		   AND id IN (
+		       SELECT user_id FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid
+		   )
+		   AND id NOT IN (
+		       SELECT user_id FROM auth_service.tenant_memberships WHERE tenant_id != $1::uuid
+		   )`,
 		// Cross-schema memberships (no FK to them.tenants)
 		`DELETE FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`,
 	}

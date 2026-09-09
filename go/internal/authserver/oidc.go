@@ -427,7 +427,7 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		debugRec.MatchedGroup = role
 	}
 
-	user, err := h.oidcStore.UpsertOIDCUser(r.Context(), tenantUUID, claims.Email, claims.Name, role)
+	user, err := h.oidcStore.UpsertOIDCUser(r.Context(), tenantUUID, claims.Email, claims.Name, role, claims.Sub, idpCfg.DiscoveryURL)
 	if err != nil {
 		h.log.Error("oidc callback: user upsert failed", "tenant", slug, "email", claims.Email)
 		writeErr(w, http.StatusInternalServerError, "internal error")

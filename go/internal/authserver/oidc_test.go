@@ -114,7 +114,7 @@ func (f *fakeOIDCStore) GetTenantIDPConfig(_ context.Context, slug string) (stri
 	return t.id, t.cfg, nil
 }
 
-func (f *fakeOIDCStore) UpsertOIDCUser(_ context.Context, _, email, name, role string) (*userRecord, error) {
+func (f *fakeOIDCStore) UpsertOIDCUser(_ context.Context, _, email, name, role, _, _ string) (*userRecord, error) {
 	if role == "" {
 		role = "viewer"
 	}

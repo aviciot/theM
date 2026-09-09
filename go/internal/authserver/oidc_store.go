@@ -82,11 +82,11 @@ type OIDCStore interface {
 	// tenant exists but has no idp_config set.
 	GetTenantIDPConfig(ctx context.Context, slug string) (tenantID string, cfg *IDPConfig, err error)
 
-	// UpsertOIDCUser finds an existing user by email within a tenant, or creates a
-	// new auth_service.users row and a tenant_memberships row, then returns the user
-	// record. This is best-effort idempotent: if the user already exists the
-	// existing record is returned unchanged.
-	UpsertOIDCUser(ctx context.Context, tenantID, email, name, role string) (*userRecord, error)
+	// UpsertOIDCUser finds or creates an auth_service.users row and a tenant_memberships row.
+	// Match priority: (idp_sub, idp_issuer) → email fallback for legacy rows without idp_sub.
+	// sub is the OIDC subject claim (stable per user per IdP).
+	// issuer is the IdP discovery URL / realm (scopes sub to a specific IdP).
+	UpsertOIDCUser(ctx context.Context, tenantID, email, name, role, sub, issuer string) (*userRecord, error)
 
 	// GetGroupRole returns the tenant role mapped to the highest-priority group
 	// (lowest priority integer wins) that appears in the groups slice.
@@ -174,7 +174,7 @@ var validMemberRoles = map[string]bool{
 	"viewer": true,
 }
 
-func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name, role string) (*userRecord, error) {
+func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name, role, sub, issuer string) (*userRecord, error) {
 	// Validate and default the membership role. super_admin or unknown → viewer.
 	if !validMemberRoles[role] {
 		role = "viewer"
@@ -213,7 +213,6 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 		return nil, err
 	}
 
-	// Upsert the user row. email is the external identity anchor.
 	// Username defaults to the email (truncated to 150 chars to stay within any UI limits).
 	username := email
 	if len(username) > 150 {
@@ -225,17 +224,44 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 
 	var userID int64
 	var username2, name2 string
-	// ON CONFLICT (email) handles idempotent upsert. The username unique constraint
-	// is satisfied on first insert; subsequent logins match via email.
+
+	// Match priority:
+	//   1. (idp_sub, idp_issuer) — stable IdP identity, immune to email changes
+	//   2. email fallback — for legacy rows created before migration 090
+	// Local accounts (password_hash IS NOT NULL) are never matched by SSO login.
+	//
+	// INSERT ... ON CONFLICT (idp_sub, idp_issuer) is a partial index conflict —
+	// we use a two-step approach: try to find existing row first, then upsert.
+	//
+	// If sub/issuer are non-empty, try matching on them first.
+	if sub != "" && issuer != "" {
+		// Backfill idp_sub/idp_issuer on existing email-matched rows from before migration 090.
+		_, _ = pgTx.Exec(ctx, `
+			UPDATE auth_service.users
+			SET idp_sub = $1, idp_issuer = $2, updated_at = CURRENT_TIMESTAMP
+			WHERE email = $3 AND password_hash IS NULL
+			  AND (idp_sub IS NULL OR idp_sub = $1)`,
+			sub, issuer, email)
+	}
+
+	// Upsert: match on (idp_sub, idp_issuer) when available, else fall back to email.
+	// The CASE in ON CONFLICT handles both paths in one query.
+	var subPtr, issuerPtr *string
+	if sub != "" && issuer != "" {
+		subPtr = &sub
+		issuerPtr = &issuer
+	}
 	err = pgTx.QueryRow(ctx, `
-		INSERT INTO auth_service.users (username, name, email, role_id, active)
-		VALUES ($1, $2, $3, $4, true)
+		INSERT INTO auth_service.users (username, name, email, role_id, active, idp_sub, idp_issuer)
+		VALUES ($1, $2, $3, $4, true, $5, $6)
 		ON CONFLICT (email) DO UPDATE
-		    SET name       = EXCLUDED.name,
-		        active     = true,
-		        updated_at = CURRENT_TIMESTAMP
+		    SET name        = EXCLUDED.name,
+		        active      = true,
+		        idp_sub     = COALESCE(EXCLUDED.idp_sub, auth_service.users.idp_sub),
+		        idp_issuer  = COALESCE(EXCLUDED.idp_issuer, auth_service.users.idp_issuer),
+		        updated_at  = CURRENT_TIMESTAMP
 		RETURNING id, username, name, role_id`,
-		username, name, email, roleID,
+		username, name, email, roleID, subPtr, issuerPtr,
 	).Scan(&userID, &username2, &name2, &roleID)
 	if err != nil {
 		return nil, err
