@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember, type GroupMapping, type GroupMappingInput } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
+import { useAuthStore } from '@/stores/authStore';
 import ProvisionWizard from './ProvisionWizard';
 
 const ACCENT = '#818cf8';
@@ -59,6 +60,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [emailDomain, setEmailDomain] = useState(tenant.email_domain ?? '');
   const [genSaving, setGenSaving] = useState(false);
   const [genMsg, setGenMsg] = useState('');
+  const { user: authUser } = useAuthStore();
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteResources, setDeleteResources] = useState<{ applications: number; agents: number; users: number } | null>(null);
@@ -66,6 +68,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [deletePasswordErr, setDeletePasswordErr] = useState('');
   const [deletePasswordOk, setDeletePasswordOk] = useState(false);
   const [verifyingPw, setVerifyingPw] = useState(false);
+  const [deleteErr, setDeleteErr] = useState('');
 
   const [discoveryURL, setDiscoveryURL] = useState('');
   const [clientID, setClientID] = useState('');
@@ -128,7 +131,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
 
   async function openDeleteModal() {
     setDeletePassword(''); setDeletePasswordErr(''); setDeletePasswordOk(false);
-    setDeleteResources(null);
+    setDeleteResources(null); setDeleteErr('');
     setDeleteConfirm(true);
     try {
       const res = await themApi.getTenantResources(tenant.id);
@@ -139,12 +142,13 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   async function verifyAdminPassword() {
     const pw = deletePassword.trim();
     if (!pw) return;
+    const username = authUser?.username ?? 'admin';
     setVerifyingPw(true); setDeletePasswordErr('');
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password: pw }),
+        body: JSON.stringify({ username, password: pw }),
       });
       if (res.ok) { setDeletePasswordOk(true); }
       else { setDeletePasswordErr('Incorrect password'); }
@@ -153,12 +157,14 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   }
 
   async function deleteTenantHandler() {
-    setDeleting(true); setGenMsg('');
+    setDeleting(true); setDeleteErr('');
     try {
       await themApi.deleteTenant(tenant.id, true);
       onDeleted(tenant.id);
-    } catch (e) { setGenMsg((e as Error).message || 'Error deleting tenant'); }
-    finally { setDeleting(false); setDeleteConfirm(false); }
+    } catch (e) {
+      setDeleteErr((e as Error).message || 'Failed to delete tenant — please try again');
+      setDeleting(false);
+    }
   }
 
   useEffect(() => {
@@ -663,6 +669,14 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 18 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#4ade80' }}>check_circle</span>
               <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 600 }}>Password verified</span>
+            </div>
+          )}
+
+          {/* Delete error */}
+          {deleteErr && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#f87171', flexShrink: 0 }}>error</span>
+              <span style={{ fontSize: 13, color: '#f87171' }}>{deleteErr}</span>
             </div>
           )}
 
