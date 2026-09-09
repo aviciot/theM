@@ -582,36 +582,117 @@ docker logs them-keycloak 2>&1 | tail -10
 |---|---|
 | Admin console | `http://localhost:8088/auth/keycloak/admin` |
 | Admin credentials | `admin` / `admin123` |
-| Discovery URL (for IdP config) | `http://localhost:8088/auth/keycloak/realms/them` |
-| Callback URL (for Keycloak client) | `http://localhost:8088/auth/api/v1/auth/oidc/callback` |
+| Callback URL (all realms) | `http://<host>:8088/auth/oidc/callback` |
 
-Pre-loaded realm `them` with:
-- Client: `them-m` (confidential, secret: `them-m-secret`)
-- Groups: `bank-admins`, `qa`, `developers`
+Each tenant has its own Keycloak realm. `unmatched_action=deny` — users from the wrong realm cannot enter the wrong tenant.
 
-| Username | Password | Email | Group |
-|---|---|---|---|
-| `testuser` | `testpass` | testuser@bank.com | — |
-| `avi` | `avi` | avi@bank.com | — |
-| `avi1` | `avi1` | avi1@bank.com | — |
-| `avi2` | `avi2` | avi2@bank.com | — |
-| `avi3` | `avi3` | avi3@bank.com | — |
-| `bankadmin` | `bankadmin` | bankadmin@bank.com | `bank-admins` |
-| `qa-user` | `qa` | qa@bank.com | `qa` |
-| `dev` | `dev` | dev@bank.com | `developers` |
+**`bank` realm** → `bank` tenant
+- Discovery URL: `http://<host>:8088/auth/keycloak/realms/bank`
+- Client: `them-m` / Secret: `them-m-bank-secret`
+- Groups claim mapper: `groups` (full path: false)
 
-> Note: Keycloak enforces a minimum 3-character username — the QA user is `qa-user` (password is `qa`).
+| Username | Password | Email | Group | Tenant role |
+|---|---|---|---|---|
+| `bankadmin` | `bankadmin` | bankadmin@bank.com | `bank-admins` | admin |
+| `avi2` | `avi2pass` | avi2@bank.com | `bank-admins` | admin |
+
+**`rnd` realm** → `rnd` tenant
+- Discovery URL: `http://<host>:8088/auth/keycloak/realms/rnd`
+- Client: `them-m` / Secret: `them-m-rnd-secret`
+- Groups claim mapper: `groups` (full path: false)
+
+| Username | Password | Email | Group | Tenant role |
+|---|---|---|---|---|
+| `dev` | `devpass` | dev@rnd.com | `developers` | admin |
+| `qa-user` | `qa` | qauser@rnd.com | `qa` | member |
+
+**`them` realm** — legacy testing only, not connected to any tenant.
+
+**`default` tenant** — no IdP. Local login only: `admin` / `admin123`. Never put on SSO (emergency backdoor).
+
+> ⚠️ Realm config (`bank`, `rnd`) lives in the `keycloak-data` Docker volume — **not** in `keycloak/them-realm.json`. If the volume is wiped, re-run the realm setup below.
+
+### Re-create bank and rnd realms after volume wipe
+
+```bash
+# Authenticate
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8080/auth/keycloak --realm master --user admin --password admin123
+
+# Create realms
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create realms -s realm=bank -s enabled=true -s displayName="Bank"
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create realms -s realm=rnd  -s enabled=true -s displayName="R&D"
+
+# Create clients (note different secrets per realm)
+for REALM in bank rnd; do
+  SECRET="them-m-${REALM}-secret"
+  docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create clients -r $REALM \
+    -s clientId=them-m -s secret=$SECRET -s publicClient=false \
+    -s protocol=openid-connect -s enabled=true \
+    -s 'redirectUris=["http://localhost:8088/auth/oidc/callback","http://10.55.125.43:8088/auth/oidc/callback"]' \
+    -s 'webOrigins=["http://localhost:8088","http://10.55.125.43:8088"]'
+
+  # Add groups claim mapper
+  CLIENT_UUID=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh get clients -r $REALM \
+    --fields id,clientId 2>/dev/null | python3 -c \
+    "import sys,json; clients=json.load(sys.stdin); print(next(c['id'] for c in clients if c['clientId']=='them-m'))")
+  docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create \
+    "clients/$CLIENT_UUID/protocol-mappers/models" -r $REALM \
+    -s name=groups -s protocol=openid-connect \
+    -s protocolMapper=oidc-group-membership-mapper \
+    -s 'config."claim.name"=groups' -s 'config."full.path"=false' \
+    -s 'config."id.token.claim"=true' -s 'config."access.token.claim"=true' \
+    -s 'config."userinfo.token.claim"=true'
+done
+
+# bank realm — groups and users
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create groups -r bank -s name=bank-admins
+BANK_GROUP=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh get groups -r bank 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+for USER in "bankadmin bankadmin bankadmin@bank.com Bank Admin" "avi2 avi2pass avi2@bank.com Avi Two"; do
+  read UN PW EMAIL FN LN <<< $USER
+  UID=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create users -r bank \
+    -s username=$UN -s email=$EMAIL -s enabled=true -s emailVerified=true 2>&1 | grep -oP "(?<=id ').*(?=')")
+  docker exec them-keycloak /opt/keycloak/bin/kcadm.sh set-password -r bank --username $UN --new-password $PW
+  docker exec them-keycloak /opt/keycloak/bin/kcadm.sh update "users/$UID/groups/$BANK_GROUP" -r bank
+done
+
+# rnd realm — groups and users
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create groups -r rnd -s name=developers
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create groups -r rnd -s name=qa
+DEV_GROUP=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh get groups -r rnd 2>/dev/null | python3 -c "import sys,json; gs=json.load(sys.stdin); print(next(g['id'] for g in gs if g['name']=='developers'))")
+QA_GROUP=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh get groups -r rnd 2>/dev/null  | python3 -c "import sys,json; gs=json.load(sys.stdin); print(next(g['id'] for g in gs if g['name']=='qa'))")
+DEV_UID=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create users -r rnd \
+  -s username=dev -s email=dev@rnd.com -s enabled=true -s emailVerified=true 2>&1 | grep -oP "(?<=id ').*(?=')")
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh set-password -r rnd --username dev --new-password devpass
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh update "users/$DEV_UID/groups/$DEV_GROUP" -r rnd
+QA_UID=$(docker exec them-keycloak /opt/keycloak/bin/kcadm.sh create users -r rnd \
+  -s username=qa-user -s email=qauser@rnd.com -s enabled=true -s emailVerified=true 2>&1 | grep -oP "(?<=id ').*(?=')")
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh set-password -r rnd --username qa-user --new-password qa
+docker exec them-keycloak /opt/keycloak/bin/kcadm.sh update "users/$QA_UID/groups/$QA_GROUP" -r rnd
+
+# Update tenant idp_config in DB to point to correct realms
+docker exec them-postgres psql -U them -d them -c "
+UPDATE them.tenants SET idp_config = '{
+  \"discovery_url\": \"http://10.55.125.43:8088/auth/keycloak/realms/bank\",
+  \"client_id\": \"them-m\", \"client_secret\": \"them-m-bank-secret\",
+  \"redirect_uri\": \"http://10.55.125.43:8088/auth/oidc/callback\",
+  \"unmatched_action\": \"deny\", \"groups_claim\": \"groups\"
+}'::jsonb WHERE slug = 'bank';
+UPDATE them.tenants SET idp_config = '{
+  \"discovery_url\": \"http://10.55.125.43:8088/auth/keycloak/realms/rnd\",
+  \"client_id\": \"them-m\", \"client_secret\": \"them-m-rnd-secret\",
+  \"redirect_uri\": \"http://10.55.125.43:8088/auth/oidc/callback\",
+  \"unmatched_action\": \"deny\", \"groups_claim\": \"groups\"
+}'::jsonb WHERE slug = 'rnd';
+"
+```
 
 ### Configure a tenant IdP via the UI
 
-1. Log in as a tenant admin at `http://localhost:8088`
-2. Go to **Settings → SSO** tab
-3. Fill in:
-   - **Discovery URL**: `http://localhost:8088/auth/keycloak/realms/them`
-   - **Client ID**: `them-m`
-   - **Client Secret**: `them-m-secret`
-   - **Redirect URI**: `http://localhost:8088/auth/api/v1/auth/oidc/callback`
-4. Click **Save SSO Config**
+1. Log in as super-admin at `http://localhost:8088`
+2. Go to **Admin → Tenants** → select tenant → **SSO tab**
+3. Fill in the discovery URL, client ID, secret, redirect URI from the table above
+4. Click **Save IdP Config**
 
 The secret is encrypted with AES-256-GCM before being stored in the DB. The UI shows `••••••••••••••••` thereafter — the secret is write-only.
 

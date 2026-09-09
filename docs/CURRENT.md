@@ -466,28 +466,42 @@ See full detail in `docs/HANDOVER.md`.
 | Bank | `bank` | Keycloak `them-m` | `bank-admins` → admin |
 | R&D | `rnd` | Keycloak `them-m` | `developers` → admin, `qa` → member |
 
-**Keycloak connection details (them-keycloak container):**
-- Discovery URL: `http://<host>:8088/auth/keycloak/realms/them`
-- Client ID: `them-m` / Secret: `them-m-secret`
+**Keycloak admin console:** `http://<host>:8088/auth/keycloak/` — user `admin` / `admin123`
+
+Each tenant has its own Keycloak realm — fully isolated user databases. `unmatched_action=deny` on both tenants — users from the wrong realm cannot enter.
+
+**`bank` realm** → `bank` tenant
+- Discovery URL: `http://<host>:8088/auth/keycloak/realms/bank`
+- Client ID: `them-m` / Secret: `them-m-bank-secret`
 - Redirect URI: `http://<host>:8088/auth/oidc/callback`
-- Admin console: `http://<host>:8088/auth/keycloak/` — user `admin` / `admin123`
 
-**Keycloak users (them realm):**
+| Username | Email | Group | Password | Tenant role |
+|---|---|---|---|---|
+| `bankadmin` | `bankadmin@bank.com` | `bank-admins` | `bankadmin` | admin |
+| `avi2` | `avi2@bank.com` | `bank-admins` | `avi2pass` | admin |
 
-| Username | Email | Groups | Password |
-|---|---|---|---|
-| `bankadmin` | `bankadmin@bank.com` | `bank-admins` | `bankadmin` |
-| `avi2` | `avi2@bank.com` | `bank-admins` | `avi2pass` |
-| `dev` | `dev@bank.com` | `developers` | `devpass` |
-| `qa-user` | `qauser@bank.com` | `qa` | `qa` |
-| `admin` | `admin@bank.com` | — (Keycloak master admin) | `admin123` |
+**`rnd` realm** → `rnd` tenant
+- Discovery URL: `http://<host>:8088/auth/keycloak/realms/rnd`
+- Client ID: `them-m` / Secret: `them-m-rnd-secret`
+- Redirect URI: `http://<host>:8088/auth/oidc/callback`
+
+| Username | Email | Group | Password | Tenant role |
+|---|---|---|---|---|
+| `dev` | `dev@rnd.com` | `developers` | `devpass` | admin |
+| `qa-user` | `qauser@rnd.com` | `qa` | `qa` | member |
+
+**`them` realm** — used by `default` tenant only for legacy testing (not connected to any tenant IdP)
+
+**`default` tenant** — no IdP configured. Local login only: `admin` / `admin123`. Emergency backdoor — never put this on SSO.
 
 Start Keycloak (if not already up):
 ```bash
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile sso up -d them-keycloak
 ```
 
-Test SSO login: go to Admin → Tenants → bank or rnd → SSO tab → "Test SSO Login".
+Test SSO login: Admin → Tenants → bank or rnd → SSO tab → "Test SSO Login".
+
+⚠️ **Keycloak realm config is runtime state** — realms `bank` and `rnd` were created via kcadm and are stored in the `keycloak-data` Docker volume. If the volume is wiped, re-run the realm setup from `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md`.
 
 ---
 
