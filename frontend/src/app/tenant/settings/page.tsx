@@ -208,10 +208,11 @@ export default function TenantSettingsPage() {
       const rec = await themApi.getOIDCDebug(debugEmail.trim());
       setDebugRecord(rec);
     } catch (err: unknown) {
-      const status = (err as { status?: number })?.status;
-      if (status === 404) setDebugMsg('No debug record found for this email (no SSO login in last 24h).');
-      else if (status === 503) setDebugMsg('Debug log unavailable (Redis not configured).');
-      else setDebugMsg('Failed to load debug record.');
+      const status = (err as { status?: number } | null)?.status;
+      if (status === 404) setDebugMsg('No SSO login record found for this email (no SSO login in last 24h, or this user belongs to a different tenant).');
+      else if (status === 503) setDebugMsg('Debug log unavailable (Redis not configured on this server).');
+      else if (status === 403) setDebugMsg('Access denied — only tenant admins can view SSO debug records.');
+      else setDebugMsg(`Lookup failed (HTTP ${status ?? 'unknown'}). Check that this email has performed an SSO login recently.`);
     } finally {
       setLoadingDebug(false);
     }
@@ -500,6 +501,83 @@ export default function TenantSettingsPage() {
                     <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', marginTop: 0, marginBottom: '20px' }}>
                       Map IdP group claim values to tenant roles. The highest-priority match (lowest number) wins. Role takes effect on the next SSO login.
                     </p>
+
+                    {/* Claim & Policy Settings */}
+                    <div style={{ padding: '16px 18px', borderRadius: '10px', border: '1px solid var(--tm-border)', background: 'rgba(255,255,255,.02)', marginBottom: '24px' }}>
+                      <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 0, marginBottom: '14px' }}>
+                        Claim &amp; Policy Settings
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '12px', alignItems: 'flex-end' }}>
+                        <Field label='Groups claim name'>
+                          <input
+                            style={inputStyle}
+                            value={idpGroupsClaim}
+                            onChange={e => setIdpGroupsClaim(e.target.value)}
+                            placeholder='groups  (default)'
+                          />
+                        </Field>
+                        <Field label='Unmatched user policy'>
+                          <select
+                            style={{ ...inputStyle, cursor: 'pointer' }}
+                            value={idpUnmatchedAction}
+                            onChange={e => setIdpUnmatchedAction(e.target.value)}
+                          >
+                            <option value="viewer">viewer — allow with viewer role</option>
+                            <option value="deny">deny — reject login if no match</option>
+                          </select>
+                        </Field>
+                        <Field label=" ">
+                          <button
+                            type="button"
+                            disabled={savingSso || !tenant.idp_configured}
+                            onClick={async () => {
+                              setSavingSso(true);
+                              setSaveMsgSso(null);
+                              try {
+                                const idpConfig: IDPConfig = {
+                                  discovery_url: idpDiscoveryUrl,
+                                  client_id: idpClientId,
+                                  redirect_uri: idpRedirectUri,
+                                  groups_claim: idpGroupsClaim.trim() || undefined,
+                                  unmatched_action: idpUnmatchedAction !== 'viewer' ? idpUnmatchedAction : undefined,
+                                };
+                                const updated = await themApi.patchTenantSettings({ idp_config: idpConfig });
+                                setTenant(updated);
+                                setSaveMsgSso({ ok: true, text: 'Claim settings saved.' });
+                              } catch {
+                                setSaveMsgSso({ ok: false, text: 'Failed to save claim settings.' });
+                              } finally {
+                                setSavingSso(false);
+                              }
+                            }}
+                            style={{
+                              padding: '9px 18px', borderRadius: '8px', border: 'none',
+                              background: tenant.idp_configured ? ACCENT : 'rgba(255,255,255,.1)',
+                              color: '#fff', fontWeight: 600, fontSize: '13px',
+                              cursor: (savingSso || !tenant.idp_configured) ? 'not-allowed' : 'pointer',
+                              opacity: (savingSso || !tenant.idp_configured) ? 0.5 : 1,
+                            }}
+                          >
+                            {savingSso ? '…' : 'Save'}
+                          </button>
+                        </Field>
+                      </div>
+                      {!tenant.idp_configured && (
+                        <p style={{ fontSize: '11px', color: '#f87171', marginTop: '4px', marginBottom: 0 }}>
+                          SSO must be configured in the SSO tab before claim settings can be saved.
+                        </p>
+                      )}
+                      {saveMsgSso && (
+                        <div style={{
+                          padding: '8px 12px', borderRadius: '6px', marginTop: '10px', fontSize: '12px',
+                          background: saveMsgSso.ok ? 'rgba(52,211,153,.1)' : 'rgba(248,113,113,.1)',
+                          border: `1px solid ${saveMsgSso.ok ? 'rgba(52,211,153,.25)' : 'rgba(248,113,113,.25)'}`,
+                          color: saveMsgSso.ok ? '#34d399' : '#f87171',
+                        }}>
+                          {saveMsgSso.text}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Existing mappings */}
                     {mappings.length > 0 && (
