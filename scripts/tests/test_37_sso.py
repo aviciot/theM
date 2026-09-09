@@ -7,7 +7,7 @@ Does NOT drive the full browser OIDC flow (requires a running Keycloak instance
 and a real browser). Instead, verifies:
   1. Super-admin can log in and list tenants
   2. PATCH /tenant/settings with idp_config sets idp_configured=true
-  3. GET /auth/api/v1/auth/tenant-lookup?email=testuser@example.com returns idp_configured=true
+  3. GET /auth/api/v1/auth/tenant-lookup?email=testuser@bank.com returns idp_configured=true
 
 Usage:
   python3 scripts/tests/test_37_sso.py [--base-url http://localhost:8088]
@@ -41,7 +41,7 @@ IDP_CONFIG = {
     "redirect_uri": "http://localhost:8088/auth/api/v1/auth/oidc/callback",
 }
 
-TEST_EMAIL = "testuser@example.com"
+TEST_EMAIL = "testuser@bank.com"
 
 passed = 0
 failed = 0
@@ -137,8 +137,8 @@ def main():
     check("GET /auth/api/v1/auth/tenant-lookup → 200", "__status" not in lookup_resp,
           f"status={lookup_resp.get('__status', 'ok')}")
 
-    # The tenant-lookup is by email domain — testuser@example.com would only show
-    # idp_configured if the tenant has email_domain=example.com set. Check that
+    # The tenant-lookup is by email domain — testuser@bank.com would only show
+    # idp_configured if the tenant has email_domain=bank.com set. Check that
     # the endpoint is reachable and returns a valid shape.
     check("Lookup response has 'slug' field", "slug" in lookup_resp,
           f"keys={list(lookup_resp.keys())[:6]}")

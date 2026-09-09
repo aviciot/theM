@@ -587,7 +587,20 @@ docker logs them-keycloak 2>&1 | tail -10
 
 Pre-loaded realm `them` with:
 - Client: `them-m` (confidential, secret: `them-m-secret`)
-- Test user: `testuser@example.com` / `testpass`
+- Groups: `bank-admins`, `qa`, `developers`
+
+| Username | Password | Email | Group |
+|---|---|---|---|
+| `testuser` | `testpass` | testuser@bank.com | — |
+| `avi` | `avi` | avi@bank.com | — |
+| `avi1` | `avi1` | avi1@bank.com | — |
+| `avi2` | `avi2` | avi2@bank.com | — |
+| `avi3` | `avi3` | avi3@bank.com | — |
+| `bankadmin` | `bankadmin` | bankadmin@bank.com | `bank-admins` |
+| `qa-user` | `qa` | qa@bank.com | `qa` |
+| `dev` | `dev` | dev@bank.com | `developers` |
+
+> Note: Keycloak enforces a minimum 3-character username — the QA user is `qa-user` (password is `qa`).
 
 ### Configure a tenant IdP via the UI
 
@@ -620,7 +633,7 @@ curl -s -X PATCH http://localhost:8088/api/v1/admin/tenants/00000000-0000-0000-0
 
 # 3. Initiate SSO login (opens browser)
 # Navigate to: http://localhost:8088/auth/api/v1/auth/oidc/login?tenant=<slug>
-# Keycloak login page appears — use testuser@example.com / testpass
+# Keycloak login page appears — use testuser@bank.com / testpass
 # After login, callback redirects and issues a session
 ```
 
