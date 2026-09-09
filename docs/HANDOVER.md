@@ -232,9 +232,62 @@ backend prerequisite for the SSO fields pre-population fix in the settings page.
   - HTTP 204 ✅
   - DB confirmed: `auth_service.tenant_memberships.role = 'member'` for user_id=24 ✅
 
-### Stage 2 and Stage 3 next steps
+### Stage 2 — IMPLEMENTED + DEPLOYED (2026-09-09) — commit 2c930cd
 
-See `docs/IAM_UI_SPEC.md` — Stage 2 (group mapping, admin membership tab) and Stage 3 (external JWT / JWKS) sections.
+**Group Mappings tab in admin tenant panel + Keycloak groups mapper**
+
+#### Frontend changes
+
+| File | Change |
+|---|---|
+| `frontend/src/lib/apiTypes.ts` | Added `GroupMapping`, `GroupMappingInput` interfaces |
+| `frontend/src/lib/api.ts` | Added `listGroupMappings`, `upsertGroupMapping`, `deleteGroupMapping` API methods |
+| `frontend/src/app/admin/tenants/page.tsx` | Added `'groups'` tab to `TenantPanel` — lists existing mappings, add/update form (group claim, role dropdown, priority), delete button |
+
+No backend Go changes — group mapping API already existed at `GET/PUT/DELETE /api/v1/admin/tenants/{id}/group-mappings` (super_admin only).
+
+#### Keycloak configuration
+
+- `them-m` client: **Group Membership** protocol mapper added — claim name `groups`, full path `false`, included in ID + access + userinfo tokens
+- Group `bank-admins` created in `them` realm
+- User `bankadmin` created (email: `bankadmin@test.com`, password: `admin123`) and added to `bank-admins` group
+- `avi1` has no groups — stays `viewer`
+
+#### Mapping configured
+
+`bank-admins → admin, priority 1` added for `avi-test` via the backend API (`PUT /api/v1/admin/tenants/d20402c8-.../group-mappings`). Visible in the new Group Mappings tab.
+
+#### SSO flow for bankadmin
+
+1. Login at `http://<host>:8088` → "Sign in with organization code" → slug: `avi-test`
+2. Keycloak login: `bankadmin` / `admin123`
+3. Keycloak emits `groups: ["bank-admins"]` in ID token
+4. `OIDCCallback` calls `GetGroupRole` → `bank-admins → admin` → `UpsertOIDCUser(role="admin")`
+5. `bankadmin` gets `admin` membership in `avi-test`; platform role stays `viewer`
+
+#### Verification done
+
+- `GET /api/v1/admin/tenants/{id}/group-mappings` returns `[]` before mapping, correct JSON after ✅
+- `PUT` returns 200 with the created mapping row ✅
+- DB: `them.tenant_group_mappings` has 1 row: `bank-admins | admin | 1` for `avi-test` ✅
+- `bankadmin` Keycloak user is in `bank-admins` group ✅
+- `avi1` has no groups ✅
+- `go test ./internal/admin/...` and `./internal/authserver/...` — both pass ✅
+- Frontend rebuilt and running ✅
+
+#### Browser test instructions
+
+1. Open `http://<host>:8088/admin/tenants`
+2. Log in as `admin` / `admin123`
+3. Click `avi-test` → open **Group Mappings** tab → should show `bank-admins / admin / 1`
+4. Open new private tab → log in with organization code `avi-test` → use `bankadmin` / `admin123` at Keycloak → expect landing in tenant member panel with `admin` role
+5. Open another new private tab → log in with organization code `avi-test` → use `avi1` / `admin123` at Keycloak → expect `viewer` access (dashboard only)
+6. Confirm `bankadmin` can see Members panel; `avi1` cannot reach admin screens
+
+#### Remaining unchecked (live browser test)
+
+- Actual Keycloak → THE-M callback for `bankadmin` (SSO E2E not run — requires browser session)
+- `bankadmin` email `bankadmin@test.com` will create a new THE-M user on first SSO login (not pre-provisioned)
 
 ---
 

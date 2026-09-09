@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (IAM UI Stage 1 implemented + deployed)
+# Last updated: 2026-09-09 (IAM UI Stage 2 implemented + deployed)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,12 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-(pending commit) docs(e2e): delegated task + context isolation assertions; gate fully closed
+2c930cd  feat(iam): add Group Mappings tab to super-admin tenant panel (Stage 2)
 30c4e1e  docs(iam): add group mapping UI spec + Keycloak test setup guide
 227d1e8  docs: IAM UI spec (3 changes) + INDEX + SSO doc + test index row 38
 d247ce8  test(multitenant): add 74-check automation script covering S0–S11
 8b445b7  fix(runtime): consolidate EP Save buttons + fix history_window not persisting
-8b91491  fix(runtime): EP enable/disable PATCH /enabled + history_window=0 clamp + A2A dispatcher tests
 ```
 
 ---
@@ -1130,9 +1129,8 @@ Done (canvas ports, commit 81c3a31):
 **Design note:** At the interpreter level, StreamOut and Response are functionally identical — both read a variable and set `result.Text`. The transport differentiation (incremental artifact events vs. single artifact) happens in `agent-runtime/main.go`'s `executeSkill`, which already emits `ArtifactEvent` at the end of every execution. A true token-by-token streaming path would require a callback/writer interface injected into the interpreter — that's a future transport-layer enhancement, not a canvas-node concern.
 
 **Next recommended task:**
-- **IAM Stage 2** — Group mapping UI in SSO tab + admin/users Membership tab + admin/tenants Members tab (see `docs/IAM_UI_SPEC.md` Stage 2 section)
-  - Requires backend: `PATCH /auth/api/v1/admin/users/{id}` + tenant_role, `GET/PUT /api/v1/tenant/group-mappings`
-  - Browser UI demo required before marking Stage 2 complete
+- **IAM Stage 2 — COMPLETE (2c930cd)**. Group Mappings tab deployed, Keycloak mapper configured, `bank-admins` group + `bankadmin` user created, mapping `bank-admins → admin` active for `avi-test`. Pending: live browser SSO verification for `bankadmin`.
+- **IAM Stage 3** — Tenant-admin self-service group mapping: `GET/PUT /api/v1/tenant/group-mappings` (scoped to own tenant, no id in URL). See `docs/IAM_UI_SPEC.md` Stage 3 section.
 - **Phase 4** — Bank JWT / JWKS validation (`JWKSAuthenticator`, `tenant_runtime_config` table) — Stage 3 prerequisite
 - UI: StreamOut properties panel in canvas `RightPanel.tsx` (from_var + media_type fields) — mirrors Response panel
 - UI: A2A Call node properties panel in canvas RightPanel (slug + var config)
