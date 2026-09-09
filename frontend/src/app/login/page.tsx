@@ -65,13 +65,13 @@ export default function LoginPage() {
 
   function handleSSOLogin() {
     if (!tenantInfo) return;
-    window.location.href = `/api/auth/oidc/start?tenant=${encodeURIComponent(tenantInfo.slug)}`;
+    window.location.href = `/auth/oidc/start?tenant=${encodeURIComponent(tenantInfo.slug)}`;
   }
 
   function handleOrgCodeSSO() {
     const slug = orgCode.trim();
     if (!slug) return;
-    window.location.href = `/api/auth/oidc/start?tenant=${encodeURIComponent(slug)}`;
+    window.location.href = `/auth/oidc/start?tenant=${encodeURIComponent(slug)}`;
   }
 
   const showSSO = tenantInfo?.idp_configured === true;
