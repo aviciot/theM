@@ -4,30 +4,64 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useEffect, useState } from 'react';
 
-const NAV = [
-  { href: '/dashboard', icon: 'dashboard', label: 'Command Center' },
+const WORKSPACE_NAV = [
+  { href: '/dashboard', icon: 'dashboard', label: 'Overview' },
   { href: '/runs',      icon: 'history',   label: 'Run History' },
 ];
 
-const ADMIN_NAV = [
-  { href: '/admin/agents',        icon: 'smart_toy',         label: 'Agents' },
-  { href: '/admin/mcp-servers',   icon: 'electrical_services', label: 'MCP Store' },
-  { href: '/admin/applications',  icon: 'apps',               label: 'Applications' },
-  { href: '/admin/tokens',        icon: 'key',           label: 'Access Tokens' },
-  { href: '/admin/playground',    icon: 'science',       label: 'Playground' },
-  { href: '/admin/services',      icon: 'monitor_heart', label: 'Services' },
-  { href: '/admin/audit-logs',   icon: 'receipt_long',  label: 'Audit Logs' },
-  { href: '/tenant/settings',     icon: 'manage_accounts', label: 'My Tenant' },
-  { href: '/tenant/members',      icon: 'group',           label: 'Members' },
-  { href: '/admin/settings',      icon: 'settings',      label: 'Settings' },
+const BUILD_TEST_NAV = [
+  { href: '/admin/applications',  icon: 'apps',                label: 'Applications' },
+  { href: '/admin/agents',        icon: 'smart_toy',           label: 'Agents' },
+  { href: '/admin/mcp-servers',   icon: 'electrical_services', label: 'MCP Servers' },
+  { href: '/admin/playground',    icon: 'science',             label: 'Playground' },
 ];
 
-const SUPER_ADMIN_NAV = [
-  { href: '/admin/tenants',       icon: 'domain',         label: 'Tenants' },
-  { href: '/admin/users',         icon: 'group',          label: 'Users' },
-  { href: '/admin/managed-apps',  icon: 'extension',      label: 'Managed Apps' },
-  { href: '/admin/observability', icon: 'monitoring',     label: 'Observability' },
+const MONITOR_NAV = [
+  { href: '/admin/services',    icon: 'monitor_heart', label: 'Security Scans' },
+  { href: '/admin/audit-logs',  icon: 'receipt_long',  label: 'Audit Logs' },
 ];
+
+const ORGANIZATION_NAV = [
+  { href: '/tenant/members',   icon: 'group',           label: 'Members' },
+  { href: '/tenant/settings',  icon: 'manage_accounts', label: 'Organization Settings' },
+  { href: '/admin/tokens',     icon: 'key',             label: 'Access Tokens' },
+];
+
+const PLATFORM_ADMIN_NAV = [
+  { href: '/admin/tenants',       icon: 'domain',     label: 'Tenants' },
+  { href: '/admin/users',         icon: 'group',      label: 'Platform Users' },
+  { href: '/admin/managed-apps',  icon: 'extension',  label: 'Managed Apps' },
+  { href: '/admin/observability', icon: 'monitoring', label: 'Usage & Quotas' },
+  { href: '/admin/settings',      icon: 'settings',   label: 'System Settings' },
+];
+
+function SectionLabel({ text }: { text: string }) {
+  return (
+    <p style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,.25)', textTransform: 'uppercase', padding: '16px 12px 8px', margin: 0 }}>
+      {text}
+    </p>
+  );
+}
+
+function NavLink({ href, icon, label, active }: { href: string; icon: string; label: string; active: boolean }) {
+  return (
+    <Link href={href} style={{
+      display: 'flex', alignItems: 'center', gap: '10px',
+      padding: '8px 12px', borderRadius: '0 24px 24px 0',
+      marginBottom: '2px', textDecoration: 'none', fontSize: '14px',
+      transition: 'all .15s',
+      background: active ? 'var(--tm-accent-bg)' : 'transparent',
+      color: active ? 'var(--tm-accent)' : 'rgba(255,255,255,.45)',
+      fontWeight: active ? 600 : 400,
+    }}
+      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.color = '#e8eaed'; }}
+      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.45)'; }}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>{icon}</span>
+      {label}
+    </Link>
+  );
+}
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -76,68 +110,46 @@ export default function Sidebar() {
 
         {/* Nav */}
         <nav style={{ flex: 1, overflowY: 'auto', padding: '0 12px' }} className="custom-scrollbar">
+
+          {/* ── Workspace (all users) ── */}
           <p style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,.25)', textTransform: 'uppercase', padding: '0 12px', marginBottom: '8px' }}>
-            Observe
+            Workspace
           </p>
-          {NAV.map(({ href, icon, label }) => (
-            <Link key={href} href={href} style={{
-              display: 'flex', alignItems: 'center', gap: '10px',
-              padding: '8px 12px', borderRadius: '0 24px 24px 0',
-              marginBottom: '2px', textDecoration: 'none', fontSize: '14px',
-              transition: 'all .15s',
-              background: isActive(href) ? 'var(--tm-accent-bg)' : 'transparent',
-              color: isActive(href) ? 'var(--tm-accent)' : 'rgba(255,255,255,.45)',
-              fontWeight: isActive(href) ? 600 : 400,
-            }}
-              onMouseEnter={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = '#e8eaed'; }}
-              onMouseLeave={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.45)'; }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>{icon}</span>
-              {label}
-            </Link>
+          {WORKSPACE_NAV.map(({ href, icon, label }) => (
+            <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
           ))}
 
-          {user?.role === 'admin' || user?.role === 'super_admin' ? (
+          {/* ── Admin sections ── */}
+          {(user?.role === 'admin' || user?.role === 'super_admin') && (
             <>
-              <p style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,.25)', textTransform: 'uppercase', padding: '16px 12px 8px' }}>
-                Admin
-              </p>
-              {ADMIN_NAV.map(({ href, icon, label }) => (
-                <Link key={href} href={href} style={{
-                  display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '8px 12px', borderRadius: '0 24px 24px 0',
-                  marginBottom: '2px', textDecoration: 'none', fontSize: '14px',
-                  transition: 'all .15s',
-                  background: isActive(href) ? 'var(--tm-accent-bg)' : 'transparent',
-                  color: isActive(href) ? 'var(--tm-accent)' : 'rgba(255,255,255,.45)',
-                  fontWeight: isActive(href) ? 600 : 400,
-                }}
-                  onMouseEnter={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = '#e8eaed'; }}
-                  onMouseLeave={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.45)'; }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>{icon}</span>
-                  {label}
-                </Link>
+              <SectionLabel text="Build & Test" />
+              {BUILD_TEST_NAV.map(({ href, icon, label }) => (
+                <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
               ))}
-              {user?.role === 'super_admin' && SUPER_ADMIN_NAV.map(({ href, icon, label }) => (
-                <Link key={href} href={href} style={{
-                  display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '8px 12px', borderRadius: '0 24px 24px 0',
-                  marginBottom: '2px', textDecoration: 'none', fontSize: '14px',
-                  transition: 'all .15s',
-                  background: isActive(href) ? 'var(--tm-accent-bg)' : 'transparent',
-                  color: isActive(href) ? 'var(--tm-accent)' : 'rgba(255,255,255,.45)',
-                  fontWeight: isActive(href) ? 600 : 400,
-                }}
-                  onMouseEnter={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = '#e8eaed'; }}
-                  onMouseLeave={(e) => { if (!isActive(href)) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.45)'; }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>{icon}</span>
-                  {label}
-                </Link>
+
+              <SectionLabel text="Monitor" />
+              {MONITOR_NAV.map(({ href, icon, label }) => (
+                <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
+              ))}
+
+              <SectionLabel text="Organization" />
+              {ORGANIZATION_NAV.map(({ href, icon, label }) => (
+                <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
               ))}
             </>
-          ) : null}
+          )}
+
+          {/* ── Platform Admin (super_admin only) ── */}
+          {user?.role === 'super_admin' && (
+            <>
+              <div style={{ margin: '12px 12px 0', borderTop: '1px solid rgba(255,255,255,.08)' }} />
+              <SectionLabel text="Platform Admin" />
+              {PLATFORM_ADMIN_NAV.map(({ href, icon, label }) => (
+                <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
+              ))}
+            </>
+          )}
+
         </nav>
 
         {/* Footer: theme toggle + user */}

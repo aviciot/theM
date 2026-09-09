@@ -326,7 +326,7 @@ export default function ServicesPage() {
           {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--tm-text)' }}>Services</h2>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--tm-text)' }}>Security Scans</h2>
               <div style={{ fontSize: 13, color: 'var(--tm-text-muted)', marginTop: 2 }}>Runtime statistics for platform services</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

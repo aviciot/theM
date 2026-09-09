@@ -86,7 +86,7 @@ export default function MCPServersPage() {
             <div>
               <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--tm-card-text)', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: '22px', color: ACCENT }}>electrical_services</span>
-                MCP Store
+                MCP Servers
               </h1>
               <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', margin: '4px 0 0 0' }}>
                 Model Context Protocol servers — tools and resources for your agents

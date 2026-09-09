@@ -247,7 +247,7 @@ export default function TenantSettingsPage() {
         <main style={{ marginLeft: '260px', flex: 1, padding: '32px 40px' }}>
           <div style={{ maxWidth: '680px' }}>
             <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--tm-card-text)', marginBottom: '4px' }}>
-              My Tenant
+              Organization Settings
             </h1>
             <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', marginBottom: '28px' }}>
               Manage your tenant settings and view resource limits.
