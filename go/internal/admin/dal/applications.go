@@ -421,6 +421,53 @@ func (d *DB) DeleteProviderKey(ctx context.Context, tenantID, appID, provider st
 	return d.q.Exec(ctx, q, appID, tenantID, provider)
 }
 
+// UpsertProviderBaseURL upserts a tenant-scoped row in them.llm_providers for the
+// given provider, setting only the base_url. The row is created with a default
+// model name equal to the provider name when inserting; existing rows have only
+// base_url updated. This allows the tenant-scoped base_url to override the
+// platform default without touching the API key stored per-app.
+func (d *DB) UpsertProviderBaseURL(ctx context.Context, tenantID, provider, baseURL string) error {
+	const q = `
+		INSERT INTO them.llm_providers (name, display_name, base_url, default_model, tenant_id, enabled)
+		VALUES ($1, $1, $2, $1, $3::uuid, true)
+		ON CONFLICT ON CONSTRAINT llm_providers_name_tenant_uq
+		DO UPDATE SET base_url = EXCLUDED.base_url, updated_at = now()`
+	return d.q.Exec(ctx, q, provider, baseURL, tenantID)
+}
+
+// GetProviderBaseURLs returns a map of provider name → base_url for the given
+// tenant. Prefers the tenant-scoped row; falls back to platform default (tenant_id IS NULL).
+func (d *DB) GetProviderBaseURLs(ctx context.Context, tenantID string) (map[string]string, error) {
+	const q = `
+		SELECT name, base_url
+		FROM them.llm_providers
+		WHERE (tenant_id = $1::uuid OR tenant_id IS NULL)
+		  AND base_url IS NOT NULL
+		  AND enabled = true
+		ORDER BY tenant_id NULLS LAST`
+	rows, err := d.q.Query(ctx, q, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	out := map[string]string{}
+	for rows.Next() {
+		var name string
+		var url *string
+		if err := rows.Scan(&name, &url); err != nil {
+			continue
+		}
+		if url != nil && *url != "" {
+			// tenant-scoped rows come first (ORDER BY tenant_id NULLS LAST);
+			// don't overwrite a tenant row with the platform default.
+			if _, exists := out[name]; !exists {
+				out[name] = *url
+			}
+		}
+	}
+	return out, nil
+}
+
 // GetAppParams returns the app_params JSONB blob for the application.
 // Returns an empty JSON object when the field is null or not set.
 func (d *DB) GetAppParams(ctx context.Context, tenantID, appID string) ([]byte, error) {

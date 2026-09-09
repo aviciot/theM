@@ -226,6 +226,10 @@ func (f *fakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string
 	return f.bulkDeletedCount, f.bulkDeleteErr
 }
 
+func (f *fakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error { return nil }
+func (f *fakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (f *fakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error) {
 	if f.providerKeysRaw != nil {
 		return f.providerKeysRaw, nil

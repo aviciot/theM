@@ -147,6 +147,10 @@ func (f *agentDefFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) 
 func (f *agentDefFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
 	return 0, nil
 }
+func (f *agentDefFakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error { return nil }
+func (f *agentDefFakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (f *agentDefFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error) {
 	return []byte(`{}`), nil
 }

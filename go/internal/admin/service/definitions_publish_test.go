@@ -183,6 +183,8 @@ func (f *publishFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ [
 func (f *publishFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error)        { return []byte(`{}`), nil }
 func (f *publishFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error      { return nil }
 func (f *publishFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error              { return nil }
+func (f *publishFakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error         { return nil }
+func (f *publishFakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) { return map[string]string{}, nil }
 func (f *publishFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error          { return nil }
 func (f *publishFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
 func (f *publishFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error { return nil }

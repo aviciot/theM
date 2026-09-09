@@ -7,7 +7,8 @@ import { EPSections } from './RuntimeEPSections';
 import { CanvasAgentsSection } from './RuntimeAgentsSection';
 import type { VoiceDraft } from './RuntimeVoicePanel';
 
-type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string };
+type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string; base_url?: string };
+const LOCAL_PROVIDERS = new Set(['ollama', 'vllm', 'lmstudio']);
 type OrchMeta    = { id: string; name: string; displayName: string };
 type EPLLMDraft  = { provider: string; model: string };
 type EPSumDraft  = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
@@ -22,12 +23,13 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [tokensInput, setTokensInput] = useState((app.runtime_config?.blocked_tokens ?? []).join('\n'));
   const [usersInput,  setUsersInput]  = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
 
-  const [keyStatuses, setKeyStatuses] = useState<KeyStatus[]>([]);
-  const [keyInputs,   setKeyInputs]   = useState<Record<string, string>>({});
-  const [keySaving,   setKeySaving]   = useState<string | null>(null);
-  const [keyMsg,      setKeyMsg]      = useState<Record<string, string>>({});
-  const [keyTestMsg,  setKeyTestMsg]  = useState<Record<string, string>>({});
-  const [keyTesting,  setKeyTesting]  = useState<string | null>(null);
+  const [keyStatuses,   setKeyStatuses]   = useState<KeyStatus[]>([]);
+  const [keyInputs,     setKeyInputs]     = useState<Record<string, string>>({});
+  const [baseUrlInputs, setBaseUrlInputs] = useState<Record<string, string>>({});
+  const [keySaving,     setKeySaving]     = useState<string | null>(null);
+  const [keyMsg,        setKeyMsg]        = useState<Record<string, string>>({});
+  const [keyTestMsg,    setKeyTestMsg]    = useState<Record<string, string>>({});
+  const [keyTesting,    setKeyTesting]    = useState<string | null>(null);
 
   const [orchMetas, setOrchMetas] = useState<OrchMeta[]>(
     (app.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name }))
@@ -77,7 +79,14 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [secSaving,       setSecSaving]       = useState(false);
   const [secMsg,          setSecMsg]          = useState('');
 
-  useEffect(() => { themApi.getProviderKeys(app.id).then(setKeyStatuses).catch(() => {}); }, [app.id]);
+  useEffect(() => {
+    themApi.getProviderKeys(app.id).then(statuses => {
+      setKeyStatuses(statuses);
+      const urls: Record<string, string> = {};
+      statuses.forEach(s => { if (s.base_url) urls[s.provider] = s.base_url; });
+      setBaseUrlInputs(urls);
+    }).catch(() => {});
+  }, [app.id]);
   useEffect(() => {
     themApi.getApplication(app.id).then(fresh => {
       setOrchMetas((fresh.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name })));
@@ -147,9 +156,25 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
     catch (e: unknown) { setTtsTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' })); } finally { setTtsTesting(null); }
   }
   async function handleSaveKey(provider: string) {
-    const key = (keyInputs[provider] ?? '').trim(); if (!key) return; setKeySaving(provider);
-    try { await themApi.setProviderKey(app.id, provider, key); setKeyStatuses(await themApi.getProviderKeys(app.id)); setKeyInputs(ki => ({ ...ki, [provider]: '' })); setKeyMsg(m => ({ ...m, [provider]: 'Saved' })); setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500); }
-    catch (e: unknown) { setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' })); } finally { setKeySaving(null); }
+    const key = (keyInputs[provider] ?? '').trim();
+    const baseURL = (baseUrlInputs[provider] ?? '').trim();
+    const isLocal = LOCAL_PROVIDERS.has(provider);
+    if (!key && !isLocal) return;
+    if (isLocal && !key && !baseURL) return;
+    setKeySaving(provider);
+    try {
+      await themApi.setProviderKey(app.id, provider, key, baseURL || undefined);
+      const statuses = await themApi.getProviderKeys(app.id);
+      setKeyStatuses(statuses);
+      const urls: Record<string, string> = {};
+      statuses.forEach(s => { if (s.base_url) urls[s.provider] = s.base_url; });
+      setBaseUrlInputs(urls);
+      setKeyInputs(ki => ({ ...ki, [provider]: '' }));
+      setKeyMsg(m => ({ ...m, [provider]: 'Saved' }));
+      setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
+    }
+    catch (e: unknown) { setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' })); }
+    finally { setKeySaving(null); }
   }
   async function handleDeleteKey(provider: string) {
     setKeySaving(provider);
@@ -312,6 +337,10 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
             const status = getKeyStatus(provider); const isBusy = keySaving === provider; const isTesting = keyTesting === provider;
             const msg = keyMsg[provider] ?? ''; const testMsg = keyTestMsg[provider] ?? '';
             const isErr = msg && msg !== 'Saved' && msg !== 'Removed'; const isTestErr = testMsg && !testMsg.startsWith('✓');
+            const isLocal = LOCAL_PROVIDERS.has(provider);
+            const canSave = isLocal
+              ? !!(keyInputs[provider] ?? '').trim() || !!(baseUrlInputs[provider] ?? '').trim()
+              : !!(keyInputs[provider] ?? '').trim();
             return (
               <div key={provider} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.07)'}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -319,12 +348,20 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{provider}</span>
                     {status.key_set ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${status.key_hint ?? ''}`) : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
                   </div>
-                  <input type="password" placeholder={status.key_set ? 'Replace key…' : 'Paste API key…'} value={keyInputs[provider] ?? ''} onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160 }} />
-                  {saveBtn(() => handleSaveKey(provider), isBusy, !(keyInputs[provider] ?? '').trim())}
+                  <input type="password" placeholder={isLocal ? 'API key (optional)' : status.key_set ? 'Replace key…' : 'Paste API key…'} value={keyInputs[provider] ?? ''} onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160 }} />
+                  {saveBtn(() => handleSaveKey(provider), isBusy, !canSave)}
                   {status.key_set && <button onClick={() => handleTestKey(provider)} disabled={isBusy || isTesting} style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}>{isTesting ? '…' : 'Test'}</button>}
                   {status.key_set && <button onClick={() => handleDeleteKey(provider)} disabled={isBusy} style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>Remove</button>}
                   {msg && <span style={{ fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
                 </div>
+                {isLocal && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                    <div style={{ width: 130, flexShrink: 0 }}>
+                      <span style={{ fontSize: 11, color: C.textMuted }}>Endpoint URL</span>
+                    </div>
+                    <input type="text" placeholder={`e.g. http://localhost:11434`} value={baseUrlInputs[provider] ?? ''} onChange={e => setBaseUrlInputs(bu => ({ ...bu, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160, fontFamily: 'monospace', fontSize: 12 }} />
+                  </div>
+                )}
                 {testMsg && <div style={{ marginTop: 6, fontSize: 12, color: isTestErr ? C.error : C.green, fontWeight: 600, paddingLeft: 138 }}>{testMsg}</div>}
               </div>
             );

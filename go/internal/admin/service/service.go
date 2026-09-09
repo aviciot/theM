@@ -65,6 +65,8 @@ type Dal interface {
 	GetProviderKeys(ctx context.Context, tenantID, appID string) ([]byte, error)
 	SetProviderKey(ctx context.Context, tenantID, appID, provider string, encryptedKey []byte) error
 	DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error
+	UpsertProviderBaseURL(ctx context.Context, tenantID, provider, baseURL string) error
+	GetProviderBaseURLs(ctx context.Context, tenantID string) (map[string]string, error)
 	SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, model string) error
 	SetOrchestratorVoice(ctx context.Context, appID, orchID string, in dal.OrchestratorVoiceInput) error
 	SetEntryPointSummarizer(ctx context.Context, appID, epID string, enabled bool, everyN, fallbackN, historyWindow int, provider, model *string) error

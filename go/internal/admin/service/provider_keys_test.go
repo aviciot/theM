@@ -20,7 +20,7 @@ func TestSetGetProviderKey_NewFormat_RoundTrip(t *testing.T) {
 	d := &fakeDal{}
 	svc := service.NewAppService(d, &fakeCache{}, key)
 
-	if err := svc.SetProviderKey(context.Background(), "tenant-1", "app-1", "anthropic", "sk-ant-test1234"); err != nil {
+	if err := svc.SetProviderKey(context.Background(), "tenant-1", "app-1", "anthropic", "sk-ant-test1234", ""); err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestSetGetProviderKey_NoCryptoKey_RoundTrip(t *testing.T) {
 	d := &fakeDal{}
 	svc := service.NewAppService(d, &fakeCache{}, nil) // nil = test mode, no encryption
 
-	if err := svc.SetProviderKey(context.Background(), "t1", "a1", "openai", "sk-openai-abc"); err != nil {
+	if err := svc.SetProviderKey(context.Background(), "t1", "a1", "openai", "sk-openai-abc", ""); err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestGetProviderKeys_ReturnsHint(t *testing.T) {
 // PK-5: SetProviderKey rejects unsupported providers.
 func TestSetProviderKey_UnsupportedProvider(t *testing.T) {
 	svc := service.NewAppService(&fakeDal{}, &fakeCache{}, nil)
-	err := svc.SetProviderKey(context.Background(), "t1", "a1", "unsupported_provider", "key")
+	err := svc.SetProviderKey(context.Background(), "t1", "a1", "unsupported_provider", "key", "")
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")
 	}
@@ -142,7 +142,7 @@ func TestSetProviderKey_UnsupportedProvider(t *testing.T) {
 // PK-6: SetProviderKey rejects empty key.
 func TestSetProviderKey_EmptyKey(t *testing.T) {
 	svc := service.NewAppService(&fakeDal{}, &fakeCache{}, nil)
-	err := svc.SetProviderKey(context.Background(), "t1", "a1", "anthropic", "")
+	err := svc.SetProviderKey(context.Background(), "t1", "a1", "anthropic", "", "")
 	if err == nil {
 		t.Fatal("expected error for empty key")
 	}
@@ -152,7 +152,7 @@ func TestSetProviderKey_EmptyKey(t *testing.T) {
 func TestSetProviderKey_ShortKey_EmptyHint(t *testing.T) {
 	d := &fakeDal{}
 	svc := service.NewAppService(d, &fakeCache{}, nil)
-	if err := svc.SetProviderKey(context.Background(), "t1", "a1", "anthropic", "abc"); err != nil {
+	if err := svc.SetProviderKey(context.Background(), "t1", "a1", "anthropic", "abc", ""); err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
 	var entry struct {

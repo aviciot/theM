@@ -286,6 +286,17 @@ var validProviders = map[string]struct{}{
 	"groq":       {},
 	"gemini":     {},
 	"elevenlabs": {},
+	"ollama":     {},
+	"vllm":       {},
+	"lmstudio":   {},
+}
+
+// localProviders is the subset of providers that require a custom base_url
+// instead of (or in addition to) an API key.
+var localProviders = map[string]struct{}{
+	"ollama":   {},
+	"vllm":     {},
+	"lmstudio": {},
 }
 
 // ProviderKeyOut is returned by GET /provider-keys — keys are masked, never plaintext.
@@ -293,6 +304,7 @@ type ProviderKeyOut struct {
 	Provider string `json:"provider"`
 	KeySet   bool   `json:"key_set"`
 	KeyHint  string `json:"key_hint,omitempty"` // last 4 chars of the original plaintext key
+	BaseURL  string `json:"base_url,omitempty"` // custom endpoint URL (local providers only)
 }
 
 // providerKeyEntry is the JSONB structure stored per provider in provider_keys.
@@ -305,6 +317,7 @@ type providerKeyEntry struct {
 
 // GetProviderKeys returns the key-set status for each provider on the application.
 // Plaintext keys are never returned; only a boolean and a 4-char hint.
+// For local providers (ollama/vllm/lmstudio) the tenant-scoped base_url is also returned.
 func (s *AppService) GetProviderKeys(ctx context.Context, tenantID, appID string) ([]ProviderKeyOut, error) {
 	raw, err := s.dal.GetProviderKeys(ctx, tenantID, appID)
 	if err != nil {
@@ -317,22 +330,45 @@ func (s *AppService) GetProviderKeys(ctx context.Context, tenantID, appID string
 	if err != nil {
 		return nil, err
 	}
+	baseURLs, _ := s.dal.GetProviderBaseURLs(ctx, tenantID) // fail-open: missing rows → empty map
 	out := make([]ProviderKeyOut, 0, len(entries))
 	for p, e := range entries {
-		out = append(out, ProviderKeyOut{Provider: p, KeySet: e.CT != "", KeyHint: e.Hint})
+		row := ProviderKeyOut{Provider: p, KeySet: e.CT != "", KeyHint: e.Hint}
+		if u, ok := baseURLs[p]; ok {
+			row.BaseURL = u
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
 
 // SetProviderKey encrypts the plaintext key with AES-GCM and stores it alongside
-// a 4-char hint (extracted before encryption) in the provider_keys JSONB column.
-func (s *AppService) SetProviderKey(ctx context.Context, tenantID, appID, provider, plainKey string) error {
+// a 4-char hint in the provider_keys JSONB column. For local providers, baseURL
+// is also upserted into them.llm_providers (tenant-scoped row). baseURL may be
+// empty for cloud providers; key may be empty for local providers that don't
+// require authentication (e.g. Ollama running unauthenticated).
+func (s *AppService) SetProviderKey(ctx context.Context, tenantID, appID, provider, plainKey, baseURL string) error {
 	if _, ok := validProviders[provider]; !ok {
 		return unprocessable("unsupported provider: " + provider)
 	}
-	if plainKey == "" {
+	_, isLocal := localProviders[provider]
+	if plainKey == "" && !isLocal {
 		return validation("key must not be empty")
 	}
+
+	// Persist base_url into them.llm_providers for this tenant.
+	if baseURL != "" {
+		if err := s.dal.UpsertProviderBaseURL(ctx, tenantID, provider, baseURL); err != nil {
+			return fmt.Errorf("upsert provider base_url: %w", err)
+		}
+	}
+
+	// For local providers with no key, store a sentinel so the provider appears
+	// as "configured" in the UI and key-resolution logic.
+	if plainKey == "" && isLocal {
+		plainKey = provider // e.g. "ollama" — skips Authorization header in the adapter
+	}
+
 	hint := ""
 	if len(plainKey) >= 4 {
 		hint = plainKey[len(plainKey)-4:]

@@ -495,7 +495,9 @@ func (h *ApplicationsHandler) GetProviderKeys(w http.ResponseWriter, r *http.Req
 }
 
 // SetProviderKey handles PUT /api/v1/admin/applications/{id}/provider-keys/{provider}.
-// Body: {"key": "<plaintext api key>"}
+// Body: {"key": "<plaintext api key>", "base_url": "<optional endpoint URL>"}
+// For local providers (ollama/vllm/lmstudio) key may be omitted; base_url is stored
+// in them.llm_providers as a tenant-scoped row.
 func (h *ApplicationsHandler) SetProviderKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	provider := chi.URLParam(r, "provider")
@@ -504,7 +506,8 @@ func (h *ApplicationsHandler) SetProviderKey(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var body struct {
-		Key string `json:"key"`
+		Key     string `json:"key"`
+		BaseURL string `json:"base_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -517,7 +520,7 @@ func (h *ApplicationsHandler) SetProviderKey(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer rollback()
-	if err := svc.SetProviderKey(r.Context(), tenantID, id, provider, body.Key); err != nil {
+	if err := svc.SetProviderKey(r.Context(), tenantID, id, provider, body.Key, body.BaseURL); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
