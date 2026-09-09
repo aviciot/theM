@@ -460,6 +460,12 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 		TaskQueue: temporal.GoTaskQueue,
 	}
 
+	lc.logger.Info("execution: starting workflow",
+		"run_id", h.RunID,
+		"ep_slug", h.EPConfig.EPSlug,
+		"user_id", h.UserID,
+	)
+
 	wfRun, wfErr := lc.temporal.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
 	if wfErr != nil {
 		lc.logger.Warn("execution: start workflow failed",

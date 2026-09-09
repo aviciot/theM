@@ -280,7 +280,7 @@ func (r *Recorder) GetArtifact(ctx context.Context, runID, artifactID string) (A
 // CreateTask inserts a child task row for an agent invocation.
 // It looks up the agent UUID by slug+tenantID and writes a 'delegated'/'working' row.
 // Returns the new task UUID string. Non-fatal: callers should log but continue on error.
-func (r *Recorder) CreateTask(ctx context.Context, tenantID, runID, contextID, agentSlug string) (string, error) {
+func (r *Recorder) CreateTask(ctx context.Context, tenantID, runID, contextID, agentSlug string, userID int64) (string, error) {
 	const q = `
 		WITH parent AS (
 			SELECT id FROM them.tasks
@@ -292,11 +292,11 @@ func (r *Recorder) CreateTask(ctx context.Context, tenantID, runID, contextID, a
 			WHERE slug = $4 AND tenant_id = $1::uuid AND enabled = true
 			LIMIT 1
 		)
-		INSERT INTO them.tasks (tenant_id, run_id, context_id, parent_task_id, agent_id, state, kind)
-		SELECT $1::uuid, $2::uuid, $3::uuid, parent.id, ag.id, 'working', 'delegated'
+		INSERT INTO them.tasks (tenant_id, run_id, context_id, parent_task_id, agent_id, state, kind, user_id)
+		SELECT $1::uuid, $2::uuid, $3::uuid, parent.id, ag.id, 'working', 'delegated', NULLIF($5, 0)::integer
 		FROM parent CROSS JOIN ag
 		RETURNING id::text`
-	row := r.db.QueryRow(ctx, q, tenantID, runID, contextID, agentSlug)
+	row := r.db.QueryRow(ctx, q, tenantID, runID, contextID, agentSlug, userID)
 	var id string
 	if err := row.Scan(&id); err != nil {
 		return "", fmt.Errorf("runrecorder: create task (slug=%s): %w", agentSlug, err)

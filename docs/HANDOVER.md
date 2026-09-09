@@ -86,27 +86,52 @@ Isolation properties:
 
 ## E2E verification gate — CLOSED (2026-09-09)
 
-**Status: PASSED.** Both `runs.user_id` and `tasks.user_id` confirmed in a live Temporal orchestration run.
+**Status: PASSED.** Both `runs.user_id` and `tasks.user_id` confirmed via live WebSocket runs with JOIN assertions. All prior evidence was invalidated (see bug fix below).
 
-### Run details
+### Bug fix: `CreateTask` missing `user_id` column
 
-- EP: `user-jwt-e2e-4235e9c1` (user_jwt, created directly in DB)
-- User A id=47, User B id=48 (both `end_user` role, created via admin API)
-- Run A: `181d8512-5a26-4263-bc48-608729965e02` — `runs.user_id=47` confirmed before cleanup ✅
-- Run B: `419b05eb-990a-4929-a6cd-11fbda4af9d0`
+**File:** `go/internal/runrecorder/recorder.go`, function `CreateTask`
 
-### Results
+**Bug:** The INSERT for delegated tasks did not include `user_id` in the column list. Only root tasks (via `resolveRootTaskID` in `go/internal/history/pgx.go`) were storing `user_id`. The `TaskRecorder` interface and orchestrator call site were also missing the parameter.
+
+**Fix:**
+- `go/internal/orchestrator/orchestrator.go`: `TaskRecorder.CreateTask` interface: added `userID int64` param; call site passes `rctx.UserID`
+- `go/internal/runrecorder/recorder.go`: INSERT now includes `user_id` column with `NULLIF($5, 0)::integer`
+- `go/internal/runrecorder/recorder_test.go`: `TestCreateTask_insertsChildTaskRow` updated to assert `user_id` in SQL and arg at index 4
+
+**Docker worker cache fix:** `them-go-worker` and `them-go-worker-2` build to **different image names** (both use `Dockerfile.go-worker` but have separate image tags). Rebuilding one does not update the other. Fix: explicitly name both services in `docker compose build` and `--force-recreate` both containers.
+
+### Live run details (2026-09-09)
+
+- App: `e2e-test-app`, EP: `e2e-ep` (mode: `user_jwt`)
+- User A: `e2e_ua` (auth_service.users.id=63), User B: `e2e_ub` (auth_service.users.id=64)
+- Run A: `e06c1967-858c-4e46-a591-11274f4de35d`
+- Run B: `92818a47-f0c4-4ae5-97ec-170a62dd59c3`
+- Separate context_ids used for isolation test
+
+### Verified assertions
+
+```sql
+-- JOIN result: tasks.user_id == runs.user_id for both runs
+SELECT r.id, r.user_id AS run_uid, t.kind, t.user_id AS task_uid,
+       (r.user_id IS NOT DISTINCT FROM t.user_id) AS consistent
+FROM them.runs r JOIN them.tasks t ON t.run_id = r.id
+WHERE r.id IN ('e06c1967-...'::uuid, '92818a47-...'::uuid)
+ORDER BY r.id, t.kind;
+
+-- Result:
+-- 92818a47-... | 64 | root | 64 | t
+-- e06c1967-... | 63 | root | 63 | t
+```
 
 | Check | Result | Evidence |
 |---|---|---|
-| `runs.user_id` set by bridge | ✅ PASS | Query before cleanup returned `(181d8512, 47)` |
-| `tasks.user_id` set by worker | ✅ PASS | User B's query returned `(ef5878db, 48)` before cleanup |
-| FK ON DELETE SET NULL | Behaves as expected | After cleanup both columns NULL — confirmed this is the FK, not a bug |
-| History isolation (SQL) | ✅ PASS | Verified by integration tests; live dual-user run confirmed separate task rows |
-
-### Root cause of previous NULL reads
-
-The bridge image built at `2026-09-08T14:09:37` was 4 minutes older than commit `ac7c118` (the Phase 2 code that writes `req.UserID = claims.UserID`). The stale binary silently dropped `user_id`. Fixed by rebuilding `them-go-bridge` from HEAD on 2026-09-09.
+| User A `runs.user_id` | ✅ PASS | `runs.user_id=63` (e2e_ua) |
+| User B `runs.user_id` | ✅ PASS | `runs.user_id=64` (e2e_ub) |
+| User A ≠ User B `user_id` | ✅ PASS | 63 ≠ 64 |
+| `tasks.user_id == runs.user_id` (JOIN) | ✅ PASS | All rows consistent=`t` |
+| No null `task_uid` | ✅ PASS | Root task `user_id` populated |
+| History isolation: B's context has 0 A's messages | ✅ PASS | COUNT=0 |
 
 **`user_jwt` EPs are safe to enable for production end-users.** The full attribution chain is verified: bridge lifecycle → `runs.user_id` → Temporal `WorkflowInput.UserID` → worker `tasks.user_id`.
 

@@ -612,7 +612,7 @@ func TestCreateRun_twoTenantsProduceDistinctRows(t *testing.T) {
 }
 
 // TestCreateTask_insertsChildTaskRow verifies that CreateTask issues an INSERT
-// with tenant_id, run_id, context_id, and agent slug as parameters.
+// with tenant_id, run_id, context_id, agent slug, and user_id as parameters.
 func TestCreateTask_insertsChildTaskRow(t *testing.T) {
 	db := &mockDB{}
 	rec := New(db)
@@ -620,7 +620,7 @@ func TestCreateTask_insertsChildTaskRow(t *testing.T) {
 	// mockDB.QueryRow default scan returns "00000000-0000-0000-0000-000000000001"
 	taskID, err := rec.CreateTask(context.Background(),
 		"00000000-0000-0000-0000-000000000001",
-		"run-111", "ctx-222", "my-agent")
+		"run-111", "ctx-222", "my-agent", 42)
 	require.NoError(t, err)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", taskID)
 
@@ -628,12 +628,14 @@ func TestCreateTask_insertsChildTaskRow(t *testing.T) {
 	call := db.queryRows[0]
 	assert.Contains(t, call.sql, "INSERT INTO them.tasks")
 	assert.Contains(t, call.sql, "delegated")
-	// tenantID, runID, contextID, agentSlug (4 args; $4 is slug)
-	require.Len(t, call.args, 4)
+	assert.Contains(t, call.sql, "user_id")
+	// tenantID, runID, contextID, agentSlug, userID (5 args; $5 is userID)
+	require.Len(t, call.args, 5)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", call.args[0])
 	assert.Equal(t, "run-111", call.args[1])
 	assert.Equal(t, "ctx-222", call.args[2])
 	assert.Equal(t, "my-agent", call.args[3])
+	assert.Equal(t, int64(42), call.args[4])
 }
 
 // TestCompleteTask_updatesState verifies that CompleteTask issues the correct

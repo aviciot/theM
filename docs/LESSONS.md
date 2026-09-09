@@ -817,3 +817,27 @@ This caused every `Publish Definition` call to return HTTP 500 silently (the err
 **Fix:** Changed to `ON CONFLICT (application_id, slug)` to match the actual constraint. The semantic is also correct: slugs are unique per-application, not per-tenant-globally.
 
 **Watch for:** When writing ON CONFLICT clauses, always verify the column set matches an existing unique index in the DB schema (`\d table_name` in psql). Unit tests with fake DALs won't catch this — only integration tests hitting real Postgres will.
+
+## Docker Compose Multi-Service Image Naming (2026-09-09)
+
+When two services in `docker-compose.yml` have separate `build:` blocks using the **same Dockerfile**, Docker Compose assigns **different image names** to each service (e.g., `them_gateway-them-go-worker` and `them_gateway-them-go-worker-2`). Rebuilding service 1 does NOT update service 2's image.
+
+**Symptoms:** After `docker compose build --no-cache svc1`, `svc2` container still runs the old binary. `strings /app/binary | grep sql` shows old SQL.
+
+**Diagnosis:** `docker inspect container-name --format '{{.Image}}'` vs `docker images image-name --format '{{.ID}}'` — image SHA mismatch = stale container.
+
+**Fix:** Always name both services explicitly in `docker compose build`:
+```bash
+docker compose ... build --no-cache them-go-worker them-go-worker-2
+docker compose ... up -d --force-recreate them-go-worker them-go-worker-2
+```
+
+**Watch for:** Any pair of containers that share a Dockerfile but differ only by env vars. Always rebuild and recreate both together after a code change.
+
+## `activity.GetLogger(ctx)` Panics in Unit Tests (2026-09-09)
+
+`go.temporal.io/sdk/activity.GetLogger(ctx)` panics when called with a plain `context.Background()` (used in unit tests). The Temporal SDK expects an activity-specific context with internal state injected.
+
+**Fix:** Use `slog.InfoContext(ctx, ...)` or any stdlib logger inside activities — these work with any context.
+
+**Watch for:** Any log call inside an `activity.*` function that uses `activity.GetLogger(ctx)`. Replace with `slog.InfoContext` for portability across test and production contexts.
