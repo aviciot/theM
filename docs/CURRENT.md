@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (E2E verification gate CLOSED — run→task user_id consistency confirmed)
+# Last updated: 2026-09-09 (E2E gate CLOSED — delegated task user_id + context isolation both verified)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,7 +10,7 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-(pending commit) fix(worker): add user_id to CreateTask INSERT; remove debug logs; E2E gate closed
+(pending commit) docs(e2e): delegated task + context isolation assertions; gate fully closed
 30c4e1e  docs(iam): add group mapping UI spec + Keycloak test setup guide
 227d1e8  docs: IAM UI spec (3 changes) + INDEX + SSO doc + test index row 38
 d247ce8  test(multitenant): add 74-check automation script covering S0–S11

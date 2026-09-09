@@ -103,37 +103,71 @@ Isolation properties:
 
 ### Live run details (2026-09-09)
 
-- App: `e2e-test-app`, EP: `e2e-ep` (mode: `user_jwt`)
+- App: `e2e-test-app`, EP: `e2e-ep` (mode: `user_jwt`), orchestrator delegates to `a2a_echo`
 - User A: `e2e_ua` (auth_service.users.id=63), User B: `e2e_ub` (auth_service.users.id=64)
-- Run A: `e06c1967-858c-4e46-a591-11274f4de35d`
-- Run B: `92818a47-f0c4-4ae5-97ec-170a62dd59c3`
-- Separate context_ids used for isolation test
 
-### Verified assertions
+**Run 1 — delegation check:**
+- Run A: `af687e08-9442-4be5-a48a-ed03e718f595`, context: `0263b839-...`
+- User A sends "Please delegate to a2a_echo and echo back: verify-delegation"
+
+**Run 2 — isolation check:**
+- Run B: `04d1ca7f-6dea-4920-8fb0-c458f63f45d9`, **same** context_id: `0263b839-...`
+- User B sends "what did the previous user say?" with A's context_id
+
+### Verified assertions (all directly queried from DB after runs completed)
+
+**Assertion 1 — Delegated task `user_id` matches `runs.user_id`:**
 
 ```sql
--- JOIN result: tasks.user_id == runs.user_id for both runs
 SELECT r.id, r.user_id AS run_uid, t.kind, t.user_id AS task_uid,
        (r.user_id IS NOT DISTINCT FROM t.user_id) AS consistent
 FROM them.runs r JOIN them.tasks t ON t.run_id = r.id
-WHERE r.id IN ('e06c1967-...'::uuid, '92818a47-...'::uuid)
-ORDER BY r.id, t.kind;
+WHERE r.id = 'af687e08-9442-4be5-a48a-ed03e718f595'::uuid
+ORDER BY t.kind;
 
 -- Result:
--- 92818a47-... | 64 | root | 64 | t
--- e06c1967-... | 63 | root | 63 | t
+-- af687e08-... | 63 | delegated | 63 | t   ← CreateTask fix verified
+-- af687e08-... | 63 | root      | 63 | t
 ```
+
+Both root and **delegated** tasks carry `user_id=63`, matching `runs.user_id=63`.
+
+**Assertion 2 — User B using A's `context_id` does NOT load A's history:**
+
+```sql
+-- All messages in the shared context_id, grouped by owner
+SELECT t.user_id, t.kind, t.run_id, tm.role, LEFT(tm.parts::text, 80)
+FROM them.task_messages tm
+JOIN them.tasks t ON tm.task_id = t.id
+WHERE t.context_id = '0263b839-d896-45d4-960e-4cdcf241f499'::uuid
+ORDER BY t.user_id, tm.seq;
+
+-- Result: 8 rows — 4 with user_id=63 (A's run), 4 with user_id=64 (B's run)
+-- B's agent reply: "what did the previous user say?" — echoed back verbatim
+-- → B's LLM received empty history (no knowledge of A's prior message)
+```
+
+LoadHistory SQL with `userID=64` applied to shared context:
+```sql
+WHERE t.context_id = '0263b839-...'::uuid
+  AND ('' = '' OR t.external_user_id = '')          -- no external_user_id filter
+  AND ('' != '' OR 64 = 0 OR t.user_id = 64)        -- filter: only user_id=64
+
+-- Result: 4 rows, ALL user_id=64 — zero of A's (user_id=63) rows returned
+```
+
+B's task writes preserve isolation: B's task has `user_id=64`, A's messages `user_id=63` are physically present in the same `context_id` but excluded by the per-user SQL filter.
 
 | Check | Result | Evidence |
 |---|---|---|
-| User A `runs.user_id` | ✅ PASS | `runs.user_id=63` (e2e_ua) |
-| User B `runs.user_id` | ✅ PASS | `runs.user_id=64` (e2e_ub) |
-| User A ≠ User B `user_id` | ✅ PASS | 63 ≠ 64 |
-| `tasks.user_id == runs.user_id` (JOIN) | ✅ PASS | All rows consistent=`t` |
-| No null `task_uid` | ✅ PASS | Root task `user_id` populated |
-| History isolation: B's context has 0 A's messages | ✅ PASS | COUNT=0 |
+| User A `runs.user_id=63` | ✅ PASS | Live query |
+| `delegated` task `user_id=63` == `runs.user_id` | ✅ PASS | JOIN consistent=`t`, `CreateTask` fix verified |
+| User B `runs.user_id=64` | ✅ PASS | Live query |
+| B's root task `user_id=64` | ✅ PASS | Live query |
+| B uses A's `context_id` → 0 of A's messages loaded | ✅ PASS | LoadHistory SQL returns 0 user_id=63 rows for B |
+| B's LLM response shows no knowledge of A's content | ✅ PASS | B echoed its own message; A's "verify-delegation" not visible |
 
-**`user_jwt` EPs are safe to enable for production end-users.** The full attribution chain is verified: bridge lifecycle → `runs.user_id` → Temporal `WorkflowInput.UserID` → worker `tasks.user_id`.
+**`user_jwt` EPs are safe to enable for production end-users.** The full attribution chain is verified: bridge lifecycle → `runs.user_id` → Temporal `WorkflowInput.UserID` → worker root task `user_id` + delegated task `user_id`. History isolation holds: same `context_id`, different `user_id` → zero cross-user message leakage.
 
 ---
 
