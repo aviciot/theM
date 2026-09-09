@@ -307,6 +307,8 @@ export const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: '
 
 // ── RuntimeView provider list ─────────────────────────────────────────────────
 export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'ollama', 'vllm', 'lmstudio', 'elevenlabs'] as const;
+export const CLOUD_PROVIDERS_LIST  = ['anthropic', 'openai', 'groq', 'gemini', 'elevenlabs'] as const;
+export const LOCAL_PROVIDERS_LIST  = ['ollama', 'vllm', 'lmstudio'] as const;
 
 export const RUNTIME_MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],

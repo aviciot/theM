@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig } from '@/lib/api';
-import { C, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
+import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
 import { EPSections } from './RuntimeEPSections';
 import { CanvasAgentsSection } from './RuntimeAgentsSection';
@@ -35,6 +35,8 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [keyMsg,        setKeyMsg]        = useState<Record<string, string>>({});
   const [keyTestMsg,    setKeyTestMsg]    = useState<Record<string, string>>({});
   const [keyTesting,    setKeyTesting]    = useState<string | null>(null);
+  const [cloudOpen,     setCloudOpen]     = useState(true);
+  const [localOpen,     setLocalOpen]     = useState(true);
 
   const [orchMetas, setOrchMetas] = useState<OrchMeta[]>(
     (app.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name }))
@@ -338,47 +340,67 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
         <Section title="Provider Keys" icon="key" accent="#fb923c" defaultOpen={false}
           subtitle={setProviders.length > 0 ? `${setProviders.length} of ${PROVIDER_LIST.length} configured` : 'No providers configured yet'}>
           <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>API keys are AES-GCM encrypted at rest.</div>
-          {PROVIDER_LIST.map(provider => {
-            const status = getKeyStatus(provider); const isBusy = keySaving === provider; const isTesting = keyTesting === provider;
-            const msg = keyMsg[provider] ?? ''; const testMsg = keyTestMsg[provider] ?? '';
-            const isErr = msg && msg !== 'Saved' && msg !== 'Removed'; const isTestErr = testMsg && !testMsg.startsWith('✓');
-            const isLocal = LOCAL_PROVIDERS.has(provider);
-            const canSave = isLocal
-              ? !!(keyInputs[provider] ?? '').trim() || !!(baseUrlInputs[provider] ?? '').trim()
-              : !!(keyInputs[provider] ?? '').trim();
-            const localBadgeLabel = (() => {
-              if (!isLocal || !status.key_set) return null;
-              const url = status.base_url;
-              if (!url) return 'set';
-              try { return new URL(url).host; } catch { return url; }
-            })();
-            return (
-              <div key={provider} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.07)'}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 130, flexShrink: 0 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{provider}</span>
-                    {status.key_set
-                      ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', localBadgeLabel ?? `set ···${status.key_hint ?? ''}`)
-                      : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
-                  </div>
-                  <input type="password" placeholder={isLocal ? 'API key (optional)' : status.key_set ? 'Replace key…' : 'Paste API key…'} value={keyInputs[provider] ?? ''} onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160 }} />
-                  {saveBtn(() => handleSaveKey(provider), isBusy, !canSave)}
-                  {status.key_set && <button onClick={() => handleTestKey(provider)} disabled={isBusy || isTesting} style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}>{isTesting ? '…' : 'Test'}</button>}
-                  {status.key_set && <button onClick={() => handleDeleteKey(provider)} disabled={isBusy} style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>Remove</button>}
-                  {msg && <span style={{ fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
-                </div>
-                {isLocal && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-                    <div style={{ width: 130, flexShrink: 0 }}>
-                      <span style={{ fontSize: 11, color: C.textMuted }}>Endpoint URL</span>
+          {(() => {
+            const renderProvider = (provider: string) => {
+              const status = getKeyStatus(provider); const isBusy = keySaving === provider; const isTesting = keyTesting === provider;
+              const msg = keyMsg[provider] ?? ''; const testMsg = keyTestMsg[provider] ?? '';
+              const isErr = msg && msg !== 'Saved' && msg !== 'Removed'; const isTestErr = testMsg && !testMsg.startsWith('✓');
+              const isLocal = LOCAL_PROVIDERS.has(provider);
+              const canSave = isLocal
+                ? !!(keyInputs[provider] ?? '').trim() || !!(baseUrlInputs[provider] ?? '').trim()
+                : !!(keyInputs[provider] ?? '').trim();
+              const localBadgeLabel = (() => {
+                if (!isLocal || !status.key_set) return null;
+                const url = status.base_url;
+                if (!url) return 'set';
+                try { return new URL(url).host; } catch { return url; }
+              })();
+              return (
+                <div key={provider} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.07)'}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 130, flexShrink: 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{provider}</span>
+                      {status.key_set
+                        ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', localBadgeLabel ?? `set ···${status.key_hint ?? ''}`)
+                        : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
                     </div>
-                    <input type="text" placeholder={LOCAL_URL_PLACEHOLDER[provider] ?? 'http://localhost:8080'} value={baseUrlInputs[provider] ?? ''} onChange={e => setBaseUrlInputs(bu => ({ ...bu, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160, fontFamily: 'monospace', fontSize: 12 }} />
+                    <input type="password" placeholder={isLocal ? 'API key (optional)' : status.key_set ? 'Replace key…' : 'Paste API key…'} value={keyInputs[provider] ?? ''} onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160 }} />
+                    {saveBtn(() => handleSaveKey(provider), isBusy, !canSave)}
+                    {status.key_set && <button onClick={() => handleTestKey(provider)} disabled={isBusy || isTesting} style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}>{isTesting ? '…' : 'Test'}</button>}
+                    {status.key_set && <button onClick={() => handleDeleteKey(provider)} disabled={isBusy} style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>Remove</button>}
+                    {msg && <span style={{ fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
                   </div>
-                )}
-                {testMsg && <div style={{ marginTop: 6, fontSize: 12, color: isTestErr ? C.error : C.green, fontWeight: 600, paddingLeft: 138 }}>{testMsg}</div>}
-              </div>
+                  {isLocal && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                      <div style={{ width: 130, flexShrink: 0 }}>
+                        <span style={{ fontSize: 11, color: C.textMuted }}>Endpoint URL</span>
+                      </div>
+                      <input type="text" placeholder={LOCAL_URL_PLACEHOLDER[provider] ?? 'http://localhost:8080'} value={baseUrlInputs[provider] ?? ''} onChange={e => setBaseUrlInputs(bu => ({ ...bu, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160, fontFamily: 'monospace', fontSize: 12 }} />
+                    </div>
+                  )}
+                  {testMsg && <div style={{ marginTop: 6, fontSize: 12, color: isTestErr ? C.error : C.green, fontWeight: 600, paddingLeft: 138 }}>{testMsg}</div>}
+                </div>
+              );
+            };
+            const groupHeader = (label: string, count: number, total: number, open: boolean, toggle: () => void) => (
+              <button onClick={toggle} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', marginTop: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
+                <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)', marginLeft: 4 }} />
+                <span style={{ fontSize: 11, color: C.textMuted }}>{count}/{total}</span>
+              </button>
             );
-          })}
+            const cloudSet = CLOUD_PROVIDERS_LIST.filter(p => getKeyStatus(p).key_set).length;
+            const localSet = LOCAL_PROVIDERS_LIST.filter(p => getKeyStatus(p).key_set).length;
+            return (
+              <>
+                {groupHeader('Cloud Providers', cloudSet, CLOUD_PROVIDERS_LIST.length, cloudOpen, () => setCloudOpen(o => !o))}
+                {cloudOpen && CLOUD_PROVIDERS_LIST.map(renderProvider)}
+                {groupHeader('Self-hosted', localSet, LOCAL_PROVIDERS_LIST.length, localOpen, () => setLocalOpen(o => !o))}
+                {localOpen && LOCAL_PROVIDERS_LIST.map(renderProvider)}
+              </>
+            );
+          })()}
         </Section>
 
         <Section title="Global Parameters" icon="variable_insert" accent="#fb923c" defaultOpen={false}
