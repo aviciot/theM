@@ -349,7 +349,7 @@ export default function ServicesPage() {
                 </div>
               )}
               <WindowPicker value={timeWindow} onChange={w => setTimeWindow(w)} />
-              <button onClick={load} title="Refresh" style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid var(--tm-border)', background: 'var(--tm-card)', color: 'var(--tm-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+              <button onClick={() => load()} title="Refresh" style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid var(--tm-border)', background: 'var(--tm-card)', color: 'var(--tm-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
               </button>
             </div>
