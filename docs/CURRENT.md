@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (LLM provider support — OpenAI-compatible adapter + local provider UI)
+# Last updated: 2026-09-09 (Tenant management: force-delete, IdP tag, OIDC redirect fix; Keycloak tenant setup)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,13 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+c078e6d  fix(oidc): correct redirect_uri path /auth/api/v1/auth/oidc/callback → /auth/oidc/callback
+9f18da3  fix(admin): include idp_configured in tenants list and create responses
+aa72059  fix(admin): force-delete tenant cascades all FK-blocked child tables
+18f9d72  fix(tenants): use logged-in username for delete verification + show errors in modal
+304e442  feat(tenants): force-delete with confirmation modal + resource summary
 4d4b232  feat(ui): group Provider Keys into collapsible Cloud / Self-hosted sections
 782af72  feat(ui): smart placeholders + host badge for local LLM providers
-c38dc3f  feat(llm): add base_url support for local providers (ollama/vllm/lmstudio)
-1195548  feat(llm): OpenAI-compatible adapter + multi-provider support
-7f09eb2  feat(iam): tenant-admin self-service SSO group mapping (Stage 3)
 ```
 
 ---
@@ -427,6 +429,65 @@ See full detail in `docs/HANDOVER.md`.
 **✅ Verification gate CLOSED (2026-09-09)** — `tasks.user_id` confirmed via live Temporal run with a2a-echo agent. User A (id=47): `runs.user_id=47` ✅; User B (id=48): `tasks.user_id=48` ✅. Root cause of previous NULLs: bridge image was 4 minutes older than Phase 2 code commit — stale binary, not a code bug. Bridge rebuilt from HEAD, gate closed. See `docs/HANDOVER.md`.
 
 **`user_jwt` EPs are safe to enable for production end-users.**
+
+---
+
+### Tenant Management Fixes — COMPLETE (2026-09-09, c078e6d)
+
+**Force-delete, IdP badge persistence, OIDC redirect URI correction, Keycloak tenant setup.**
+
+#### Tenant force-delete (aa72059 + 304e442 + 18f9d72)
+
+- Modal shows resource counts (applications / agents / users) before deleting
+- Admin must enter their own password to unlock the "Delete everything" button
+- `ForceDeleteTenant` now deletes all 9 FK-blocked child tables in dependency order:
+  `run_artifacts → runs → access_tokens → orchestrators → component_definitions → application_definitions → applications → agents → memberships` — then the tenant row
+- Error from force-delete is shown inside the modal (not on a different tab)
+- Password verification uses the logged-in user's username (not hardcoded `'admin'`)
+
+#### IdP badge persistence (9f18da3)
+
+- **Root cause:** `GET /admin/tenants` returned `Tenant` (no `idp_configured` field) — badge appeared after Save (PATCH response has it) but vanished on refresh
+- Fix: `ListTenants`, `GetTenant`, `CreateTenant` all now return `idp_config IS NOT NULL AS idp_configured`; `Tenant` struct gained `IDPConfigured bool`
+- Test mock updated for new 9-column scan shape
+
+#### OIDC redirect URI (c078e6d)
+
+- **Root cause:** Keycloak client had `redirectUris: ["/auth/oidc/callback"]` but tenants stored `/auth/api/v1/auth/oidc/callback` (stale Python path)
+- Fix: updated bank + rnd `idp_config.redirect_uri` in DB to `/auth/oidc/callback`
+- Keycloak `them-m` client updated (both `localhost` and `10.55.125.43` variants)
+- `keycloak/them-realm.json` fixed so container recreation uses correct URIs
+
+#### Keycloak tenants configured (live DB, not committed)
+
+| Tenant | Slug | IdP | Group mappings |
+|---|---|---|---|
+| Default Tenant | `default` | — | — |
+| Bank | `bank` | Keycloak `them-m` | `bank-admins` → admin |
+| R&D | `rnd` | Keycloak `them-m` | `developers` → admin, `qa` → member |
+
+**Keycloak connection details (them-keycloak container):**
+- Discovery URL: `http://<host>:8088/auth/keycloak/realms/them`
+- Client ID: `them-m` / Secret: `them-m-secret`
+- Redirect URI: `http://<host>:8088/auth/oidc/callback`
+- Admin console: `http://<host>:8088/auth/keycloak/` — user `admin` / `admin123`
+
+**Keycloak users (them realm):**
+
+| Username | Email | Groups | Password |
+|---|---|---|---|
+| `bankadmin` | `bankadmin@bank.com` | `bank-admins` | `bankadmin` |
+| `avi2` | `avi2@bank.com` | `bank-admins` | `avi2pass` |
+| `dev` | `dev@bank.com` | `developers` | `devpass` |
+| `qa-user` | `qauser@bank.com` | `qa` | `qa` |
+| `admin` | `admin@bank.com` | — (Keycloak master admin) | `admin123` |
+
+Start Keycloak (if not already up):
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile sso up -d them-keycloak
+```
+
+Test SSO login: go to Admin → Tenants → bank or rnd → SSO tab → "Test SSO Login".
 
 ---
 
