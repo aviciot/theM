@@ -200,9 +200,13 @@ export const MODELS_BY_PROVIDER: Record<string, string[]> = {
   openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
   groq:      ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.6-27b', 'groq/compound', 'groq/compound-mini'],
   gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+  // Local / self-hosted (OpenAI-compatible) — model name is typed freely
+  ollama:    ['llama3.2', 'llama3.1', 'mistral', 'qwen2.5-coder', 'gemma3'],
+  vllm:      ['meta-llama/Llama-3.1-8B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3'],
+  lmstudio:  ['local-model'],
 };
 
-export const PROVIDER_OPTIONS = ['anthropic', 'openai', 'groq', 'gemini'];
+export const PROVIDER_OPTIONS = ['anthropic', 'openai', 'groq', 'gemini', 'ollama', 'vllm', 'lmstudio'];
 
 // ── App card styles ───────────────────────────────────────────────────────────
 export const APP_CARD_STYLES = `
@@ -302,13 +306,17 @@ export const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream
 export const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
 
 // ── RuntimeView provider list ─────────────────────────────────────────────────
-export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'elevenlabs'] as const;
+export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'ollama', 'vllm', 'lmstudio', 'elevenlabs'] as const;
 
 export const RUNTIME_MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
   groq:      ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'],
   gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+  // Local / self-hosted — model name is free-typed; list provides common defaults
+  ollama:    ['llama3.2', 'llama3.1', 'mistral', 'qwen2.5-coder', 'gemma3'],
+  vllm:      ['meta-llama/Llama-3.1-8B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3'],
+  lmstudio:  ['local-model'],
 };
 
 // Voice (STT / TTS) constants

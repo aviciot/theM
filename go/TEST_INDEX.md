@@ -481,9 +481,9 @@ sanitization, and cross-run access denial.
 
 ---
 
-### S1-10 · LLM provider — `internal/llm/provider_test.go`
+### S1-10 · LLM provider — `internal/llm/provider_test.go`, `internal/llm/openai_test.go`
 
-**Purpose:** Typed tool definitions + provider interface + streaming cancellation (fixes findings #8, #9).
+**Purpose:** Typed tool definitions + provider interface + streaming cancellation. Includes OpenAI-compatible adapter tests (OAI-1..9).
 
 | Test | What it proves |
 |---|---|
@@ -493,8 +493,17 @@ sanitization, and cross-run access denial.
 | `TestToolDef_emptyDescriptionReturnsError` | `ToolDef.Validate()` rejects empty description |
 | `TestToolDef_validDoesNotReturnError` | Valid ToolDef passes validation |
 | `TestMockProvider_emptyResponsesClosesChannelImmediately` | Empty response set → channel closed cleanly |
+| `TestOpenAIProvider_defaults` (OAI-1) | Empty model/maxTokens/baseURL → correct defaults |
+| `TestOpenAIProvider_streamTextDelta` (OAI-2) | Text delta chunks → text_delta events; stop event carries usage |
+| `TestOpenAIProvider_toolCallEmitted` (OAI-3) | finish_reason=tool_calls → tool_calls StreamEvent |
+| `TestOpenAIProvider_httpErrorReturned` (OAI-4) | Non-200 response → error returned, channel not opened |
+| `TestOpenAIProvider_contextCancellation` (OAI-5) | ctx.Cancel() stops stream well before 1000 events |
+| `TestOpenAIProvider_systemPromptSentFirst` (OAI-6) | SystemPrompt prepended as role=system in request body |
+| `TestOpenAIProvider_noAuthHeaderForOllama` (OAI-7) | apiKey="ollama" → Authorization header absent |
+| `TestDomainMessageToOpenAI_toolResult` (OAI-8) | tool_result parts convert to role=tool message |
+| `TestDomainMessageToOpenAI_emptyUserSkipped` (OAI-9) | Empty user message → ok=false (skip) |
 
-**Trigger:** any change to `internal/llm/provider.go`, `internal/llm/mock.go`, `internal/llm/anthropic.go`
+**Trigger:** any change to `internal/llm/provider.go`, `internal/llm/mock.go`, `internal/llm/anthropic.go`, `internal/llm/openai.go`
 
 ---
 

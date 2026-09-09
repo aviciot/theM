@@ -59,12 +59,17 @@ type RunConfig struct {
 	// LLMAPIKey is the plaintext API key for LLMProvider, read from
 	// applications.provider_keys. Empty string means fall back to global key.
 	LLMAPIKey string
+	// LLMBaseURL is the custom endpoint URL for the LLM provider, read from
+	// them.llm_providers.base_url. Empty = use the provider's public default.
+	// Set this for local/self-hosted models (Ollama, vLLM, LMStudio, etc.).
+	LLMBaseURL string
 
 	// Summarizer fields — populated when memory_enabled=true on the entry_point row.
 	// Memory config is per-EP so each entry point can have independent history settings.
 	SummarizerProvider string
 	SummarizerModel    string
 	SummarizerAPIKey   string // plaintext, decrypted from provider_keys
+	SummarizerBaseURL  string // custom endpoint URL for summarizer provider (mirrors LLMBaseURL)
 
 	// MCPServiceURL is the internal base URL of them-mcp-service, injected by the
 	// worker at build time (not stored in DB). Empty → MCP tool dispatch disabled.
@@ -244,10 +249,12 @@ WHERE ep.id = $1::uuid`
 		providerName = "anthropic"
 	}
 
-	// Resolve API key: tenant override in llm_providers takes precedence over
-	// per-app key in applications.provider_keys, which in turn takes precedence
+	// Resolve API key + base_url: tenant override in llm_providers takes precedence
+	// over per-app key in applications.provider_keys, which in turn takes precedence
 	// over the global environment variable. Non-fatal: fall through on miss.
-	apiKey := l.loadTenantProviderKey(ctx, tenantID, providerName)
+	tenantRow := l.loadTenantProviderKey(ctx, tenantID, providerName)
+	apiKey := tenantRow.key
+	llmBaseURL := tenantRow.baseURL
 	if apiKey == "" {
 		var keyErr error
 		apiKey, keyErr = l.loadProviderKey(ctx, applicationID, providerName)
@@ -266,9 +273,12 @@ WHERE ep.id = $1::uuid`
 		sumModel = *summarizerModel
 	}
 	sumAPIKey := ""
+	sumBaseURL := ""
 	if memoryEnabled && sumProvider != "" {
 		// Prefer tenant override for summarizer key.
-		sumAPIKey = l.loadTenantProviderKey(ctx, tenantID, sumProvider)
+		sumRow := l.loadTenantProviderKey(ctx, tenantID, sumProvider)
+		sumAPIKey = sumRow.key
+		sumBaseURL = sumRow.baseURL
 		if sumAPIKey == "" {
 			var sumKeyErr error
 			sumAPIKey, sumKeyErr = l.loadProviderKey(ctx, applicationID, sumProvider)
@@ -295,9 +305,11 @@ WHERE ep.id = $1::uuid`
 		OrchestratorConfig: cfg,
 		LLMProvider:        providerName,
 		LLMAPIKey:          apiKey,
+		LLMBaseURL:         llmBaseURL,
 		SummarizerProvider: sumProvider,
 		SummarizerModel:    sumModel,
 		SummarizerAPIKey:   sumAPIKey,
+		SummarizerBaseURL:  sumBaseURL,
 		ManagedAppParams:   managedParams,
 	}, nil
 }
@@ -462,17 +474,24 @@ func (l *PgxLoader) resolveAgentSlugs(ctx context.Context, ids []string) ([]stri
 	return slugs, nil
 }
 
-// loadTenantProviderKey looks up a decrypted API key from them.llm_providers,
-// preferring the tenant-scoped override over the platform default.
-// Returns empty string when no enabled row exists or on any error (fail-open).
-func (l *PgxLoader) loadTenantProviderKey(ctx context.Context, tenantID, provider string) string {
+// providerRow holds the resolved key and optional custom base URL for a provider.
+type providerRow struct {
+	key     string
+	baseURL string
+}
+
+// loadTenantProviderKey looks up a decrypted API key and base_url from
+// them.llm_providers, preferring the tenant-scoped override over the platform
+// default. Returns zero value when no enabled row exists or on any error
+// (fail-open).
+func (l *PgxLoader) loadTenantProviderKey(ctx context.Context, tenantID, provider string) providerRow {
 	if tenantID == "" || provider == "" {
-		return ""
+		return providerRow{}
 	}
 
 	// Tenant override first.
-	if key := l.lookupLLMProviderKey(ctx, provider, &tenantID); key != "" {
-		return key
+	if row := l.lookupLLMProviderKey(ctx, provider, &tenantID); row.key != "" {
+		return row
 	}
 	// Platform default fallback.
 	return l.lookupLLMProviderKey(ctx, provider, nil)
@@ -480,34 +499,39 @@ func (l *PgxLoader) loadTenantProviderKey(ctx context.Context, tenantID, provide
 
 // lookupLLMProviderKey fetches and decrypts a single llm_providers row.
 // tenantID nil = platform default (tenant_id IS NULL); non-nil = tenant override.
-// Returns empty string on miss or error.
-func (l *PgxLoader) lookupLLMProviderKey(ctx context.Context, provider string, tenantID *string) string {
+// Returns zero value on miss or error.
+func (l *PgxLoader) lookupLLMProviderKey(ctx context.Context, provider string, tenantID *string) providerRow {
 	var encPtr *string
+	var baseURLPtr *string
 	var err error
 	if tenantID == nil {
-		const q = `SELECT api_key_encrypted FROM them.llm_providers WHERE name=$1 AND tenant_id IS NULL AND enabled=true LIMIT 1`
-		err = l.pool.QueryRow(ctx, q, provider).Scan(&encPtr)
+		const q = `SELECT api_key_encrypted, base_url FROM them.llm_providers WHERE name=$1 AND tenant_id IS NULL AND enabled=true LIMIT 1`
+		err = l.pool.QueryRow(ctx, q, provider).Scan(&encPtr, &baseURLPtr)
 	} else {
-		const q = `SELECT api_key_encrypted FROM them.llm_providers WHERE name=$1 AND tenant_id=$2::uuid AND enabled=true LIMIT 1`
-		err = l.pool.QueryRow(ctx, q, provider, *tenantID).Scan(&encPtr)
+		const q = `SELECT api_key_encrypted, base_url FROM them.llm_providers WHERE name=$1 AND tenant_id=$2::uuid AND enabled=true LIMIT 1`
+		err = l.pool.QueryRow(ctx, q, provider, *tenantID).Scan(&encPtr, &baseURLPtr)
 	}
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			slog.Warn("workerconfig: llm_providers key lookup error — skipping",
 				"provider", provider, "has_tenant", tenantID != nil)
 		}
-		return ""
+		return providerRow{}
+	}
+	var baseURL string
+	if baseURLPtr != nil {
+		baseURL = *baseURLPtr
 	}
 	if encPtr == nil || *encPtr == "" {
-		return ""
+		return providerRow{baseURL: baseURL}
 	}
 	plain, decErr := l.decryptValue(*encPtr)
 	if decErr != nil {
 		slog.Warn("workerconfig: llm_providers key decrypt failed — skipping",
 			"provider", provider, "has_tenant", tenantID != nil)
-		return ""
+		return providerRow{}
 	}
-	return plain
+	return providerRow{key: plain, baseURL: baseURL}
 }
 
 // loadProviderKey reads and decrypts the key for one provider from applications.provider_keys.

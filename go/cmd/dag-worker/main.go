@@ -420,20 +420,29 @@ func extractNodeLLMOverrides(overrides map[string]any) map[string]agentgen.NodeL
 // ── multiLLMFactory ───────────────────────────────────────────────────────────
 
 // multiLLMFactory routes to the correct provider implementation.
+// baseURLs maps provider name → custom endpoint URL (from them.llm_providers.base_url).
 type multiLLMFactory struct {
 	platformKey string
+	baseURLs    map[string]string
 }
 
 func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
-	if apiKey == "" {
+	if apiKey == "" && provider != "ollama" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
+	}
+	baseURL := ""
+	if f.baseURLs != nil {
+		baseURL = f.baseURLs[provider]
 	}
 	switch provider {
 	case "anthropic", "":
 		p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
 		return &anthropicAdapter{p: p}, nil
+	case "openai", "groq", "ollama", "vllm", "lmstudio":
+		p := llm.NewOpenAIProvider(apiKey, model, baseURL, maxTokens)
+		return &openAIAdapter{p: p}, nil
 	default:
-		return nil, fmt.Errorf("provider %q is not yet supported in dag-worker; only 'anthropic' is available", provider)
+		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, or lmstudio", provider)
 	}
 }
 
@@ -466,7 +475,37 @@ func (a *anthropicAdapter) Complete(ctx context.Context, systemPrompt, userPromp
 	return sb.String(), nil
 }
 
+// openAIAdapter adapts llm.OpenAIProvider to agentgen.LLMProvider.
+type openAIAdapter struct {
+	p *llm.OpenAIProvider
+}
+
+func (a *openAIAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	msgs := []domain.Message{
+		{
+			Role:  domain.RoleUser,
+			Parts: []domain.ContentPart{{Type: "text", Text: userPrompt}},
+		},
+	}
+	opts := llm.Options{SystemPrompt: systemPrompt}
+	ch, err := a.p.Stream(ctx, msgs, nil, opts)
+	if err != nil {
+		return "", fmt.Errorf("LLM stream start: %w", err)
+	}
+	var sb strings.Builder
+	for ev := range ch {
+		switch ev.Type {
+		case "text_delta":
+			sb.WriteString(ev.Delta)
+		case "error":
+			return "", fmt.Errorf("LLM stream error: %w", ev.Error)
+		}
+	}
+	return sb.String(), nil
+}
+
 var _ agentgen.LLMProvider = (*anthropicAdapter)(nil)
+var _ agentgen.LLMProvider = (*openAIAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 var _ temporal.ContextLoader = (*dbContextLoader)(nil)
 

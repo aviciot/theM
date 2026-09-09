@@ -318,18 +318,20 @@ func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) (ll
 		switch cfg.LLMProvider {
 		case "anthropic":
 			apiKey = os.Getenv("ANTHROPIC_API_KEY")
-		case "openai":
+		case "openai", "groq", "ollama", "vllm", "lmstudio":
 			apiKey = os.Getenv("OPENAI_API_KEY")
 		}
 	}
-	if apiKey == "" {
+	if apiKey == "" && cfg.LLMProvider != "ollama" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime or env", cfg.LLMProvider)
 	}
 	switch cfg.LLMProvider {
 	case "anthropic":
 		return llm.NewAnthropicProvider(apiKey, cfg.OrchestratorConfig.Model, 0), nil
+	case "openai", "groq", "ollama", "vllm", "lmstudio":
+		return llm.NewOpenAIProvider(apiKey, cfg.OrchestratorConfig.Model, cfg.LLMBaseURL, 0), nil
 	default:
-		return nil, fmt.Errorf("provider %q is not yet supported in the Go worker", cfg.LLMProvider)
+		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, or lmstudio", cfg.LLMProvider)
 	}
 }
 
@@ -354,13 +356,15 @@ func (a *workerFileGateAdapter) InterceptInlineArtifact(ctx context.Context, app
 
 // resolveSummarizerProvider selects and constructs the LLM provider for the summarizer.
 func (f *runOrchestratorFactory) resolveSummarizerProvider(cfg workerconfig.RunConfig) (llm.Provider, error) {
-	if cfg.SummarizerAPIKey == "" {
+	if cfg.SummarizerAPIKey == "" && cfg.SummarizerProvider != "ollama" {
 		return nil, fmt.Errorf("no API key configured for summarizer provider %q", cfg.SummarizerProvider)
 	}
 	switch cfg.SummarizerProvider {
 	case "anthropic":
 		return llm.NewAnthropicProvider(cfg.SummarizerAPIKey, cfg.SummarizerModel, 0), nil
+	case "openai", "groq", "ollama", "vllm", "lmstudio":
+		return llm.NewOpenAIProvider(cfg.SummarizerAPIKey, cfg.SummarizerModel, cfg.SummarizerBaseURL, 0), nil
 	default:
-		return nil, fmt.Errorf("summarizer provider %q is not yet supported", cfg.SummarizerProvider)
+		return nil, fmt.Errorf("summarizer provider %q is not supported — use anthropic, openai, groq, ollama, vllm, or lmstudio", cfg.SummarizerProvider)
 	}
 }

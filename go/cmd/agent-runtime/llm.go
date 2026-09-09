@@ -66,21 +66,30 @@ func writeJSONRPCError(w http.ResponseWriter, id any, code int, message string, 
 }
 
 // multiLLMFactory routes to the correct provider implementation.
-// Currently only "anthropic" is fully implemented; other providers return a clear error.
+// baseURLs maps provider name → custom endpoint URL (from them.llm_providers.base_url).
+// An empty map means all providers use their public default endpoints.
 type multiLLMFactory struct {
 	platformKey string
+	baseURLs    map[string]string // provider name → base URL override
 }
 
 func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
-	if apiKey == "" {
+	if apiKey == "" && provider != "ollama" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
+	}
+	baseURL := ""
+	if f.baseURLs != nil {
+		baseURL = f.baseURLs[provider]
 	}
 	switch provider {
 	case "anthropic", "":
 		p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
 		return &anthropicProviderAdapter{p: p}, nil
+	case "openai", "groq", "ollama", "vllm", "lmstudio":
+		p := llm.NewOpenAIProvider(apiKey, model, baseURL, maxTokens)
+		return &openAIProviderAdapter{p: p}, nil
 	default:
-		return nil, fmt.Errorf("provider %q is not yet supported in the agent runtime; only 'anthropic' is available", provider)
+		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, or lmstudio", provider)
 	}
 }
 
@@ -114,7 +123,37 @@ func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, u
 	return sb.String(), nil
 }
 
+// openAIProviderAdapter adapts llm.OpenAIProvider to agentgen.LLMProvider.
+type openAIProviderAdapter struct {
+	p *llm.OpenAIProvider
+}
+
+func (a *openAIProviderAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	msgs := []domain.Message{
+		{
+			Role:  domain.RoleUser,
+			Parts: []domain.ContentPart{{Type: "text", Text: userPrompt}},
+		},
+	}
+	opts := llm.Options{SystemPrompt: systemPrompt}
+	ch, err := a.p.Stream(ctx, msgs, nil, opts)
+	if err != nil {
+		return "", fmt.Errorf("LLM stream start: %w", err)
+	}
+	var sb strings.Builder
+	for ev := range ch {
+		switch ev.Type {
+		case "text_delta":
+			sb.WriteString(ev.Delta)
+		case "error":
+			return "", fmt.Errorf("LLM stream error: %w", ev.Error)
+		}
+	}
+	return sb.String(), nil
+}
+
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)
+var _ agentgen.LLMProvider = (*openAIProviderAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 
 // pgxAgentEndpointQueryer implements agentgen.AgentEndpointQueryer using pgxpool.

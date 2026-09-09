@@ -63,5 +63,5 @@ func TestResolveProvider_UnsupportedProviderFails(t *testing.T) {
 	}
 	_, err := f.resolveProvider(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet supported")
+	assert.Contains(t, err.Error(), "not supported")
 }
