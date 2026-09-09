@@ -373,13 +373,6 @@ export default function UsersPage() {
     setSelected(null);
   }
 
-  const page: React.CSSProperties = {
-    display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)',
-  };
-  const main: React.CSSProperties = {
-    flex: 1, padding: '32px', overflowY: 'auto',
-    paddingRight: selected ? '420px' : '32px', transition: 'padding-right .2s',
-  };
   const row: React.CSSProperties = {
     display: 'grid', gap: '1px',
     background: 'var(--tm-border)',
@@ -396,70 +389,83 @@ export default function UsersPage() {
   };
 
   return (
-    <div style={page}>
+    <>
       <Sidebar />
-      <main style={main}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
-          <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: 'var(--tm-card-text)' }}>Users</h1>
-          <button onClick={() => setShowCreate(true)}
-            style={{ padding: '9px 20px', borderRadius: '9px', border: 'none', background: ACCENT, color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}>
-            + Create User
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap' }}>
-          <input
-            placeholder="Search users…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{
-              flex: '1 1 240px', maxWidth: '360px', padding: '9px 14px', borderRadius: '9px',
-              border: '1px solid var(--tm-border)', background: 'var(--tm-card)',
-              color: 'var(--tm-card-text)', fontSize: '13px', boxSizing: 'border-box',
-            }}
-          />
-          <select
-            value={roleFilter}
-            onChange={e => setRoleFilter(e.target.value)}
-            style={{
-              padding: '9px 14px', borderRadius: '9px', border: '1px solid var(--tm-border)',
-              background: 'var(--tm-card)', color: 'var(--tm-card-text)', fontSize: '13px', cursor: 'pointer',
-            }}
-          >
-            <option value="all">All roles</option>
-            <option value="super_admin">super_admin</option>
-            <option value="admin">admin</option>
-            <option value="member">member</option>
-            <option value="viewer">viewer</option>
-            <option value="inactive">inactive</option>
-          </select>
-        </div>
-
-        {loading ? (
-          <p style={{ color: 'var(--tm-card-text-muted)' }}>Loading…</p>
-        ) : filtered.length === 0 ? (
-          <p style={{ color: 'var(--tm-card-text-muted)' }}>No users found.</p>
-        ) : (
-          <div style={row}>
-            <div style={header}>
-              <span>Username</span>
-              <span>Name</span>
-              <span>Tenant</span>
-              <span>Role</span>
-              <span>Status</span>
+      <main style={{ marginLeft: '260px', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
+        <header style={{ padding: '24px 32px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: 'var(--tm-card-text)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '22px', color: ACCENT }}>group</span>
+                Users
+              </h1>
+              <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', margin: '4px 0 0 0' }}>
+                Platform-wide user management
+              </p>
             </div>
-            {filtered.map(u => (
-              <div key={u.id} style={{ ...cell, background: selected?.id === u.id ? `${ACCENT}10` : 'var(--tm-card)' }}
-                onClick={() => setSelected(u)}>
-                <span style={{ fontFamily: 'monospace' }}>{u.username}</span>
-                <span>{u.name}</span>
-                <span style={{ color: 'var(--tm-card-text-muted)' }}>{u.tenant_slug || '—'}</span>
-                <span style={{ color: 'var(--tm-card-text-muted)' }}>{u.role}</span>
-                {badge(u.active)}
-              </div>
-            ))}
+            <button onClick={() => setShowCreate(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 18px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT}40`, color: ACCENT, cursor: 'pointer' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add</span>
+              Create User
+            </button>
           </div>
-        )}
+        </header>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', paddingRight: selected ? '420px' : '32px' }} className="custom-scrollbar">
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap' }}>
+            <input
+              placeholder="Search users…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{
+                flex: '1 1 240px', maxWidth: '360px', padding: '9px 14px', borderRadius: '9px',
+                border: '1px solid var(--tm-border)', background: 'var(--tm-card)',
+                color: 'var(--tm-card-text)', fontSize: '13px', boxSizing: 'border-box',
+              }}
+            />
+            <select
+              value={roleFilter}
+              onChange={e => setRoleFilter(e.target.value)}
+              style={{
+                padding: '9px 14px', borderRadius: '9px', border: '1px solid var(--tm-border)',
+                background: 'var(--tm-card)', color: 'var(--tm-card-text)', fontSize: '13px', cursor: 'pointer',
+              }}
+            >
+              <option value="all">All roles</option>
+              <option value="super_admin">super_admin</option>
+              <option value="admin">admin</option>
+              <option value="member">member</option>
+              <option value="viewer">viewer</option>
+              <option value="inactive">inactive</option>
+            </select>
+          </div>
+
+          {loading ? (
+            <p style={{ color: 'var(--tm-card-text-muted)' }}>Loading…</p>
+          ) : filtered.length === 0 ? (
+            <p style={{ color: 'var(--tm-card-text-muted)' }}>No users found.</p>
+          ) : (
+            <div style={row}>
+              <div style={header}>
+                <span>Username</span>
+                <span>Name</span>
+                <span>Tenant</span>
+                <span>Role</span>
+                <span>Status</span>
+              </div>
+              {filtered.map(u => (
+                <div key={u.id} style={{ ...cell, background: selected?.id === u.id ? `${ACCENT}10` : 'var(--tm-card)' }}
+                  onClick={() => setSelected(u)}>
+                  <span style={{ fontFamily: 'monospace' }}>{u.username}</span>
+                  <span>{u.name}</span>
+                  <span style={{ color: 'var(--tm-card-text-muted)' }}>{u.tenant_slug || '—'}</span>
+                  <span style={{ color: 'var(--tm-card-text-muted)' }}>{u.role}</span>
+                  {badge(u.active)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </main>
 
       {selected && (
@@ -478,6 +484,6 @@ export default function UsersPage() {
           onCreated={handleCreated}
         />
       )}
-    </div>
+    </>
   );
 }
