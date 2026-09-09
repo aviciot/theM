@@ -783,6 +783,17 @@ export interface IDPConfig {
   client_id: string;
   redirect_uri: string;
   client_secret?: string; // write-only — sent on save, never returned by the API
+  groups_claim?: string;     // OIDC claim name for group values; default "groups"
+  unmatched_action?: string; // "viewer" (default) or "deny"
+}
+
+export interface OIDCDebugRecord {
+  email: string;
+  groups_received: string[];
+  matched_group?: string;
+  matched_role?: string;
+  outcome: string; // "matched" | "unmatched_viewer" | "unmatched_denied" | "lookup_error"
+  login_at: string;
 }
 
 export interface TenantRecord {

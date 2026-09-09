@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type TenantRecord, type TenantQuota, type IDPConfig } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantQuota, type IDPConfig, type GroupMapping, type GroupMappingInput, type OIDCDebugRecord } from '@/lib/api';
 
 const ACCENT = '#818cf8';
 
@@ -45,17 +45,33 @@ export default function TenantSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'quota'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'mappings' | 'quota'>('general');
 
   // SSO tab state
   const [idpDiscoveryUrl, setIdpDiscoveryUrl] = useState('');
   const [idpClientId, setIdpClientId] = useState('');
   const [idpClientSecret, setIdpClientSecret] = useState('');
   const [idpRedirectUri, setIdpRedirectUri] = useState('');
+  const [idpGroupsClaim, setIdpGroupsClaim] = useState('');
+  const [idpUnmatchedAction, setIdpUnmatchedAction] = useState('viewer');
   const [idpSecretChanged, setIdpSecretChanged] = useState(false);
   const [savingSso, setSavingSso] = useState(false);
   const [saveMsgSso, setSaveMsgSso] = useState<{ ok: boolean; text: string } | null>(null);
   const [clearingSso, setClearingSso] = useState(false);
+
+  // Group Mappings tab state
+  const [mappings, setMappings] = useState<GroupMapping[]>([]);
+  const [mapGroupClaim, setMapGroupClaim] = useState('');
+  const [mapRole, setMapRole] = useState<'admin' | 'member' | 'viewer'>('member');
+  const [mapPriority, setMapPriority] = useState(10);
+  const [savingMap, setSavingMap] = useState(false);
+  const [mapMsg, setMapMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Debug box state
+  const [debugEmail, setDebugEmail] = useState('');
+  const [debugRecord, setDebugRecord] = useState<OIDCDebugRecord | null>(null);
+  const [debugMsg, setDebugMsg] = useState<string | null>(null);
+  const [loadingDebug, setLoadingDebug] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -69,12 +85,20 @@ export default function TenantSettingsPage() {
         setIdpDiscoveryUrl(t.idp_config.discovery_url ?? '');
         setIdpClientId(t.idp_config.client_id ?? '');
         setIdpRedirectUri(t.idp_config.redirect_uri ?? '');
+        setIdpGroupsClaim(t.idp_config.groups_claim ?? '');
+        setIdpUnmatchedAction(t.idp_config.unmatched_action ?? 'viewer');
       }
       setQuota(q);
     }).catch(() => {
       setError('Failed to load tenant settings.');
     }).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'mappings') {
+      themApi.listMyGroupMappings().then(setMappings).catch(() => setMappings([]));
+    }
+  }, [activeTab]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -105,6 +129,8 @@ export default function TenantSettingsPage() {
         discovery_url: idpDiscoveryUrl.trim(),
         client_id: idpClientId.trim(),
         redirect_uri: idpRedirectUri.trim(),
+        groups_claim: idpGroupsClaim.trim() || undefined,
+        unmatched_action: idpUnmatchedAction !== 'viewer' ? idpUnmatchedAction : undefined,
       };
       if (idpSecretChanged && idpClientSecret) {
         idpConfig.client_secret = idpClientSecret;
@@ -129,16 +155,65 @@ export default function TenantSettingsPage() {
     try {
       const updated = await themApi.patchTenantSettings({ idp_config: null });
       setTenant(updated);
-      setIdpDiscoveryUrl('');
-      setIdpClientId('');
-      setIdpClientSecret('');
-      setIdpRedirectUri('');
+      setIdpDiscoveryUrl(''); setIdpClientId(''); setIdpClientSecret('');
+      setIdpRedirectUri(''); setIdpGroupsClaim(''); setIdpUnmatchedAction('viewer');
       setIdpSecretChanged(false);
       setSaveMsgSso({ ok: true, text: 'SSO configuration cleared.' });
     } catch {
       setSaveMsgSso({ ok: false, text: 'Failed to clear SSO configuration.' });
     } finally {
       setClearingSso(false);
+    }
+  }
+
+  async function handleAddMapping(e: React.FormEvent) {
+    e.preventDefault();
+    if (!mapGroupClaim.trim()) return;
+    setSavingMap(true);
+    setMapMsg(null);
+    try {
+      const input: GroupMappingInput = { group_claim: mapGroupClaim.trim(), role: mapRole, priority: mapPriority };
+      const m = await themApi.upsertMyGroupMapping(input);
+      setMappings(prev => {
+        const idx = prev.findIndex(x => x.id === m.id);
+        if (idx >= 0) { const next = [...prev]; next[idx] = m; return next; }
+        return [...prev, m];
+      });
+      setMapGroupClaim('');
+      setMapMsg({ ok: true, text: 'Mapping saved.' });
+    } catch {
+      setMapMsg({ ok: false, text: 'Failed to save mapping.' });
+    } finally {
+      setSavingMap(false);
+    }
+  }
+
+  async function handleDeleteMapping(id: string) {
+    if (!window.confirm('Delete this group mapping?')) return;
+    try {
+      await themApi.deleteMyGroupMapping(id);
+      setMappings(prev => prev.filter(m => m.id !== id));
+    } catch {
+      setMapMsg({ ok: false, text: 'Failed to delete mapping.' });
+    }
+  }
+
+  async function handleDebugLookup(e: React.FormEvent) {
+    e.preventDefault();
+    if (!debugEmail.trim()) return;
+    setLoadingDebug(true);
+    setDebugRecord(null);
+    setDebugMsg(null);
+    try {
+      const rec = await themApi.getOIDCDebug(debugEmail.trim());
+      setDebugRecord(rec);
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      if (status === 404) setDebugMsg('No debug record found for this email (no SSO login in last 24h).');
+      else if (status === 503) setDebugMsg('Debug log unavailable (Redis not configured).');
+      else setDebugMsg('Failed to load debug record.');
+    } finally {
+      setLoadingDebug(false);
     }
   }
 
@@ -193,6 +268,7 @@ export default function TenantSettingsPage() {
                 <div style={{ display: 'flex', gap: '4px', marginBottom: '24px' }}>
                   <button style={tabStyle(activeTab === 'general')} onClick={() => setActiveTab('general')}>General</button>
                   <button style={tabStyle(activeTab === 'sso')} onClick={() => setActiveTab('sso')}>SSO / Identity Provider</button>
+                  <button style={tabStyle(activeTab === 'mappings')} onClick={() => setActiveTab('mappings')}>Group Mappings</button>
                   <button style={tabStyle(activeTab === 'quota')} onClick={() => setActiveTab('quota')}>Quota &amp; Limits</button>
                 </div>
 
@@ -349,6 +425,32 @@ export default function TenantSettingsPage() {
                         </p>
                       </Field>
 
+                      <Field label="Groups claim name">
+                        <input
+                          style={inputStyle}
+                          value={idpGroupsClaim}
+                          onChange={e => setIdpGroupsClaim(e.target.value)}
+                          placeholder='groups  (leave blank for default "groups")'
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          The ID token claim that carries group values. Defaults to &quot;groups&quot; when blank. &quot;groups&quot; is not a guaranteed OIDC Core claim — check your IdP's token configuration.
+                        </p>
+                      </Field>
+
+                      <Field label="Unmatched user policy">
+                        <select
+                          style={{ ...inputStyle, cursor: 'pointer' }}
+                          value={idpUnmatchedAction}
+                          onChange={e => setIdpUnmatchedAction(e.target.value)}
+                        >
+                          <option value="viewer">viewer — allow login with viewer role</option>
+                          <option value="deny">deny — reject login if no group mapping matches</option>
+                        </select>
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          Controls what happens when an SSO user&apos;s groups don&apos;t match any group mapping. &quot;deny&quot; is recommended for tightly-controlled tenants.
+                        </p>
+                      </Field>
+
                       {saveMsgSso && (
                         <div style={{
                           padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px',
@@ -389,6 +491,157 @@ export default function TenantSettingsPage() {
                         )}
                       </div>
                     </form>
+                  </div>
+                )}
+
+                {/* Group Mappings tab */}
+                {activeTab === 'mappings' && (
+                  <div style={{ background: 'var(--tm-card)', border: '1px solid var(--tm-border)', borderRadius: '12px', padding: '28px' }}>
+                    <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', marginTop: 0, marginBottom: '20px' }}>
+                      Map IdP group claim values to tenant roles. The highest-priority match (lowest number) wins. Role takes effect on the next SSO login.
+                    </p>
+
+                    {/* Existing mappings */}
+                    {mappings.length > 0 && (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--tm-border)' }}>
+                            {['Group claim', 'Role', 'Priority', ''].map(h => (
+                              <th key={h} style={{ textAlign: 'left', padding: '8px 10px', color: 'var(--tm-card-text-muted)', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mappings.sort((a, b) => a.priority - b.priority).map(m => (
+                            <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                              <td style={{ padding: '9px 10px', color: 'var(--tm-card-text)', fontFamily: 'monospace' }}>{m.group_claim}</td>
+                              <td style={{ padding: '9px 10px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '8px', background: `${ACCENT}18`, color: ACCENT, border: `1px solid ${ACCENT}40` }}>
+                                  {m.role}
+                                </span>
+                              </td>
+                              <td style={{ padding: '9px 10px', color: 'var(--tm-card-text-muted)' }}>{m.priority}</td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                <button
+                                  onClick={() => handleDeleteMapping(m.id)}
+                                  style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '6px', border: '1px solid rgba(248,113,113,.3)', background: 'rgba(248,113,113,.08)', color: '#f87171', cursor: 'pointer' }}
+                                >
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {mappings.length === 0 && (
+                      <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', marginBottom: '20px' }}>No group mappings configured.</p>
+                    )}
+
+                    {/* Add mapping form */}
+                    <form onSubmit={handleAddMapping}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '10px', alignItems: 'flex-end' }}>
+                        <Field label="Group claim value">
+                          <input
+                            style={inputStyle}
+                            value={mapGroupClaim}
+                            onChange={e => setMapGroupClaim(e.target.value)}
+                            placeholder="e.g. bank-admins"
+                            required
+                          />
+                        </Field>
+                        <Field label="Role">
+                          <select style={{ ...inputStyle, cursor: 'pointer', width: '120px' }} value={mapRole} onChange={e => setMapRole(e.target.value as 'admin' | 'member' | 'viewer')}>
+                            <option value="admin">admin</option>
+                            <option value="member">member</option>
+                            <option value="viewer">viewer</option>
+                          </select>
+                        </Field>
+                        <Field label="Priority">
+                          <input
+                            type="number"
+                            style={{ ...inputStyle, width: '80px' }}
+                            value={mapPriority}
+                            onChange={e => setMapPriority(Number(e.target.value))}
+                            min={0}
+                          />
+                        </Field>
+                        <Field label=" ">
+                          <button type="submit" disabled={savingMap} style={{
+                            padding: '9px 18px', borderRadius: '8px', border: 'none',
+                            background: ACCENT, color: '#fff', fontWeight: 600, fontSize: '13px',
+                            cursor: savingMap ? 'not-allowed' : 'pointer', opacity: savingMap ? 0.6 : 1,
+                          }}>
+                            {savingMap ? '…' : 'Save'}
+                          </button>
+                        </Field>
+                      </div>
+                    </form>
+
+                    {mapMsg && (
+                      <div style={{
+                        padding: '10px 14px', borderRadius: '8px', marginTop: '12px', fontSize: '13px',
+                        background: mapMsg.ok ? 'rgba(52,211,153,.1)' : 'rgba(248,113,113,.1)',
+                        border: `1px solid ${mapMsg.ok ? 'rgba(52,211,153,.25)' : 'rgba(248,113,113,.25)'}`,
+                        color: mapMsg.ok ? '#34d399' : '#f87171',
+                      }}>
+                        {mapMsg.text}
+                      </div>
+                    )}
+
+                    {/* Debug box */}
+                    <div style={{ marginTop: '36px', padding: '20px', borderRadius: '10px', border: '1px solid var(--tm-border)', background: 'rgba(255,255,255,.02)' }}>
+                      <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 0, marginBottom: '12px' }}>
+                        SSO Login Debug
+                      </p>
+                      <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', marginTop: 0, marginBottom: '14px' }}>
+                        Inspect the most recent SSO login outcome for a user in this tenant (24h retention).
+                      </p>
+                      <form onSubmit={handleDebugLookup} style={{ display: 'flex', gap: '10px' }}>
+                        <input
+                          style={{ ...inputStyle, flex: 1 }}
+                          value={debugEmail}
+                          onChange={e => setDebugEmail(e.target.value)}
+                          placeholder="user@example.com"
+                          type="email"
+                          required
+                        />
+                        <button type="submit" disabled={loadingDebug} style={{
+                          padding: '9px 18px', borderRadius: '8px', border: 'none',
+                          background: `${ACCENT}30`, color: ACCENT, fontWeight: 600, fontSize: '13px',
+                          cursor: loadingDebug ? 'not-allowed' : 'pointer', opacity: loadingDebug ? 0.6 : 1, flexShrink: 0,
+                        }}>
+                          {loadingDebug ? '…' : 'Lookup'}
+                        </button>
+                      </form>
+                      {debugMsg && (
+                        <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', marginTop: '10px' }}>{debugMsg}</p>
+                      )}
+                      {debugRecord && (
+                        <div style={{ marginTop: '14px', padding: '14px', borderRadius: '8px', background: 'rgba(255,255,255,.03)', border: '1px solid var(--tm-border)', fontSize: '12px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 14px' }}>
+                            <span style={{ color: 'var(--tm-card-text-muted)', fontWeight: 600 }}>Email</span>
+                            <span style={{ color: 'var(--tm-card-text)' }}>{debugRecord.email}</span>
+                            <span style={{ color: 'var(--tm-card-text-muted)', fontWeight: 600 }}>Outcome</span>
+                            <span style={{ color: debugRecord.outcome === 'matched' ? '#34d399' : debugRecord.outcome.startsWith('unmatched_denied') || debugRecord.outcome === 'lookup_error' ? '#f87171' : 'var(--tm-card-text)' }}>
+                              {debugRecord.outcome}
+                            </span>
+                            <span style={{ color: 'var(--tm-card-text-muted)', fontWeight: 600 }}>Groups received</span>
+                            <span style={{ color: 'var(--tm-card-text)', fontFamily: 'monospace' }}>{debugRecord.groups_received?.join(', ') || '(none)'}</span>
+                            {debugRecord.matched_group && <>
+                              <span style={{ color: 'var(--tm-card-text-muted)', fontWeight: 600 }}>Matched group</span>
+                              <span style={{ color: 'var(--tm-card-text)', fontFamily: 'monospace' }}>{debugRecord.matched_group}</span>
+                            </>}
+                            {debugRecord.matched_role && <>
+                              <span style={{ color: 'var(--tm-card-text-muted)', fontWeight: 600 }}>Matched role</span>
+                              <span style={{ color: ACCENT }}>{debugRecord.matched_role}</span>
+                            </>}
+                            <span style={{ color: 'var(--tm-card-text-muted)', fontWeight: 600 }}>Login at</span>
+                            <span style={{ color: 'var(--tm-card-text-muted)' }}>{new Date(debugRecord.login_at).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 

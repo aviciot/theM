@@ -232,7 +232,7 @@ func BuildRouter(
 
 	// Tenant self-service routes — available to admin OR super_admin.
 	// Reads tenant from JWT claims; no tenant ID in URL.
-	selfSvc := NewTenantSelfServiceHandler(dbq, auditWriter, idpKey)
+	selfSvc := NewTenantSelfServiceHandler(dbq, auditWriter, idpKey, redis)
 	r.Group(func(selfGroup chi.Router) {
 		if jwtMiddleware != nil {
 			selfGroup.Use(jwtMiddleware)

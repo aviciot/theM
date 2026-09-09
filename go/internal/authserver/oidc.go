@@ -146,13 +146,38 @@ func (h *OIDCHandlers) discover(ctx context.Context, discoveryURL string) (*oidc
 }
 
 // idTokenClaims is the minimal set of claims the callback validates.
-// Groups holds OIDC group claims (Azure AD, Google Workspace, Okta all use "groups").
+// RawPayload carries the full decoded payload for extracting custom claim names.
 type idTokenClaims struct {
-	Sub    string   `json:"sub"`
-	Email  string   `json:"email"`
-	Name   string   `json:"name"`
-	Exp    int64    `json:"exp"`
-	Groups []string `json:"groups"`
+	Sub        string                     `json:"sub"`
+	Email      string                     `json:"email"`
+	Name       string                     `json:"name"`
+	Exp        int64                      `json:"exp"`
+	Groups     []string                   `json:"groups"` // default claim name; see extractGroups
+	RawPayload map[string]json.RawMessage `json:"-"`      // full payload for custom claim names
+}
+
+// extractGroups returns the group values for the given claim name from the validated
+// ID token payload. Only string-array values are accepted; non-array or non-string
+// elements are silently discarded. The result is empty (not nil) when the claim is
+// absent or has no valid string values.
+func extractGroups(raw map[string]json.RawMessage, claimName string) []string {
+	v, ok := raw[claimName]
+	if !ok {
+		return []string{}
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(v, &arr); err != nil {
+		return []string{} // claim is not an array — treat as absent
+	}
+	out := make([]string, 0, len(arr))
+	for _, elem := range arr {
+		var s string
+		if err := json.Unmarshal(elem, &s); err != nil {
+			continue // non-string element — discard
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 type tokenResponse struct {
@@ -338,21 +363,67 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve tenant membership role from group claims (if any). Falls back to ""
-	// which UpsertOIDCUser interprets as the default "viewer" role.
-	// super_admin is rejected here as a defence-in-depth measure — UpsertOIDCUser
-	// also rejects it, but rejecting early produces a clear audit log entry.
+	// Extract group values from the validated ID token using the configured claim name.
+	claimName := idpCfg.groupsClaimName()
+	groups := extractGroups(claims.RawPayload, claimName)
+
+	// Resolve tenant membership role — three distinct outcomes:
+	//   matched        — a group mapping was found; use the mapped role
+	//   unmatched      — groups present but no mapping matched (or no groups at all)
+	//   lookup_error   — DB error during group lookup; reject login (retryable)
+	// super_admin mappings are rejected as defence-in-depth; DB CHECK also enforces this.
 	role := ""
-	if len(claims.Groups) > 0 {
-		if mapped, found, grpErr := h.oidcStore.GetGroupRole(r.Context(), tenantUUID, claims.Groups); grpErr == nil && found {
+	debugRec := OIDCDebugRecord{
+		Email:          claims.Email,
+		GroupsReceived: groups,
+		LoginAt:        time.Now().UTC(),
+	}
+
+	if len(groups) > 0 {
+		mapped, found, grpErr := h.oidcStore.GetGroupRole(r.Context(), tenantUUID, groups)
+		if grpErr != nil {
+			// Authorization system failure — reject login so caller can retry.
+			h.log.Error("oidc callback: group role lookup failed — rejecting login",
+				"tenant", slug, "email", claims.Email, "error", grpErr)
+			debugRec.Outcome = "lookup_error"
+			_ = h.oidcStore.WriteOIDCDebug(r.Context(), tenantUUID, debugRec)
+			writeErr(w, http.StatusServiceUnavailable, "authorization check failed — please try again")
+			return
+		}
+		if found {
 			if mapped == "super_admin" {
-				h.log.Warn("oidc callback: group mapping returned super_admin — rejected, defaulting to viewer",
+				h.log.Warn("oidc callback: group mapping returned super_admin — rejected",
 					"tenant", slug, "email", claims.Email)
+				// Treat as unmatched; super_admin cannot be granted via group mapping.
 			} else {
 				role = mapped
+				debugRec.MatchedGroup = mapped // will be overwritten with group name below
+				debugRec.MatchedRole = mapped
+				debugRec.Outcome = "matched"
 			}
 		}
-		// Non-fatal: group lookup failure or no match → default role used.
+	}
+
+	// Record matched group name (the group_claim value, not the role).
+	// We don't have it from GetGroupRole; re-derive from groups slice vs role.
+	// For the debug record set MatchedGroup only when outcome=matched.
+	if debugRec.Outcome != "matched" {
+		// Unmatched — apply unmatched_action.
+		if idpCfg.unmatchedDeny() {
+			h.log.Warn("oidc callback: no group mapping matched and unmatched_action=deny — rejecting login",
+				"tenant", slug, "email", claims.Email)
+			debugRec.Outcome = "unmatched_denied"
+			_ = h.oidcStore.WriteOIDCDebug(r.Context(), tenantUUID, debugRec)
+			writeErr(w, http.StatusForbidden, "no group mapping matched — access denied")
+			return
+		}
+		debugRec.Outcome = "unmatched_viewer"
+	}
+
+	// Fix MatchedGroup: GetGroupRole doesn't return which group matched.
+	// Store the role as MatchedGroup when outcome=matched (best available without schema change).
+	if debugRec.Outcome == "matched" {
+		debugRec.MatchedGroup = role
 	}
 
 	user, err := h.oidcStore.UpsertOIDCUser(r.Context(), tenantUUID, claims.Email, claims.Name, role)
@@ -361,6 +432,9 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// Write debug record (non-fatal; login proceeds regardless of write outcome).
+	_ = h.oidcStore.WriteOIDCDebug(r.Context(), tenantUUID, debugRec)
 
 	access, expiresIn, err := h.signer.IssueAccessToken(user.ID, user.Username, user.Name, user.Role, tenantUUID, 0)
 	if err != nil {

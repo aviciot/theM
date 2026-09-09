@@ -125,10 +125,12 @@ func (d *DB) CreateTenant(ctx context.Context, in TenantInput) (Tenant, error) {
 // TenantIDPConfig holds per-tenant OIDC provider settings stored in them.tenants.idp_config.
 // ClientSecret is write-only — it is never returned in API responses.
 type TenantIDPConfig struct {
-	DiscoveryURL string `json:"discovery_url"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty"` // write-only; redacted in audit via tenantIDPConfigForAudit
-	RedirectURI  string `json:"redirect_uri"`
+	DiscoveryURL    string `json:"discovery_url"`
+	ClientID        string `json:"client_id"`
+	ClientSecret    string `json:"client_secret,omitempty"` // write-only; redacted in audit via tenantIDPConfigForAudit
+	RedirectURI     string `json:"redirect_uri"`
+	GroupsClaim     string `json:"groups_claim,omitempty"`     // OIDC claim name for group values; default "groups"
+	UnmatchedAction string `json:"unmatched_action,omitempty"` // "viewer" (default) or "deny"
 }
 
 // TenantPatch carries optional fields for PATCH /admin/tenants/{id}.

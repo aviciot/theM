@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/rueidis"
 
 	"github.com/aviciot/them/internal/idpcrypto"
 )
@@ -29,6 +30,48 @@ type IDPConfig struct {
 	ClientSecret string `json:"client_secret"`
 	// RedirectURI is the registered callback URI (must match what is registered at the IdP).
 	RedirectURI string `json:"redirect_uri"`
+	// GroupsClaim is the OIDC claim name that carries group values. Defaults to "groups"
+	// when empty. Must be present in the validated ID token payload.
+	GroupsClaim string `json:"groups_claim,omitempty"`
+	// UnmatchedAction controls login behaviour when no group mapping matches.
+	// "viewer" (default when empty) — proceed with viewer role.
+	// "deny"   — reject the login with 403; no session or tokens are issued.
+	UnmatchedAction string `json:"unmatched_action,omitempty"`
+}
+
+// groupsClaimName returns the effective claim name for group values, defaulting to "groups".
+func (c *IDPConfig) groupsClaimName() string {
+	if c.GroupsClaim != "" {
+		return c.GroupsClaim
+	}
+	return "groups"
+}
+
+// unmatchedDeny returns true when the tenant requires a group match to log in.
+func (c *IDPConfig) unmatchedDeny() bool {
+	return c.UnmatchedAction == "deny"
+}
+
+// OIDCDebugRecord stores the sanitised outcome of the most recent SSO login for
+// a given (tenantID, email) pair. Written at callback time, TTL 24h, read by
+// tenant admins via GET /tenant/oidc-debug?email=... Diagnostic failures never
+// block login.
+type OIDCDebugRecord struct {
+	Email         string    `json:"email"`
+	GroupsReceived []string `json:"groups_received"`
+	// MatchedGroup is the group_claim value that produced the role (empty when none matched).
+	MatchedGroup string `json:"matched_group,omitempty"`
+	// MatchedRole is the role the matching produced (empty = unmatched / default viewer / denied).
+	MatchedRole string `json:"matched_role,omitempty"`
+	// Outcome is one of: "matched", "unmatched_viewer", "unmatched_denied", "lookup_error".
+	Outcome string `json:"outcome"`
+	LoginAt time.Time `json:"login_at"`
+}
+
+const oidcDebugTTL = 24 * time.Hour
+
+func oidcDebugKey(tenantID, email string) string {
+	return "them:oidc:last_login:" + tenantID + ":" + email
 }
 
 // OIDCStore extends the auth Store with OIDC-specific operations.
@@ -43,9 +86,6 @@ type OIDCStore interface {
 	// new auth_service.users row and a tenant_memberships row, then returns the user
 	// record. This is best-effort idempotent: if the user already exists the
 	// existing record is returned unchanged.
-	// groups is the list of group claim values from the OIDC id_token (may be nil/empty).
-	// When non-empty, the platform resolves a role via tenant group mappings before
-	// calling UpsertOIDCUser — the role is stored in the membership row.
 	UpsertOIDCUser(ctx context.Context, tenantID, email, name, role string) (*userRecord, error)
 
 	// GetGroupRole returns the tenant role mapped to the highest-priority group
@@ -53,12 +93,21 @@ type OIDCStore interface {
 	// Returns ("", false, nil) when no mapping matches — caller should use the
 	// default role. Returns an error only on DB failure.
 	GetGroupRole(ctx context.Context, tenantID string, groups []string) (role string, found bool, err error)
+
+	// WriteOIDCDebug writes a sanitised login outcome record to Redis (24h TTL).
+	// Failure is non-fatal and must never block login.
+	WriteOIDCDebug(ctx context.Context, tenantID string, rec OIDCDebugRecord) error
+
+	// GetOIDCDebug reads the stored login outcome for (tenantID, email).
+	// Returns nil when no record exists (key expired or never written).
+	GetOIDCDebug(ctx context.Context, tenantID, email string) (*OIDCDebugRecord, error)
 }
 
-// pgxOIDCStore is the PostgreSQL-backed OIDCStore.
+// pgxOIDCStore is the PostgreSQL + Redis-backed OIDCStore.
 type pgxOIDCStore struct {
 	pool   *pgxpool.Pool
-	idpKey []byte // AES-256 key for client_secret decryption; nil = pass-through
+	idpKey []byte       // AES-256 key for client_secret decryption; nil = pass-through
+	redis  rueidis.Client // nil when Redis unavailable (debug writes are skipped)
 }
 
 // NewPgxOIDCStore builds an OIDCStore over the given pgx pool.
@@ -71,6 +120,12 @@ func NewPgxOIDCStore(pool *pgxpool.Pool) OIDCStore {
 // written by PatchTenant when IDP_ENCRYPTION_KEY was set.
 func NewPgxOIDCStoreWithKey(pool *pgxpool.Pool, key []byte) OIDCStore {
 	return &pgxOIDCStore{pool: pool, idpKey: key}
+}
+
+// NewPgxOIDCStoreWithKeyAndRedis builds an OIDCStore with both client_secret
+// decryption and Redis-backed debug log support.
+func NewPgxOIDCStoreWithKeyAndRedis(pool *pgxpool.Pool, key []byte, rc rueidis.Client) OIDCStore {
+	return &pgxOIDCStore{pool: pool, idpKey: key, redis: rc}
 }
 
 func (s *pgxOIDCStore) GetTenantIDPConfig(ctx context.Context, slug string) (string, *IDPConfig, error) {
@@ -249,4 +304,45 @@ func (s *pgxOIDCStore) GetGroupRole(ctx context.Context, tenantID string, groups
 		return "", false, err
 	}
 	return role, true, nil
+}
+
+// WriteOIDCDebug stores a sanitised login outcome in Redis (24h TTL).
+// Silently skips when Redis is not configured.
+func (s *pgxOIDCStore) WriteOIDCDebug(ctx context.Context, tenantID string, rec OIDCDebugRecord) error {
+	if s.redis == nil {
+		return nil
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	key := oidcDebugKey(tenantID, rec.Email)
+	cmd := s.redis.B().Set().Key(key).Value(string(data)).Ex(oidcDebugTTL).Build()
+	return s.redis.Do(ctx, cmd).Error()
+}
+
+// GetOIDCDebug retrieves the stored login outcome for (tenantID, email).
+// Returns nil when no record exists.
+func (s *pgxOIDCStore) GetOIDCDebug(ctx context.Context, tenantID, email string) (*OIDCDebugRecord, error) {
+	if s.redis == nil {
+		return nil, nil
+	}
+	key := oidcDebugKey(tenantID, email)
+	cmd := s.redis.B().Get().Key(key).Build()
+	res := s.redis.Do(ctx, cmd)
+	if err := res.Error(); err != nil {
+		if rueidis.IsRedisNil(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	raw, err := res.AsBytes()
+	if err != nil {
+		return nil, err
+	}
+	var rec OIDCDebugRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, err
+	}
+	return &rec, nil
 }

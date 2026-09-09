@@ -96,6 +96,7 @@ export type {
   TenantMember,
   GroupMapping,
   GroupMappingInput,
+  OIDCDebugRecord,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -160,6 +161,9 @@ import type {
   UserUpdateInput,
   TenantSummary,
   TenantMember,
+  GroupMapping,
+  GroupMappingInput,
+  OIDCDebugRecord,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -593,6 +597,14 @@ export const themApi = {
     api.get<TenantMember[]>('/tenant/members'),
   patchMyMember: (userId: number, role: string) =>
     api.patch<void>('/tenant/members/' + userId, { role }),
+  listMyGroupMappings: () =>
+    api.get<GroupMapping[]>('/tenant/group-mappings'),
+  upsertMyGroupMapping: (input: GroupMappingInput) =>
+    api.put<GroupMapping>('/tenant/group-mappings', input),
+  deleteMyGroupMapping: (mappingId: string) =>
+    api.delete<void>('/tenant/group-mappings/' + mappingId),
+  getOIDCDebug: (email: string) =>
+    api.get<OIDCDebugRecord>('/tenant/oidc-debug?email=' + encodeURIComponent(email)),
 
   // Managed App catalog (platform-level)
   listManagedApps: () =>

@@ -23,7 +23,7 @@ import (
 func newSelfSvcRouter(db admin.DBQuerier) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
-	admin.NewTenantSelfServiceHandler(db, nil, nil).Routes(r)
+	admin.NewTenantSelfServiceHandler(db, nil, nil, nil).Routes(r)
 	return r
 }
 
@@ -46,7 +46,7 @@ func noTenantCtxRouter(db admin.DBQuerier) *chi.Mux {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
-	admin.NewTenantSelfServiceHandler(db, nil, nil).Routes(r)
+	admin.NewTenantSelfServiceHandler(db, nil, nil, nil).Routes(r)
 	return r
 }
 
@@ -314,4 +314,133 @@ func TestTenantSelfService_GetSettings_WithIDPConfig(t *testing.T) {
 	assert.Equal(t, "them-m", idpCfg["client_id"])
 	// client_secret must never be returned
 	assert.Empty(t, idpCfg["client_secret"])
+}
+
+// ── TSS-13: ListMyGroupMappings returns empty array ───────────────────────────
+
+func TestTenantSelfService_ListMyGroupMappings_Empty(t *testing.T) {
+	db := &tenantDB{groupMappingRows: []*groupMappingFakeRow{}}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/group-mappings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Empty(t, out)
+}
+
+// ── TSS-14: ListMyGroupMappings returns existing mappings ─────────────────────
+
+func TestTenantSelfService_ListMyGroupMappings_Populated(t *testing.T) {
+	db := &tenantDB{
+		groupMappingRows: []*groupMappingFakeRow{
+			{id: "aaa", tenantID: testTenantID, groupClaim: "bank-admins", role: "admin", priority: 10},
+		},
+	}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/group-mappings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	assert.Equal(t, "bank-admins", out[0]["group_claim"])
+	assert.Equal(t, "admin", out[0]["role"])
+}
+
+// ── TSS-15: UpsertMyGroupMapping returns 200 with created mapping ─────────────
+
+func TestTenantSelfService_UpsertMyGroupMapping_Success(t *testing.T) {
+	db := &tenantDB{
+		groupMappingRow: &groupMappingFakeRow{
+			id: "bbb", tenantID: testTenantID, groupClaim: "bank-admins", role: "admin", priority: 10,
+		},
+	}
+	r := newSelfSvcRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"group_claim": "bank-admins", "role": "admin", "priority": 10})
+	req := httptest.NewRequest(http.MethodPut, "/tenant/group-mappings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "bank-admins", out["group_claim"])
+	assert.Equal(t, "admin", out["role"])
+}
+
+// ── TSS-16: UpsertMyGroupMapping rejects super_admin role ────────────────────
+
+func TestTenantSelfService_UpsertMyGroupMapping_SuperAdminRejected(t *testing.T) {
+	db := &tenantDB{}
+	r := newSelfSvcRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"group_claim": "platform-ops", "role": "super_admin", "priority": 0})
+	req := httptest.NewRequest(http.MethodPut, "/tenant/group-mappings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TSS-17: DeleteMyGroupMapping returns 204 on success ──────────────────────
+
+func TestTenantSelfService_DeleteMyGroupMapping_Success(t *testing.T) {
+	db := &tenantDB{groupMappingRow: &groupMappingFakeRow{id: "ccc"}}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tenant/group-mappings/ccc", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// ── TSS-18: DeleteMyGroupMapping returns 404 when mapping not found ───────────
+
+func TestTenantSelfService_DeleteMyGroupMapping_NotFound(t *testing.T) {
+	db := &tenantDB{execErr: pgx.ErrNoRows}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tenant/group-mappings/zzz", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── TSS-19: GetOIDCDebug returns 503 when Redis not configured ────────────────
+// (Redis=nil; real Redis path is covered by integration tests.)
+
+func TestTenantSelfService_GetOIDCDebug_NoRedis(t *testing.T) {
+	db := &tenantDB{}
+	r := newSelfSvcRouter(db) // Redis nil
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/oidc-debug?email=bankadmin@test.com", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// ── TSS-20: GetOIDCDebug requires email parameter ─────────────────────────────
+
+func TestTenantSelfService_GetOIDCDebug_MissingEmail(t *testing.T) {
+	db := &tenantDB{}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/oidc-debug", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

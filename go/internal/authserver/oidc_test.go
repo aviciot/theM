@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -82,6 +83,7 @@ type fakeOIDCStore struct {
 	}
 	upsertedUsers    []*userRecord
 	groupRoleMapping map[string]string // group_claim → role; empty = no match
+	groupRoleErr     error             // when non-nil, GetGroupRole returns this error
 }
 
 func newFakeOIDCStore() *fakeOIDCStore {
@@ -125,12 +127,23 @@ func (f *fakeOIDCStore) UpsertOIDCUser(_ context.Context, _, email, name, role s
 }
 
 func (f *fakeOIDCStore) GetGroupRole(_ context.Context, _ string, groups []string) (string, bool, error) {
+	if f.groupRoleErr != nil {
+		return "", false, f.groupRoleErr
+	}
 	for _, g := range groups {
 		if role, ok := f.groupRoleMapping[g]; ok {
 			return role, true, nil
 		}
 	}
 	return "", false, nil
+}
+
+func (f *fakeOIDCStore) WriteOIDCDebug(_ context.Context, _ string, _ OIDCDebugRecord) error {
+	return nil // no-op in tests
+}
+
+func (f *fakeOIDCStore) GetOIDCDebug(_ context.Context, _, _ string) (*OIDCDebugRecord, error) {
+	return nil, nil // no-op in tests
 }
 
 // ── mock IdP HTTP server ──────────────────────────────────────────────────────
@@ -254,6 +267,30 @@ func testOIDCClaimsWithGroups(t *testing.T, email, name string, groups []string)
 		"groups": groups,
 	})
 	return encodeBase64URL(raw)
+}
+
+// testOIDCClaimsWithCustomClaim encodes id_token claims with a custom-named group claim.
+func testOIDCClaimsWithCustomClaim(t *testing.T, email, name, claimName string, groups []string) string {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{
+		"sub":       "ext-user-42",
+		"email":     email,
+		"name":      name,
+		"exp":       time.Now().Add(1 * time.Hour).Unix(),
+		claimName:   groups,
+	})
+	return encodeBase64URL(raw)
+}
+
+// testOIDCHandlersWithIDPConfig builds handlers with a custom IDPConfig for the "acme" tenant.
+func testOIDCHandlersWithIDPConfig(t *testing.T, idpBaseURL string, cfg *IDPConfig) (*OIDCHandlers, *fakeOIDCStore) {
+	t.Helper()
+	store := newFakeOIDCStore()
+	store.addTenant("acme", testBootstrapTenantID, cfg)
+	baseCfg := &Config{JWTSecret: testSecret, AccessTokenExpiry: 3600, RefreshTokenExpiry: 604800}
+	signer := newTokenSigner([]byte(testSecret), 3600, 604800)
+	h := NewOIDCHandlers(store, signer, baseCfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return h, store
 }
 
 func testOIDCHandlers(t *testing.T, idpBaseURL string) (*OIDCHandlers, *fakeOIDCStore) {
@@ -656,5 +693,98 @@ func TestOIDCCallback_NoGroupsDefaultRole(t *testing.T) {
 	}
 	if store.upsertedUsers[0].Role != "viewer" {
 		t.Errorf("OIDC-27: absent groups claim must use default viewer role, got %q", store.upsertedUsers[0].Role)
+	}
+}
+
+// ── OIDC-31: configurable groups_claim name extracts from non-default claim ──
+
+func TestOIDCCallback_ConfigurableGroupsClaim(t *testing.T) {
+	idp := newMockIdP(t)
+	// Token carries groups under "member_of", not "groups".
+	idp.idTokenPayload = testOIDCClaimsWithCustomClaim(t, "alice@example.com", "Alice", "member_of", []string{"bank-admins"})
+	cfg := &IDPConfig{
+		DiscoveryURL:    idp.server.URL,
+		ClientID:        "client-id",
+		ClientSecret:    "client-secret",
+		RedirectURI:     "http://localhost/auth/oidc/callback",
+		GroupsClaim:     "member_of",
+	}
+	h, store := testOIDCHandlersWithIDPConfig(t, idp.server.URL, cfg)
+	store.groupRoleMapping["bank-admins"] = "admin"
+
+	state := signState("acme", "nonce", []byte(testSecret))
+	r := httptest.NewRequest(http.MethodGet,
+		"/auth/oidc/callback?code=code&state="+url.QueryEscape(state), nil)
+	r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: "verifier"})
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("OIDC-31: expected 302, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(store.upsertedUsers) != 1 {
+		t.Fatalf("OIDC-31: UpsertOIDCUser must be called exactly once, got %d", len(store.upsertedUsers))
+	}
+	if store.upsertedUsers[0].Role != "admin" {
+		t.Errorf("OIDC-31: custom claim 'member_of' must extract groups; expected admin, got %q", store.upsertedUsers[0].Role)
+	}
+}
+
+// ── OIDC-32: unmatched_action=deny + no match → 403, no session issued ───────
+
+func TestOIDCCallback_UnmatchedDeny(t *testing.T) {
+	idp := newMockIdP(t)
+	idp.idTokenPayload = testOIDCClaimsWithGroups(t, "bob@example.com", "Bob", []string{"unknown-group"})
+	cfg := &IDPConfig{
+		DiscoveryURL:    idp.server.URL,
+		ClientID:        "client-id",
+		ClientSecret:    "client-secret",
+		RedirectURI:     "http://localhost/auth/oidc/callback",
+		UnmatchedAction: "deny",
+	}
+	h, store := testOIDCHandlersWithIDPConfig(t, idp.server.URL, cfg)
+	// No group mappings configured → no match.
+
+	state := signState("acme", "nonce", []byte(testSecret))
+	r := httptest.NewRequest(http.MethodGet,
+		"/auth/oidc/callback?code=code&state="+url.QueryEscape(state), nil)
+	r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: "verifier"})
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("OIDC-32: expected 403 on unmatched+deny, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(store.upsertedUsers) != 0 {
+		t.Errorf("OIDC-32: UpsertOIDCUser must NOT be called on unmatched+deny, got %d", len(store.upsertedUsers))
+	}
+}
+
+// ── OIDC-33: DB lookup error → 503, no session issued (AT-11) ────────────────
+
+func TestOIDCCallback_GroupLookupError_RejectsLogin(t *testing.T) {
+	idp := newMockIdP(t)
+	idp.idTokenPayload = testOIDCClaimsWithGroups(t, "carol@example.com", "Carol", []string{"bank-admins"})
+	cfg := &IDPConfig{
+		DiscoveryURL: idp.server.URL,
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RedirectURI:  "http://localhost/auth/oidc/callback",
+	}
+	h, store := testOIDCHandlersWithIDPConfig(t, idp.server.URL, cfg)
+	store.groupRoleErr = errors.New("db connection error")
+
+	state := signState("acme", "nonce", []byte(testSecret))
+	r := httptest.NewRequest(http.MethodGet,
+		"/auth/oidc/callback?code=code&state="+url.QueryEscape(state), nil)
+	r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: "verifier"})
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, r)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("OIDC-33: expected 503 on group lookup error, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(store.upsertedUsers) != 0 {
+		t.Errorf("OIDC-33: UpsertOIDCUser must NOT be called on lookup error, got %d calls", len(store.upsertedUsers))
 	}
 }

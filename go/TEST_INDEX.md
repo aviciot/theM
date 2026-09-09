@@ -334,6 +334,9 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestOIDCRoles_OIDC28_AdminGroupMapping_PlatformRoleIsViewer` (OIDC-28) | group mapping "admin" passes validMemberRoles; UpsertOIDCUser always looks up "viewer" in auth_service.roles (platform role separation) |
 | `TestOIDCRoles_OIDC29_SuperAdminMapping_Rejected` (OIDC-29) | "super_admin" from group mapping rejected by validMemberRoles guard and by OIDCCallback before UpsertOIDCUser is called |
 | `TestOIDCRoles_OIDC30_RefreshPreservesTenantB` (OIDC-30) | issuePairByTenantID + Refresh: refresh token carries tenant B UUID; new access token scoped to tenant B with correct membership role |
+| `TestOIDCCallback_ConfigurableGroupsClaim` (OIDC-31) | groups_claim="member_of" → extractGroups reads from "member_of" not "groups"; matched → admin role |
+| `TestOIDCCallback_UnmatchedDeny` (OIDC-32) | unmatched_action="deny" + no match → 403, UpsertOIDCUser NOT called |
+| `TestOIDCCallback_GroupLookupError_RejectsLogin` (OIDC-33) | GetGroupRole returns DB error → 503, UpsertOIDCUser NOT called (AT-11: never fall back to viewer on auth-system failure) |
 | `TestUserMgmt_ListUsers_Empty` (UM-01) | GET /api/v1/admin/users returns [] when store is empty |
 | `TestUserMgmt_CreateUser` (UM-02) | POST creates user; 201 + body; user stored |
 | `TestUserMgmt_CreateUser_Conflict` (UM-03) | duplicate username → 409 |
@@ -2692,8 +2695,16 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | TSS-10 | `TestTenantSelfService_PatchMyMember_InvalidRole` | PATCH rejects role=super_admin with 400 |
 | TSS-11 | `TestTenantSelfService_PatchMyMember_NotFound` | PATCH returns 404 when membership does not exist |
 | TSS-12 | `TestTenantSelfService_GetSettings_WithIDPConfig` | GET /tenant/settings returns idp_config (discovery_url, client_id, redirect_uri); client_secret absent |
+| TSS-13 | `TestTenantSelfService_ListMyGroupMappings_Empty` | GET /tenant/group-mappings returns [] when no mappings |
+| TSS-14 | `TestTenantSelfService_ListMyGroupMappings_Populated` | GET /tenant/group-mappings returns existing mappings ordered by priority |
+| TSS-15 | `TestTenantSelfService_UpsertMyGroupMapping_Success` | PUT /tenant/group-mappings → 200 with created/updated mapping |
+| TSS-16 | `TestTenantSelfService_UpsertMyGroupMapping_SuperAdminRejected` | PUT with role=super_admin → 400 |
+| TSS-17 | `TestTenantSelfService_DeleteMyGroupMapping_Success` | DELETE /tenant/group-mappings/{id} → 204 |
+| TSS-18 | `TestTenantSelfService_DeleteMyGroupMapping_NotFound` | DELETE non-existent mapping → 404 |
+| TSS-19 | `TestTenantSelfService_GetOIDCDebug_NoRedis` | GET /tenant/oidc-debug with Redis=nil → 503 |
+| TSS-20 | `TestTenantSelfService_GetOIDCDebug_MissingEmail` | GET /tenant/oidc-debug without email param → 400 |
 
-**Trigger:** `internal/admin/tenant_self_service.go`, `internal/admin/dal/tenants.go` (UpdateMemberRole, GetTenantDetail), `internal/admin/middleware.go` (RequireTenantAdmin), `internal/admin/router.go` (self-service group)
+**Trigger:** `internal/admin/tenant_self_service.go`, `internal/admin/dal/tenants.go` (UpdateMemberRole, GetTenantDetail, ListGroupMappings, UpsertGroupMapping, DeleteGroupMapping), `internal/admin/middleware.go` (RequireTenantAdmin), `internal/admin/router.go` (self-service group)
 
 ---
 

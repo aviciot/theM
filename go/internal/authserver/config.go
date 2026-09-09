@@ -48,6 +48,12 @@ type Config struct {
 	// When empty, encryption is disabled (pass-through mode for migration).
 	IDPEncryptionKey string
 
+	// Redis connection for OIDC debug log records (optional).
+	// When RedisHost is empty, debug writes/reads are silently skipped.
+	RedisHost     string
+	RedisPort     int
+	RedisPassword string
+
 	LogLevel  string
 	LogFormat string
 
@@ -75,6 +81,10 @@ func LoadConfig() (*Config, error) {
 		RefreshTokenExpiry: getEnvInt("REFRESH_TOKEN_EXPIRY", 604800),
 
 		IDPEncryptionKey: getEnv("IDP_ENCRYPTION_KEY", ""),
+
+		RedisHost:     getEnv("REDIS_HOST", ""),
+		RedisPort:     getEnvInt("REDIS_PORT", 6379),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 
 		LogLevel:  getEnv("LOG_LEVEL", "INFO"),
 		LogFormat: getEnv("LOG_FORMAT", "json"),
@@ -121,6 +131,15 @@ func (c *Config) DSN() string {
 // Addr returns the listen address in host:port form.
 func (c *Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
+
+// RedisAddr returns the Redis address in host:port form.
+// Returns "" when RedisHost is not configured (debug writes are skipped).
+func (c *Config) RedisAddr() string {
+	if c.RedisHost == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
 }
 
 // SafeString returns a log-safe one-line representation. All secrets are masked.

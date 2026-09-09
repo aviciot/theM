@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/rueidis"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/tenantctx"
@@ -16,12 +18,14 @@ import (
 type TenantSelfServiceHandler struct {
 	db    *dal.DB
 	audit *AuditWriter
+	redis rueidis.Client // nil when Redis unavailable; debug reads return 404
 }
 
 // NewTenantSelfServiceHandler creates a TenantSelfServiceHandler.
 // idpKey is the AES-256 encryption key for IdP client_secret; nil disables encryption.
-func NewTenantSelfServiceHandler(db DBQuerier, audit *AuditWriter, idpKey []byte) *TenantSelfServiceHandler {
-	return &TenantSelfServiceHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit}
+// rc is the Redis client for OIDC debug reads; nil skips debug reads.
+func NewTenantSelfServiceHandler(db DBQuerier, audit *AuditWriter, idpKey []byte, rc rueidis.Client) *TenantSelfServiceHandler {
+	return &TenantSelfServiceHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit, redis: rc}
 }
 
 // Routes mounts the self-service endpoints.
@@ -31,6 +35,10 @@ func (h *TenantSelfServiceHandler) Routes(r chi.Router) {
 	r.Get("/tenant/quota", h.GetQuota)
 	r.Get("/tenant/members", h.GetMyMembers)
 	r.Patch("/tenant/members/{user_id}", h.PatchMyMember)
+	r.Get("/tenant/group-mappings", h.ListMyGroupMappings)
+	r.Put("/tenant/group-mappings", h.UpsertMyGroupMapping)
+	r.Delete("/tenant/group-mappings/{mapping_id}", h.DeleteMyGroupMapping)
+	r.Get("/tenant/oidc-debug", h.GetOIDCDebug)
 }
 
 // GetSettings handles GET /api/v1/tenant/settings.
@@ -150,4 +158,119 @@ func (h *TenantSelfServiceHandler) GetQuota(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, q)
+}
+
+// ListMyGroupMappings handles GET /api/v1/tenant/group-mappings.
+// Returns all group mappings for the caller's own tenant.
+func (h *TenantSelfServiceHandler) ListMyGroupMappings(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	mappings, err := h.db.ListGroupMappings(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, mappings)
+}
+
+// UpsertMyGroupMapping handles PUT /api/v1/tenant/group-mappings.
+// Creates or updates a group mapping for the caller's own tenant.
+// super_admin role is rejected — OIDC mappings cannot grant platform super_admin.
+func (h *TenantSelfServiceHandler) UpsertMyGroupMapping(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	var in dal.GroupMappingInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if in.GroupClaim == "" {
+		writeError(w, http.StatusBadRequest, "group_claim is required")
+		return
+	}
+	switch in.Role {
+	case "admin", "member", "viewer":
+	default:
+		writeError(w, http.StatusBadRequest, "role must be admin, member, or viewer")
+		return
+	}
+	m, err := h.db.UpsertGroupMapping(r.Context(), tenantID, in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+// DeleteMyGroupMapping handles DELETE /api/v1/tenant/group-mappings/{mapping_id}.
+// Removes a group mapping by ID — tenant isolation enforced at DB layer (tenant_id filter).
+func (h *TenantSelfServiceHandler) DeleteMyGroupMapping(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	mappingID := chi.URLParam(r, "mapping_id")
+	if mappingID == "" {
+		writeError(w, http.StatusBadRequest, "mapping_id is required")
+		return
+	}
+	if err := h.db.DeleteGroupMapping(r.Context(), tenantID, mappingID); dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "mapping not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetOIDCDebug handles GET /api/v1/tenant/oidc-debug?email={email}.
+// Returns the most recent SSO login debug record for the given email in the caller's tenant.
+// Only tenant admins may call this — viewers get 403 via RequireTenantAdmin middleware.
+// Returns 404 when no record exists (key expired or login never occurred).
+func (h *TenantSelfServiceHandler) GetOIDCDebug(w http.ResponseWriter, r *http.Request) {
+	email := r.URL.Query().Get("email")
+	if email == "" {
+		writeError(w, http.StatusBadRequest, "email query parameter is required")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if h.redis == nil {
+		writeError(w, http.StatusServiceUnavailable, "debug log unavailable")
+		return
+	}
+	rec, err := h.readOIDCDebug(r.Context(), tenantID, email)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "debug read error")
+		return
+	}
+	if rec == nil {
+		writeError(w, http.StatusNotFound, "no debug record found")
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
+// oidcDebugKey returns the Redis key for an OIDC debug record.
+// Must match the key format used in authserver.oidcDebugKey.
+func oidcDebugKey(tenantID, email string) string {
+	return "them:oidc:last_login:" + tenantID + ":" + email
+}
+
+// readOIDCDebug reads the stored OIDC debug record from Redis for (tenantID, email).
+// Returns nil when no record exists (key expired or never written).
+func (h *TenantSelfServiceHandler) readOIDCDebug(ctx context.Context, tenantID, email string) (map[string]any, error) {
+	key := oidcDebugKey(tenantID, email)
+	cmd := h.redis.B().Get().Key(key).Build()
+	res := h.redis.Do(ctx, cmd)
+	if err := res.Error(); err != nil {
+		if rueidis.IsRedisNil(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	raw, err := res.AsBytes()
+	if err != nil {
+		return nil, err
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
 }

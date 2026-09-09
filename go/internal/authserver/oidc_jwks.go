@@ -240,6 +240,12 @@ func verifyRS256IDToken(ctx context.Context, fetcher jwksFetcher, jwksURI, idTok
 	if claims.Email == "" {
 		return nil, fmt.Errorf("id_token: missing email claim")
 	}
+	// Populate RawPayload so the callback can extract custom-named claims from the
+	// validated (signature-verified) payload without re-parsing the JWT.
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(payloadBytes, &rawPayload); err == nil {
+		claims.RawPayload = rawPayload
+	}
 	return &claims, nil
 }
 

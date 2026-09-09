@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/rueidis"
+
 	"github.com/aviciot/them/internal/authserver"
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/idpcrypto"
@@ -58,7 +60,27 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("IDP_ENCRYPTION_KEY: %w", err)
 	}
-	oidcStore := authserver.NewPgxOIDCStoreWithKey(database.Pool(), idpKey)
+
+	// ── 4a. Redis (optional — OIDC debug records only) ────────────────────────
+	var redisClient rueidis.Client
+	if addr := cfg.RedisAddr(); addr != "" {
+		opts := rueidis.ClientOption{
+			InitAddress: []string{addr},
+		}
+		if cfg.RedisPassword != "" {
+			opts.Password = cfg.RedisPassword
+		}
+		rc, err := rueidis.NewClient(opts)
+		if err != nil {
+			log.Warn("redis unavailable — OIDC debug writes disabled", "err", err)
+		} else {
+			redisClient = rc
+			defer rc.Close()
+			log.Info("redis connected for OIDC debug", "addr", addr)
+		}
+	}
+
+	oidcStore := authserver.NewPgxOIDCStoreWithKeyAndRedis(database.Pool(), idpKey, redisClient)
 	signer := authserver.NewTokenSigner(cfg)
 	oidcHandlers := authserver.NewOIDCHandlers(oidcStore, signer, cfg, log)
 	userMgmt := authserver.NewUserMgmtHandlers(store, cfg, log)
