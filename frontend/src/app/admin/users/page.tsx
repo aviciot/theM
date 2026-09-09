@@ -378,6 +378,7 @@ export default function UsersPage() {
   };
   const main: React.CSSProperties = {
     flex: 1, padding: '32px', overflowY: 'auto',
+    paddingRight: selected ? '420px' : '32px', transition: 'padding-right .2s',
   };
   const row: React.CSSProperties = {
     display: 'grid', gap: '1px',
