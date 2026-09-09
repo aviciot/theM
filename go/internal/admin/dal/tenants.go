@@ -523,19 +523,26 @@ func (d *DB) GetTenantResources(ctx context.Context, id string) (TenantResources
 }
 
 // ForceDeleteTenant cascades deletion of all tenant resources then removes the tenant.
-// Deletes: agents, applications (cascades entry_points, runs, etc.), memberships, then tenant row.
+// Deletes in dependency order: leaf tables first, then parent tables, then the tenant row.
 func (d *DB) ForceDeleteTenant(ctx context.Context, id string) error {
-	const delAgents = `DELETE FROM them.agents WHERE tenant_id = $1::uuid`
-	if err := d.q.Exec(ctx, delAgents, id); err != nil {
-		return err
+	steps := []string{
+		// Leaf tables (no further dependents within the tenant)
+		`DELETE FROM them.run_artifacts          WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.runs                   WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.access_tokens          WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.orchestrators          WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.component_definitions  WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.application_definitions WHERE tenant_id = $1::uuid`,
+		// applications CASCADE-deletes entry_points, app_agent_bindings, etc.
+		`DELETE FROM them.applications           WHERE tenant_id = $1::uuid`,
+		`DELETE FROM them.agents                 WHERE tenant_id = $1::uuid`,
+		// Cross-schema memberships (no FK to them.tenants)
+		`DELETE FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`,
 	}
-	const delApps = `DELETE FROM them.applications WHERE tenant_id = $1::uuid`
-	if err := d.q.Exec(ctx, delApps, id); err != nil {
-		return err
-	}
-	const delMembers = `DELETE FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`
-	if err := d.q.Exec(ctx, delMembers, id); err != nil {
-		return err
+	for _, q := range steps {
+		if err := d.q.Exec(ctx, q, id); err != nil {
+			return err
+		}
 	}
 	const q = `DELETE FROM them.tenants WHERE id = $1::uuid AND is_bootstrap = false RETURNING id`
 	var returned string
