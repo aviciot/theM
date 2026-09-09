@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (IAM UI Stage 2 implemented + deployed)
+# Last updated: 2026-09-09 (IAM UI Stage 3 — tenant-admin SSO self-service)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+7f09eb2  feat(iam): tenant-admin self-service SSO group mapping (Stage 3)
 2c930cd  feat(iam): add Group Mappings tab to super-admin tenant panel (Stage 2)
 30c4e1e  docs(iam): add group mapping UI spec + Keycloak test setup guide
 227d1e8  docs: IAM UI spec (3 changes) + INDEX + SSO doc + test index row 38
 d247ce8  test(multitenant): add 74-check automation script covering S0–S11
-8b445b7  fix(runtime): consolidate EP Save buttons + fix history_window not persisting
 ```
 
 ---
@@ -295,6 +295,20 @@ What was built:
 **Change 2 — `/admin/tenants` Members tab** ✅ commit `2b05c2c`
 - Added 4th tab "Members" to `TenantPanel` — fetches `GET /api/v1/admin/tenants/{id}/members` on tab open; compact read-only table.
 - `api.ts`: `listTenantMembers(tenantId)` + `TenantMember` type exported.
+
+### Step 39 — IAM Stage 3: tenant-admin self-service SSO group mapping — COMPLETE (7f09eb2, 2026-09-09)
+
+- `authserver/oidc_store.go`: `IDPConfig.GroupsClaim` + `UnmatchedAction`; `OIDCDebugRecord` struct; `WriteOIDCDebug`/`GetOIDCDebug` (Redis 24h TTL); `NewPgxOIDCStoreWithKeyAndRedis`
+- `authserver/oidc_jwks.go`: `verifyRS256IDToken` populates `claims.RawPayload` from validated payload
+- `authserver/oidc.go`: three-way outcome (matched/unmatched/lookup_error); AT-11: lookup_error → 503, reject login (never fall back to viewer on auth-system failure); unmatched+deny → 403; configurable claim via `extractGroups`; `WriteOIDCDebug` for all outcomes
+- `authserver/config.go`: `RedisHost`/`RedisPort`/`RedisPassword` + `RedisAddr()`; `cmd/auth-server/main.go`: optional Redis client
+- `admin/dal/tenants.go`: `TenantIDPConfig.GroupsClaim` + `UnmatchedAction`
+- `admin/tenant_self_service.go`: `ListMyGroupMappings`, `UpsertMyGroupMapping` (rejects super_admin), `DeleteMyGroupMapping`, `GetOIDCDebug`; Redis field; updated constructor
+- `docker-compose.yml`: `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` for `them-auth-go`
+- `db/089_idp_group_claim_config.sql`: re-applies role CHECK without super_admin (migration 081 was file-only)
+- Frontend: `groups_claim` field + `unmatched_action` select in SSO tab; Group Mappings tab (list/add/delete); SSO Login Debug box
+- Tests: OIDC-31..33 (configurable claim, deny, lookup error), TSS-13..20 (group CRUD, debug); 49 packages pass
+- Verified live: `them-auth-go` Redis connected; GET /tenant/group-mappings → [] ✓; GET /tenant/settings → 200 ✓
 
 ### End-user auth Phase 1 — COMPLETE (2026-09-08)
 
@@ -1129,9 +1143,10 @@ Done (canvas ports, commit 81c3a31):
 **Design note:** At the interpreter level, StreamOut and Response are functionally identical — both read a variable and set `result.Text`. The transport differentiation (incremental artifact events vs. single artifact) happens in `agent-runtime/main.go`'s `executeSkill`, which already emits `ArtifactEvent` at the end of every execution. A true token-by-token streaming path would require a callback/writer interface injected into the interpreter — that's a future transport-layer enhancement, not a canvas-node concern.
 
 **Next recommended task:**
-- **IAM Stage 2 — COMPLETE (2c930cd)**. Group Mappings tab deployed, Keycloak mapper configured, `bank-admins` group + `bankadmin` user created, mapping `bank-admins → admin` active for `avi-test`. Pending: live browser SSO verification for `bankadmin`.
-- **IAM Stage 3** — Tenant-admin self-service group mapping: `GET/PUT /api/v1/tenant/group-mappings` (scoped to own tenant, no id in URL). See `docs/IAM_UI_SPEC.md` Stage 3 section.
-- **Phase 4** — Bank JWT / JWKS validation (`JWKSAuthenticator`, `tenant_runtime_config` table) — Stage 3 prerequisite
+- **IAM Stage 2 — COMPLETE (2c930cd)**. Group Mappings tab deployed, Keycloak mapper configured, `bank-admins` group + `bankadmin` user created, mapping `bank-admins → admin` active for `avi-test`.
+- **IAM Stage 3 — COMPLETE (7f09eb2)**. Tenant-admin self-service SSO group mapping. Configurable groups_claim, unmatched_action=deny|viewer, self-service CRUD (/tenant/group-mappings), OIDC debug endpoint (/tenant/oidc-debug), Redis-backed debug records, AT-11 corrected (lookup_error→503, never fall back to viewer). 3 new OIDC tests (OIDC-31..33), 8 new TSS tests (TSS-13..20). Deployed: them-auth-go (Redis connected), them-go-bridge (new routes active), them-frontend (Group Mappings tab + debug box). Verified: GET /tenant/group-mappings → [] ✓, GET /tenant/oidc-debug (no email) → 400 ✓, GET /tenant/settings → 200 ✓.
+- **IAM Stage 4 (next)** — Browser verification: (a) bankadmin SSO login → admin role, (b) avi1 SSO login → viewer, (c) bankadmin: /tenant/settings Group Mappings tab works end-to-end, (d) debug box shows bankadmin's OIDC login record after SSO. Also verify AT-13: mapping edit → refresh (no change), then mapping edit → new SSO login → refresh (new role).
+- **Phase 4** — Bank JWT / JWKS validation (`JWKSAuthenticator`, `tenant_runtime_config` table)
 - UI: StreamOut properties panel in canvas `RightPanel.tsx` (from_var + media_type fields) — mirrors Response panel
 - UI: A2A Call node properties panel in canvas RightPanel (slug + var config)
 
