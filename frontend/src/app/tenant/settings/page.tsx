@@ -65,6 +65,11 @@ export default function TenantSettingsPage() {
       setTenant(t);
       setDisplayName(t.display_name);
       setEmailDomain(t.email_domain ?? '');
+      if (t.idp_config) {
+        setIdpDiscoveryUrl(t.idp_config.discovery_url ?? '');
+        setIdpClientId(t.idp_config.client_id ?? '');
+        setIdpRedirectUri(t.idp_config.redirect_uri ?? '');
+      }
       setQuota(q);
     }).catch(() => {
       setError('Failed to load tenant settings.');

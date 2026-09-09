@@ -188,6 +188,41 @@ B's task writes preserve isolation: B's task has `user_id=64`, A's messages `use
 
 ---
 
+## IAM UI Stage 1 — IMPLEMENTED + DEPLOYED (2026-09-09)
+
+Bank-team onboarding flow: tenant creation → SSO → bank employee login → Members.
+
+### Backend added
+
+| File | Change |
+|---|---|
+| `go/internal/admin/dal/tenants.go` | `UpdateMemberRole(ctx, tenantID, userID, role)` — UPDATE with RETURNING for no-rows detection |
+| `go/internal/admin/tenant_self_service.go` | `PatchMyMember` handler + route `PATCH /api/v1/tenant/members/{user_id}` |
+
+**Auth:** `RequireTenantAdmin` middleware (already applied to all `/tenant/` routes) — only `admin` or `super_admin` membership role can update member roles.
+
+**Role validation:** `viewer` | `member` | `admin` only — `super_admin` is rejected at handler level.
+
+### Frontend fixed
+
+| File | What changed |
+|---|---|
+| `frontend/src/app/tenant/members/page.tsx` | `handleSave` calls `themApi.patchMyMember(user_id, role)` → `PATCH /api/v1/tenant/members/{id}` instead of super-admin-only `updateUser` |
+| `frontend/src/app/tenant/settings/page.tsx` | `useEffect` populates `idpDiscoveryUrl`, `idpClientId`, `idpRedirectUri` from `t.idp_config` on load |
+| `frontend/src/app/admin/tenants/ProvisionWizard.tsx` | Done step (Step 4) shows SSO setup callout with "Open tenant panel → SSO" button |
+| `frontend/src/app/login/page.tsx` | "Sign in with organization code" toggle — text input for tenant slug, triggers `GET /api/auth/oidc/start?tenant=<slug>` without email lookup |
+
+### Tests
+
+TSS-09, TSS-10, TSS-11 for `PatchMyMember` exist in `go/internal/admin/tenant_self_service_test.go`.
+All admin tests pass (`ok github.com/aviciot/them/internal/admin`).
+
+### Stage 2 and Stage 3 next steps
+
+See `docs/IAM_UI_SPEC.md` — Stage 2 (group mapping, admin membership tab) and Stage 3 (external JWT / JWKS) sections.
+
+---
+
 ## What was NOT done (remaining phases)
 
 | Phase | What | Why deferred |

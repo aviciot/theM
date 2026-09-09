@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -29,13 +30,15 @@ func (h *TenantSelfServiceHandler) Routes(r chi.Router) {
 	r.Patch("/tenant/settings", h.PatchSettings)
 	r.Get("/tenant/quota", h.GetQuota)
 	r.Get("/tenant/members", h.GetMyMembers)
+	r.Patch("/tenant/members/{user_id}", h.PatchMyMember)
 }
 
 // GetSettings handles GET /api/v1/tenant/settings.
-// Returns the caller's own tenant info — tenant ID comes from JWT via tenantctx.
+// Returns the caller's own tenant info including IDP config fields (secret blanked).
+// Tenant ID comes from JWT via tenantctx.
 func (h *TenantSelfServiceHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	tenant, err := h.db.GetTenant(r.Context(), tenantID)
+	tenant, err := h.db.GetTenantDetail(r.Context(), tenantID)
 	if dal.IsNoRows(err) {
 		writeError(w, http.StatusNotFound, "tenant not found")
 		return
@@ -97,6 +100,40 @@ func (h *TenantSelfServiceHandler) GetMyMembers(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, members)
+}
+
+// PatchMyMember handles PATCH /api/v1/tenant/members/{user_id}.
+// Allows tenant admins to update the membership role of any member in their own tenant.
+// Only role changes are accepted (viewer | member | admin).
+func (h *TenantSelfServiceHandler) PatchMyMember(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	userIDStr := chi.URLParam(r, "user_id")
+	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	if err != nil || userID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	switch in.Role {
+	case "viewer", "member", "admin":
+	default:
+		writeError(w, http.StatusBadRequest, "role must be viewer, member, or admin")
+		return
+	}
+	if err := h.db.UpdateMemberRole(r.Context(), tenantID, userID, in.Role); dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "membership not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GetQuota handles GET /api/v1/tenant/quota.

@@ -276,6 +276,17 @@ function Step4Done({ tenant, skipped, onClose }: {
           </div>
         )}
       </div>
+      <div style={{ background: `${ACCENT}10`, border: `1px solid ${ACCENT_BORDER}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '20px' }}>
+        <p style={{ fontSize: '12px', color: ACCENT, margin: '0 0 6px 0', fontWeight: 600 }}>Next step: configure SSO</p>
+        <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: '0 0 8px 0' }}>
+          Enable Identity Provider login so bank employees can sign in via SSO. Open the tenant panel → Identity Provider tab.
+        </p>
+        <button
+          onClick={onClose}
+          style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '6px', border: `1px solid ${ACCENT_BORDER}`, background: `${ACCENT}22`, color: ACCENT, cursor: 'pointer', fontWeight: 600 }}>
+          Open tenant panel → SSO
+        </button>
+      </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button onClick={onClose}
           style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: 'pointer' }}>

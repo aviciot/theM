@@ -1,10 +1,75 @@
 # IAM UI — Design & Implementation Spec
-# Last updated: 2026-09-07
-# Status: PLANNED — not yet implemented
+# Last updated: 2026-09-09
+# Status: Stage 1 IMPLEMENTED + DEPLOYED (2026-09-09)
 
-This spec defines the three IAM UI changes needed to make identity and access
-management usable in the-M. It is written for a developer picking this up in a
-new session.
+This spec defines the IAM UI work needed to make identity and access management
+usable in the-M. It is organized into three bounded stages. It is written for a
+developer picking this up in a new session.
+
+---
+
+## Stage 1 — Tenant creation → SSO → bank employee login → Members
+**Status: IMPLEMENTED + DEPLOYED (2026-09-09, HEAD 86b0886+)**
+
+### What was delivered
+
+| Item | File | Status |
+|---|---|---|
+| `PATCH /api/v1/tenant/members/{user_id}` backend | `go/internal/admin/tenant_self_service.go`, `go/internal/admin/dal/tenants.go` | Done |
+| Members page Save uses tenant-scoped endpoint | `frontend/src/app/tenant/members/page.tsx` | Done |
+| SSO fields populated from saved config on load | `frontend/src/app/tenant/settings/page.tsx` | Done |
+| ProvisionWizard Done step → SSO setup callout | `frontend/src/app/admin/tenants/ProvisionWizard.tsx` | Done |
+| Login page org-code fallback | `frontend/src/app/login/page.tsx` | Done |
+
+### Stage 1 verification
+- Go build: all packages pass (`ok internal/admin`, `ok internal/admin/dal`)
+- Tests: TSS-09, TSS-10, TSS-11 covering `PatchMyMember` all pass
+- Frontend: TypeScript compiles, container restarted
+
+### What Stage 1 enables
+A super-admin can:
+1. Create a tenant via ProvisionWizard (Steps 1–3)
+2. Be directed to SSO tab immediately after (Done step callout)
+3. Configure SSO — fields now pre-populate when re-opening the settings page
+4. Bank employees can log in via SSO or via org-code fallback on login page
+5. Tenant admin can view and update member roles from `/tenant/members` — no longer requires super-admin
+
+---
+
+## Stage 2 — Group-to-role mapping, tenant-admin membership editing, developer permissions
+**Status: NOT STARTED**
+
+### What Stage 2 adds
+1. Group mapping UI in SSO tab — lets SSO users auto-receive roles without manual promotion
+2. Admin/Users Membership tab — super-admin can change tenant_role per user
+3. Admin/Tenants Members tab — super-admin sees member list per tenant
+
+### Backend needed for Stage 2
+- `PATCH /auth/api/v1/admin/users/{id}` — add `tenant_role` to update request (Change 1 backend)
+- `GET /api/v1/tenant/group-mappings` + `PUT /api/v1/tenant/group-mappings` — tenant-scoped group mapping endpoints
+- Add `groups_claim` and `unmatched_action` to `idp_config` JSONB + enforce at OIDC login
+
+### Frontend needed for Stage 2
+- **Change 1 frontend**: Membership tab in `/admin/users` side panel
+- **Change 2 frontend**: Members tab in `/admin/tenants` side panel + member count badge
+- **Change 4 frontend**: Group mapping UI in SSO settings tab (see full spec below)
+
+---
+
+## Stage 3 — End-customer authentication, application permissions, usage
+**Status: NOT STARTED — requires Phase 4 (JWKS) as prerequisite**
+
+### What Stage 3 adds
+1. JWKS-validated external JWT bearer tokens for end-customer auth
+2. Per-EP allowed_principals enforcement (already built — `allowed_principals` column + `CheckPrincipal`)
+3. Application-level usage/quota UI visible to tenant admins
+4. End-customer session and run scoping visible in the Members/Activity view
+
+### Prerequisite: Phase 4 (JWKS)
+Phase 4 adds the `JWKSAuthenticator` and `tenant_runtime_config` table. Until that lands,
+Stage 3 cannot be started. Phase 3 (`allowed_principals`) is complete and gating is live.
+
+---
 
 ---
 

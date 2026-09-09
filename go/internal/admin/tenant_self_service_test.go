@@ -224,3 +224,94 @@ func TestTenantSelfService_GetMyMembers_Populated(t *testing.T) {
 	assert.Equal(t, "bob", out[1]["username"])
 	assert.Equal(t, "member", out[1]["role"])
 }
+
+// successScanner is a SingleRowScanner whose Scan always succeeds, setting the
+// first *int64 dest to the given value.
+type successScanner struct{ val int64 }
+
+func (s *successScanner) Scan(dest ...any) error {
+	for _, d := range dest {
+		if p, ok := d.(*int64); ok {
+			*p = s.val
+			return nil
+		}
+	}
+	return nil
+}
+
+// ── TSS-09: PatchMyMember returns 204 on success ──────────────────────────────
+
+func TestTenantSelfService_PatchMyMember_Success(t *testing.T) {
+	// ExecReturning for UpdateMemberRole scans one *int64 (RETURNING user_id).
+	db := &tenantDB{addMemberRow: &successScanner{val: 42}}
+	r := newSelfSvcRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"role": "member"})
+	req := httptest.NewRequest(http.MethodPatch, "/tenant/members/42", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// ── TSS-10: PatchMyMember rejects invalid role ────────────────────────────────
+
+func TestTenantSelfService_PatchMyMember_InvalidRole(t *testing.T) {
+	db := &tenantDB{}
+	r := newSelfSvcRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"role": "super_admin"})
+	req := httptest.NewRequest(http.MethodPatch, "/tenant/members/42", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TSS-11: PatchMyMember returns 404 when membership not found ───────────────
+
+func TestTenantSelfService_PatchMyMember_NotFound(t *testing.T) {
+	db := &tenantDB{execErr: pgx.ErrNoRows}
+	r := newSelfSvcRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"role": "viewer"})
+	req := httptest.NewRequest(http.MethodPatch, "/tenant/members/99", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── TSS-12: GetSettings returns IDP config fields when configured ─────────────
+
+func TestTenantSelfService_GetSettings_WithIDPConfig(t *testing.T) {
+	db := &tenantDB{
+		getRow: &tenantFakeRow{
+			id:            testTenantID,
+			slug:          "bank",
+			displayName:   "Bank Tenant",
+			enabled:       true,
+			idpConfigured: true,
+			rawIDP:        []byte(`{"discovery_url":"https://idp.example.com/realms/bank","client_id":"them-m","redirect_uri":"https://app.example.com/cb"}`),
+		},
+	}
+	r := newSelfSvcRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenant/settings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, true, out["idp_configured"])
+	idpCfg, ok := out["idp_config"].(map[string]any)
+	require.True(t, ok, "idp_config should be an object")
+	assert.Equal(t, "https://idp.example.com/realms/bank", idpCfg["discovery_url"])
+	assert.Equal(t, "them-m", idpCfg["client_id"])
+	// client_secret must never be returned
+	assert.Empty(t, idpCfg["client_secret"])
+}

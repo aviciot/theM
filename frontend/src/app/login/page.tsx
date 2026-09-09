@@ -17,6 +17,10 @@ export default function LoginPage() {
   const [lookingUp, setLookingUp] = useState(false);
   const lastLookupDomain = useRef('');
 
+  // Organization code fallback (slug-based SSO)
+  const [showOrgCode, setShowOrgCode] = useState(false);
+  const [orgCode, setOrgCode] = useState('');
+
   useEffect(() => {
     fetchUser().then((ok) => { if (ok) router.replace('/dashboard'); });
   }, []);
@@ -62,6 +66,12 @@ export default function LoginPage() {
   function handleSSOLogin() {
     if (!tenantInfo) return;
     window.location.href = `/api/auth/oidc/start?tenant=${encodeURIComponent(tenantInfo.slug)}`;
+  }
+
+  function handleOrgCodeSSO() {
+    const slug = orgCode.trim();
+    if (!slug) return;
+    window.location.href = `/api/auth/oidc/start?tenant=${encodeURIComponent(slug)}`;
   }
 
   const showSSO = tenantInfo?.idp_configured === true;
@@ -164,6 +174,30 @@ export default function LoginPage() {
                   )}
                 </div>
               </div>
+
+              {/* Organization code fallback */}
+              <div className="text-right" style={{ marginTop: '-12px' }}>
+                <button type="button" onClick={() => { setShowOrgCode(v => !v); setOrgCode(''); }}
+                  className="text-xs text-slate-500 hover:text-slate-400 transition-colors underline underline-offset-2">
+                  {showOrgCode ? 'Use email instead' : 'Sign in with organization code'}
+                </button>
+              </div>
+              {showOrgCode && (
+                <div className="rounded-lg p-3 space-y-2"
+                  style={{ background: 'rgba(59,77,255,.06)', border: '1px solid rgba(59,77,255,.2)' }}>
+                  <label className="block text-xs font-medium text-slate-400">Organization code (tenant slug)</label>
+                  <input
+                    type="text" value={orgCode} onChange={e => setOrgCode(e.target.value)}
+                    placeholder="acme-corp"
+                    className="brand-input" style={{ paddingLeft: '12px' }}
+                  />
+                  <button type="button" onClick={handleOrgCodeSSO} disabled={!orgCode.trim()}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-50"
+                    style={{ background: 'linear-gradient(135deg, #2563eb 0%, #4338ca 100%)' }}>
+                    Continue with SSO
+                  </button>
+                </div>
+              )}
 
               {/* SSO banner — shown when tenant has IdP configured */}
               {showSSO && (

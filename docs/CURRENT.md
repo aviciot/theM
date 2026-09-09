@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (E2E gate CLOSED — delegated task user_id + context isolation both verified)
+# Last updated: 2026-09-09 (IAM UI Stage 1 implemented + deployed)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -1130,10 +1130,12 @@ Done (canvas ports, commit 81c3a31):
 **Design note:** At the interpreter level, StreamOut and Response are functionally identical — both read a variable and set `result.Text`. The transport differentiation (incremental artifact events vs. single artifact) happens in `agent-runtime/main.go`'s `executeSkill`, which already emits `ArtifactEvent` at the end of every execution. A true token-by-token streaming path would require a callback/writer interface injected into the interpreter — that's a future transport-layer enhancement, not a canvas-node concern.
 
 **Next recommended task:**
+- **IAM Stage 2** — Group mapping UI in SSO tab + admin/users Membership tab + admin/tenants Members tab (see `docs/IAM_UI_SPEC.md` Stage 2 section)
+  - Requires backend: `PATCH /auth/api/v1/admin/users/{id}` + tenant_role, `GET/PUT /api/v1/tenant/group-mappings`
+  - Browser UI demo required before marking Stage 2 complete
+- **Phase 4** — Bank JWT / JWKS validation (`JWKSAuthenticator`, `tenant_runtime_config` table) — Stage 3 prerequisite
 - UI: StreamOut properties panel in canvas `RightPanel.tsx` (from_var + media_type fields) — mirrors Response panel
 - UI: A2A Call node properties panel in canvas RightPanel (slug + var config)
-- Smoke test the two-segment URL paths end-to-end (WS connect, SSE connect, A2A card fetch) via the playground
-- Frontend: expose app slug as an editable field in the application properties panel so users can rename/customize it
 
 ### Phase 4-C Advisory items (deferred)
 - Advisory A: DB round-trips per Temporal activity (4 queries/node) — cache spec in `ActivityIC`

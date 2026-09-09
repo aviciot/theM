@@ -583,6 +583,8 @@ export const themApi = {
     api.get<TenantQuota>('/tenant/quota'),
   listMyMembers: () =>
     api.get<TenantMember[]>('/tenant/members'),
+  patchMyMember: (userId: number, role: string) =>
+    api.patch<void>('/tenant/members/' + userId, { role }),
 
   // Managed App catalog (platform-level)
   listManagedApps: () =>

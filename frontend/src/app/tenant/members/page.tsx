@@ -47,8 +47,7 @@ function MemberPanel({
     setSaving(true);
     setMsg(null);
     try {
-      // Uses PATCH /auth/api/v1/admin/users/{id} with tenant_role
-      await themApi.updateUser(member.user_id, { tenant_role: role });
+      await themApi.patchMyMember(member.user_id, role);
       setMsg({ ok: true, text: 'Saved' });
       onSaved();
     } catch {

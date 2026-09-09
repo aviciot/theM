@@ -349,6 +349,16 @@ func (d *DB) AddMember(ctx context.Context, tenantID string, in TenantMemberInpu
 	return m, err
 }
 
+// UpdateMemberRole sets the role for the given user's membership in a specific tenant.
+// Returns pgx.ErrNoRows when the membership does not exist.
+func (d *DB) UpdateMemberRole(ctx context.Context, tenantID string, userID int64, role string) error {
+	const q = `UPDATE auth_service.tenant_memberships SET role = $3
+	           WHERE tenant_id = $1::uuid AND user_id = $2
+	           RETURNING user_id`
+	var id int64
+	return d.q.ExecReturning(ctx, q, tenantID, userID, role).Scan(&id)
+}
+
 // ── PatchTenant ───────────────────────────────────────────────────────────────
 
 // PatchTenant updates a tenant's display_name, enabled, idp_config, and/or email_domain.
