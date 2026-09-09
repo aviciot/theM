@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember, type GroupMapping, type GroupMappingInput } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 import ProvisionWizard from './ProvisionWizard';
@@ -53,7 +53,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   onPatched: (t: TenantRecord) => void;
   onDeleted: (id: string) => void;
 }) {
-  const [tab, setTab] = useState<'general' | 'idp' | 'quota' | 'members'>('general');
+  const [tab, setTab] = useState<'general' | 'idp' | 'quota' | 'members' | 'groups'>('general');
   const [displayName, setDisplayName] = useState(tenant.display_name);
   const [enabled, setEnabled] = useState(tenant.enabled);
   const [emailDomain, setEmailDomain] = useState(tenant.email_domain ?? '');
@@ -82,6 +82,13 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [quotaMsg, setQuotaMsg] = useState('');
   const [members, setMembers] = useState<TenantMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [groupsMsg, setGroupsMsg] = useState('');
+  const [newGroupClaim, setNewGroupClaim] = useState('');
+  const [newGroupRole, setNewGroupRole] = useState('viewer');
+  const [newGroupPriority, setNewGroupPriority] = useState(10);
+  const [groupsSaving, setGroupsSaving] = useState(false);
 
   useEffect(() => {
     setDisplayName(tenant.display_name);
@@ -98,6 +105,11 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     setQuota(emptyQuota());
     setQuotaMsg('');
     setMembers([]);
+    setGroupMappings([]);
+    setGroupsMsg('');
+    setNewGroupClaim('');
+    setNewGroupRole('viewer');
+    setNewGroupPriority(10);
     setDeleteConfirm(false);
     // Fetch full detail to get IdP config fields (list endpoint omits them)
     themApi.getTenant(tenant.id).then(detail => {
@@ -125,6 +137,15 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
       .then(m => setMembers(Array.isArray(m) ? m : []))
       .catch(() => setMembers([]))
       .finally(() => setMembersLoading(false));
+  }, [tab, tenant.id]);
+
+  useEffect(() => {
+    if (tab !== 'groups') return;
+    setGroupsLoading(true);
+    themApi.listGroupMappings(tenant.id)
+      .then(m => setGroupMappings(Array.isArray(m) ? m : []))
+      .catch(() => setGroupMappings([]))
+      .finally(() => setGroupsLoading(false));
   }, [tab, tenant.id]);
 
   useEffect(() => {
@@ -226,6 +247,31 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     );
   }
 
+  async function saveGroupMapping() {
+    if (!newGroupClaim.trim()) { setGroupsMsg('Group claim is required'); return; }
+    setGroupsSaving(true); setGroupsMsg('');
+    const input: GroupMappingInput = { group_claim: newGroupClaim.trim(), role: newGroupRole, priority: newGroupPriority };
+    try {
+      const saved = await themApi.upsertGroupMapping(tenant.id, input);
+      setGroupMappings(prev => {
+        const idx = prev.findIndex(m => m.group_claim === saved.group_claim);
+        return idx >= 0 ? prev.map((m, i) => i === idx ? saved : m) : [...prev, saved];
+      });
+      setNewGroupClaim('');
+      setNewGroupPriority(10);
+      setGroupsMsg('Saved');
+    } catch { setGroupsMsg('Error saving mapping'); }
+    finally { setGroupsSaving(false); }
+  }
+
+  async function deleteGroupMappingHandler(mappingId: string) {
+    setGroupsMsg('');
+    try {
+      await themApi.deleteGroupMapping(tenant.id, mappingId);
+      setGroupMappings(prev => prev.filter(m => m.id !== mappingId));
+    } catch { setGroupsMsg('Error deleting mapping'); }
+  }
+
   const inp: React.CSSProperties = {
     width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
     background: 'var(--tm-inset)', border: '1px solid var(--tm-filter-border)',
@@ -251,13 +297,13 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
       </div>
 
       <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0', borderBottom: '1px solid rgba(255,255,255,.06)', flexWrap: 'wrap' }}>
-        {(['general', 'idp', 'quota', 'members'] as const).map(t => (
+        {(['general', 'idp', 'quota', 'members', 'groups'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '7px 14px', borderRadius: '8px 8px 0 0', fontSize: '13px', fontWeight: tab === t ? 600 : 400,
             background: tab === t ? 'rgba(255,255,255,.07)' : 'transparent',
             border: 'none', color: tab === t ? 'var(--tm-card-text)' : 'var(--tm-card-text-muted)', cursor: 'pointer',
           }}>
-            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : t === 'quota' ? 'Quotas' : 'Members'}
+            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : t === 'quota' ? 'Quotas' : t === 'members' ? 'Members' : 'Group Mappings'}
           </button>
         ))}
       </div>
@@ -454,6 +500,88 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
               </tbody>
             </table>
           )
+        )}
+
+        {tab === 'groups' && (
+          <>
+            <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', marginTop: 0, marginBottom: '16px' }}>
+              Map IdP group claims to tenant membership roles. The highest-priority match (lowest number) wins.
+            </p>
+
+            {groupsLoading ? (
+              <p style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px' }}>Loading…</p>
+            ) : (
+              <>
+                {groupMappings.length === 0 ? (
+                  <p style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px', marginBottom: '16px' }}>No group mappings yet.</p>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginBottom: '20px' }}>
+                    <thead>
+                      <tr>
+                        {['Group Claim', 'Role', 'Priority', ''].map(h => (
+                          <th key={h} style={{ textAlign: 'left', padding: '6px 8px', fontSize: '11px', fontWeight: 600, color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupMappings.map((m, i) => (
+                        <tr key={m.id} style={{ borderBottom: i < groupMappings.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none' }}>
+                          <td style={{ padding: '8px 8px', color: 'var(--tm-card-text)', fontFamily: 'monospace', fontSize: 12 }}>{m.group_claim}</td>
+                          <td style={{ padding: '8px 8px', color: 'var(--tm-card-text-muted)' }}>{m.role}</td>
+                          <td style={{ padding: '8px 8px', color: 'var(--tm-card-text-muted)' }}>{m.priority}</td>
+                          <td style={{ padding: '8px 8px' }}>
+                            <button
+                              onClick={() => deleteGroupMappingHandler(m.id)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f87171', padding: '2px 6px', fontSize: '12px', borderRadius: '6px' }}
+                              title="Delete"
+                            >✕</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                <div style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)', borderRadius: '10px', padding: '14px' }}>
+                  <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text)', margin: '0 0 12px 0' }}>Add / update mapping</p>
+                  <div style={row}>
+                    <label style={lbl}>Group Claim (exact value from IdP)</label>
+                    <input
+                      value={newGroupClaim}
+                      onChange={e => setNewGroupClaim(e.target.value)}
+                      style={inp}
+                      placeholder="bank-admins"
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                    <div>
+                      <label style={lbl}>Role</label>
+                      <select value={newGroupRole} onChange={e => setNewGroupRole(e.target.value)} style={{ ...inp, cursor: 'pointer' }}>
+                        {['viewer', 'member', 'admin', 'super_admin'].map(r => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lbl}>Priority (lower = higher priority)</label>
+                      <input
+                        type="number" min={1}
+                        value={newGroupPriority}
+                        onChange={e => setNewGroupPriority(parseInt(e.target.value, 10) || 10)}
+                        style={inp}
+                      />
+                    </div>
+                  </div>
+                  <button onClick={saveGroupMapping} disabled={groupsSaving} style={{ padding: '9px 20px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: groupsSaving ? 'not-allowed' : 'pointer', opacity: groupsSaving ? 0.6 : 1 }}>
+                    {groupsSaving ? 'Saving…' : 'Save Mapping'}
+                  </button>
+                  {groupsMsg && <p style={{ fontSize: '12px', color: groupsMsg === 'Saved' ? '#34d399' : '#f87171', marginTop: '8px' }}>{groupsMsg}</p>}
+                </div>
+              </>
+            )}
+          </>
         )}
       </div>
     </aside>

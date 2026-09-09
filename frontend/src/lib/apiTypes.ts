@@ -829,6 +829,24 @@ export interface TenantQuota {
   runs_per_minute: number | null;
 }
 
+// ── Tenant group mapping types ────────────────────────────────────────────────
+
+export interface GroupMapping {
+  id: string;
+  tenant_id: string;
+  group_claim: string;
+  role: string;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupMappingInput {
+  group_claim: string;
+  role: string;
+  priority: number;
+}
+
 // ── Tenant member types ───────────────────────────────────────────────────────
 
 export interface TenantMember {

@@ -94,6 +94,8 @@ export type {
   UserUpdateInput,
   TenantSummary,
   TenantMember,
+  GroupMapping,
+  GroupMappingInput,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -573,6 +575,12 @@ export const themApi = {
     api.put<TenantQuota>('/admin/tenants/' + id + '/quota', quota),
   listTenantMembers: (tenantId: string) =>
     api.get<TenantMember[]>('/admin/tenants/' + tenantId + '/members'),
+  listGroupMappings: (tenantId: string) =>
+    api.get<GroupMapping[]>('/admin/tenants/' + tenantId + '/group-mappings'),
+  upsertGroupMapping: (tenantId: string, input: GroupMappingInput) =>
+    api.put<GroupMapping>('/admin/tenants/' + tenantId + '/group-mappings', input),
+  deleteGroupMapping: (tenantId: string, mappingId: string) =>
+    api.delete<void>('/admin/tenants/' + tenantId + '/group-mappings/' + mappingId),
 
   // Tenant self-service (admin/super_admin — own tenant only, no ID in URL)
   getTenantSettings: () =>
