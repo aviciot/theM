@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { themApi, type ManagedUser, type TenantSummary, type UserCreateInput, type UserUpdateInput } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import AuthGuard from '@/components/AuthGuard';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 
 const ACCENT = '#818cf8';
@@ -389,7 +390,7 @@ export default function UsersPage() {
   };
 
   return (
-    <>
+    <AuthGuard>
       <Sidebar />
       <main style={{ marginLeft: '260px', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
         <header style={{ padding: '24px 32px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -484,6 +485,6 @@ export default function UsersPage() {
           onCreated={handleCreated}
         />
       )}
-    </>
+    </AuthGuard>
   );
 }

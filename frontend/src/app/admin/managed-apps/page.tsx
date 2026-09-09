@@ -8,6 +8,8 @@ import {
   type TenantRecord,
 } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import AuthGuard from '@/components/AuthGuard';
+import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 
 const ACCENT = '#818cf8';
 const ACCENT_BORDER = 'rgba(129,140,248,0.4)';
@@ -221,6 +223,7 @@ function AppCard({
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ManagedAppsPage() {
+  useRequireSuperAdmin();
   const [apps, setApps] = useState<ManagedApp[]>([]);
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
   const [bindings, setBindings] = useState<ManagedAppBinding[]>([]);
@@ -288,7 +291,7 @@ export default function ManagedAppsPage() {
   };
 
   return (
-    <>
+    <AuthGuard>
       <Sidebar />
       <main style={{ marginLeft: '260px', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
         <header style={{ padding: '24px 32px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -385,6 +388,6 @@ export default function ManagedAppsPage() {
           />
         )}
       </main>
-    </>
+    </AuthGuard>
   );
 }

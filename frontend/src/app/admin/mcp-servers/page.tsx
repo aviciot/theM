@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { themApi, type MCPServer } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import AuthGuard from '@/components/AuthGuard';
 import { type HealthStatus, ACCENT, ACCENT_BORDER } from './mcpConstants';
 import { MCPServerCard } from './MCPServerCard';
 import { MCPPropertiesPanel } from './MCPPropertiesPanel';
@@ -78,7 +79,7 @@ export default function MCPServersPage() {
   };
 
   return (
-    <>
+    <AuthGuard>
       <Sidebar />
       <main style={{ marginLeft: '260px', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
         <header style={{ padding: '24px 32px 16px 32px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -152,6 +153,6 @@ export default function MCPServersPage() {
         {selected && <MCPPropertiesPanel server={selected} onClose={() => setSelected(null)} onSaved={handleSaved} onDeleted={handleDeleted} />}
         {showCreate && <MCPCreateModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
       </main>
-    </>
+    </AuthGuard>
   );
 }

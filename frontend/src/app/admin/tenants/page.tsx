@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember, type GroupMapping, type GroupMappingInput } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import AuthGuard from '@/components/AuthGuard';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 import { useAuthStore } from '@/stores/authStore';
 import ProvisionWizard from './ProvisionWizard';
@@ -736,7 +737,7 @@ export default function TenantsPage() {
   }
 
   return (
-    <>
+    <AuthGuard><>
       <Sidebar />
       <main style={{ marginLeft: '260px', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
         <header style={{ padding: '24px 32px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -790,6 +791,6 @@ export default function TenantsPage() {
         {selected && <TenantPanel tenant={selected} onClose={() => setSelected(null)} onPatched={handlePatched} onDeleted={handleDeleted} />}
         {showCreate && <ProvisionWizard onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
       </main>
-    </>
+    </></AuthGuard>
   );
 }
