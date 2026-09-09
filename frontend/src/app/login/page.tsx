@@ -234,10 +234,6 @@ export default function LoginPage() {
             </form>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-600">
-            the-M · Multi-Agent Runtime
-          </p>
-
           {/* SSO via org code — below card, out of the main form flow */}
           <div className="mt-5">
             {!showOrgCode ? (
