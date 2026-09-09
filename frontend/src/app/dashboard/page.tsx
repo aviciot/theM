@@ -68,7 +68,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([themApi.agents(), themApi.runs()])
+    Promise.all([
+      themApi.agents().catch(() => [] as Agent[]),
+      themApi.runs().catch(() => [] as Run[]),
+    ])
       .then(([a, r]) => { setAgents(a); setRuns((r as any).items ?? r); })
       .finally(() => setLoading(false));
   }, []);
