@@ -214,8 +214,23 @@ Bank-team onboarding flow: tenant creation → SSO → bank employee login → M
 
 ### Tests
 
-TSS-09, TSS-10, TSS-11 for `PatchMyMember` exist in `go/internal/admin/tenant_self_service_test.go`.
-All admin tests pass (`ok github.com/aviciot/them/internal/admin`).
+TSS-09, TSS-10, TSS-11 for `PatchMyMember` and TSS-12 for `GetSettings` IDP config response.
+All in `go/internal/admin/tenant_self_service_test.go`. All admin tests pass.
+
+Also: `GetSettings` now calls `GetTenantDetail` (not `GetTenant`), so the response
+includes `idp_config.{discovery_url,client_id,redirect_uri}` when SSO is configured.
+`client_secret` is always omitted (`""` in the struct → omitempty in JSON). This is the
+backend prerequisite for the SSO fields pre-population fix in the settings page.
+
+### Live API verification (2026-09-09)
+
+- `GET /api/v1/tenant/settings` (avi-test tenant, SSO-configured):
+  - `idp_configured: true` ✅
+  - `idp_config.discovery_url`, `client_id`, `redirect_uri` present ✅
+  - `client_secret` absent ✅
+- `PATCH /api/v1/tenant/members/24` (role: viewer → member):
+  - HTTP 204 ✅
+  - DB confirmed: `auth_service.tenant_memberships.role = 'member'` for user_id=24 ✅
 
 ### Stage 2 and Stage 3 next steps
 

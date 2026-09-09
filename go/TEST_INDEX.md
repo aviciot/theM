@@ -2688,8 +2688,12 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | TSS-06 | `TestTenantSelfService_GetQuota_Found` | Returns 200 with quota including plan |
 | TSS-07 | `TestTenantSelfService_GetMyMembers_Empty` | Returns 200 `[]` when no members exist for tenant |
 | TSS-08 | `TestTenantSelfService_GetMyMembers_Populated` | Returns 200 with correct username and role for each member |
+| TSS-09 | `TestTenantSelfService_PatchMyMember_Success` | PATCH /tenant/members/{id} returns 204 when role updated successfully |
+| TSS-10 | `TestTenantSelfService_PatchMyMember_InvalidRole` | PATCH rejects role=super_admin with 400 |
+| TSS-11 | `TestTenantSelfService_PatchMyMember_NotFound` | PATCH returns 404 when membership does not exist |
+| TSS-12 | `TestTenantSelfService_GetSettings_WithIDPConfig` | GET /tenant/settings returns idp_config (discovery_url, client_id, redirect_uri); client_secret absent |
 
-**Trigger:** `internal/admin/tenant_self_service.go`, `internal/admin/middleware.go` (RequireTenantAdmin), `internal/admin/router.go` (self-service group)
+**Trigger:** `internal/admin/tenant_self_service.go`, `internal/admin/dal/tenants.go` (UpdateMemberRole, GetTenantDetail), `internal/admin/middleware.go` (RequireTenantAdmin), `internal/admin/router.go` (self-service group)
 
 ---
 
