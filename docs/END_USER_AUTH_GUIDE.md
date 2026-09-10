@@ -9,90 +9,115 @@ connect and how.
 
 ## Concepts
 
-### Access Mode
+### What is an Entry Point?
 
-Every entry point has an **Access Mode** that determines what credential a caller must present.
+An **entry point (EP)** is a door into your application. You create one (or more) when you
+build your app in the Canvas. The EP type — WebSocket, SSE, A2A — is about the *protocol*:
+how the client communicates. The *access policy* is about *who* is allowed through that door.
 
-| Mode | Credential required | Typical use |
-|---|---|---|
-| `token` | Opaque bearer token from `them.access_tokens` | Backend services, internal tools |
-| `public` | None | Public demos, webhooks |
-| `user_jwt` | the-M HS256 user JWT (staff login) | Internal staff facing the-M UI |
-| `external_jwt` | RS256 JWT from tenant's own IdP (e.g. bank Keycloak) | Bank customers calling the-M directly |
+You can have a single WebSocket EP that only accepts bank-backend tokens, or two WebSocket
+EPs on the same app: one for bank-mediated calls, one for direct bank-customer JWTs.
+The protocol type and the access control are independent.
 
-### Allowed Principals
+### Access Policy (set in the UI)
 
-Every entry point also has an **Allowed Principals** policy that controls the *type* of caller,
-independently of the credential check.
+When you select an entry point in the Canvas, the right panel shows an **Access Policy** dropdown.
+This controls what credential a caller must present:
+
+| Option in UI | Internal name | Credential required | Typical use |
+|---|---|---|---|
+| Token required | `token` | Opaque bearer token (Admin → Tokens) | Bank backend service, internal tools |
+| Public (no auth) | `public` | None | Public demos, open webhooks |
+| User JWT (the-M users) | `user_jwt` | the-M HS256 session JWT (staff login) | Internal staff using the-M dashboard |
+| External JWT (bank RS256) | `external_jwt` | RS256 JWT from bank's own IdP (Keycloak etc.) | Bank customers calling the-M directly |
+
+### Allowed Principals (DB only — no UI yet)
+
+Every EP also has an **Allowed Principals** column in the database that controls the *type* of
+caller, independently of the credential check. **This is not yet exposed in the UI** — it must
+be set directly in the database after the EP is created.
 
 | Value | Who can connect | Who is blocked |
 |---|---|---|
-| `internal` | Regular opaque tokens, the-M user JWTs | Backend service tokens, external_jwt callers |
+| `internal` *(default)* | Regular opaque tokens, the-M user JWTs | Backend service tokens (`is_backend=true`), external_jwt callers |
 | `external` | Backend service tokens (`is_backend=true`), external_jwt callers | Regular tokens, user JWTs |
 | `both` | Everyone (no restriction beyond the access mode) | Nobody |
+
+To set it:
+```sql
+UPDATE them.entry_points SET allowed_principals = 'external'
+WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
+```
 
 ---
 
 ## The Three Caller Paths
 
+These paths apply to any EP type (WebSocket, SSE, A2A). The EP type is the protocol;
+the access policy is the lock. You configure the lock the same way regardless of protocol.
+
 ### Path A — Bank calls the-M on behalf of a customer (mediated)
 
 ```
-Bank customer → Bank backend → the-M
+Bank customer → Bank backend → the-M WS/SSE/A2A endpoint
 ```
 
 The bank authenticates its customer internally. The bank's **backend system** holds a
-the-M service token with `is_backend=true`. It calls the-M WS/SSE and passes the
+the-M service token with `is_backend=true`. It connects to the-M and passes the
 customer's identity in the `X-External-User` header.
 
 - the-M trusts `X-External-User` **only** from a caller presenting an `is_backend=true` token.
 - The customer never interacts with the-M directly and has no the-M credentials.
 - the-M records the customer identity from the header for session attribution.
 
-**Required EP configuration:**
-- Access Mode: `token`
-- Allowed Principals: `external` (or `both` if internal callers also allowed)
+**EP configuration (Canvas → select EP → Access Policy dropdown):**
+- Access Policy: **Token required** (`token`)
+- Allowed Principals (DB): `external` (or `both` if internal callers also allowed)
 
-**Required token setup:**
-- Create a token via Admin → Tokens
-- After creation, set `is_backend=true` via DB (currently no UI toggle): `UPDATE them.access_tokens SET is_backend=true WHERE label='<label>';`
+**Token setup:**
+- Admin → Tokens → create token, note the label
+- Set `is_backend=true` via DB (no UI toggle yet):
+  ```sql
+  UPDATE them.access_tokens SET is_backend = true WHERE label = '<label>';
+  ```
 
 ---
 
 ### Path B — Bank customer calls the-M directly (direct RS256 JWT)
 
 ```
-Bank customer → the-M  (presents bank Keycloak JWT)
+Bank customer's app (browser/mobile) → the-M WS/SSE/A2A endpoint
+                                         (presents bank Keycloak JWT)
 ```
 
-The customer's app (browser/mobile) obtains a JWT directly from the bank's Keycloak
-(or any OIDC IdP). It presents that JWT as a Bearer token to the-M. the-M validates it
+The customer's app obtains a JWT directly from the bank's Keycloak (or any OIDC IdP).
+It presents that JWT as the Bearer token when connecting to the-M. the-M validates it
 via JWKS and extracts the `sub` claim as the user's identity.
 
 No the-M account is required for the customer.
 
-**Required EP configuration:**
-- Access Mode: `external_jwt`
-- Allowed Principals: `external`
+**EP configuration (Canvas → select EP → Access Policy dropdown):**
+- Access Policy: **External JWT (bank RS256)** (`external_jwt`)
+- Allowed Principals (DB): `external`
 
-**Required tenant configuration (Runtime Identity):**
+**Tenant configuration (required — one-time per tenant):**
 - Tenant Settings → Runtime Identity tab → fill in JWKS URI + Issuer → Save
-- Or via API: `PUT /api/v1/tenant/runtime-idp`
+- This tells the-M where to fetch the bank's public keys and what issuer to expect.
 
 ---
 
 ### Path C — the-M staff user (internal)
 
 ```
-Staff member → the-M (presents the-M user JWT from login)
+Staff member → the-M WS/SSE endpoint  (presents the-M login JWT)
 ```
 
 A user with a the-M account logs in through the dashboard. Their HS256 session JWT is
-used directly as the bearer credential for WS/SSE connections.
+used as the bearer credential when connecting to an EP.
 
-**Required EP configuration:**
-- Access Mode: `user_jwt`
-- Allowed Principals: `internal`
+**EP configuration (Canvas → select EP → Access Policy dropdown):**
+- Access Policy: **User JWT (the-M users)** (`user_jwt`)
+- Allowed Principals (DB): `internal` (the default — no DB change needed)
 
 ---
 
