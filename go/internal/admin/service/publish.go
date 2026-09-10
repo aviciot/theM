@@ -436,6 +436,14 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			}
 		}
 
+		// allowed_principals — defaults to "internal" when absent or invalid.
+		allowedPrincipals := "internal"
+		if ep.Config != nil {
+			if v, _ := ep.Config["allowed_principals"].(string); v == "external" || v == "both" {
+				allowedPrincipals = v
+			}
+		}
+
 		// Extract per-EP memory config from the orchestrator's canvas config.
 		// Stored as config.ep_memory[ep.instance_id] on the orchestrator node.
 		var (
@@ -483,6 +491,7 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			EntryPointType:         ep.Protocol,
 			AppOrchestratorID:      orchID,
 			AccessPolicy:           accessPolicy,
+			AllowedPrincipals:      allowedPrincipals,
 			ConversationTokenLimit: convTokenLimit,
 			MaxConcurrentSessions:  maxConcurrent,
 			QueueTimeoutSeconds:    queueTimeout,

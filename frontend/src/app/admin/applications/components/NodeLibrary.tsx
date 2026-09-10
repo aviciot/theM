@@ -94,7 +94,7 @@ export function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                   <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                     <div
                       draggable
-                      onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: meta.title, accessMode: 'token', slug: '' })}
+                      onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: meta.title, accessMode: 'token', allowedPrincipals: 'internal', slug: '' })}
                       style={{ ...itemStyle, background: isAmber ? C.amberBg : C.cyanBg, borderColor: isAmber ? C.amberBorder : C.cyanBorder, marginBottom: 0 }}
                       onMouseEnter={e => (e.currentTarget.style.background = isAmber ? 'rgba(245,158,11,0.1)' : 'rgba(0,240,255,0.1)')}
                       onMouseLeave={e => (e.currentTarget.style.background = isAmber ? C.amberBg : C.cyanBg)}

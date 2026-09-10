@@ -218,7 +218,8 @@ export function buildNodesFromApp(
       data: {
         label: app.name,
         epType: (ep.entry_point_type as EntryPointType) ?? 'websocket',
-        accessMode: ((ep.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
+        accessMode: ((ep.access_policy as any)?.mode ?? 'token') as 'token' | 'public' | 'user_jwt' | 'external_jwt',
+        allowedPrincipals: (ep.allowed_principals ?? 'internal') as 'internal' | 'external' | 'both',
         slug: ep.slug,
         appName: app.name,
         convTokenLimit: ep.conversation_token_limit != null ? String(ep.conversation_token_limit) : '',

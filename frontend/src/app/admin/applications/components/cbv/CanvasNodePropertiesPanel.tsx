@@ -456,6 +456,25 @@ export function CanvasNodePropertiesPanel({
             <option value="user_jwt">user_jwt (the-M users)</option>
             <option value="external_jwt">external_jwt (bank RS256 JWTs)</option>
           </select>
+          {d.protocol !== 'voice' && d.protocol !== 'webrtc' && (
+            <>
+              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4, marginTop: 10 }}>Allowed Callers</label>
+              <select
+                style={selectStyle}
+                value={(cfg.allowed_principals as string) || 'internal'}
+                onChange={e => setEpConfig(selectedNode!.id, { allowed_principals: e.target.value })}
+              >
+                <option value="internal">Internal only — the-M tokens &amp; staff</option>
+                <option value="external">External only — bank backend or bank JWT</option>
+                <option value="both">Both — no caller-type restriction</option>
+              </select>
+              <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+                {((cfg.allowed_principals as string) || 'internal') === 'internal' && 'Regular the-M tokens and staff logins only.'}
+                {(cfg.allowed_principals as string) === 'external' && 'Bank backend tokens (is_backend=true) or direct bank RS256 JWTs only.'}
+                {(cfg.allowed_principals as string) === 'both' && 'Any authenticated caller — no caller-type restriction.'}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Section D — Capacity */}

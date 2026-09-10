@@ -90,6 +90,21 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           <option value="external_jwt">External JWT (bank RS256)</option>
         </select>
       </div>
+      {d.epType !== 'voice' && d.epType !== 'webrtc' && (
+        <div style={fieldWrap}>
+          <label style={labelStyle}>Allowed Callers</label>
+          <select style={{ ...inputStyle }} value={d.allowedPrincipals ?? 'internal'} onChange={e => onUpdateNode(selectedNode.id, { allowedPrincipals: e.target.value as 'internal' | 'external' | 'both' })}>
+            <option value="internal">Internal only — the-M tokens &amp; staff</option>
+            <option value="external">External only — bank backend or bank JWT</option>
+            <option value="both">Both — no caller-type restriction</option>
+          </select>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
+            {(d.allowedPrincipals ?? 'internal') === 'internal' && 'Only regular the-M access tokens and staff user JWTs are admitted. Bank backend tokens and direct bank JWTs are blocked.'}
+            {d.allowedPrincipals === 'external' && 'Only bank backend service tokens (is_backend=true) or direct bank RS256 JWTs are admitted. Regular the-M tokens and staff logins are blocked.'}
+            {d.allowedPrincipals === 'both' && 'Any authenticated caller is admitted — both the-M tokens and bank/external callers. Use when you want no caller-type restriction beyond the Access Policy above.'}
+          </div>
+        </div>
+      )}
       <div style={fieldWrap}>
         <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
           Slug

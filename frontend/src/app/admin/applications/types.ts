@@ -27,6 +27,7 @@ export interface EntryPointData {
   label: string;
   epType: EntryPointType;
   accessMode: 'token' | 'public' | 'user_jwt' | 'external_jwt';
+  allowedPrincipals: 'internal' | 'external' | 'both';
   slug: string;
   appName?: string;
   convTokenLimit?: string;

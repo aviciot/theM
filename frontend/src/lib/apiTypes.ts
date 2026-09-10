@@ -203,6 +203,7 @@ export interface EntryPoint {
   summarizer_model?: string | null;
   llm_provider?: string | null;
   llm_model?: string | null;
+  allowed_principals?: 'internal' | 'external' | 'both';
 }
 
 export interface CanvasLayout {
