@@ -18,6 +18,7 @@ type Tenant struct {
 	IsBootstrap   bool      `json:"is_bootstrap"`
 	IDPConfigured bool      `json:"idp_configured"`
 	EmailDomain   *string   `json:"email_domain,omitempty"`
+	LogoURL       *string   `json:"logo_url,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -33,7 +34,7 @@ func (d *DB) ListTenants(ctx context.Context) ([]Tenant, error) {
 	const q = `
 		SELECT id::text, slug, display_name, enabled, is_bootstrap,
 		       idp_config IS NOT NULL AS idp_configured,
-		       email_domain, created_at, updated_at
+		       email_domain, logo_url, created_at, updated_at
 		FROM them.tenants
 		ORDER BY created_at ASC`
 	rows, err := d.q.Query(ctx, q)
@@ -45,7 +46,7 @@ func (d *DB) ListTenants(ctx context.Context) ([]Tenant, error) {
 	for rows.Next() {
 		var t Tenant
 		if err := rows.Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap,
-			&t.IDPConfigured, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			&t.IDPConfigured, &t.EmailDomain, &t.LogoURL, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -61,12 +62,12 @@ func (d *DB) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	const q = `
 		SELECT id::text, slug, display_name, enabled, is_bootstrap,
 		       idp_config IS NOT NULL AS idp_configured,
-		       email_domain, created_at, updated_at
+		       email_domain, logo_url, created_at, updated_at
 		FROM them.tenants
 		WHERE id = $1::uuid`
 	var t Tenant
 	err := d.q.QueryRow(ctx, q, id).Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap,
-		&t.IDPConfigured, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+		&t.IDPConfigured, &t.EmailDomain, &t.LogoURL, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -76,14 +77,14 @@ func (d *DB) GetTenantDetail(ctx context.Context, id string) (TenantDetail, erro
 		SELECT id::text, slug, display_name, enabled, is_bootstrap,
 		       idp_config IS NOT NULL AS idp_configured,
 		       idp_config,
-		       email_domain, created_at, updated_at
+		       email_domain, logo_url, created_at, updated_at
 		FROM them.tenants
 		WHERE id = $1::uuid`
 	var t TenantDetail
 	var rawIDP []byte
 	err := d.q.QueryRow(ctx, q, id).Scan(
 		&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap,
-		&t.IDPConfigured, &rawIDP, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+		&t.IDPConfigured, &rawIDP, &t.EmailDomain, &t.LogoURL, &t.CreatedAt, &t.UpdatedAt)
 	if err == nil && rawIDP != nil {
 		var cfg TenantIDPConfig
 		if json.Unmarshal(rawIDP, &cfg) == nil {
@@ -122,11 +123,11 @@ func (d *DB) CreateTenant(ctx context.Context, in TenantInput) (Tenant, error) {
 		VALUES ($1, $2)
 		RETURNING id::text, slug, display_name, enabled, is_bootstrap,
 		          idp_config IS NOT NULL AS idp_configured,
-		          email_domain, created_at, updated_at`
+		          email_domain, logo_url, created_at, updated_at`
 	var t Tenant
 	err := d.q.ExecReturning(ctx, q, in.Slug, in.DisplayName).
 		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap,
-			&t.IDPConfigured, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+			&t.IDPConfigured, &t.EmailDomain, &t.LogoURL, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -209,6 +210,7 @@ type TenantDetail struct {
 	IDPConfigured bool             `json:"idp_configured"`
 	IDPConfig     *TenantIDPConfig `json:"idp_config,omitempty"` // secret always blank
 	EmailDomain   *string          `json:"email_domain,omitempty"`
+	LogoURL       *string          `json:"logo_url,omitempty"`
 	CreatedAt     time.Time        `json:"created_at"`
 	UpdatedAt     time.Time        `json:"updated_at"`
 }
@@ -423,14 +425,14 @@ func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (Ten
 		RETURNING id::text, slug, display_name, enabled, is_bootstrap,
 		          idp_config IS NOT NULL AS idp_configured,
 		          idp_config,
-		          email_domain,
+		          email_domain, logo_url,
 		          created_at, updated_at`
 	var t TenantDetail
 	var rawIDP []byte
 	err := d.q.ExecReturning(ctx, q, id, patch.DisplayName, patch.Enabled,
 		patch.SetIDP, idpJSONArg,
 		patch.SetEmailDomain, emailDomainArg).
-		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap, &t.IDPConfigured, &rawIDP, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IsBootstrap, &t.IDPConfigured, &rawIDP, &t.EmailDomain, &t.LogoURL, &t.CreatedAt, &t.UpdatedAt)
 	if err == nil && rawIDP != nil {
 		var cfg TenantIDPConfig
 		if json.Unmarshal(rawIDP, &cfg) == nil {
@@ -570,6 +572,16 @@ func (d *DB) ForceDeleteTenant(ctx context.Context, id string) error {
 	const q = `DELETE FROM them.tenants WHERE id = $1::uuid AND is_bootstrap = false RETURNING id`
 	var returned string
 	return d.q.ExecReturning(ctx, q, id).Scan(&returned)
+}
+
+// SetTenantLogoURL stores the logo URL for a tenant.
+func (d *DB) SetTenantLogoURL(ctx context.Context, id, logoURL string) error {
+	return d.q.Exec(ctx, `UPDATE them.tenants SET logo_url=$2, updated_at=now() WHERE id=$1::uuid`, id, logoURL)
+}
+
+// ClearTenantLogoURL removes the logo URL for a tenant.
+func (d *DB) ClearTenantLogoURL(ctx context.Context, id string) error {
+	return d.q.Exec(ctx, `UPDATE them.tenants SET logo_url=NULL, updated_at=now() WHERE id=$1::uuid`, id)
 }
 
 // DeleteTenant deletes a tenant by ID. Fails with pgx.ErrNoRows if not found,

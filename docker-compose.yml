@@ -779,6 +779,9 @@ services:
       - THEM_DB_URL_APP=${THEM_DB_URL_APP}
       - THEM_DB_URL_ADMIN=${THEM_DB_URL_ADMIN}
       - IDP_ENCRYPTION_KEY=${THE_M_IDP_ENCRYPTION_KEY:-}
+      - TENANT_LOGO_DIR=/app/data/tenants
+    volumes:
+      - ./data/tenants:/app/data/tenants
     networks:
       - them-network
     depends_on:
@@ -803,6 +806,11 @@ services:
       - "traefik.http.routers.them-go-health.entrypoints=web"
       - "traefik.http.routers.them-go-health.priority=130"
       - "traefik.http.routers.them-go-health.service=them-go-bridge-svc"
+      # ── /static/tenants — tenant logo assets ─────────────────────────────────
+      - "traefik.http.routers.them-go-static.rule=PathPrefix(`/static/tenants`)"
+      - "traefik.http.routers.them-go-static.entrypoints=web"
+      - "traefik.http.routers.them-go-static.priority=120"
+      - "traefik.http.routers.them-go-static.service=them-go-bridge-svc"
       # ── /api/v1 — all admin REST, runs, artifacts ─────────────────────────────
       - "traefik.http.routers.them-go-api.rule=PathPrefix(`/api/v1`)"
       - "traefik.http.routers.them-go-api.entrypoints=web"

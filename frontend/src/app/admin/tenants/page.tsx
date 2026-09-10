@@ -20,9 +20,14 @@ function TenantCard({ tenant, selected, onClick }: { tenant: TenantRecord; selec
       boxShadow: selected ? `0 0 0 3px ${ACCENT}22` : 'none',
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
-        <div>
-          <p style={{ fontWeight: 700, fontSize: '15px', color: 'var(--tm-card-text)', margin: '0 0 2px 0' }}>{tenant.display_name}</p>
-          <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: 0, fontFamily: 'monospace' }}>{tenant.slug}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {tenant.logo_url && (
+            <img src={tenant.logo_url} alt="" style={{ width: '36px', height: '36px', objectFit: 'contain', borderRadius: '6px', background: 'var(--tm-inset)', flexShrink: 0 }} />
+          )}
+          <div>
+            <p style={{ fontWeight: 700, fontSize: '15px', color: 'var(--tm-card-text)', margin: '0 0 2px 0' }}>{tenant.display_name}</p>
+            <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: 0, fontFamily: 'monospace' }}>{tenant.slug}</p>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
           <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px',
@@ -98,6 +103,37 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [newGroupRole, setNewGroupRole] = useState('viewer');
   const [newGroupPriority, setNewGroupPriority] = useState(10);
   const [groupsSaving, setGroupsSaving] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoMsg, setLogoMsg] = useState('');
+  const [logoUrl, setLogoUrl] = useState<string | null>(tenant.logo_url ?? null);
+
+  useEffect(() => {
+    setLogoUrl(tenant.logo_url ?? null);
+  }, [tenant.id, tenant.logo_url]);
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoUploading(true); setLogoMsg('');
+    try {
+      const { logo_url } = await themApi.uploadTenantLogo(tenant.id, file);
+      setLogoUrl(logo_url);
+      onPatched({ ...tenant, logo_url });
+      setLogoMsg('Logo saved');
+    } catch { setLogoMsg('Upload failed'); }
+    finally { setLogoUploading(false); e.target.value = ''; }
+  }
+
+  async function handleLogoDelete() {
+    setLogoUploading(true); setLogoMsg('');
+    try {
+      await themApi.deleteTenantLogo(tenant.id);
+      setLogoUrl(null);
+      onPatched({ ...tenant, logo_url: null });
+      setLogoMsg('Logo removed');
+    } catch { setLogoMsg('Delete failed'); }
+    finally { setLogoUploading(false); }
+  }
 
   useEffect(() => {
     setDisplayName(tenant.display_name);
@@ -371,6 +407,33 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
               {genSaving ? 'Saving…' : 'Save'}
             </button>
             {genMsg && <p style={{ fontSize: '12px', color: genMsg === 'Saved' ? '#34d399' : '#f87171', marginTop: '8px' }}>{genMsg}</p>}
+
+            {/* Logo */}
+            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,.06)' }}>
+              <label style={lbl}>Tenant Logo <span style={{ fontWeight: 400, color: 'var(--tm-card-text-muted)' }}>(PNG, SVG, JPG, WebP · max 200 KB)</span></label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+                {logoUrl
+                  ? <img src={logoUrl} alt="tenant logo" style={{ width: '56px', height: '56px', objectFit: 'contain', borderRadius: '8px', background: 'var(--tm-inset)', border: '1px solid var(--tm-border)' }} />
+                  : <div style={{ width: '56px', height: '56px', borderRadius: '8px', background: 'var(--tm-inset)', border: '1px solid var(--tm-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '24px', color: 'var(--tm-card-text-muted)', opacity: 0.4 }}>domain</span>
+                    </div>
+                }
+                <div style={{ display: 'flex', gap: '8px', flexDirection: 'column' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, background: `${ACCENT}18`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: logoUploading ? 'not-allowed' : 'pointer', opacity: logoUploading ? 0.6 : 1 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>upload</span>
+                    {logoUrl ? 'Replace Logo' : 'Upload Logo'}
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style={{ display: 'none' }} onChange={handleLogoUpload} disabled={logoUploading} />
+                  </label>
+                  {logoUrl && (
+                    <button onClick={handleLogoDelete} disabled={logoUploading} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.25)', color: '#f87171', cursor: logoUploading ? 'not-allowed' : 'pointer', opacity: logoUploading ? 0.6 : 1 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>delete</span>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+              {logoMsg && <p style={{ fontSize: '11px', color: logoMsg.includes('fail') || logoMsg.includes('fail') ? '#f87171' : '#34d399', marginTop: '6px' }}>{logoMsg}</p>}
+            </div>
 
             {!tenant.is_bootstrap && (
               <div style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid rgba(248,113,113,.15)' }}>

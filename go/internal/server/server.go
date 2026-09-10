@@ -207,6 +207,13 @@ func (s *Server) MountApps(h http.Handler) {
 	s.router.Handle("/*", h)
 }
 
+// MountStatic serves files from dir under the given URL prefix.
+// Must be called BEFORE MountApps so the exact prefix is matched first.
+func (s *Server) MountStatic(prefix, dir string) {
+	fs := http.FileServer(http.Dir(dir))
+	s.router.Handle(prefix+"/*", http.StripPrefix(prefix, fs))
+}
+
 // Handler returns the underlying chi router as an http.Handler. Intended for
 // use in integration tests that need to wrap the router in an httptest.Server
 // without calling ListenAndServe.

@@ -587,6 +587,17 @@ export const themApi = {
     api.put<GroupMapping>('/admin/tenants/' + tenantId + '/group-mappings', input),
   deleteGroupMapping: (tenantId: string, mappingId: string) =>
     api.delete<void>('/admin/tenants/' + tenantId + '/group-mappings/' + mappingId),
+  uploadTenantLogo: async (id: string, file: File): Promise<{ logo_url: string }> => {
+    const form = new FormData();
+    form.append('logo', file);
+    const res = await fetch(`/api/them/api/v1/admin/tenants/${id}/logo`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  deleteTenantLogo: async (id: string): Promise<void> => {
+    const res = await fetch(`/api/them/api/v1/admin/tenants/${id}/logo`, { method: 'DELETE' });
+    if (!res.ok && res.status !== 204) throw new Error(await res.text());
+  },
 
   // Tenant self-service (admin/super_admin — own tenant only, no ID in URL)
   getTenantSettings: () =>

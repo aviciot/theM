@@ -183,7 +183,7 @@ func tenantAdminRouter(t *testing.T, cache *auth.Cache) http.Handler {
 		})
 	}
 
-	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil)
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir())
 }
 
 // tenantAdminRouterNoTenant returns a router that auto-injects a super_admin JWT
@@ -215,7 +215,7 @@ func tenantAdminRouterNoTenant(t *testing.T, cache *auth.Cache) http.Handler {
 			inner(next).ServeHTTP(w, r2)
 		})
 	}
-	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil)
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir())
 }
 
 // thGet sends a GET request to path with an Authorization: Bearer <token> header.
@@ -467,7 +467,7 @@ func tenantAdminRouterWithJWT(t *testing.T, cache *auth.Cache, jwtToken string) 
 			inner(next).ServeHTTP(w, r2)
 		})
 	}
-	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil)
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir())
 }
 
 // TH-13: admin JWT with tenant_id → 200 on /admin/agents (tenant-scoped route).

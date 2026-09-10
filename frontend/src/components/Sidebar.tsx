@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
+import { themApi } from '@/lib/api';
 import { useEffect, useState } from 'react';
 
 const WORKSPACE_NAV = [
@@ -68,6 +69,14 @@ export default function Sidebar() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const [dark, setDark] = useState(false);
+  const [tenantLogoUrl, setTenantLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user || user.role === 'super_admin') return;
+    themApi.getTenantSettings()
+      .then(t => setTenantLogoUrl(t.logo_url ?? null))
+      .catch(() => {});
+  }, [user?.role]);
 
   // Sync state with the class set by the inline script in layout.tsx
   useEffect(() => {
@@ -102,11 +111,16 @@ export default function Sidebar() {
         display: 'flex', flexDirection: 'column', padding: '24px 0', zIndex: 40,
       }}>
         {/* Brand */}
-        <div style={{ padding: '0 24px', marginBottom: '32px', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ padding: '0 24px', marginBottom: tenantLogoUrl ? '12px' : '32px', display: 'flex', justifyContent: 'center' }}>
           <a href="/" style={{ display: 'inline-flex', cursor: 'pointer' }}>
             <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '81px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.2))' }} />
           </a>
         </div>
+        {tenantLogoUrl && (
+          <div style={{ padding: '0 16px 20px', display: 'flex', justifyContent: 'center' }}>
+            <img src={tenantLogoUrl} alt="Tenant logo" style={{ maxHeight: '40px', maxWidth: '140px', objectFit: 'contain' }} />
+          </div>
+        )}
 
         {/* Nav */}
         <nav style={{ flex: 1, overflowY: 'auto', padding: '0 12px' }} className="custom-scrollbar">

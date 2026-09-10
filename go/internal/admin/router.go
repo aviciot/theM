@@ -122,6 +122,7 @@ func BuildRouter(
 	hitlStore *agentgen.HITLStore,
 	canvasSignaler temporal.CanvasSignaler,
 	idpKey []byte,
+	logoDir string,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -136,7 +137,7 @@ func BuildRouter(
 	llmRouting := NewLLMRoutingHandler(dbq)
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
 	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
-	tenants := NewTenantsHandler(dbq, auditWriter, idpKey)
+	tenants := NewTenantsHandler(dbq, auditWriter, idpKey, logoDir)
 	managedApps := NewManagedAppsHandler(dbq)
 
 	// Admin + runs routes — all require JWT. Within /admin, routes are split into

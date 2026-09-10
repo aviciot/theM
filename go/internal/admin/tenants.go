@@ -14,17 +14,19 @@ import (
 // All routes require super_admin (enforced by the outer router group).
 // Tenants are platform-global — no AdminTenantMiddleware is applied here.
 type TenantsHandler struct {
-	db    *dal.DB
-	audit *AuditWriter
+	db      *dal.DB
+	audit   *AuditWriter
+	logoDir string
 }
 
 // NewTenantsHandler creates a TenantsHandler.
 // idpKey is the AES-256 encryption key for IdP client_secret; nil disables encryption.
-func NewTenantsHandler(db DBQuerier, audit *AuditWriter, idpKey []byte) *TenantsHandler {
-	return &TenantsHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit}
+// logoDir is the base directory for tenant logo files.
+func NewTenantsHandler(db DBQuerier, audit *AuditWriter, idpKey []byte, logoDir string) *TenantsHandler {
+	return &TenantsHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit, logoDir: logoDir}
 }
 
-// Routes mounts the tenant CRUD + quota + member + group-mapping endpoints.
+// Routes mounts the tenant CRUD + quota + member + group-mapping + logo endpoints.
 func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants", h.List)
 	r.Post("/tenants", h.Create)
@@ -39,6 +41,8 @@ func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants/{id}/group-mappings", h.ListGroupMappings)
 	r.Put("/tenants/{id}/group-mappings", h.UpsertGroupMapping)
 	r.Delete("/tenants/{id}/group-mappings/{mapping_id}", h.DeleteGroupMapping)
+	r.Post("/tenants/{id}/logo", h.UploadLogo)
+	r.Delete("/tenants/{id}/logo", h.DeleteLogo)
 }
 
 // List handles GET /api/v1/admin/tenants.

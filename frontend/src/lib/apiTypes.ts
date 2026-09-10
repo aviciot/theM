@@ -805,6 +805,7 @@ export interface TenantRecord {
   idp_configured: boolean;
   idp_config?: IDPConfig | null; // returned by /tenant/settings (secret always blank)
   email_domain?: string | null;
+  logo_url?: string | null;
   created_at: string;
   updated_at: string;
 }

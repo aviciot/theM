@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -41,14 +42,14 @@ func (r *tenantFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	// Support three scan widths:
-	// 9-col  (ListTenants/GetTenant): id, slug, display_name, enabled, is_bootstrap, idp_configured, email_domain, created_at, updated_at
-	// 10-col (GetTenantDetail/PatchTenant): id, slug, display_name, enabled, is_bootstrap, idp_configured, idp_config, email_domain, created_at, updated_at
+	// Support two scan widths:
+	// 10-col (ListTenants/GetTenant): id, slug, display_name, enabled, is_bootstrap, idp_configured, email_domain, logo_url, created_at, updated_at
+	// 11-col (GetTenantDetail/PatchTenant): id, slug, display_name, enabled, is_bootstrap, idp_configured, idp_config, email_domain, logo_url, created_at, updated_at
 	var vals []any
-	if len(dest) >= 10 {
-		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, testNow, testNow}
+	if len(dest) >= 11 {
+		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, (*string)(nil), testNow, testNow}
 	} else {
-		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.emailDomain, testNow, testNow}
+		vals = []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.emailDomain, (*string)(nil), testNow, testNow}
 	}
 	for i, d := range dest {
 		if i >= len(vals) {
@@ -187,7 +188,7 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, testNow, testNow}
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.isBootstrap, r.idpConfigured, r.rawIDP, r.emailDomain, (*string)(nil), testNow, testNow}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
@@ -223,7 +224,7 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 func newTenantRouter(db admin.DBQuerier) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(withTestTenant) // inject bootstrap tenant into context
-	admin.NewTenantsHandler(db, nil, nil).Routes(r)
+	admin.NewTenantsHandler(db, nil, nil, os.TempDir()).Routes(r)
 	return r
 }
 
