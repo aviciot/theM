@@ -453,6 +453,8 @@ export function CanvasNodePropertiesPanel({
           >
             <option value="token">token</option>
             <option value="public">public</option>
+            <option value="user_jwt">user_jwt (the-M users)</option>
+            <option value="external_jwt">external_jwt (bank RS256 JWTs)</option>
           </select>
         </div>
 

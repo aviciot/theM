@@ -98,6 +98,8 @@ export type {
   GroupMapping,
   GroupMappingInput,
   OIDCDebugRecord,
+  RuntimeIDPConfig,
+  RuntimeIDPInput,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -166,6 +168,8 @@ import type {
   GroupMapping,
   GroupMappingInput,
   OIDCDebugRecord,
+  RuntimeIDPConfig,
+  RuntimeIDPInput,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -621,6 +625,14 @@ export const themApi = {
     api.delete<void>('/tenant/group-mappings/' + mappingId),
   getOIDCDebug: (email: string) =>
     api.get<OIDCDebugRecord>('/tenant/oidc-debug?email=' + encodeURIComponent(email)),
+
+  // Runtime Identity Provider (customer-facing JWT validation via JWKS)
+  getRuntimeIDP: () =>
+    api.get<RuntimeIDPConfig>('/tenant/runtime-idp'),
+  putRuntimeIDP: (input: RuntimeIDPInput) =>
+    api.put<RuntimeIDPConfig>('/tenant/runtime-idp', input),
+  deleteRuntimeIDP: () =>
+    api.delete<void>('/tenant/runtime-idp'),
 
   // Managed App catalog (platform-level)
   listManagedApps: () =>

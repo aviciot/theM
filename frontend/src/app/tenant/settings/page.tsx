@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type TenantRecord, type TenantQuota, type IDPConfig, type GroupMapping, type GroupMappingInput, type OIDCDebugRecord } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantQuota, type IDPConfig, type GroupMapping, type GroupMappingInput, type OIDCDebugRecord, type RuntimeIDPConfig, type RuntimeIDPInput } from '@/lib/api';
 
 const ACCENT = '#818cf8';
 
@@ -45,7 +45,16 @@ export default function TenantSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'mappings' | 'quota'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'mappings' | 'runtime-idp' | 'quota'>('general');
+
+  // Runtime IDP tab state
+  const [ridp, setRidp] = useState<RuntimeIDPConfig | null>(null);
+  const [ridpJwksUri, setRidpJwksUri] = useState('');
+  const [ridpIssuer, setRidpIssuer] = useState('');
+  const [ridpAudience, setRidpAudience] = useState('');
+  const [ridpSubClaim, setRidpSubClaim] = useState('');
+  const [savingRidp, setSavingRidp] = useState(false);
+  const [ridpMsg, setRidpMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // SSO tab state
   const [idpDiscoveryUrl, setIdpDiscoveryUrl] = useState('');
@@ -98,7 +107,52 @@ export default function TenantSettingsPage() {
     if (activeTab === 'mappings') {
       themApi.listMyGroupMappings().then(setMappings).catch(() => setMappings([]));
     }
+    if (activeTab === 'runtime-idp') {
+      themApi.getRuntimeIDP().then(cfg => {
+        setRidp(cfg);
+        if (cfg.configured) {
+          setRidpJwksUri(cfg.jwks_uri ?? '');
+          setRidpIssuer(cfg.issuer ?? '');
+          setRidpAudience(cfg.audience ?? '');
+          setRidpSubClaim(cfg.sub_claim ?? '');
+        }
+      }).catch(() => setRidpMsg({ ok: false, text: 'Failed to load runtime IDP config.' }));
+    }
   }, [activeTab]);
+
+  async function handleSaveRidp(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingRidp(true);
+    setRidpMsg(null);
+    try {
+      const input: RuntimeIDPInput = {
+        jwks_uri: ridpJwksUri.trim(),
+        issuer: ridpIssuer.trim(),
+        audience: ridpAudience.trim() || undefined,
+        sub_claim: ridpSubClaim.trim() || undefined,
+      };
+      await themApi.putRuntimeIDP(input);
+      setRidpMsg({ ok: true, text: 'Runtime IDP configuration saved.' });
+      setRidp({ configured: true, ...input });
+    } catch {
+      setRidpMsg({ ok: false, text: 'Failed to save runtime IDP configuration.' });
+    } finally {
+      setSavingRidp(false);
+    }
+  }
+
+  async function handleClearRidp() {
+    if (!window.confirm('Clear runtime IDP configuration? Entry points using external_jwt mode will stop accepting bank-issued JWTs.')) return;
+    setRidpMsg(null);
+    try {
+      await themApi.deleteRuntimeIDP();
+      setRidp({ configured: false });
+      setRidpJwksUri(''); setRidpIssuer(''); setRidpAudience(''); setRidpSubClaim('');
+      setRidpMsg({ ok: true, text: 'Runtime IDP configuration cleared.' });
+    } catch {
+      setRidpMsg({ ok: false, text: 'Failed to clear runtime IDP configuration.' });
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -270,6 +324,7 @@ export default function TenantSettingsPage() {
                   <button style={tabStyle(activeTab === 'general')} onClick={() => setActiveTab('general')}>General</button>
                   <button style={tabStyle(activeTab === 'sso')} onClick={() => setActiveTab('sso')}>SSO / Identity Provider</button>
                   <button style={tabStyle(activeTab === 'mappings')} onClick={() => setActiveTab('mappings')}>Group Mappings</button>
+                  <button style={tabStyle(activeTab === 'runtime-idp')} onClick={() => setActiveTab('runtime-idp')}>Runtime Identity</button>
                   <button style={tabStyle(activeTab === 'quota')} onClick={() => setActiveTab('quota')}>Quota &amp; Limits</button>
                 </div>
 
@@ -720,6 +775,112 @@ export default function TenantSettingsPage() {
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {/* Runtime Identity tab */}
+                {activeTab === 'runtime-idp' && (
+                  <div style={{ background: 'var(--tm-card)', border: '1px solid var(--tm-border)', borderRadius: '12px', padding: '28px' }}>
+                    <div style={{ marginBottom: '20px' }}>
+                      <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)', margin: 0 }}>
+                        Configure the JWKS endpoint for external bank-issued JWTs. Entry points with access mode <code>external_jwt</code> will validate RS256 tokens against these keys.
+                      </p>
+                      <div style={{ marginTop: '12px' }}>
+                        <span style={{
+                          display: 'inline-block', fontSize: '12px', fontWeight: 600,
+                          padding: '3px 10px', borderRadius: '10px',
+                          background: ridp?.configured ? `${ACCENT}18` : 'rgba(255,255,255,.05)',
+                          color: ridp?.configured ? ACCENT : 'var(--tm-card-text-muted)',
+                          border: `1px solid ${ridp?.configured ? `${ACCENT}40` : 'var(--tm-border)'}`,
+                        }}>
+                          {ridp?.configured ? 'Runtime IDP configured' : 'Runtime IDP not configured'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleSaveRidp}>
+                      <Field label="JWKS URI">
+                        <input
+                          style={inputStyle}
+                          value={ridpJwksUri}
+                          onChange={e => setRidpJwksUri(e.target.value)}
+                          placeholder="https://bank.example.com/.well-known/jwks.json"
+                          required
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          HTTPS endpoint returning the RS256 public keys used to sign customer JWTs.
+                        </p>
+                      </Field>
+
+                      <Field label="Issuer">
+                        <input
+                          style={inputStyle}
+                          value={ridpIssuer}
+                          onChange={e => setRidpIssuer(e.target.value)}
+                          placeholder="https://bank.example.com"
+                          required
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          Must match the <code>iss</code> claim in the JWT exactly.
+                        </p>
+                      </Field>
+
+                      <Field label="Audience (optional)">
+                        <input
+                          style={inputStyle}
+                          value={ridpAudience}
+                          onChange={e => setRidpAudience(e.target.value)}
+                          placeholder="them-runtime (leave blank to skip audience check)"
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          If set, the JWT <code>aud</code> claim must include this value.
+                        </p>
+                      </Field>
+
+                      <Field label="Subject claim (optional)">
+                        <input
+                          style={inputStyle}
+                          value={ridpSubClaim}
+                          onChange={e => setRidpSubClaim(e.target.value)}
+                          placeholder="sub (default)"
+                        />
+                        <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginTop: '4px' }}>
+                          JWT claim used as the external user identity. Defaults to <code>sub</code>.
+                        </p>
+                      </Field>
+
+                      {ridpMsg && (
+                        <div style={{
+                          padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px',
+                          background: ridpMsg.ok ? 'rgba(52,211,153,.1)' : 'rgba(248,113,113,.1)',
+                          border: `1px solid ${ridpMsg.ok ? 'rgba(52,211,153,.25)' : 'rgba(248,113,113,.25)'}`,
+                          color: ridpMsg.ok ? '#34d399' : '#f87171',
+                        }}>
+                          {ridpMsg.text}
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        <button type="submit" disabled={savingRidp} style={{
+                          padding: '9px 20px', borderRadius: '8px', border: 'none',
+                          background: ACCENT, color: '#fff', fontWeight: 600, fontSize: '13px',
+                          cursor: savingRidp ? 'not-allowed' : 'pointer', opacity: savingRidp ? 0.6 : 1,
+                          transition: 'opacity .15s',
+                        }}>
+                          {savingRidp ? 'Saving…' : 'Save Runtime IDP'}
+                        </button>
+                        {ridp?.configured && (
+                          <button type="button" onClick={handleClearRidp} style={{
+                            padding: '9px 20px', borderRadius: '8px',
+                            border: '1px solid rgba(248,113,113,.4)',
+                            background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '13px',
+                            cursor: 'pointer',
+                          }}>
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </form>
                   </div>
                 )}
 

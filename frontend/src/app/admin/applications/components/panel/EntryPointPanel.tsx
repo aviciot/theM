@@ -83,9 +83,11 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
       </div>
       <div style={fieldWrap}>
         <label style={labelStyle}>Access Policy</label>
-        <select style={{ ...inputStyle }} value={d.accessMode} onChange={e => onUpdateNode(selectedNode.id, { accessMode: e.target.value as 'token' | 'public' })}>
+        <select style={{ ...inputStyle }} value={d.accessMode} onChange={e => onUpdateNode(selectedNode.id, { accessMode: e.target.value as 'token' | 'public' | 'user_jwt' | 'external_jwt' })}>
           <option value="token">Token required</option>
           <option value="public">Public (no auth)</option>
+          <option value="user_jwt">User JWT (the-M users)</option>
+          <option value="external_jwt">External JWT (bank RS256)</option>
         </select>
       </div>
       <div style={fieldWrap}>

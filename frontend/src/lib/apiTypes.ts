@@ -788,6 +788,21 @@ export interface IDPConfig {
   unmatched_action?: string; // "viewer" (default) or "deny"
 }
 
+export interface RuntimeIDPConfig {
+  configured: boolean;
+  jwks_uri?: string;
+  issuer?: string;
+  audience?: string;   // empty = audience validation skipped
+  sub_claim?: string;  // default "sub"
+}
+
+export interface RuntimeIDPInput {
+  jwks_uri: string;
+  issuer: string;
+  audience?: string;
+  sub_claim?: string;
+}
+
 export interface OIDCDebugRecord {
   email: string;
   groups_received: string[];

@@ -26,7 +26,7 @@ export type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 export interface EntryPointData {
   label: string;
   epType: EntryPointType;
-  accessMode: 'token' | 'public';
+  accessMode: 'token' | 'public' | 'user_jwt' | 'external_jwt';
   slug: string;
   appName?: string;
   convTokenLimit?: string;

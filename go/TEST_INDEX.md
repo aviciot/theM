@@ -2739,6 +2739,58 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-107 · JWKS cache + RS256 verify — `internal/jwks/jwks_test.go`
+
+**Purpose:** Validates JWKS fetch/cache, key-rotation re-fetch, and RS256 signature verification used by the Phase 4 external JWT path.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| JW-1 | `TestVerifyRS256_ValidToken` | Valid RS256 token → payload returned |
+| JW-2 | `TestVerifyRS256_TamperedSig` | Tampered signature → error |
+| JW-3 | `TestVerifyRS256_UnsupportedAlg` | non-RS256 alg header → explicit error |
+| JW-4 | `TestVerifyRS256_KeyRotation` | Unknown kid triggers re-fetch; succeeds with new key |
+| JW-5 | `TestVerifyRS256_MalformedToken` | Malformed token → error |
+
+**Trigger:** any change to `internal/jwks/jwks.go`
+
+---
+
+### S1-108 · ExternalJWTValidator — `internal/auth/external_jwt_test.go`
+
+**Purpose:** Validates bank-issued RS256 JWTs: issuer, audience, sub extraction, expiry, aud-as-string.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| EXT-1 | `TestExternalJWT_ValidToken` | Valid token → sub returned |
+| EXT-2 | `TestExternalJWT_ExpiredToken` | Expired → expired error |
+| EXT-3 | `TestExternalJWT_WrongIssuer` | Wrong iss → issuer error |
+| EXT-4 | `TestExternalJWT_WrongAudience` | Wrong aud → audience error |
+| EXT-5 | `TestExternalJWT_SkipAudCheck` | Empty cfg.Audience → aud not validated |
+| EXT-6 | `TestExternalJWT_MissingSub` | Missing sub → sub error |
+| EXT-7 | `TestExternalJWT_AudAsString` | aud as string (not array) → accepted |
+
+**Trigger:** any change to `internal/auth/external_jwt.go`
+
+---
+
+### S1-109 · Lifecycle AccessModeExternal — `internal/execution/lifecycle_external_jwt_test.go`
+
+**Purpose:** End-to-end admit tests for `external_jwt` entry points: token validation, principal guard, spoofing prevention.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| LC-EXT-1 | `TestAccessModeExternal_ValidJWT_Admitted` | Valid bank JWT → admitted; ExternalUserID from sub |
+| LC-EXT-2 | `TestAccessModeExternal_NoToken_Rejected` | No token → 401 |
+| LC-EXT-3 | `TestAccessModeExternal_NoValidator_Rejected` | No validator wired → 401 |
+| LC-EXT-4 | `TestAccessModeExternal_NoRIDPConfig_Rejected` | No tenant runtime IDP row → 401 |
+| LC-EXT-5 | `TestAccessModeExternal_InvalidJWT_Rejected` | Tampered JWT → 401 |
+| LC-EXT-6 | `TestAccessModeExternal_PrincipalGuard_Blocked` | EP allowed_principals=internal → 403 |
+| LC-EXT-7 | `TestAccessModeExternal_HeaderIgnored_SubFromJWT` | Caller-supplied ExternalUserID overwritten by JWT sub |
+
+**Trigger:** any change to `internal/execution/lifecycle.go` (external_jwt path), `internal/auth/external_jwt.go`, `internal/jwks/`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -3310,7 +3362,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-104 | Redis metrics recorder (MR-01..07): RecordRun_TenantAndApp, RecordRun_NoApp, RecordTokens_TenantAndApp, RecordMCPCall_TenantAndApp, RecordUser_PFAddAndExpiry, NoopRecorder_AllNil, RecordRun_ExpireAtFuture | 7 |
 | S1-105 | runrecorder metrics integration (MRR-01..03): WithMetricsRecorder_CreateRunFiresMetric, RecordTokensMetric_FiresMetric, RecordTokensMetric_NoopWithoutRecorder | 3 |
 | S1-106 | Managed-app flag toggle handler (MA-01..03): SetManaged → 200, SetTenant → 200, DBError → 500 | 3 |
-| **S1 total** | | **1133** |
+| S1-107 | JWKS cache + RS256 verify (JW-1..5): ValidToken, TamperedSig, UnsupportedAlg, KeyRotation, MalformedToken | 5 |
+| S1-108 | ExternalJWTValidator (EXT-1..7): ValidToken, ExpiredToken, WrongIssuer, WrongAudience, SkipAudCheck, MissingSub, AudAsString | 7 |
+| S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
+| **S1 total** | | **1152** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
