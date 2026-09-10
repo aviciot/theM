@@ -481,19 +481,22 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
         {user?.role === 'super_admin' && (
           <Section title="Managed App" icon="storefront" accent="#a78bfa" defaultOpen={false}
             subtitle={isManaged ? 'Exposed to consuming tenants' : 'Private to owner tenant'}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${isManaged ? 'rgba(167,139,250,0.25)' : 'rgba(255,255,255,0.07)'}` }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Managed App</div>
+                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                  {isManaged ? 'Accessible to tenants with an active binding' : 'Private — only this tenant can use it'}
+                </div>
+              </div>
               <button
-                onClick={() => handleSetManaged(!isManaged)}
+                onClick={() => !isManagedSaving && handleSetManaged(!isManaged)}
                 disabled={isManagedSaving}
-                style={{ padding: '8px 18px', borderRadius: 7, border: `1px solid ${isManaged ? 'rgba(167,139,250,0.4)' : 'rgba(132,158,190,0.3)'}`, background: isManaged ? 'rgba(167,139,250,0.12)' : 'transparent', color: isManaged ? '#a78bfa' : C.textMuted, cursor: isManagedSaving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: isManagedSaving ? 0.6 : 1 }}
+                style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: isManagedSaving ? 'not-allowed' : 'pointer', background: isManaged ? '#a78bfa' : 'rgba(255,255,255,0.1)', position: 'relative', transition: 'background 0.2s', flexShrink: 0, opacity: isManagedSaving ? 0.6 : 1 }}
               >
-                {isManagedSaving ? 'Saving…' : isManaged ? 'Managed — click to make private' : 'Private — click to make managed'}
+                <span style={{ position: 'absolute', top: 3, left: isManaged ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
               </button>
-              {managedMsg && <span style={{ fontSize: 12, fontWeight: 600, color: managedMsg === 'Saved' ? C.green : C.error }}>{managedMsg}</span>}
             </div>
-            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>
-              Managed apps are accessible to consuming tenants that have an active binding. Entry points remain owned by this application's tenant.
-            </div>
+            {managedMsg && <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: managedMsg === 'Saved' ? C.green : C.error }}>{managedMsg}</div>}
           </Section>
         )}
 
