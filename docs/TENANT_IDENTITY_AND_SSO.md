@@ -444,13 +444,48 @@ The actual SSO login requires a real browser because:
 
 | Item | Value |
 |---|---|
-| Test user | `testuser@example.com` / `testpass` |
-| Realm | `them` |
+| Admin console | `http://localhost:8088/auth/keycloak/admin` |
+| Admin credentials | `admin` / `admin123` |
 | Client ID | `them-m` |
 | Client secret | `them-m-secret` |
 | External URL (browser / curl from host) | `http://localhost:8088/auth/keycloak/realms/them` |
 | Internal URL (use in `discovery_url` field) | `http://them-keycloak:8080/auth/keycloak/realms/them` |
 | Start command | `docker compose ... --profile sso up -d them-keycloak` |
+
+### Test users — all passwords are `admin123`
+
+**realm: bank**
+
+| Username | Email | Notes |
+|---|---|---|
+| `bankadmin` | bankadmin@bank.com | Primary bank tenant admin |
+| `avi2` | avi2@bank.com | Regular bank user |
+
+**realm: rnd**
+
+| Username | Email | Notes |
+|---|---|---|
+| `dev` | dev@rnd.com | Developer user |
+| `qa-user` | qauser@rnd.com | QA user |
+
+**realm: them** (main/default realm)
+
+| Username | Email | Notes |
+|---|---|---|
+| `bankadmin` | bankadmin@bank.com | Bank admin in main realm |
+| `avi` | avi@bank.com | Test user |
+| `avi1` | avi1@bank.com | Test user |
+| `avi2` | avi2@bank.com | Test user |
+| `avi3` | avi3@bank.com | Test user |
+| `dev` | dev@bank.com | Developer test user |
+| `qa-user` | qa@bank.com | QA test user |
+| `testuser` | testuser@bank.com | Generic test user |
+
+**realm: master** (Keycloak internal — do not use for app login)
+
+| Username | Notes |
+|---|---|
+| `admin` | Keycloak master admin — password `admin123` |
 
 ### Key API endpoints
 
