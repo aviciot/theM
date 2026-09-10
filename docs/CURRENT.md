@@ -538,20 +538,31 @@ Test SSO login: Admin → Tenants → bank or rnd → SSO tab → "Test SSO Logi
 
 ### Next recommended task
 
-**Phase 4 — Deploy to Tenant** (see `docs/PLATFORM_ROADMAP.md`)
+**Phase 4 — Bank JWT / JWKS validation at runtime entry points** (see `docs/END_USER_AUTH_PLAN.md`)
 
-Phase 3 (Managed Apps) is complete (pending commit this session):
-- `epConfigQuery` now JOINs `managed_app_bindings` — consuming tenants can reach platform-owned EPs
-- `PATCH /admin/applications/{id}/managed` handler wired (super-admin only)
-- Frontend "Managed App" toggle visible to `super_admin` in RuntimeView
-- Tests: EC-MA-01..02 (epconfig), MA-01..03 (managed flag handler) — S1 total 1133
+End-user auth phases 1, 2, 3, and 5 are all complete. Phase 4 is the only remaining gap.
 
-**Known gap (deferred to Phase 4):** `lifecycle.go:403` uses `resolvedCfg.TenantID` (EP owner's tenant) for run creation. For managed apps this attributes runs to the platform tenant, not the consuming tenant. Runs, quota, and metrics for managed-app usage are incorrectly charged to Default. Fix is tracked in `docs/STATUS.md`.
+**What it enables:** A bank customer presents their own bank-issued JWT (from the bank's Keycloak/Auth0/etc.) directly to a WS/SSE entry point — no the-M account needed. The-M validates the JWT via JWKS, extracts `sub` as `external_user_id`. The bank manages its own users in its own IdP.
 
-Phase 4 (Deploy to Tenant — hard fork) steps in `docs/PLATFORM_ROADMAP.md`.
+**Confirmed complete as of 2026-09-10 (verified in code):**
+- Managed apps (Phase 5 of end-user plan) ✅ — `epConfigQuery` OR-clause on `managed_app_bindings`; consuming tenants can reach platform-owned EPs.
+- Billing attributed to consuming tenant ✅ — `billingTenantID = req.TenantID` in `lifecycle.go` (commit `b660657`).
+- The "known gap" from the previous entry is resolved — `lifecycle.go` uses `req.TenantID` (consuming tenant), not `resolvedCfg.TenantID` (platform tenant).
+
+**Phase 4 scope:**
+1. `db/09x_tenant_runtime_config.sql` — new table: `jwks_uri`, `issuer`, `audience`, `claim_mappings` per tenant
+2. `JWKSAuthenticator` in `internal/auth/` or `internal/epconfig/` — validates RS256/ES256 JWTs from external IdPs at entry points (separate from the existing OIDC SSO dashboard flow)
+3. `AccessModeExternal = "external_jwt"` constant + `Lifecycle.Admit` step
+4. Tenant-admin UI — configure runtime JWKS URI / issuer / audience in tenant settings
+5. Tests using live Keycloak as the bank IdP
+
+**Three end-user flows that work today (without Phase 4):**
+1. Backend-mediated — bank's backend holds an `is_backend=true` token, passes `X-External-User: customer-id` header
+2. the-M `end_user` account — create account per customer, use `/auth/runtime-login` to get JWT, connect to `AccessModeUser` EPs
+3. Managed app — consuming tenant binds to platform-published app; quota + billing charged to consuming tenant
 
 Key reminders:
-- Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.
+- Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — verified applied via migration 089 (2026-09-09) ✅
 - Every Go change → `cd go && go test ./...` (must be zero failures before commit).
 - Phase 1 Redis key patterns documented in `docs/REDIS.md` (Metrics Keys section).
 

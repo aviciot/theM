@@ -247,7 +247,7 @@ Option (b) is smaller. This is a **Phase 5** gap — out of scope for Phases 1�
 | The-M user JWT at WS/SSE entry points | ✅ Phase 2 (`AccessModeUser = "user_jwt"`, lifecycle step 3.5) | **Authorization rule:** any authenticated member of the EP's tenant can invoke any `AccessModeUser` EP. `allowed_principals` (Phase 3) is the scheduled fix for per-EP principal restrictions. | 2 |
 | Bank JWT / JWKS validation | ❌ | `JWKSAuthenticator` not implemented | 4 |
 | Principal type guard on EP | ✅ Phase 3 (`allowed_principals` column + `CheckPrincipal` in `Lifecycle.Admit`) | `internal`/`external`/`both` controls which caller type reaches each EP. Default `'internal'` safe for existing EPs. | 3 |
-| Managed app runtime routing | ❌ | `epConfigQuery` uses `ep.tenant_id` — managed EP not reachable by consuming tenant | 5 |
+| Managed app runtime routing | ✅ Phase 5 (`epConfigQuery` OR-clause on `managed_app_bindings`; billing attributed to consuming tenant) | — | 5 |
 
 ---
 
@@ -386,47 +386,35 @@ CREATE TABLE them.tenant_runtime_config (
 
 ---
 
-### Phase 5 — Managed app runtime routing
+### Phase 5 — Managed app runtime routing ✅ COMPLETE (2026-09-09)
 
-**What it enables:** A consuming tenant can call a managed (platform-owned) app's entry point. Today this is not possible because `epConfigQuery` resolves by `ep.tenant_id` which is the platform tenant's ID, not the consuming tenant's.
+**What it enables:** A consuming tenant can call a managed (platform-owned) app's entry point.
 
-**Root cause:** `managed_app_bindings(app_id, tenant_id)` has no entry_point column. Entry points are always owned by the application's tenant. A consuming tenant has no entry_point rows for a managed app.
-
-**Proposed fix (option B — smaller):** Extend `epconfig/pgx.go:epConfigQuery` to fall back to a managed-app JOIN when the primary tenant lookup yields no row:
-
-```sql
--- After primary lookup fails, try managed app path:
-SELECT ep.*, a.*
-FROM them.entry_points ep
-JOIN them.applications a ON ep.app_id = a.id
-JOIN them.managed_app_bindings mab ON mab.app_id = a.id
-WHERE a.app_type = 'managed'
-  AND mab.tenant_id = $1::uuid     -- consuming tenant's ID
-  AND mab.enabled = true
-  AND a.slug = $2
-  AND ep.slug = $3
-```
-
-The `TenantID` on the returned `EPConfig` must be set to the **consuming tenant's** ID, not the platform's.
-
-**Effort:** ~1 day. Moderate risk — changes the core EP resolution path; needs integration tests against a real managed app binding.
-
-**Out of scope for Phases 1–4.** Managed app routing is a separate concern from end-user authentication.
+**Implementation (verified 2026-09-10):**
+- `epconfig/pgx.go:epConfigQuery` WHERE clause: `ep.tenant_id = $1 OR EXISTS (SELECT 1 FROM managed_app_bindings WHERE app_id = ep.application_id AND tenant_id = $1 AND enabled = true)` — consuming tenant resolves the managed EP in one query.
+- `execution/lifecycle.go`: `billingTenantID = req.TenantID` (the calling/consuming tenant) — quota, RLS, and run attribution all charged to the consuming tenant, not the platform tenant.
+- `admin/managed_apps.go`: platform routes (list/create/get/put-params, platform-level bindings by tenant_id) + tenant routes (list/upsert binding from JWT context).
+- `admin/dal/managed_apps.go`: DAL for managed app catalog and `managed_app_bindings`.
+- Billing attribution commit: `b660657`.
 
 ---
 
 ## Build Order and Dependencies
 
 ```
-Phase 1 (done)  — external_user_id + is_backend + history isolation
-Phase 2         — the-M user JWT at entry points + runtime-only role + internal history isolation
-Phase 3         — allowed_principals guard on EPs
-Phase 4         — Bank JWT / JWKS validation
-Phase 5         — Managed app runtime routing (epConfigQuery JOIN on managed_app_bindings)
+Phase 1 ✅ done  — external_user_id + is_backend + history isolation
+Phase 2 ✅ done  — the-M user JWT at entry points + runtime-only role + internal history isolation
+Phase 3 ✅ done  — allowed_principals guard on EPs
+Phase 4 ❌ next  — Bank JWT / JWKS validation at runtime entry points
+Phase 5 ✅ done  — Managed app runtime routing (epConfigQuery OR-clause on managed_app_bindings)
 ```
 
-Phase 2 and 3 are independent and can be done in either order.
-Phase 4 depends on Phase 3 (needs `allowed_principals = 'external'` to safely restrict JWKS-validated EPs).
-Phase 5 is independent — it touches only `epconfig/pgx.go` and has no dependency on Phases 2–4.
+Phase 4 is the only remaining gap for the end-user identity story. It depends on Phase 3
+(needs `allowed_principals = 'external'` to safely restrict JWKS-validated EPs — Phase 3 done ✅).
 
-Phase 2 also unblocks the "platform-as-product" pattern immediately — direct end users can sign up and use agents with their own account, fully isolated history, and no dashboard access.
+**Three working end-user flows today (without Phase 4):**
+1. **Backend-mediated** — bank's backend holds an `is_backend=true` token, passes `X-External-User: customer-id` header. Scalable; customer never touches the-M directly.
+2. **the-M end_user account** — create an `end_user` account per customer, use `/auth/runtime-login` to get a JWT, connect to `AccessModeUser` EPs directly. History isolated by `user_id`. Not scalable for large customer bases.
+3. **Managed app** — platform publishes a shared app; consuming tenant binds to it; customer calls it via the consuming tenant's token. Quota + billing charged to consuming tenant.
+
+**Phase 4 unlocks:** bank customer presents their own bank-issued JWT (from bank's Keycloak/Auth0) directly to a WS/SSE entry point — no the-M account needed. The-M validates via JWKS, extracts `sub` as `external_user_id`. Bank manages its own users; the-M just enforces the signature.
