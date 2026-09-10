@@ -2739,6 +2739,20 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-108 · Deploy application — `internal/admin/deploy_application_test.go`
+
+**Purpose:** Validates the POST `/applications/{id}/deploy` handler: atomic CTE clone into a target tenant, checklist response, and error paths.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| DA-01 | `TestDeployApplication_Success` | Valid source + target → 200 with `application` + `checklist` (llm_keys_required, mcp_servers) |
+| DA-02 | `TestDeployApplication_MissingTarget` | Empty `target_tenant_id` → 400 bad request |
+| DA-03 | `TestDeployApplication_DBError` | DB CTE returns error → 500 |
+
+**Trigger:** `internal/admin/applications.go` (DeployApplication), `internal/admin/dal/applications.go` (DeployApplication CTE), `internal/admin/router.go`
+
+---
+
 ### S1-107 · JWKS cache + RS256 verify — `internal/jwks/jwks_test.go`
 
 **Purpose:** Validates JWKS fetch/cache, key-rotation re-fetch, and RS256 signature verification used by the Phase 4 external JWT path.
@@ -3365,7 +3379,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-107 | JWKS cache + RS256 verify (JW-1..5): ValidToken, TamperedSig, UnsupportedAlg, KeyRotation, MalformedToken | 5 |
 | S1-108 | ExternalJWTValidator (EXT-1..7): ValidToken, ExpiredToken, WrongIssuer, WrongAudience, SkipAudCheck, MissingSub, AudAsString | 7 |
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
-| **S1 total** | | **1152** |
+| S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
+| **S1 total** | | **1155** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

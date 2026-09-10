@@ -678,6 +678,82 @@ func (h *ApplicationsHandler) PatchManaged(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"is_managed": body.IsManaged})
 }
 
+// deployInput is the request body for POST /admin/applications/{id}/deploy.
+type deployInput struct {
+	TargetTenantID string `json:"target_tenant_id"`
+}
+
+// deployChecklist is the post-deploy checklist returned to the caller.
+type deployChecklist struct {
+	LLMKeysRequired bool     `json:"llm_keys_required"`
+	MCPServers      []string `json:"mcp_servers"`
+}
+
+// DeployApplication handles POST /api/v1/admin/applications/{id}/deploy.
+// Clones the source application into the target tenant. RequireSuperAdmin.
+// Uses the Admin (BYPASSRLS) pool — the CTE inserts into the target tenant's
+// applications table, which has FORCE RLS on them_app; Admin bypasses this.
+// Falls back to legacyDAL (them_app) when pools is nil (unit tests only).
+func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	var body deployInput
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TargetTenantID == "" {
+		writeError(w, http.StatusBadRequest, "invalid JSON or missing target_tenant_id")
+		return
+	}
+
+	var newApp dal.Application
+	var err error
+
+	if h.pools != nil {
+		// Production path: use BYPASSRLS Admin pool so the CTE can INSERT into
+		// the target tenant's applications row regardless of app.tenant_id GUC.
+		tx, txErr := h.pools.BeginAdminTx(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "deploy failed")
+			return
+		}
+		defer tx.Rollback(r.Context()) //nolint:errcheck
+		newApp, err = dal.NewDBFromAdminQuerier(tx).DeployApplication(r.Context(), appID, body.TargetTenantID)
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+	} else {
+		// Unit-test path: pools not wired — use legacyDAL directly.
+		newApp, err = h.legacyDAL.DeployApplication(r.Context(), appID, body.TargetTenantID)
+	}
+
+	if err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusBadRequest, "source application or target tenant not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "deploy failed")
+		return
+	}
+
+	// Build MCP checklist from the source app's credential bindings.
+	mcpNames := []string{}
+	if creds, err := h.legacyDAL.ListAppMCPCredentials(r.Context(), appID); err == nil {
+		for _, c := range creds {
+			mcpNames = append(mcpNames, c.Name)
+		}
+	}
+	llmRequired := len(newApp.AppOrchestrators) > 0
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"application": newApp,
+		"checklist": deployChecklist{
+			LLMKeysRequired: llmRequired,
+			MCPServers:      mcpNames,
+		},
+	})
+}
+
 func (h *ApplicationsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	var input BulkDeleteInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

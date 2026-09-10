@@ -682,6 +682,71 @@ WHERE id             = $1::uuid
 	return d.q.Exec(ctx, q, epID, appID, string(card))
 }
 
+// DeployApplication atomically clones a source application into a target tenant.
+// It copies the applications row and all entry_points rows under new UUIDs.
+// provider_keys and app_mcp_credentials are intentionally NOT copied.
+// Returns the newly created Application (without orchestrators/EPs enrichment).
+func (d *DB) DeployApplication(ctx context.Context, sourceAppID, targetTenantID string) (Application, error) {
+	const cte = `
+WITH src AS (
+    SELECT name, slug, enabled, runtime_config, app_params, active_definition_id
+    FROM them.applications
+    WHERE id = $1::uuid
+),
+new_app AS (
+    INSERT INTO them.applications
+        (id, tenant_id, name, slug, enabled, provider_keys, runtime_config, app_params, active_definition_id, created_at, updated_at)
+    SELECT
+        gen_random_uuid(), $2::uuid, name,
+        slug || '-' || substr(md5(random()::text), 1, 6),
+        enabled, '{}'::jsonb, runtime_config, app_params, active_definition_id,
+        now(), now()
+    FROM src
+    RETURNING id, name, slug, enabled, active_definition_id
+),
+new_eps AS (
+    INSERT INTO them.entry_points
+        (id, application_id, tenant_id, slug, entry_point_type, enabled,
+         memory_enabled, summarize_every_n_calls, memory_raw_fallback_n, history_window,
+         summarizer_provider, summarizer_model, llm_provider, llm_model,
+         allowed_principals, created_at, updated_at)
+    SELECT
+        gen_random_uuid(), (SELECT id FROM new_app), $2::uuid,
+        ep.slug, ep.entry_point_type, ep.enabled,
+        COALESCE(ep.memory_enabled, false),
+        COALESCE(ep.summarize_every_n_calls, 10),
+        COALESCE(ep.memory_raw_fallback_n, 3),
+        COALESCE(ep.history_window, 20),
+        ep.summarizer_provider, ep.summarizer_model,
+        ep.llm_provider, ep.llm_model,
+        COALESCE(ep.allowed_principals, 'internal'),
+        now(), now()
+    FROM them.entry_points ep
+    WHERE ep.application_id = $1::uuid
+    RETURNING id
+)
+SELECT
+    na.id::text,
+    na.name,
+    na.slug,
+    COALESCE(t.slug, ''),
+    na.enabled,
+    d.revision,
+    d.status
+FROM new_app na
+JOIN them.tenants t ON t.id = $2::uuid
+LEFT JOIN them.application_definitions d ON d.id = na.active_definition_id`
+
+	row := d.q.QueryRow(ctx, cte, sourceAppID, targetTenantID)
+	a, err := scanApplication(row)
+	if err != nil {
+		return Application{}, err
+	}
+	a.EntryPoints = d.ListEntryPoints(ctx, a.ID)
+	a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
+	return a, nil
+}
+
 // SetManagedFlag toggles applications.app_type between 'tenant' and 'managed'.
 // This must be called via the Admin (BYPASSRLS) pool — app_type is not
 // writable by them_app (RLS). Passing isManaged=true marks the app as a
