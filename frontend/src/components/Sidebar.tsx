@@ -104,7 +104,7 @@ export default function Sidebar() {
         {/* Brand */}
         <div style={{ padding: '0 24px', marginBottom: '32px', display: 'flex', justifyContent: 'center' }}>
           <a href="/" style={{ display: 'inline-flex', cursor: 'pointer' }}>
-            <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '62px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.2))' }} />
+            <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '81px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.2))' }} />
           </a>
         </div>
 
