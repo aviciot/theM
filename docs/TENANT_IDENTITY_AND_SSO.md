@@ -454,19 +454,20 @@ The actual SSO login requires a real browser because:
 
 ### Test users — all passwords are `admin123`
 
-**realm: bank**
+**realm: bank** — groups: `bank-admins` → `admin` role in the-M
 
-| Username | Email | Notes |
-|---|---|---|
-| `bankadmin` | bankadmin@bank.com | Primary bank tenant admin |
-| `avi2` | avi2@bank.com | Regular bank user |
+| Username | Email | Group | Role in the-M |
+|---|---|---|---|
+| `bankadmin` | bankadmin@bank.com | `bank-admins` | admin |
+| `avi2` | avi2@bank.com | `bank-admins` | admin |
+| `avi3` | avi3@bank.com | _(none)_ | viewer (default) |
 
-**realm: rnd**
+**realm: rnd** — groups: `developers` → developer role, `qa` → viewer role
 
-| Username | Email | Notes |
-|---|---|---|
-| `dev` | dev@rnd.com | Developer user |
-| `qa-user` | qauser@rnd.com | QA user |
+| Username | Email | Group | Role in the-M |
+|---|---|---|---|
+| `dev` | dev@rnd.com | `developers` | developer |
+| `qa-user` | qauser@rnd.com | `qa` | viewer |
 
 **realm: them** (main/default realm)
 
