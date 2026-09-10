@@ -113,12 +113,12 @@ export default function Sidebar() {
         {/* Brand */}
         <div style={{ padding: '0 24px', marginBottom: tenantLogoUrl ? '12px' : '32px', display: 'flex', justifyContent: 'center' }}>
           <a href="/" style={{ display: 'inline-flex', cursor: 'pointer' }}>
-            <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '81px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.2))' }} />
+            <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '65px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.2))' }} />
           </a>
         </div>
         {tenantLogoUrl && (
-          <div style={{ padding: '0 16px 20px', display: 'flex', justifyContent: 'center' }}>
-            <img src={tenantLogoUrl} alt="Tenant logo" style={{ maxHeight: '40px', maxWidth: '140px', objectFit: 'contain' }} />
+          <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-start' }}>
+            <img src={tenantLogoUrl} alt="Tenant logo" style={{ maxHeight: '52px', maxWidth: '182px', objectFit: 'contain' }} />
           </div>
         )}
 
