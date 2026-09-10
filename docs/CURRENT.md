@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-10 (Managed-app billing attribution fix complete)
+# Last updated: 2026-09-10 (Phase 4 Deploy-to-Tenant complete — backend + frontend + tests)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,12 +10,12 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-b660657  feat(billing): attribute managed-app runs to the consuming tenant, not the app owner
-03e76ec  docs: mark Phase 1 Redis Metrics complete, set Phase 2 as next task
-8f23e8a  fix(tenants): fix doubled /api/v1 prefix in logo upload/delete URLs
-737c923  feat(tenants): tenant logo upload, replace, delete
-f420688  feat(metrics): Phase 1 Redis Metrics Foundation — write side
-83a5999  docs: add Platform Roadmap (Redis metrics, observability, managed apps, deploy-to-tenant)
+(pending commit)  feat(phase4): Deploy to Tenant — frontend UI + TEST_INDEX + roadmap update
+1f9f520  feat(admin): deploy-to-tenant — clone app into target tenant via Admin pool
+9f4d701  feat(phase4): fix runtime IDP DB access and add E2E test — 37/37 pass
+712d5fa  docs: sync end-user auth plan and CURRENT.md to verified code state
+a8f67e2  feat(observability): Redis metrics read side — live-today counts on tenant summary
+6e91197  docs: update TEST_INDEX, CURRENT.md, STATUS.md for billing attribution fix
 ```
 
 ---

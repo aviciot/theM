@@ -14,7 +14,7 @@ discussed in the September 2026 architecture session. Update the status column a
 | 1 | Redis metrics — write side | **COMPLETE** `f420688` | — |
 | 2 | Observability — per-app breakdown | **COMPLETE** `ad2ea46` | Phase 1 |
 | 3 | Managed Apps — shared runtime (Option 1) | **COMPLETE** `fd50ec0` | Phase 2 |
-| 4 | Deploy to Tenant — hard fork (Option 2) | **PLANNED** | Phase 3 (optional) |
+| 4 | Deploy to Tenant — hard fork (Option 2) | **COMPLETE** | Phase 3 (optional) |
 
 ---
 
@@ -246,12 +246,14 @@ Implemented as an atomic CTE in a single transaction — no partial state if it 
 
 ### Steps
 
-- [ ] 1. DAL: `DeployApplication(ctx, sourceAppID, targetTenantID)` — atomic CTE clone
-- [ ] 2. Handler + route (RequireSuperAdmin middleware enforced)
-- [ ] 3. Frontend: "Deploy to tenant" button on app card (super-admin only) → tenant picker modal
-- [ ] 4. Post-deploy checklist returned in response body (keys to configure, MCPs to set)
-- [ ] 5. Tests — verify clone is independent (delete source does not affect copy)
-- [ ] 6. Build + deploy
+- [x] 1. DAL: `DeployApplication(ctx, sourceAppID, targetTenantID)` — atomic CTE clone
+- [x] 2. Handler + route (RequireSuperAdmin middleware enforced)
+- [x] 3. Frontend: "Deploy to Tenant" section in RuntimeView (super-admin only) — tenant picker + deploy button + checklist display
+- [x] 4. Post-deploy checklist returned in response body (keys to configure, MCPs to set)
+- [x] 5. Tests DA-01/DA-02/DA-03 — success, missing target, DB error (all pass)
+- [ ] 6. Build + deploy (pending next deploy cycle)
+
+**Completed commit:** (pending — see next commit in this session)
 
 ### Key files
 

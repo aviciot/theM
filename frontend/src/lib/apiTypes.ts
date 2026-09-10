@@ -1011,3 +1011,11 @@ export interface TenantSummary {
   slug: string;
   display_name: string;
 }
+
+export interface DeployResult {
+  application: Application;
+  checklist: {
+    llm_keys_required: boolean;
+    mcp_servers: string[];
+  };
+}

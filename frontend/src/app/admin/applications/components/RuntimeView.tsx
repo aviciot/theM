@@ -92,6 +92,12 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [isManagedSaving, setIsManagedSaving] = useState(false);
   const [managedMsg,      setManagedMsg]      = useState('');
 
+  const [tenants,      setTenants]      = useState<import('@/lib/api').TenantRecord[]>([]);
+  const [deployTarget, setDeployTarget] = useState('');
+  const [deploying,    setDeploying]    = useState(false);
+  const [deployResult, setDeployResult] = useState<import('@/lib/api').DeployResult | null>(null);
+  const [deployError,  setDeployError]  = useState('');
+
   useEffect(() => {
     themApi.getProviderKeys(app.id).then(statuses => {
       setKeyStatuses(statuses);
@@ -121,6 +127,10 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   }, [app.id]);
   useEffect(() => { themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {}); }, [app.id]);
   useEffect(() => { themApi.getSecurityConfig(app.id).then(setSecCfg).catch(() => {}); }, [app.id]);
+  useEffect(() => {
+    if (user?.role !== 'super_admin') return;
+    themApi.listTenants().catch(() => []).then(setTenants);
+  }, [user?.role]);
   useEffect(() => {
     themApi.listAgentBindings(app.id).then(bindings => {
       Promise.all(bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null)))
@@ -237,6 +247,17 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
     try { await themApi.setManagedFlag(app.id, next); setIsManaged(next); setManagedMsg('Saved'); setTimeout(() => setManagedMsg(''), 2500); }
     catch (e: unknown) { setManagedMsg(e instanceof Error ? e.message : 'Failed'); } finally { setIsManagedSaving(false); }
   }, [app.id]);
+
+  async function handleDeploy() {
+    if (!deployTarget) return;
+    setDeploying(true); setDeployError(''); setDeployResult(null);
+    try {
+      const result = await themApi.deployApplication(app.id, deployTarget);
+      setDeployResult(result);
+    } catch (e: unknown) {
+      setDeployError(e instanceof Error ? e.message : 'Deploy failed');
+    } finally { setDeploying(false); }
+  }
 
   async function handleSave() {
     setSaving(true); setError(null);
@@ -473,6 +494,57 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
             <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>
               Managed apps are accessible to consuming tenants that have an active binding. Entry points remain owned by this application's tenant.
             </div>
+          </Section>
+        )}
+
+        {user?.role === 'super_admin' && (
+          <Section title="Deploy to Tenant" icon="rocket_launch" accent="#34d399" defaultOpen={false}
+            subtitle="Clone this app into another tenant's workspace">
+            <div style={{ marginBottom: 10, fontSize: 12, color: C.textMuted }}>
+              Creates a full copy of this application (config, entry points, orchestrators) in the selected tenant.
+              Provider keys and MCP credentials are not copied — the tenant must supply their own.
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+              <select
+                value={deployTarget}
+                onChange={e => { setDeployTarget(e.target.value); setDeployResult(null); setDeployError(''); }}
+                style={{ ...sharedField, flex: 1 }}
+              >
+                <option value="">— select target tenant —</option>
+                {tenants.map(t => (
+                  <option key={t.id} value={t.id}>{t.display_name || t.slug} ({t.slug})</option>
+                ))}
+              </select>
+              <button
+                onClick={handleDeploy}
+                disabled={!deployTarget || deploying}
+                style={{ padding: '8px 20px', borderRadius: 7, border: 'none', cursor: (!deployTarget || deploying) ? 'not-allowed' : 'pointer', background: '#34d399', color: '#0a0f1e', fontSize: 13, fontWeight: 700, opacity: (!deployTarget || deploying) ? 0.5 : 1 }}
+              >
+                {deploying ? 'Deploying…' : 'Deploy'}
+              </button>
+            </div>
+            {deployError && (
+              <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginBottom: 8 }}>{deployError}</div>
+            )}
+            {deployResult && (
+              <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(52,211,153,0.07)', border: '1px solid rgba(52,211,153,0.25)' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#34d399', marginBottom: 6 }}>Deployed successfully</div>
+                <div style={{ fontSize: 12, color: C.text, marginBottom: 4 }}>
+                  App: <span style={{ fontFamily: 'JetBrains Mono, monospace', color: C.textMuted }}>{deployResult.application.slug}</span>
+                  {' '}in tenant <span style={{ fontFamily: 'JetBrains Mono, monospace', color: C.textMuted }}>{deployResult.application.tenant_slug}</span>
+                </div>
+                {deployResult.checklist.llm_keys_required && (
+                  <div style={{ fontSize: 12, color: '#fbbf24', marginTop: 6 }}>
+                    LLM provider keys required — tenant must configure keys before this app can run.
+                  </div>
+                )}
+                {deployResult.checklist.mcp_servers.length > 0 && (
+                  <div style={{ fontSize: 12, color: '#fbbf24', marginTop: 4 }}>
+                    MCP servers used: {deployResult.checklist.mcp_servers.join(', ')} — re-bind or re-credential in the tenant.
+                  </div>
+                )}
+              </div>
+            )}
           </Section>
         )}
       </div>

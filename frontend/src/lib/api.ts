@@ -100,6 +100,7 @@ export type {
   OIDCDebugRecord,
   RuntimeIDPConfig,
   RuntimeIDPInput,
+  DeployResult,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -170,6 +171,7 @@ import type {
   OIDCDebugRecord,
   RuntimeIDPConfig,
   RuntimeIDPInput,
+  DeployResult,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -432,6 +434,7 @@ export const themApi = {
   setAppParam: (appId: string, name: string, value: string, type: string) => api.put<{ name: string; updated: boolean }>(`/admin/applications/${appId}/app-params/${name}`, { value, type }),
   deleteAppParam: (appId: string, name: string) => api.delete<{ name: string; deleted: boolean }>(`/admin/applications/${appId}/app-params/${name}`),
   setManagedFlag: (appId: string, isManaged: boolean) => api.patch<{ is_managed: boolean }>(`/admin/applications/${appId}/managed`, { is_managed: isManaged }),
+  deployApplication: (appId: string, targetTenantId: string): Promise<DeployResult> => api.post<DeployResult>(`/admin/applications/${appId}/deploy`, { target_tenant_id: targetTenantId }),
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
   listEntryPoints: (appId: string) => api.get<EntryPoint[]>(`/admin/applications/${appId}/entry-points`),
