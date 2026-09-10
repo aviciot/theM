@@ -52,8 +52,8 @@ func obsSummaryRows(data [][]any) *fakeRows {
 func TestObservability_Summary_OK(t *testing.T) {
 	rows := obsSummaryRows([][]any{
 		// tenant_id, display_name, run_count_30d, total_llm_tokens_30d,
-		// max_agents (int or nil), max_apps (int or nil), agent_count, app_count
-		{"tid-1", "Acme Corp", int64(42), int64(100_000), 50, nil, int64(3), int64(5)},
+		// max_agents (int or nil), max_apps (int or nil), agent_count, app_count, app_ids
+		{"tid-1", "Acme Corp", int64(42), int64(100_000), 50, nil, int64(3), int64(5), []string{}},
 	})
 	q := &obsQuerier{rows: rows}
 
@@ -230,11 +230,40 @@ func TestObservability_AppBreakdown_MultiApp(t *testing.T) {
 	assert.InDelta(t, 20.0, body[1]["run_count_30d"], 0.01)
 }
 
+// OBS-9: Summary response includes live-today fields (is_live=false when no Redis).
+func TestObservability_Summary_LiveFieldsPresent(t *testing.T) {
+	rows := obsSummaryRows([][]any{
+		{"tid-1", "Acme", int64(5), int64(1000), nil, nil, int64(1), int64(1), []string{"app-x"}},
+	})
+	q := &obsQuerier{rows: rows}
+	h := admin.NewObservabilityHandlerForTest(q)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/observability/summary", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	// Live-today fields must be present and zero/false when Redis is not wired.
+	assert.Equal(t, false, body[0]["is_live"])
+	assert.InDelta(t, 0.0, body[0]["runs_today"], 0.01)
+	assert.InDelta(t, 0.0, body[0]["active_users_today"], 0.01)
+	// AppIDs must NOT appear in JSON output.
+	_, hasAppIDs := body[0]["app_ids"]
+	// app_ids carries json:"-" so it must be absent from the wire format.
+	// NOTE: json:"-" omits the field entirely — verify it is not present.
+	assert.False(t, hasAppIDs, "app_ids must not appear in JSON output")
+}
+
 // OBS-4: Multiple tenants are all returned in order.
 func TestObservability_Summary_MultiTenant(t *testing.T) {
 	rows := obsSummaryRows([][]any{
-		{"tid-1", "Alpha", int64(10), int64(5000), 10, nil, int64(2), int64(1)},
-		{"tid-2", "Beta", int64(0), int64(0), nil, 20, int64(0), int64(3)},
+		{"tid-1", "Alpha", int64(10), int64(5000), 10, nil, int64(2), int64(1), []string{"app-a"}},
+		{"tid-2", "Beta", int64(0), int64(0), nil, 20, int64(0), int64(3), []string{}},
 	})
 	q := &obsQuerier{rows: rows}
 

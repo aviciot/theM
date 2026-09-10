@@ -928,6 +928,9 @@ export interface TenantObservabilitySummary {
   max_apps: number | null;
   agent_count: number;
   app_count: number;
+  runs_today: number;
+  active_users_today: number;
+  is_live: boolean;
 }
 
 export interface AppObservabilitySummary {

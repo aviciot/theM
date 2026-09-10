@@ -29,7 +29,7 @@ type TenantObservabilitySummary struct {
 	TenantID    string `json:"tenant_id"`
 	DisplayName string `json:"display_name"`
 	// Last-30-day aggregates.
-	RunCount30d      int64 `json:"run_count_30d"`
+	RunCount30d       int64 `json:"run_count_30d"`
 	TotalLLMTokens30d int64 `json:"total_llm_tokens_30d"`
 	// Current quota limits (nil = unlimited).
 	MaxAgents *int `json:"max_agents"`
@@ -37,10 +37,20 @@ type TenantObservabilitySummary struct {
 	// Current resource counts.
 	AgentCount int64 `json:"agent_count"`
 	AppCount   int64 `json:"app_count"`
+	// Today live numbers from Redis (zero if not yet populated).
+	RunsToday        int64 `json:"runs_today"`
+	ActiveUsersToday int64 `json:"active_users_today"`
+	// IsLive is true when today's numbers came from Redis.
+	IsLive bool `json:"is_live"`
+	// AppIDs holds this tenant's application UUIDs, populated by ListObservabilitySummary
+	// so the handler can query per-app Redis keys without a second DB round-trip.
+	// Not exposed in JSON.
+	AppIDs []string `json:"-"`
 }
 
 // ListObservabilitySummary returns one row per tenant with aggregate run/token
-// usage (last 30 days) and current quota + resource counts.
+// usage (last 30 days), current quota + resource counts, and the list of
+// application IDs (used by the handler to fetch per-app Redis metrics).
 // The querier MUST use the Admin (BYPASSRLS) pool — this is intentional; it is
 // a super-admin cross-tenant view and must bypass RLS policies.
 func ListObservabilitySummary(ctx context.Context, q Querier) ([]TenantObservabilitySummary, error) {
@@ -53,7 +63,8 @@ func ListObservabilitySummary(ctx context.Context, q Querier) ([]TenantObservabi
 			q.max_agents,
 			q.max_apps,
 			COALESCE(ac.agent_count, 0),
-			COALESCE(apc.app_count, 0)
+			COALESCE(apc.app_count, 0),
+			COALESCE(apc.app_ids, '{}')
 		FROM them.tenants t
 		LEFT JOIN (
 			SELECT
@@ -71,7 +82,8 @@ func ListObservabilitySummary(ctx context.Context, q Querier) ([]TenantObservabi
 			GROUP BY tenant_id
 		) ac ON ac.tenant_id = t.id
 		LEFT JOIN (
-			SELECT tenant_id, COUNT(*) AS app_count
+			SELECT tenant_id, COUNT(*) AS app_count,
+			       ARRAY_AGG(id::text) AS app_ids
 			FROM them.applications
 			GROUP BY tenant_id
 		) apc ON apc.tenant_id = t.id
@@ -91,6 +103,7 @@ func ListObservabilitySummary(ctx context.Context, q Querier) ([]TenantObservabi
 			&s.RunCount30d, &s.TotalLLMTokens30d,
 			&s.MaxAgents, &s.MaxApps,
 			&s.AgentCount, &s.AppCount,
+			&s.AppIDs,
 		); err != nil {
 			return nil, err
 		}

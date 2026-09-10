@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi } from '@/lib/api';
@@ -29,7 +29,7 @@ function quotaColor(used: number, max: number | null): string {
 
 // ── KPI tile ──────────────────────────────────────────────────────────────────
 
-function KpiTile({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+function KpiTile({ label, value, sub }: { label: ReactNode; value: string | number; sub?: string }) {
   return (
     <div style={{ background: 'var(--tm-card)', border: '1px solid var(--tm-border)', borderRadius: 10, padding: '16px 20px', minWidth: 130 }}>
       <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{label}</div>
@@ -66,7 +66,7 @@ function AppBreakdownTable({ apps, loading, error }: { apps: AppObservabilitySum
 
   return (
     <tr>
-      <td colSpan={5} style={{ padding: 0 }}>
+      <td colSpan={6} style={{ padding: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: 'var(--tm-bg)' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--tm-border)' }}>
@@ -176,6 +176,9 @@ function TenantRow({ r }: { r: TenantObservabilitySummary }) {
         </td>
         <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
           {fmtNum(r.run_count_30d)}
+          {r.is_live && r.runs_today > 0 && (
+            <div style={{ fontSize: 10, color: '#22c55e' }}>+{fmtNum(r.runs_today)} today</div>
+          )}
         </td>
         <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
           {fmtNum(r.total_llm_tokens_30d)}
@@ -185,6 +188,9 @@ function TenantRow({ r }: { r: TenantObservabilitySummary }) {
         </td>
         <td style={{ padding: '12px 16px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: quotaColor(r.app_count, r.max_apps) }}>
           {quota(r.app_count, r.max_apps)}
+        </td>
+        <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+          {r.is_live ? fmtNum(r.active_users_today) : '—'}
         </td>
       </tr>
       {expanded && (
@@ -221,6 +227,9 @@ export default function ObservabilityPage() {
 
   const totalRuns = rows.reduce((s, r) => s + r.run_count_30d, 0);
   const totalTokens = rows.reduce((s, r) => s + r.total_llm_tokens_30d, 0);
+  const totalRunsToday = rows.reduce((s, r) => s + r.runs_today, 0);
+  const totalUsersToday = rows.reduce((s, r) => s + r.active_users_today, 0);
+  const anyLive = rows.some(r => r.is_live);
 
   return (
     <AuthGuard>
@@ -244,6 +253,12 @@ export default function ObservabilityPage() {
               <KpiTile label="Tenants" value={rows.length} />
               <KpiTile label="Runs (30d)" value={fmtNum(totalRuns)} sub="across all tenants" />
               <KpiTile label="LLM tokens (30d)" value={fmtNum(totalTokens)} sub="across all tenants" />
+              {anyLive && (
+                <>
+                  <KpiTile label={<>Runs today{<LiveBadge />}</>} value={fmtNum(totalRunsToday)} sub="across all tenants" />
+                  <KpiTile label={<>Active users today{<LiveBadge />}</>} value={fmtNum(totalUsersToday)} sub="across all tenants" />
+                </>
+              )}
             </div>
           )}
 
@@ -265,6 +280,9 @@ export default function ObservabilityPage() {
                         <th style={{ textAlign: 'right', padding: '10px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>LLM Tokens (30d)</th>
                         <th style={{ textAlign: 'right', padding: '10px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>Agents</th>
                         <th style={{ textAlign: 'right', padding: '10px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>Apps</th>
+                        <th style={{ textAlign: 'right', padding: '10px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>
+                          Users today{anyLive && <LiveBadge />}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>

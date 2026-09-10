@@ -46,12 +46,34 @@ func (h *ObservabilityHandler) Routes(r interface {
 }
 
 // Summary handles GET /api/v1/admin/observability/summary.
+// Returns 30d DB aggregates merged with live-today Redis data per tenant.
 func (h *ObservabilityHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	rows, err := dal.ListObservabilitySummary(r.Context(), h.adminDB)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+
+	if h.redis != nil {
+		today := time.Now().UTC().Format("2006-01-02")
+		for i := range rows {
+			tid := rows[i].TenantID
+			// Active users today — one HLL key per tenant-day.
+			users := h.pfcountKey(r.Context(), fmt.Sprintf("them:metrics:%s:users:%s", tid, today))
+			// Runs today — sum across all apps for this tenant.
+			var runsToday int64
+			for _, appID := range rows[i].AppIDs {
+				fields := h.hgetallKey(r.Context(), fmt.Sprintf("them:metrics:%s:app:%s:%s", tid, appID, today))
+				runsToday += parseInt64(fields["runs"])
+			}
+			if users > 0 || runsToday > 0 {
+				rows[i].ActiveUsersToday = users
+				rows[i].RunsToday = runsToday
+				rows[i].IsLive = true
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rows)
 }
