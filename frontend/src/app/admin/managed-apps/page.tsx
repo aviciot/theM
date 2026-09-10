@@ -192,9 +192,9 @@ function AssignmentPanel({ app, detail, tenants, bindingMap, onBindingChange }: 
                   : <span style={{ fontSize: 11, color: MUTED }}>—</span>}
               </div>
 
-              {/* Actions */}
+              {/* Actions — only show Configure if the app has params */}
               <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                {detail && (
+                {detail && detail.params.length > 0 && (
                   <button
                     onClick={() => setConfigFor({ tenant })}
                     style={{ padding: '5px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--tm-card-text-muted)', cursor: 'pointer' }}
