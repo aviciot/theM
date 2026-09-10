@@ -17,6 +17,7 @@ SELECT
     COALESCE(a.slug, ''),
     COALESCE(t.slug, ''),
     a.enabled,
+    COALESCE(a.app_type, 'tenant') = 'managed',
     d.revision,
     d.status
 FROM them.applications a
@@ -27,7 +28,7 @@ WHERE a.tenant_id = $1::uuid`
 // scanApplication scans one application row from listAppQuery.
 func scanApplication(rows SingleRowScanner) (Application, error) {
 	var a Application
-	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.IsManaged, &a.ActiveRevision, &a.ActiveStatus); err != nil {
 		return a, err
 	}
 	return a, nil

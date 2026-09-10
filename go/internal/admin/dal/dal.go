@@ -317,6 +317,7 @@ type Application struct {
 	Slug             string                   `json:"slug"`
 	TenantSlug       string                   `json:"tenant_slug,omitempty"`
 	Enabled          bool                     `json:"enabled"`
+	IsManaged        bool                     `json:"is_managed"`
 	ActiveRevision   *int                     `json:"active_revision,omitempty"`
 	ActiveStatus     *string                  `json:"active_status,omitempty"`
 	EntryPoints      []EntryPoint             `json:"entry_points"`

@@ -40,11 +40,11 @@ func (d *deployDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.Si
 	return &fakeRow{}
 }
 
-// deployAppFakeRow returns a plausible application scan: id, name, slug, tenant_slug, enabled, revision, status.
+// deployAppFakeRow returns a plausible application scan: id, name, slug, tenant_slug, enabled, is_managed, revision, status.
 type deployAppFakeRow struct{}
 
 func (r *deployAppFakeRow) Scan(dest ...any) error {
-	vals := []any{"new-app-uuid", "Test App", "test-app-abc123", "bank", true, nil, nil}
+	vals := []any{"new-app-uuid", "Test App", "test-app-abc123", "bank", true, false, nil, nil}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
