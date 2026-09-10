@@ -538,16 +538,17 @@ Test SSO login: Admin → Tenants → bank or rnd → SSO tab → "Test SSO Logi
 
 ### Next recommended task
 
-**Phase 2 — Observability: Per-App Breakdown** (see `docs/PLATFORM_ROADMAP.md`)
+**Phase 3 — Managed Apps** (see `docs/PLATFORM_ROADMAP.md`)
 
-Phase 1 (Redis Metrics write side) is complete as of commit `f420688`.
+Phase 2 (Per-App Observability Breakdown) is complete as of commit `ad2ea46`.
 
-Phase 2 adds:
-- DAL: `ListAppObservabilitySummary(ctx, tenantID)` — queries `them.runs` + `them.run_usage` grouped by application_id
-- Handler: `GET /api/v1/admin/observability/tenant/{id}/apps` — DB 30d + Redis today (HGETALL), merged
-- Frontend: expand tenant row on `/admin/observability` to show per-app table with live badge
+Phase 3 adds:
+- `epConfigQuery` JOIN `managed_app_bindings` so a consuming tenant's token can reach Default-owned entry points
+- `is_managed` toggle on applications + CRUD for `managed_app_bindings`
+- Runs attributed to consuming tenant (quota + metrics correctly charged)
+- Frontend: "Make managed" toggle + tenant assignment panel
 
-See `docs/PLATFORM_ROADMAP.md` Phase 2 section for the full step list.
+See `docs/PLATFORM_ROADMAP.md` Phase 3 section for the full step list.
 
 Key reminders:
 - Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.

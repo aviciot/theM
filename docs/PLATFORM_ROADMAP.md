@@ -12,7 +12,7 @@ discussed in the September 2026 architecture session. Update the status column a
 | Phase | Goal | Status | Requires |
 |---|---|---|---|
 | 1 | Redis metrics — write side | **COMPLETE** `f420688` | — |
-| 2 | Observability — per-app breakdown | **PLANNED** | Phase 1 |
+| 2 | Observability — per-app breakdown | **COMPLETE** `ad2ea46` | Phase 1 |
 | 3 | Managed Apps — shared runtime (Option 1) | **PLANNED** | Phase 2 |
 | 4 | Deploy to Tenant — hard fork (Option 2) | **PLANNED** | Phase 3 (optional) |
 
