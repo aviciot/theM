@@ -2649,9 +2649,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
-### S1-101 · Observability summary — `internal/admin/observability_test.go`
+### S1-101 · Observability summary + per-app breakdown — `internal/admin/observability_test.go`
 
-**Purpose:** `GET /admin/observability/summary` returns a cross-tenant aggregate JSON array using the Admin (BYPASSRLS) pool; DB errors return 500.
+**Purpose:** `GET /admin/observability/summary` returns a cross-tenant aggregate JSON array using the Admin (BYPASSRLS) pool; `GET /admin/observability/tenant/{id}/apps` returns per-app 30d DB stats merged with Redis live-today numbers; DB errors return 500.
 
 | Test ID | Test | What it proves |
 |---|---|---|
@@ -2659,6 +2659,10 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | OBS-2 | `TestObservability_Summary_Empty` | No tenants → 200 with `[]` |
 | OBS-3 | `TestObservability_Summary_DBError` | DB error → 500 |
 | OBS-4 | `TestObservability_Summary_MultiTenant` | Two tenants returned in order with correct per-tenant quota fields |
+| OBS-5 | `TestObservability_AppBreakdown_OK` | Single app row: application_id, app_name, 30d counters → 200; is_live=false when no Redis |
+| OBS-6 | `TestObservability_AppBreakdown_Empty` | No apps → 200 with `[]` |
+| OBS-7 | `TestObservability_AppBreakdown_DBError` | DB error → 500 |
+| OBS-8 | `TestObservability_AppBreakdown_MultiApp` | Two apps returned in order with correct 30d fields |
 
 **Trigger:** any change to `internal/admin/observability.go`, `internal/admin/dal/observability.go`
 
@@ -3282,12 +3286,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
 | S1-100 | Audit Logs handler (AL-01..03, AL-05b..11): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges, AgentInput_AuthTokenRedacted, MCPServerPatch_ProbeTokenRedacted, TenantPatch_ClientSecretRedacted | 10 |
-| S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
+| S1-101 | Observability summary + per-app breakdown (OBS-1..8): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant, AppBreakdown_OK, AppBreakdown_Empty, AppBreakdown_DBError, AppBreakdown_MultiApp | 8 |
 | S1-102 | Audit redaction production-path (AR-01..03): AgentUpdate_AuditNoRawAuthToken, MCPServerUpdate_AuditNoRawProbeToken, TenantPatch_AuditNoRawClientSecret | 3 |
 | S1-103 | Tenant self-service handler (TSS-01..08): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found, GetMyMembers_Empty, GetMyMembers_Populated | 8 |
 | S1-104 | Redis metrics recorder (MR-01..07): RecordRun_TenantAndApp, RecordRun_NoApp, RecordTokens_TenantAndApp, RecordMCPCall_TenantAndApp, RecordUser_PFAddAndExpiry, NoopRecorder_AllNil, RecordRun_ExpireAtFuture | 7 |
 | S1-105 | runrecorder metrics integration (MRR-01..03): WithMetricsRecorder_CreateRunFiresMetric, RecordTokensMetric_FiresMetric, RecordTokensMetric_NoopWithoutRecorder | 3 |
-| **S1 total** | | **1124** |
+| **S1 total** | | **1128** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

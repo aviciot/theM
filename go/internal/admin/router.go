@@ -212,7 +212,7 @@ func BuildRouter(
 				systemAgents.Routes(platformGlobal)
 				tenants.Routes(platformGlobal)
 				if pools != nil {
-					NewObservabilityHandler(pools).Routes(platformGlobal)
+					NewObservabilityHandler(pools, redis).Routes(platformGlobal)
 				}
 				managedApps.PlatformRoutes(platformGlobal)
 				if sessionReader != nil {

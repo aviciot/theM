@@ -89,6 +89,7 @@ export type {
   ManagedAppBindingInput,
   AuditLog,
   TenantObservabilitySummary,
+  AppObservabilitySummary,
   ManagedUser,
   UserCreateInput,
   UserUpdateInput,
@@ -156,6 +157,7 @@ import type {
   ManagedAppBindingInput,
   AuditLog,
   TenantObservabilitySummary,
+  AppObservabilitySummary,
   ManagedUser,
   UserCreateInput,
   UserUpdateInput,
@@ -638,6 +640,8 @@ export const themApi = {
   // Observability
   getObservabilitySummary: () =>
     api.get<TenantObservabilitySummary[]>('/admin/observability/summary'),
+  getAppObservabilityBreakdown: (tenantId: string) =>
+    api.get<AppObservabilitySummary[]>(`/admin/observability/tenant/${tenantId}/apps`),
 
   // User management (Step 32 — routes to them-auth-go via /api/auth-admin)
   listUsers: () => authAdmin.get<ManagedUser[]>('users'),

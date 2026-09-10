@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi } from '@/lib/api';
-import type { TenantObservabilitySummary } from '@/lib/api';
+import type { TenantObservabilitySummary, AppObservabilitySummary } from '@/lib/api';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -36,6 +36,163 @@ function KpiTile({ label, value, sub }: { label: string; value: string | number;
       <div style={{ fontSize: 26, fontWeight: 700, color: 'var(--tm-text)', lineHeight: 1 }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', marginTop: 4 }}>{sub}</div>}
     </div>
+  );
+}
+
+// ── Live badge ────────────────────────────────────────────────────────────────
+
+function LiveBadge() {
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, color: '#22c55e', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 5px', marginLeft: 5, verticalAlign: 'middle', letterSpacing: '0.04em' }}>
+      LIVE
+    </span>
+  );
+}
+
+// ── Per-app breakdown row ─────────────────────────────────────────────────────
+
+function AppBreakdownTable({ apps, loading, error }: { apps: AppObservabilitySummary[]; loading: boolean; error: string }) {
+  if (loading) {
+    return <div style={{ padding: '12px 16px 12px 40px', color: 'var(--tm-text-muted)', fontSize: 13 }}>Loading app breakdown…</div>;
+  }
+  if (error) {
+    return <div style={{ padding: '12px 16px 12px 40px', color: '#f87171', fontSize: 13 }}>{error}</div>;
+  }
+  if (apps.length === 0) {
+    return <div style={{ padding: '12px 16px 12px 40px', color: 'var(--tm-text-muted)', fontSize: 13 }}>No applications.</div>;
+  }
+
+  const isLive = apps.some(a => a.is_live);
+
+  return (
+    <tr>
+      <td colSpan={5} style={{ padding: 0 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: 'var(--tm-bg)' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--tm-border)' }}>
+              <th style={{ textAlign: 'left', padding: '8px 16px 8px 40px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>App</th>
+              <th style={{ textAlign: 'right', padding: '8px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>Runs (30d)</th>
+              <th style={{ textAlign: 'right', padding: '8px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>Tokens in (30d)</th>
+              <th style={{ textAlign: 'right', padding: '8px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>Tokens out (30d)</th>
+              <th style={{ textAlign: 'right', padding: '8px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>
+                MCP (30d)
+              </th>
+              <th style={{ textAlign: 'right', padding: '8px 16px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>
+                Users today{isLive && <LiveBadge />}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {apps.map((a) => (
+              <tr key={a.application_id} style={{ borderTop: '1px solid var(--tm-border)' }}>
+                <td style={{ padding: '8px 16px 8px 40px' }}>
+                  <div style={{ fontWeight: 500, color: 'var(--tm-text)' }}>{a.app_name}</div>
+                  <div style={{ fontSize: 10, color: 'var(--tm-text-muted)', fontFamily: 'monospace', marginTop: 1 }}>{a.application_id}</div>
+                </td>
+                <td style={{ padding: '8px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtNum(a.run_count_30d)}
+                  {a.is_live && a.runs_today > 0 && (
+                    <div style={{ fontSize: 10, color: '#22c55e' }}>+{fmtNum(a.runs_today)} today</div>
+                  )}
+                </td>
+                <td style={{ padding: '8px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtNum(a.tokens_in_30d)}
+                  {a.is_live && a.tokens_in_today > 0 && (
+                    <div style={{ fontSize: 10, color: '#22c55e' }}>+{fmtNum(a.tokens_in_today)} today</div>
+                  )}
+                </td>
+                <td style={{ padding: '8px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtNum(a.tokens_out_30d)}
+                  {a.is_live && a.tokens_out_today > 0 && (
+                    <div style={{ fontSize: 10, color: '#22c55e' }}>+{fmtNum(a.tokens_out_today)} today</div>
+                  )}
+                </td>
+                <td style={{ padding: '8px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtNum(a.mcp_calls_30d)}
+                  {a.is_live && a.mcp_calls_today > 0 && (
+                    <div style={{ fontSize: 10, color: '#22c55e' }}>+{fmtNum(a.mcp_calls_today)} today</div>
+                  )}
+                </td>
+                <td style={{ padding: '8px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+                  {a.is_live ? fmtNum(a.active_users_today) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+  );
+}
+
+// ── Expandable tenant row ─────────────────────────────────────────────────────
+
+function TenantRow({ r }: { r: TenantObservabilitySummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const [apps, setApps] = useState<AppObservabilitySummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const expand = useCallback(async () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
+    if (apps.length > 0) return; // already loaded
+    setLoading(true);
+    setError('');
+    try {
+      const data = await themApi.getAppObservabilityBreakdown(r.tenant_id);
+      setApps(data ?? []);
+    } catch (e) {
+      setError((e as Error).message ?? 'Failed to load app breakdown');
+    } finally {
+      setLoading(false);
+    }
+  }, [expanded, apps.length, r.tenant_id]);
+
+  return (
+    <>
+      <tr
+        key={r.tenant_id}
+        style={{ borderTop: '1px solid var(--tm-border)', cursor: 'pointer' }}
+        onClick={expand}
+        title="Click to expand app breakdown"
+      >
+        <td style={{ padding: '12px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 14, color: 'var(--tm-text-muted)', transition: 'transform 0.15s', transform: expanded ? 'rotate(90deg)' : 'none' }}
+            >
+              chevron_right
+            </span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--tm-text)' }}>{r.display_name}</div>
+              <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', marginTop: 2, fontFamily: 'monospace' }}>{r.tenant_id}</div>
+            </div>
+          </div>
+        </td>
+        <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtNum(r.run_count_30d)}
+        </td>
+        <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtNum(r.total_llm_tokens_30d)}
+        </td>
+        <td style={{ padding: '12px 16px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: quotaColor(r.agent_count, r.max_agents) }}>
+          {quota(r.agent_count, r.max_agents)}
+        </td>
+        <td style={{ padding: '12px 16px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: quotaColor(r.app_count, r.max_apps) }}>
+          {quota(r.app_count, r.max_apps)}
+        </td>
+      </tr>
+      {expanded && (
+        loading || error || apps.length >= 0
+          ? <AppBreakdownTable apps={apps} loading={loading} error={error} />
+          : null
+      )}
+    </>
   );
 }
 
@@ -74,7 +231,7 @@ export default function ObservabilityPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--tm-text)' }}>Observability</h2>
-              <div style={{ fontSize: 13, color: 'var(--tm-text-muted)', marginTop: 2 }}>Per-tenant usage and quota summary — last 30 days</div>
+              <div style={{ fontSize: 13, color: 'var(--tm-text-muted)', marginTop: 2 }}>Per-tenant usage and quota summary — last 30 days. Click a row to see per-app breakdown.</div>
             </div>
             <button onClick={load} title="Refresh" style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid var(--tm-border)', background: 'var(--tm-card)', color: 'var(--tm-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
@@ -112,24 +269,7 @@ export default function ObservabilityPage() {
                     </thead>
                     <tbody>
                       {rows.map((r) => (
-                        <tr key={r.tenant_id} style={{ borderTop: '1px solid var(--tm-border)' }}>
-                          <td style={{ padding: '12px 16px' }}>
-                            <div style={{ fontWeight: 600, color: 'var(--tm-text)' }}>{r.display_name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', marginTop: 2, fontFamily: 'monospace' }}>{r.tenant_id}</div>
-                          </td>
-                          <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
-                            {fmtNum(r.run_count_30d)}
-                          </td>
-                          <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--tm-text)', fontVariantNumeric: 'tabular-nums' }}>
-                            {fmtNum(r.total_llm_tokens_30d)}
-                          </td>
-                          <td style={{ padding: '12px 16px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: quotaColor(r.agent_count, r.max_agents) }}>
-                            {quota(r.agent_count, r.max_agents)}
-                          </td>
-                          <td style={{ padding: '12px 16px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: quotaColor(r.app_count, r.max_apps) }}>
-                            {quota(r.app_count, r.max_apps)}
-                          </td>
-                        </tr>
+                        <TenantRow key={r.tenant_id} r={r} />
                       ))}
                     </tbody>
                   </table>

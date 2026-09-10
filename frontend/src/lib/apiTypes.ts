@@ -929,6 +929,21 @@ export interface TenantObservabilitySummary {
   app_count: number;
 }
 
+export interface AppObservabilitySummary {
+  application_id: string;
+  app_name: string;
+  run_count_30d: number;
+  tokens_in_30d: number;
+  tokens_out_30d: number;
+  mcp_calls_30d: number;
+  runs_today: number;
+  tokens_in_today: number;
+  tokens_out_today: number;
+  mcp_calls_today: number;
+  active_users_today: number;
+  is_live: boolean;
+}
+
 export interface AuditLog {
   id: number;
   user_id?: number;
