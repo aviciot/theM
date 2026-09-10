@@ -20,6 +20,7 @@ import (
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/jwks"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/appliveness"
@@ -267,6 +268,17 @@ func run() error {
 		userJWTSecret = []byte(cfg.SecretKey)
 	}
 	execLifecycle.WithJWTSecret(userJWTSecret)
+
+	// ── 16a-ext. Wire external JWT validator for AccessModeExternal EPs ──────
+	// Allows bank-issued RS256 JWTs to be validated via JWKS at runtime entry
+	// points configured with access_mode="external_jwt".
+	// Uses the Admin pool (BYPASSRLS) to read tenant_runtime_config rows.
+	extJWKSCache := jwks.NewDefaultCache()
+	extJWTValidator := auth.NewExternalJWTValidator(extJWKSCache)
+	extIDPDB := dal.NewDB(admin.NewPgxQuerier(rlsPools.Admin))
+	extIDPLoader := admin.NewRuntimeIDPLoader(extIDPDB)
+	execLifecycle.WithExternalJWT(extIDPLoader, extJWTValidator)
+	log.Info("external JWT validator wired (RS256/JWKS for external_jwt EPs)")
 
 	// ── 16a. Wire quota enforcer ─────────────────────────────────────────────
 	// Reuses the same RateLimitClient already constructed above for per-token RL.

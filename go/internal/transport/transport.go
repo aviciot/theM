@@ -57,6 +57,21 @@ type TemporalClientExecutor interface {
 	ExecuteWorkflow(ctx context.Context, options temporalclient.StartWorkflowOptions, workflow interface{}, args ...interface{}) (temporalclient.WorkflowRun, error)
 }
 
+// RuntimeIDPConfig holds the per-tenant external JWT validation settings.
+// Populated from them.tenant_runtime_config by RuntimeIDPLoader.
+type RuntimeIDPConfig struct {
+	JWKSUri  string
+	Issuer   string
+	Audience string // empty = skip aud validation
+	SubClaim string // default "sub"
+}
+
+// RuntimeIDPLoader loads per-tenant external JWT configuration.
+// Implemented by admin/dal.DB via the admin DAL.
+type RuntimeIDPLoader interface {
+	GetTenantRuntimeIDP(ctx context.Context, tenantID string) (*RuntimeIDPConfig, error)
+}
+
 // TokenHash returns the lowercase hex SHA-256 of rawToken, matching the hash
 // stored in them.access_tokens by the Python platform (same as auth.tokenHash).
 // This function is defined here (not in ws or sse) to ensure both packages use

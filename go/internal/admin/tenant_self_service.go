@@ -39,6 +39,9 @@ func (h *TenantSelfServiceHandler) Routes(r chi.Router) {
 	r.Put("/tenant/group-mappings", h.UpsertMyGroupMapping)
 	r.Delete("/tenant/group-mappings/{mapping_id}", h.DeleteMyGroupMapping)
 	r.Get("/tenant/oidc-debug", h.GetOIDCDebug)
+	r.Get("/tenant/runtime-idp", h.GetRuntimeIDP)
+	r.Put("/tenant/runtime-idp", h.PutRuntimeIDP)
+	r.Delete("/tenant/runtime-idp", h.DeleteRuntimeIDP)
 }
 
 // GetSettings handles GET /api/v1/tenant/settings.

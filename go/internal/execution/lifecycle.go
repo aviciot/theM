@@ -75,9 +75,11 @@ type Lifecycle struct {
 	sessions  transport.SessionStore
 	recorder  RunCreator
 	temporal  transport.TemporalClientExecutor
-	quota     QuotaEnforcer // optional; nil = no quota enforcement
-	jwtSecret []byte        // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
-	logger    *slog.Logger
+	quota            QuotaEnforcer // optional; nil = no quota enforcement
+	jwtSecret        []byte        // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
+	ridpLoader       transport.RuntimeIDPLoader    // optional; loads per-tenant external JWT config
+	extJWTValidator  *auth.ExternalJWTValidator    // optional; validates external RS256 JWTs
+	logger           *slog.Logger
 }
 
 // NewLifecycle constructs a production Lifecycle. epLoader, gateStore, sessions,
@@ -121,6 +123,15 @@ func (lc *Lifecycle) WithQuotaEnforcer(qe QuotaEnforcer) *Lifecycle {
 // Without it, AccessModeUser EPs reject all requests with 401.
 func (lc *Lifecycle) WithJWTSecret(secret []byte) *Lifecycle {
 	lc.jwtSecret = secret
+	return lc
+}
+
+// WithExternalJWT attaches the external JWT validator and runtime IDP config loader
+// needed for AccessModeExternal entry points (bank-issued RS256 JWTs via JWKS).
+// Both must be non-nil; without this, external_jwt EPs reject all requests with 401.
+func (lc *Lifecycle) WithExternalJWT(loader transport.RuntimeIDPLoader, validator *auth.ExternalJWTValidator) *Lifecycle {
+	lc.ridpLoader = loader
+	lc.extJWTValidator = validator
 	return lc
 }
 
@@ -235,6 +246,46 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 		// Store the-M user ID for history isolation and run attribution.
 		req.UserID = claims.UserID
+	}
+
+	// ── 3.6. AccessModeExternal — validate bank-issued RS256 JWT via JWKS ────
+	// ExternalUserID comes exclusively from the validated JWT sub claim.
+	// X-External-User headers are never read in this path.
+	// These callers are classified as "external" principals (isBackend=true in
+	// CheckPrincipal) so the EP must have allowed_principals="external" or "both".
+	if resolvedCfg.AccessMode == epconfig.AccessModeExternal {
+		if req.RawToken == "" {
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		if lc.ridpLoader == nil || lc.extJWTValidator == nil {
+			lc.logger.Warn("execution: AccessModeExternal EP but no JWKS validator configured", "ep_slug", req.EPSlug)
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		ridp, ridpErr := lc.ridpLoader.GetTenantRuntimeIDP(ctx, resolvedCfg.TenantID)
+		if ridpErr != nil {
+			lc.logger.Warn("execution: no runtime IDP config for tenant",
+				"ep_slug", req.EPSlug, "tenant_id", resolvedCfg.TenantID, "error", ridpErr)
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		extSub, extErr := lc.extJWTValidator.Validate(ctx, req.RawToken, auth.ExternalJWTConfig{
+			JWKSUri:  ridp.JWKSUri,
+			Issuer:   ridp.Issuer,
+			Audience: ridp.Audience,
+			SubClaim: ridp.SubClaim,
+		})
+		if extErr != nil {
+			lc.logger.Debug("execution: external JWT validation failed",
+				"ep_slug", req.EPSlug, "error", extErr)
+			return nil, admitErr(AdmitErrUnauthorized)
+		}
+		req.ExternalUserID = extSub
+		// Synthesise TokenInfo with IsBackend=true so CheckPrincipal classifies
+		// this caller as "external".  No opaque token exists — TenantID is set
+		// from the server-resolved EP config, never from the JWT.
+		tokenInfo = &auth.TokenInfo{
+			TenantID:  resolvedCfg.TenantID,
+			IsBackend: true,
+		}
 	}
 
 	// ── 4. Access mode enforcement ────────────────────────────────────────────

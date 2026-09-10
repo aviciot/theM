@@ -69,6 +69,15 @@ const AccessModeToken = "token"
 // Current rule: authentication (valid JWT + correct tenant) is the only gate.
 const AccessModeUser = "user_jwt"
 
+// AccessModeExternal means a bank-issued RS256 JWT validated via JWKS is required.
+// The tenant must have a row in them.tenant_runtime_config with jwks_uri/issuer.
+// ExternalUserID is extracted exclusively from the validated token's sub claim —
+// never from X-External-User headers.  These callers are classified as "external"
+// principals and require allowed_principals = "external" or "both" on the EP.
+//
+// Algorithm support: RS256 only.  ES256 is a future addition.
+const AccessModeExternal = "external_jwt"
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Sentinel errors
 // ──────────────────────────────────────────────────────────────────────────────
@@ -104,7 +113,7 @@ type EPConfig struct {
 	AppEnabled    bool
 	EPEnabled     bool
 	EPType             string // "websocket" | "sse" | etc.
-	AccessMode         string // "public" | "token" | "user_jwt"
+	AccessMode         string // "public" | "token" | "user_jwt" | "external_jwt"
 	AllowedPrincipals  string // "internal" | "external" | "both"; default "internal"
 
 	// Orchestrator binding (SEC-04).
@@ -191,6 +200,9 @@ func parseAccessPolicy(logger *slog.Logger, data []byte) string {
 	}
 	if p.Mode == AccessModeUser {
 		return AccessModeUser
+	}
+	if p.Mode == AccessModeExternal {
+		return AccessModeExternal
 	}
 	return AccessModeToken
 }
@@ -478,7 +490,8 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 // CheckPrincipal enforces the allowed_principals policy on an entry point.
 //
 // Principal classification:
-//   - isBackend=true  → "external" principal (backend service with X-External-User)
+//   - isBackend=true  → "external" principal (backend service token with X-External-User,
+//     OR a caller on an AccessModeExternal EP — set by lifecycle before calling CheckPrincipal)
 //   - isBackend=false → "internal" principal (opaque bearer token or the-M user JWT)
 //
 // The check is skipped when AllowedPrincipals is "both" or empty (treats empty as "internal"
