@@ -1,0 +1,69 @@
+{
+  "id": "rnd",
+  "realm": "rnd",
+  "displayName": "R&D",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "accessTokenLifespan": 3600,
+  "clients": [
+    {
+      "clientId": "them-m",
+      "name": "the-M Platform",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "them-m-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:8088/auth/oidc/callback",
+        "http://10.55.125.43:8088/auth/oidc/callback",
+        "http://localhost:8088/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8088",
+        "http://10.55.125.43:8088"
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "developers",
+      "path": "/developers"
+    },
+    {
+      "name": "qa",
+      "path": "/qa"
+    }
+  ],
+  "users": [
+    {
+      "username": "dev",
+      "email": "dev@rnd.com",
+      "firstName": "Dev",
+      "lastName": "User",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/developers"]
+    },
+    {
+      "username": "qa-user",
+      "email": "qauser@rnd.com",
+      "firstName": "QA",
+      "lastName": "User",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/qa"]
+    }
+  ]
+}

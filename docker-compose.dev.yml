@@ -295,6 +295,7 @@ services:
       - KC_HTTP_RELATIVE_PATH=/auth/keycloak
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+      - ./keycloak/themes:/opt/keycloak/themes:ro
     networks:
       - them-network
     labels:

@@ -1,0 +1,77 @@
+html, body, .login-pf, .login-pf-page {
+  background: #0a0f1e !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+#kc-header, #kc-header-wrapper {
+  display: none !important;
+}
+
+.login-pf-page .card-pf,
+.card-pf {
+  background: #1a2d50 !important;
+  border: 1px solid rgba(33, 150, 243, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 0 40px rgba(33, 150, 243, 0.08), 0 8px 32px rgba(0,0,0,0.5);
+  padding: 36px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+#kc-content, #kc-content-wrapper {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.theme-logo {
+  max-width: 210px;
+  display: block;
+  margin: 0 auto 28px;
+}
+
+label, .control-label {
+  color: rgba(160, 200, 255, 0.7) !important;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.form-control, input[type="text"], input[type="password"] {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1px solid rgba(33, 150, 243, 0.2) !important;
+  border-radius: 8px !important;
+  color: #e0eeff !important;
+  padding: 10px 14px;
+}
+
+.form-control:focus, input[type="text"]:focus, input[type="password"]:focus {
+  border-color: #2196F3 !important;
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.12) !important;
+  outline: none;
+}
+
+.btn-primary, #kc-form-buttons .btn-primary {
+  background: #2196F3 !important;
+  border: none !important;
+  border-radius: 8px !important;
+  color: #fff !important;
+  font-weight: 600;
+  padding: 11px;
+  width: 100%;
+  box-shadow: 0 4px 16px rgba(33, 150, 243, 0.3);
+}
+
+.btn-primary:hover, #kc-form-buttons .btn-primary:hover {
+  background: #00B8D9 !important;
+  box-shadow: 0 4px 20px rgba(0, 184, 217, 0.4);
+}
+
+#kc-login-title, h1 {
+  color: #e0eeff !important;
+  text-align: center;
+}
+
+a, a:visited { color: #2196F3; }
+a:hover { color: #00B8D9; }

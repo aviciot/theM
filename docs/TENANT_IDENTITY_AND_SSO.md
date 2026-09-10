@@ -1,5 +1,5 @@
 # Tenant Identity & SSO in the-M
-# Last updated: 2026-09-07
+# Last updated: 2026-09-10
 
 This guide is written for someone with no prior SSO experience.
 It covers what tenants are, how users are managed, how SSO login works,
@@ -461,6 +461,14 @@ The actual SSO login requires a real browser because:
 | `bankadmin` | bankadmin@bank.com | `bank-admins` | admin |
 | `avi2` | avi2@bank.com | `bank-admins` | admin |
 | `avi3` | avi3@bank.com | _(none)_ | viewer (default) |
+
+**realm: payops_ai** — groups: `payops-admins` → `admin` role in the-M
+
+| Username | Email | Group | Role in the-M |
+|---|---|---|---|
+| `payopsadmin` | payops_admin@payops.ai | `payops-admins` | admin |
+| `avi1` | avi1@payops.ai | _(none)_ | viewer (default) |
+| `avi2` | avi2@payops.ai | _(none)_ | viewer (default) |
 
 **realm: rnd** — groups: `developers` → developer role, `qa` → viewer role
 

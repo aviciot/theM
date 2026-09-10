@@ -1,0 +1,81 @@
+{
+  "id": "bank",
+  "realm": "bank",
+  "displayName": "Bank",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "accessTokenLifespan": 3600,
+  "clients": [
+    {
+      "clientId": "them-m",
+      "name": "the-M Platform",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "them-m-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:8088/auth/oidc/callback",
+        "http://10.55.125.43:8088/auth/oidc/callback",
+        "http://localhost:8088/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8088",
+        "http://10.55.125.43:8088"
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "bank-admins",
+      "path": "/bank-admins"
+    },
+    {
+      "name": "developers",
+      "path": "/developers"
+    },
+    {
+      "name": "qa",
+      "path": "/qa"
+    }
+  ],
+  "users": [
+    {
+      "username": "bankadmin",
+      "email": "bankadmin@bank.com",
+      "firstName": "Bank",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/bank-admins"]
+    },
+    {
+      "username": "avi2",
+      "email": "avi2@bank.com",
+      "firstName": "Avi",
+      "lastName": "Two",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+    },
+    {
+      "username": "avi3",
+      "email": "avi3@bank.com",
+      "firstName": "Avi",
+      "lastName": "Three",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+body {
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+#kc-header, #kc-header-wrapper {
+  display: none;
+}
+
+.login-pf body {
+  background: #f0f4ff;
+}
+
+#kc-form-login,
+.card-pf,
+.login-pf-page .card-pf {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 87, 255, 0.10);
+  padding: 32px;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.login-pf-page {
+  background: #f0f4ff;
+}
+
+#kc-content,
+#kc-content-wrapper {
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.theme-logo {
+  max-width: 140px;
+  display: block;
+  margin: 0 auto 24px;
+}
+
+#kc-form-buttons .btn-primary,
+.btn-primary {
+  background: #0057FF;
+  border-color: #0057FF;
+  color: #ffffff;
+  border-radius: 8px;
+  width: 100%;
+  padding: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+#kc-form-buttons .btn-primary:hover,
+.btn-primary:hover {
+  background: #00008B;
+  border-color: #00008B;
+}
+
+.form-control:focus {
+  border-color: #0057FF;
+  box-shadow: 0 0 0 2px rgba(0, 87, 255, 0.15);
+}
+
+a, a:visited {
+  color: #0057FF;
+}
+
+a:hover {
+  color: #00008B;
+}
+
+#kc-login-title {
+  text-align: center;
+  color: #00008B;
+}
