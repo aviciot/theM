@@ -23,7 +23,7 @@ import (
 func newSelfSvcRouter(db admin.DBQuerier) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
-	admin.NewTenantSelfServiceHandler(db, nil, nil, nil).Routes(r)
+	admin.NewTenantSelfServiceHandler(db, nil, nil, nil, nil).Routes(r)
 	return r
 }
 
@@ -46,7 +46,7 @@ func noTenantCtxRouter(db admin.DBQuerier) *chi.Mux {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
-	admin.NewTenantSelfServiceHandler(db, nil, nil, nil).Routes(r)
+	admin.NewTenantSelfServiceHandler(db, nil, nil, nil, nil).Routes(r)
 	return r
 }
 

@@ -32,6 +32,21 @@
         "http://localhost:8088",
         "http://10.55.125.43:8088"
       ]
+    },
+    {
+      "clientId": "bank-test-cli",
+      "name": "Bank E2E Test Client",
+      "description": "Used only by automated test scripts — direct access grants for password-flow token issuance",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "bank-test-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [],
+      "webOrigins": []
     }
   ],
   "groups": [

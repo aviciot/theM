@@ -217,6 +217,8 @@ func BuildRouter(
 				managedApps.PlatformRoutes(platformGlobal)
 				// Super-admin toggle: PATCH /admin/applications/{id}/managed
 				platformGlobal.Patch("/applications/{id}/managed", apps.PatchManaged)
+				// Super-admin deploy: POST /admin/applications/{id}/deploy
+				platformGlobal.Post("/applications/{id}/deploy", apps.DeployApplication)
 				if sessionReader != nil {
 					NewSessionsHandler(sessionReader).Routes(platformGlobal)
 				}
@@ -235,7 +237,7 @@ func BuildRouter(
 
 	// Tenant self-service routes — available to admin OR super_admin.
 	// Reads tenant from JWT claims; no tenant ID in URL.
-	selfSvc := NewTenantSelfServiceHandler(dbq, auditWriter, idpKey, redis)
+	selfSvc := NewTenantSelfServiceHandler(dbq, pools, auditWriter, idpKey, redis)
 	r.Group(func(selfGroup chi.Router) {
 		if jwtMiddleware != nil {
 			selfGroup.Use(jwtMiddleware)

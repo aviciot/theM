@@ -10,6 +10,7 @@ import (
 	"github.com/redis/rueidis"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
@@ -17,6 +18,7 @@ import (
 // All routes read the tenant ID from JWT claims (via tenantctx) — never from URL params.
 type TenantSelfServiceHandler struct {
 	db    *dal.DB
+	pools *db.Pools // used for FORCE ROW LEVEL SECURITY tables (e.g. tenant_runtime_config)
 	audit *AuditWriter
 	redis rueidis.Client // nil when Redis unavailable; debug reads return 404
 }
@@ -24,8 +26,9 @@ type TenantSelfServiceHandler struct {
 // NewTenantSelfServiceHandler creates a TenantSelfServiceHandler.
 // idpKey is the AES-256 encryption key for IdP client_secret; nil disables encryption.
 // rc is the Redis client for OIDC debug reads; nil skips debug reads.
-func NewTenantSelfServiceHandler(db DBQuerier, audit *AuditWriter, idpKey []byte, rc rueidis.Client) *TenantSelfServiceHandler {
-	return &TenantSelfServiceHandler{db: dal.NewDB(db).WithIDPKey(idpKey), audit: audit, redis: rc}
+// pools is used for tables with FORCE ROW LEVEL SECURITY that require the app.tenant_id GUC.
+func NewTenantSelfServiceHandler(dbQuerier DBQuerier, pools *db.Pools, audit *AuditWriter, idpKey []byte, rc rueidis.Client) *TenantSelfServiceHandler {
+	return &TenantSelfServiceHandler{db: dal.NewDB(dbQuerier).WithIDPKey(idpKey), pools: pools, audit: audit, redis: rc}
 }
 
 // Routes mounts the self-service endpoints.

@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS them.tenant_runtime_config (
 -- them_app needs full CRUD (tenant self-service routes run via TenantTx / them_app role).
 GRANT SELECT, INSERT, UPDATE, DELETE ON them.tenant_runtime_config TO them_app;
 
+-- them_admin needs full CRUD for the runtime IDP loader (reads config at WS admission time).
+-- Note: BYPASSRLS bypasses RLS policies but NOT object-level privileges.
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.tenant_runtime_config TO them_admin;
+
 -- Row-level security: each tenant can only see and modify its own row.
 ALTER TABLE them.tenant_runtime_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE them.tenant_runtime_config FORCE ROW LEVEL SECURITY;
