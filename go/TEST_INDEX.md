@@ -687,7 +687,8 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestLifecycle_RecorderCreateRunFails` | recorder.CreateRun error → AdmitErrInternal; session.End + gate.Release called |
 | `TestLifecycle_StartTemporalFails` | Start with erroring temporal → error; Release still cleans up |
 | `TestLifecycle_ReleaseNilHandle_NoOp` | Release(nil) is a safe no-op |
-| `TestLifecycle_TenantIDFromEPConfig_NotFromRequest` | Caller cannot override TenantID/AppID — always from EPConfig |
+| `TestLifecycle_TenantIDFromEPConfig_NotFromRequest` | Caller cannot override TenantID/AppID — workflow always uses EPConfig; billing uses req.TenantID |
+| `TestLifecycle_ManagedApp_BillingTenantIsCallerNotOwner` | Managed-app: run billed to consuming tenant (req.TenantID); Temporal workflow gets app-owner TenantID for LLM key lookup |
 | `TestLifecycle_ContextIDProvidedByCaller_Preserved` | Caller-supplied ContextID is preserved in handle |
 | `TestLifecycle_ContextIDGeneratedWhenEmpty` | Empty ContextID → UUID v4 generated; different from RunID |
 | `TestLifecycle_PublicEP_NoToken_Admitted` | Public EP + no token → admission succeeds |
