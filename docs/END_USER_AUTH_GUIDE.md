@@ -41,8 +41,8 @@ This controls what credential the caller must present:
 Every EP also has an **Allowed Principals** column in the database. This controls the *type* of
 caller, independently of the credential check.
 
-> **Note:** Allowed Principals is not yet exposed in the UI. Set it directly in the DB after
-> creating the EP.
+> **UI:** Select an entry point in the Canvas → the **Allowed Callers** dropdown controls this.
+> Voice and WebRTC EPs hide this field (they use a separate admission path).
 
 | Value | Who can connect | Who is blocked |
 |---|---|---|
@@ -78,12 +78,7 @@ via the `X-External-User` header.
    ```sql
    UPDATE them.access_tokens SET is_backend = true WHERE label = '<label>';
    ```
-3. **Configure the EP** — Canvas → select EP → Access Policy: **Token required**
-4. **Set Allowed Principals** (DB):
-   ```sql
-   UPDATE them.entry_points SET allowed_principals = 'external'
-   WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
-   ```
+3. **Configure the EP** — Canvas → select EP → Access Policy: **Token required**, Allowed Callers: **External only**
 
 **What the caller must present:**
 
@@ -127,13 +122,7 @@ No the-M account is needed for the end user.
    > For Keycloak behind a reverse proxy, use the **external** URL (the one users see),
    > not the internal Docker hostname.
 
-2. **Configure the EP** — Canvas → select EP → Access Policy: **External JWT (RS256)**
-
-3. **Set Allowed Principals** (DB):
-   ```sql
-   UPDATE them.entry_points SET allowed_principals = 'external'
-   WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
-   ```
+2. **Configure the EP** — Canvas → select EP → Access Policy: **External JWT (RS256)**, Allowed Callers: **External only**
 
 **What the caller must present:**
 

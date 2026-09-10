@@ -95,7 +95,7 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           <label style={labelStyle}>Allowed Callers</label>
           <select style={{ ...inputStyle }} value={d.allowedPrincipals ?? 'internal'} onChange={e => onUpdateNode(selectedNode.id, { allowedPrincipals: e.target.value as 'internal' | 'external' | 'both' })}>
             <option value="internal">Internal only — the-M tokens &amp; staff</option>
-            <option value="external">External only — bank backend or bank JWT</option>
+            <option value="external">External only — backend service or RS256 JWT</option>
             <option value="both">Both — no caller-type restriction</option>
           </select>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
