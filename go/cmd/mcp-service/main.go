@@ -18,6 +18,7 @@ import (
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/mcp"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/telemetry"
 )
 
@@ -66,7 +67,9 @@ func run() error {
 	registry := mcp.NewRegistry(redisCache.Client())
 	leader := mcp.NewLeaderLock(redisCache.Client(), cfg.InstanceID)
 	supervisor := mcp.NewSupervisor(dal, registry, leader, cfg.HealthIntervalSeconds, cfg.SecretKey, log)
-	executor := mcp.NewExecutor(dal, registry, cfg.SecretKey)
+	mcpMetrics := cache.NewMetricsRedisClient(redisCache.Client())
+	executor := mcp.NewExecutor(dal, registry, cfg.SecretKey).
+		WithMetricsRecorder(metrics.NewRedisRecorder(mcpMetrics))
 
 	// ── 7. HTTP server ────────────────────────────────────────────────────────
 	healthHandler := health.New(cfg.InstanceID, database, redisCache)

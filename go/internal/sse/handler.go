@@ -63,8 +63,9 @@ type Handler struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
-	runStreamer   runstream.RedisStreamer
+	runStreamer    runstream.RedisStreamer
 	slugResolver  SlugResolver
+	metricsRec    metrics.Recorder
 }
 
 // NewHandler creates a Handler. The lifecycle owns auth, EPConfig, gate, session,
@@ -103,6 +104,12 @@ func (h *Handler) WithRunStreamer(rc runstream.RedisStreamer) *Handler {
 // the /{tenant_slug} path segment to a tenant UUID.
 func (h *Handler) WithSlugResolver(r SlugResolver) *Handler {
 	h.slugResolver = r
+	return h
+}
+
+// WithMetricsRecorder attaches a metrics.Recorder for fire-and-forget user session recording.
+func (h *Handler) WithMetricsRecorder(rec metrics.Recorder) *Handler {
+	h.metricsRec = rec
 	return h
 }
 
@@ -249,6 +256,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.ActiveSessions.WithLabelValues(epType).Inc()
 	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
 	metrics.GateAdmissions.WithLabelValues(epType).Inc()
+
+	if h.metricsRec != nil && handle.UserID != 0 {
+		tenantID := handle.EPConfig.TenantID
+		userID := handle.UserID
+		go func() {
+			if err := h.metricsRec.RecordUser(context.Background(), tenantID, userID); err != nil {
+				h.logger.Warn("sse: metrics RecordUser failed", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	h.logger.Info("sse: session started",
 		"ep_slug", epSlug,

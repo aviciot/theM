@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/metrics"
 )
 
 // ExecuteRequest is the body of POST /internal/execute.
@@ -29,9 +31,10 @@ type ExecuteResponse struct {
 
 // Executor handles MCP tool calls from the orchestrator.
 type Executor struct {
-	dal       *DAL
-	registry  *Registry
-	secretKey []byte
+	dal        *DAL
+	registry   *Registry
+	secretKey  []byte
+	metricsRec metrics.Recorder
 }
 
 // NewExecutor creates an Executor. secretKey is the Fernet key for credential decryption.
@@ -41,6 +44,12 @@ func NewExecutor(dal *DAL, registry *Registry, secretKey string) *Executor {
 		registry:  registry,
 		secretKey: crypto.DeriveKey(secretKey),
 	}
+}
+
+// WithMetricsRecorder attaches a metrics.Recorder for fire-and-forget MCP call counters.
+func (e *Executor) WithMetricsRecorder(rec metrics.Recorder) *Executor {
+	e.metricsRec = rec
+	return e
 }
 
 // Execute resolves credentials for the given application + MCP server slug,
@@ -87,6 +96,17 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) ExecuteRespo
 	}
 
 	raw, _ := json.Marshal(result)
+
+	if e.metricsRec != nil {
+		appID := req.ApplicationID
+		tID := tenantID
+		go func() {
+			if err := e.metricsRec.RecordMCPCall(context.Background(), tID, appID); err != nil {
+				slog.Warn("mcp: metrics RecordMCPCall failed", "error", err)
+			}
+		}()
+	}
+
 	return ExecuteResponse{Result: raw}
 }
 

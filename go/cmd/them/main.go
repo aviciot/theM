@@ -35,6 +35,7 @@ import (
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/middleware"
 	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/quota"
@@ -126,6 +127,12 @@ func run() error {
 	// INSERT so isolation is preserved without relying on the GUC.
 	recorderPool := rlsPools.Admin
 	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(recorderPool))
+
+	// ── 7b. Wire Redis metrics recorder ──────────────────────────────────────
+	metricsRedis := cache.NewMetricsRedisClient(redisCache.Client())
+	metricsRec := metrics.NewRedisRecorder(metricsRedis)
+	recorder.WithMetricsRecorder(metricsRec)
+	log.Info("Redis metrics recorder initialised")
 
 	// ── 10. Create rate limiter ───────────────────────────────────────────────
 	rlRedis := cache.NewRateLimitClient(redisCache.Client())
@@ -290,7 +297,8 @@ func run() error {
 	sessionPub := dashboard.NewSessionPublisher(sessionPubRedis, log)
 	wsHandler := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).
 		WithRunStreamer(rsStreamer).
-		WithSessionPublisher(sessionPub)
+		WithSessionPublisher(sessionPub).
+		WithMetricsRecorder(metricsRec)
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 
@@ -298,7 +306,8 @@ func run() error {
 	// Lifecycle handles auth, EPConfig, gate, session, CreateRun.
 	// SSE handler retains: SSE headers, streaming, metrics.
 	sseHandler := sse.NewHandler(execLifecycle, recorder, bus, authenticator, cfg.InstanceID, log).
-		WithRunStreamer(rsStreamer)
+		WithRunStreamer(rsStreamer).
+		WithMetricsRecorder(metricsRec)
 	srv.MountSSE(sseHandler.Routes())
 	log.Info("SSE handler mounted", "prefix", "/sse")
 
@@ -426,9 +435,15 @@ func run() error {
 	adminHITLRedis := cache.NewAuthRedisClient(redisCache.Client())
 	adminHITLStore := agentgen.NewHITLStore(adminHITLRedis)
 	adminIDPKey, _ := idpcrypto.ParseKey(cfg.IDPEncryptionKey) // validated at startup; err is nil here
-	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey)
+	logoDir := getEnvDefault("TENANT_LOGO_DIR", "/app/data/tenants")
+	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey, logoDir)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
+
+	// ── Static tenant assets (/static/tenants/*) ──────────────────────────────
+	// Must be mounted BEFORE MountApps (which registers a catch-all "/*").
+	srv.MountStatic("/static/tenants", logoDir)
+	log.Info("static tenant assets mounted", "prefix", "/static/tenants", "dir", logoDir)
 
 	// ── 19b. Mount /{tenant_slug}/apps/* (WS + SSE + voice) ─────────────────
 	// Voice handler needs AppService (for provider-key decryption), which requires
@@ -544,6 +559,13 @@ func (a *tenantQuotaAdapter) CheckQuota(ctx context.Context, tenantID string) er
 	default:
 		return enforceErr
 	}
+}
+
+func getEnvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func (a *jwtFallbackAuthenticator) Validate(ctx context.Context, rawToken string) (*auth.TokenInfo, error) {

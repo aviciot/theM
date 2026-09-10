@@ -52,6 +52,25 @@
 | `them:sess:control:{session_id}` | runtime_manager.py signal_disconnect (via admin_sessions router) | apps.py + ws_orchestrator.py per-session `_control_listener` | Cross-replica admin session termination. One message closes the WS with code 4000. Best-effort pub/sub — no persistence, no TTL. |
 | `them:mcp:manifest:changed` | go/internal/mcp/registry.go `PublishManifestChanged` | (reserved — future Go bridge real-time update) | Signals that a server's tool manifest was updated. Payload is server slug. |
 
+## Metrics Keys (Phase 1 — write side only)
+
+Written by `go/internal/metrics/recorder.go` (`RedisRecorder`). TTL is sliding: reset on every write via `EXPIREAT`.
+Read path (Phase 2) will use `HGETALL` to merge today's live Redis values with DB 30d history.
+
+| Key Pattern | Type | TTL | Fields / elements | Purpose |
+|---|---|---|---|---|
+| `them:metrics:{tenant_id}:{YYYY-MM-DD}` | Hash | 32 days | `runs`, `tokens_in`, `tokens_out`, `mcp_calls` | Per-tenant daily counter totals |
+| `them:metrics:{tenant_id}:app:{app_id}:{YYYY-MM-DD}` | Hash | 32 days | `runs`, `tokens_in`, `tokens_out`, `mcp_calls` | Per-app daily counter totals |
+| `them:metrics:{tenant_id}:users:{YYYY-MM-DD}` | HyperLogLog | 32 days | user IDs (formatted as decimal string) | Unique active user count per tenant per day (PFADD) |
+
+Increment operations:
+- `RecordRun` — HINCRBY `runs` +1 on tenant key and app key (if appID non-empty)
+- `RecordTokens` — HINCRBY `tokens_in` and `tokens_out` on tenant and app keys
+- `RecordMCPCall` — HINCRBY `mcp_calls` +1 on tenant and app keys
+- `RecordUser` — PFADD userID (decimal string) to HLL key; only fires when `userID != 0`
+
+All writes are fire-and-forget goroutines. Failures are logged at `slog.Warn` only — never block the run path.
+
 ## Naming Rules
 - All keys MUST start with `them:` or `rl:them:`
 - Hash tokens before storing: `hashlib.sha256(token.encode()).hexdigest()`

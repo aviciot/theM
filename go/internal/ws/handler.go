@@ -104,9 +104,10 @@ type Handler struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
-	runStreamer   runstream.RedisStreamer
+	runStreamer    runstream.RedisStreamer
 	sessionPub    *dashboard.SessionPublisher
 	slugResolver  SlugResolver
+	metricsRec    metrics.Recorder
 }
 
 // NewHandler creates a Handler. All admission/session/gate logic is delegated
@@ -149,6 +150,12 @@ func (h *Handler) WithSessionPublisher(pub *dashboard.SessionPublisher) *Handler
 // the /{tenant_slug} path segment to a tenant UUID.
 func (h *Handler) WithSlugResolver(r SlugResolver) *Handler {
 	h.slugResolver = r
+	return h
+}
+
+// WithMetricsRecorder attaches a metrics.Recorder for fire-and-forget user session recording.
+func (h *Handler) WithMetricsRecorder(rec metrics.Recorder) *Handler {
+	h.metricsRec = rec
 	return h
 }
 
@@ -278,6 +285,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.GateAdmissions.WithLabelValues(epType).Inc()
 	metrics.ActiveSessions.WithLabelValues(epType).Inc()
 	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
+
+	if h.metricsRec != nil && handle.UserID != 0 {
+		tenantID := handle.EPConfig.TenantID
+		userID := handle.UserID
+		go func() {
+			if err := h.metricsRec.RecordUser(context.Background(), tenantID, userID); err != nil {
+				h.logger.Warn("ws: metrics RecordUser failed", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	// ── 3. Upgrade to WebSocket ───────────────────────────────────────────────
 	// Admit has run the full pipeline (gate check + session.Register + CreateRun).

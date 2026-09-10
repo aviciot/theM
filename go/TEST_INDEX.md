@@ -3285,7 +3285,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-101 | Observability summary (OBS-1..4): Summary_OK, Summary_Empty, Summary_DBError, Summary_MultiTenant | 4 |
 | S1-102 | Audit redaction production-path (AR-01..03): AgentUpdate_AuditNoRawAuthToken, MCPServerUpdate_AuditNoRawProbeToken, TenantPatch_AuditNoRawClientSecret | 3 |
 | S1-103 | Tenant self-service handler (TSS-01..08): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found, GetMyMembers_Empty, GetMyMembers_Populated | 8 |
-| **S1 total** | | **1114** |
+| S1-104 | Redis metrics recorder (MR-01..07): RecordRun_TenantAndApp, RecordRun_NoApp, RecordTokens_TenantAndApp, RecordMCPCall_TenantAndApp, RecordUser_PFAddAndExpiry, NoopRecorder_AllNil, RecordRun_ExpireAtFuture | 7 |
+| S1-105 | runrecorder metrics integration (MRR-01..03): WithMetricsRecorder_CreateRunFiresMetric, RecordTokensMetric_FiresMetric, RecordTokensMetric_NoopWithoutRecorder | 3 |
+| **S1 total** | | **1124** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -3297,4 +3299,4 @@ If a test is added without updating this index, the PR should not be merged.
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1073** |
+| **`go test ./...` total** | | **1083** |

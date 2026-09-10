@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aviciot/them/internal/domain"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -674,4 +676,73 @@ func TestCompleteRootTask_updatesRootRow(t *testing.T) {
 	err = rec.CompleteRootTask(context.Background(), "run-def", false)
 	require.NoError(t, err)
 	assert.Equal(t, "failed", db.calls[0].args[1])
+}
+
+// ── Metrics recorder integration ──────────────────────────────────────────────
+
+// fakeMetricsRecorder is a metrics.Recorder that counts calls.
+type fakeMetricsRecorder struct {
+	runs   atomic.Int32
+	tokens atomic.Int32
+}
+
+func (f *fakeMetricsRecorder) RecordRun(_ context.Context, _, _ string) error {
+	f.runs.Add(1)
+	return nil
+}
+func (f *fakeMetricsRecorder) RecordTokens(_ context.Context, _, _ string, _, _ int64) error {
+	f.tokens.Add(1)
+	return nil
+}
+func (f *fakeMetricsRecorder) RecordMCPCall(_ context.Context, _, _ string) error { return nil }
+func (f *fakeMetricsRecorder) RecordUser(_ context.Context, _ string, _ int64) error { return nil }
+
+var _ metrics.Recorder = (*fakeMetricsRecorder)(nil)
+
+// MRR-01: WithMetricsRecorder — CreateRun fires RecordRun in background.
+func TestWithMetricsRecorder_CreateRunFiresMetric(t *testing.T) {
+	db := &mockDB{}
+	fakeRec := &fakeMetricsRecorder{}
+	rec := New(db).WithMetricsRecorder(fakeRec)
+
+	run := domain.Run{
+		ID:            "run-m1",
+		TenantID:      "00000000-0000-0000-0000-000000000001",
+		ApplicationID: "00000000-0000-0000-0000-000000000002",
+	}
+	err := rec.CreateRun(context.Background(), run)
+	require.NoError(t, err)
+
+	// Allow goroutine to complete.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && fakeRec.runs.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.Equal(t, int32(1), fakeRec.runs.Load(), "RecordRun should have been called once")
+}
+
+// MRR-02: RecordTokensMetric delegates to metricsRec.RecordTokens.
+func TestRecordTokensMetric_FiresMetric(t *testing.T) {
+	db := &mockDB{}
+	fakeRec := &fakeMetricsRecorder{}
+	rec := New(db).WithMetricsRecorder(fakeRec)
+
+	rec.RecordTokensMetric(context.Background(), "t1", "a1", 100, 50)
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && fakeRec.tokens.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.Equal(t, int32(1), fakeRec.tokens.Load(), "RecordTokens should have been called once")
+}
+
+// MRR-03: RecordTokensMetric no-ops when no metrics recorder configured.
+func TestRecordTokensMetric_NoopWithoutRecorder(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db) // no WithMetricsRecorder
+
+	// Should not panic.
+	assert.NotPanics(t, func() {
+		rec.RecordTokensMetric(context.Background(), "t1", "a1", 100, 50)
+	})
 }

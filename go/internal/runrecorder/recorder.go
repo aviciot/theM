@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/aviciot/them/internal/domain"
+	"github.com/aviciot/them/internal/metrics"
 )
 
 // DBQuerier is the database interface needed by the Recorder.
@@ -47,7 +49,8 @@ var ErrMissingTenantID = errors.New("runrecorder: TenantID must not be empty")
 
 // Recorder writes run lifecycle events to the database.
 type Recorder struct {
-	db DBQuerier
+	db         DBQuerier
+	metricsRec metrics.Recorder
 }
 
 // New creates a Recorder backed by the given DBQuerier.
@@ -58,6 +61,27 @@ func New(db DBQuerier) *Recorder {
 // NewRecorder is an alias for New for backward compatibility.
 func NewRecorder(db DBQuerier) *Recorder {
 	return New(db)
+}
+
+// WithMetricsRecorder attaches a metrics.Recorder for fire-and-forget Redis counters.
+// Returns the same *Recorder for chaining.
+func (r *Recorder) WithMetricsRecorder(rec metrics.Recorder) *Recorder {
+	r.metricsRec = rec
+	return r
+}
+
+// RecordTokensMetric fires a fire-and-forget metrics.RecordTokens call.
+// tenantID and appID identify the bucket; tokensIn/tokensOut are the delta counts.
+// No-ops when no metrics recorder is configured.
+func (r *Recorder) RecordTokensMetric(ctx context.Context, tenantID, appID string, tokensIn, tokensOut int64) {
+	if r.metricsRec == nil {
+		return
+	}
+	go func() {
+		if err := r.metricsRec.RecordTokens(context.Background(), tenantID, appID, tokensIn, tokensOut); err != nil {
+			slog.Warn("runrecorder: metrics RecordTokens failed", "error", err)
+		}
+	}()
 }
 
 // CreateRun inserts a new run row in them.runs with status "running".
@@ -96,6 +120,15 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	)
 	if err != nil {
 		return fmt.Errorf("runrecorder: create run %s: %w", run.ID, err)
+	}
+	if r.metricsRec != nil {
+		tenantID := run.TenantID
+		appID := run.ApplicationID
+		go func() {
+			if err := r.metricsRec.RecordRun(context.Background(), tenantID, appID); err != nil {
+				slog.Warn("runrecorder: metrics RecordRun failed", "error", err)
+			}
+		}()
 	}
 	return nil
 }
