@@ -454,7 +454,7 @@ export function CanvasNodePropertiesPanel({
             <option value="token">token</option>
             <option value="public">public</option>
             <option value="user_jwt">user_jwt (the-M users)</option>
-            <option value="external_jwt">external_jwt (bank RS256 JWTs)</option>
+            <option value="external_jwt">external_jwt (RS256 from IdP)</option>
           </select>
           {d.protocol !== 'voice' && d.protocol !== 'webrtc' && (
             <>
@@ -465,12 +465,12 @@ export function CanvasNodePropertiesPanel({
                 onChange={e => setEpConfig(selectedNode!.id, { allowed_principals: e.target.value })}
               >
                 <option value="internal">Internal only — the-M tokens &amp; staff</option>
-                <option value="external">External only — bank backend or bank JWT</option>
+                <option value="external">External only — backend service or RS256 JWT</option>
                 <option value="both">Both — no caller-type restriction</option>
               </select>
               <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>
                 {((cfg.allowed_principals as string) || 'internal') === 'internal' && 'Regular the-M tokens and staff logins only.'}
-                {(cfg.allowed_principals as string) === 'external' && 'Bank backend tokens (is_backend=true) or direct bank RS256 JWTs only.'}
+                {(cfg.allowed_principals as string) === 'external' && 'Backend service tokens (is_backend=true) or direct RS256 JWTs from a third-party IdP only.'}
                 {(cfg.allowed_principals as string) === 'both' && 'Any authenticated caller — no caller-type restriction.'}
               </div>
             </>

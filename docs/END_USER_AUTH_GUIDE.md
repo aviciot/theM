@@ -1,9 +1,9 @@
 # End-User Authentication — Operator Guide
 # the-M Platform · Phase 4 · Last updated: 2026-09-10
 
-This guide covers how to configure entry points so that external users (bank customers,
-partner systems) can reach a the-M application — and how to control exactly who can
-connect and how.
+This guide explains how to configure entry points so that external users (customers
+of a tenant's service, partner systems, or internal staff) can reach a the-M application —
+and how to control exactly who is admitted.
 
 ---
 
@@ -12,40 +12,48 @@ connect and how.
 ### What is an Entry Point?
 
 An **entry point (EP)** is a door into your application. You create one (or more) when you
-build your app in the Canvas. The EP type — WebSocket, SSE, A2A — is about the *protocol*:
-how the client communicates. The *access policy* is about *who* is allowed through that door.
+build your app in the Canvas. The EP **type** — WebSocket, SSE, A2A — is the *protocol*:
+how the client communicates with the-M. The **access policy** is the *lock*: what credential
+a caller must present. These two settings are independent.
 
-You can have a single WebSocket EP that only accepts bank-backend tokens, or two WebSocket
-EPs on the same app: one for bank-mediated calls, one for direct bank-customer JWTs.
-The protocol type and the access control are independent.
+Example: you can have a WebSocket EP that admits only service-account tokens, or two WebSocket
+EPs on the same app — one for mediated calls (tenant-backend token), one for direct end-user
+JWTs. Protocol choice and access control are configured separately.
 
-### Access Policy (set in the UI)
+---
 
-When you select an entry point in the Canvas, the right panel shows an **Access Policy** dropdown.
-This controls what credential a caller must present:
+## Access Policy — the Lock
 
-| Option in UI | Internal name | Credential required | Typical use |
+When you select an entry point in the Canvas, the right-hand panel shows an **Access Policy** dropdown.
+This controls what credential the caller must present:
+
+| Label in UI | Internal name | Credential required | Typical use |
 |---|---|---|---|
-| Token required | `token` | Opaque bearer token (Admin → Tokens) | Bank backend service, internal tools |
+| Token required | `token` | Opaque bearer token (Admin → Tokens) | Backend service calls, internal tools |
 | Public (no auth) | `public` | None | Public demos, open webhooks |
 | User JWT (the-M users) | `user_jwt` | the-M HS256 session JWT (staff login) | Internal staff using the-M dashboard |
-| External JWT (bank RS256) | `external_jwt` | RS256 JWT from bank's own IdP (Keycloak etc.) | Bank customers calling the-M directly |
+| External JWT (RS256) | `external_jwt` | RS256 JWT from a third-party IdP (Keycloak etc.) | End-users calling the-M directly via their own IdP |
 
-### Allowed Principals (DB only — no UI yet)
+---
 
-Every EP also has an **Allowed Principals** column in the database that controls the *type* of
-caller, independently of the credential check. **This is not yet exposed in the UI** — it must
-be set directly in the database after the EP is created.
+## Allowed Principals — the Caller Type Filter
+
+Every EP also has an **Allowed Principals** column in the database. This controls the *type* of
+caller, independently of the credential check.
+
+> **Note:** Allowed Principals is not yet exposed in the UI. Set it directly in the DB after
+> creating the EP.
 
 | Value | Who can connect | Who is blocked |
 |---|---|---|
-| `internal` *(default)* | Regular opaque tokens, the-M user JWTs | Backend service tokens (`is_backend=true`), external_jwt callers |
-| `external` | Backend service tokens (`is_backend=true`), external_jwt callers | Regular tokens, user JWTs |
-| `both` | Everyone (no restriction beyond the access mode) | Nobody |
+| `internal` *(default)* | Regular opaque tokens, the-M user JWTs | Backend service tokens (`is_backend=true`), external RS256 JWT callers |
+| `external` | Backend service tokens (`is_backend=true`), external RS256 JWT callers | Regular tokens, user JWTs |
+| `both` | Anyone who passes the access-mode check | No caller-type restriction |
 
-To set it:
+To set it after EP creation:
 ```sql
-UPDATE them.entry_points SET allowed_principals = 'external'
+UPDATE them.entry_points
+SET allowed_principals = 'external'
 WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
 ```
 
@@ -53,107 +61,121 @@ WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
 
 ## The Three Caller Paths
 
-These paths apply to any EP type (WebSocket, SSE, A2A). The EP type is the protocol;
-the access policy is the lock. You configure the lock the same way regardless of protocol.
-
-### Path A — Bank calls the-M on behalf of a customer (mediated)
+### Path A — Tenant mediates on behalf of an end-user
 
 ```
-Bank customer → Bank backend → the-M WS/SSE/A2A endpoint
+End user → Tenant backend system → the-M WS/SSE/A2A endpoint
 ```
 
-The bank authenticates its customer internally. The bank's **backend system** holds a
-the-M service token with `is_backend=true`. It connects to the-M and passes the
-customer's identity in the `X-External-User` header.
+The tenant's own backend authenticates its users internally, then calls the-M using a
+**service account token** (`is_backend=true`). The end user's identity is passed to the-M
+via the `X-External-User` header.
 
-- the-M trusts `X-External-User` **only** from a caller presenting an `is_backend=true` token.
-- The customer never interacts with the-M directly and has no the-M credentials.
-- the-M records the customer identity from the header for session attribution.
+**What this means for the operator:**
 
-**EP configuration (Canvas → select EP → Access Policy dropdown):**
-- Access Policy: **Token required** (`token`)
-- Allowed Principals (DB): `external` (or `both` if internal callers also allowed)
+1. **Create a service token** — Admin → Tokens → New Token. Note the label.
+2. **Mark it as a backend token** (not yet in UI — use DB):
+   ```sql
+   UPDATE them.access_tokens SET is_backend = true WHERE label = '<label>';
+   ```
+3. **Configure the EP** — Canvas → select EP → Access Policy: **Token required**
+4. **Set Allowed Principals** (DB):
+   ```sql
+   UPDATE them.entry_points SET allowed_principals = 'external'
+   WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
+   ```
 
-**Token setup:**
-- Admin → Tokens → create token, note the label
-- Set `is_backend=true` via DB (no UI toggle yet):
-  ```sql
-  UPDATE them.access_tokens SET is_backend = true WHERE label = '<label>';
-  ```
+**What the caller must present:**
+
+- HTTP header: `Authorization: Bearer <service_token>`
+- HTTP header: `X-External-User: <end_user_identity>` (any string — email, UUID, etc.)
+
+**What the-M does:**
+
+- Validates the opaque token against the database.
+- Checks `is_backend=true` — only then is `X-External-User` trusted and recorded.
+- Records the value of `X-External-User` as the session's external user identity.
+- The end user has no the-M account and presents no the-M credential.
 
 ---
 
-### Path B — Bank customer calls the-M directly (direct RS256 JWT)
+### Path B — End user connects directly (RS256 JWT from their own IdP)
 
 ```
-Bank customer's app (browser/mobile) → the-M WS/SSE/A2A endpoint
-                                         (presents bank Keycloak JWT)
+End user's app (browser / mobile) → the-M WS/SSE/A2A endpoint
+                                      (presents their IdP JWT)
 ```
 
-The customer's app obtains a JWT directly from the bank's Keycloak (or any OIDC IdP).
-It presents that JWT as the Bearer token when connecting to the-M. the-M validates it
-via JWKS and extracts the `sub` claim as the user's identity.
+The end user holds a JWT issued by a third-party Identity Provider (e.g. Keycloak, Auth0,
+Azure AD). They present it as the Bearer token when connecting. the-M validates it via the
+tenant's configured JWKS endpoint and extracts the `sub` claim as the user's identity.
 
-No the-M account is required for the customer.
+No the-M account is needed for the end user.
 
-**EP configuration (Canvas → select EP → Access Policy dropdown):**
-- Access Policy: **External JWT (bank RS256)** (`external_jwt`)
-- Allowed Principals (DB): `external`
+**What this means for the operator:**
 
-**Tenant configuration (required — one-time per tenant):**
-- Tenant Settings → Runtime Identity tab → fill in JWKS URI + Issuer → Save
-- This tells the-M where to fetch the bank's public keys and what issuer to expect.
+1. **Configure Runtime Identity for the tenant** — Tenant Settings → Runtime Identity tab:
+
+   | Field | Required | What to put |
+   |---|---|---|
+   | JWKS URI | **Yes** | Full URL to the IdP's JWKS endpoint, e.g. `https://sso.company.com/realms/myapp/protocol/openid-connect/certs` |
+   | Issuer | **Yes** | The `iss` claim value from tokens — must match exactly, e.g. `https://sso.company.com/realms/myapp` |
+   | Audience | No | The `aud` claim value if you want to enforce it; leave empty to skip |
+   | Sub Claim | No | Defaults to `sub`; change if your IdP uses a different claim for user identity (e.g. `preferred_username`) |
+
+   > The issuer must match what the IdP actually puts in the `iss` claim.
+   > For Keycloak behind a reverse proxy, use the **external** URL (the one users see),
+   > not the internal Docker hostname.
+
+2. **Configure the EP** — Canvas → select EP → Access Policy: **External JWT (RS256)**
+
+3. **Set Allowed Principals** (DB):
+   ```sql
+   UPDATE them.entry_points SET allowed_principals = 'external'
+   WHERE application_id = '<app_id>' AND slug = '<ep_slug>';
+   ```
+
+**What the caller must present:**
+
+- HTTP header: `Authorization: Bearer <jwt_from_idp>`
+
+**What the-M does:**
+
+- Fetches the tenant's JWKS URI (cached).
+- Validates the JWT signature with RS256.
+- Checks `iss` matches the configured Issuer.
+- Checks `aud` if configured.
+- Extracts the configured sub claim as the session's external user identity.
+- `X-External-User` headers are **ignored** on `external_jwt` EPs — the identity comes
+  exclusively from the validated JWT.
 
 ---
 
 ### Path C — the-M staff user (internal)
 
 ```
-Staff member → the-M WS/SSE endpoint  (presents the-M login JWT)
+Staff member → the-M WS/SSE endpoint (presents the-M login JWT)
 ```
 
-A user with a the-M account logs in through the dashboard. Their HS256 session JWT is
-used as the bearer credential when connecting to an EP.
+A user with a the-M account logs in through the dashboard. Their HS256 session JWT is used
+as the bearer credential.
 
-**EP configuration (Canvas → select EP → Access Policy dropdown):**
-- Access Policy: **User JWT (the-M users)** (`user_jwt`)
-- Allowed Principals (DB): `internal` (the default — no DB change needed)
+**What this means for the operator:**
 
----
+- EP Access Policy: **User JWT (the-M users)** — no other setup needed.
+- Allowed Principals defaults to `internal` — no DB change needed.
 
-## Configuring Runtime Identity (for Path B)
+**What the caller must present:**
 
-The Runtime Identity tab (Tenant Settings) stores the per-tenant JWKS configuration
-used to validate bank-issued JWTs at admission time.
-
-| Field | Required | Notes |
-|---|---|---|
-| JWKS URI | **Yes** | Full URL to the IdP's JWKS endpoint. Must be HTTPS in production. |
-| Issuer | **Yes** | Must match the `iss` claim in tokens exactly (case-sensitive). |
-| Audience | No | If set, must match the `aud` claim. Leave empty to skip audience validation. |
-| Sub Claim | No | Defaults to `sub`. Change if your IdP uses a different claim for user identity (e.g. `preferred_username`). |
-
-Example values for a bank Keycloak:
-```
-JWKS URI:  https://keycloak.bank.com/realms/bank/protocol/openid-connect/certs
-Issuer:    https://keycloak.bank.com/realms/bank
-Audience:  (leave empty unless you want to restrict to a specific client)
-Sub Claim: sub
-```
-
-> **Important:** The issuer must exactly match what the IdP puts in the `iss` claim.
-> For Keycloak behind a reverse proxy, this is the **external** (Traefik/nginx) URL,
-> not the internal Docker hostname.
+- HTTP header: `Authorization: Bearer <the_m_user_jwt>` (obtained via `/auth/login`)
 
 ---
 
 ## Access Control Matrix
 
-Which combinations admit which callers:
-
-| Access Mode | Allowed Principals | Bank RS256 JWT (direct) | Backend token + X-External-User | Regular opaque token | the-M user JWT |
+| Access Mode | Allowed Principals | RS256 JWT (direct) | Backend token + X-External-User | Regular opaque token | the-M user JWT |
 |---|---|---|---|---|---|
-| `external_jwt` | `external` | ✅ | ❌ (wrong mode) | ❌ | ❌ |
+| `external_jwt` | `external` | ✅ | ❌ wrong mode | ❌ | ❌ |
 | `external_jwt` | `internal` | ❌ 403 | ❌ | ❌ | ❌ |
 | `token` | `external` | ❌ | ✅ | ❌ 403 | ❌ |
 | `token` | `internal` | ❌ | ❌ 403 | ✅ | ❌ |
@@ -165,55 +187,52 @@ Which combinations admit which callers:
 
 ## Common Scenarios
 
-### Q1: Bank customer calls the-M through the bank — how does this work?
+### Q1: An end user connects through the tenant's backend — how does this work?
 
-Use **Path A** (mediated). The bank's backend system connects using a backend service
-token. The bank controls authentication of its own customers and passes their identity
-to the-M via `X-External-User`.
+Use **Path A**. The tenant's backend system authenticates its own users internally.
+It connects to the-M using a service account token with `is_backend=true`, passing
+the end user's identity in `X-External-User`.
 
 Configure the EP: `access_mode=token`, `allowed_principals=external`.
 
-The bank customer never sees the-M credentials. From the-M's perspective, the caller
-is the bank's backend service; the customer identity is metadata on the session.
+From the-M's perspective, the caller is the tenant's backend service. The end user
+identity is metadata on the session — they have no the-M credentials.
 
-### Q2: Can the same bank customer call the-M directly, bypassing the bank?
+### Q2: Can the same end user connect directly to the-M, bypassing the tenant backend?
 
-**Only if you configure a second EP with `access_mode=external_jwt`.**
+**Only if you configure a separate EP with `access_mode=external_jwt`.**
 
-If you have only a `token`+`external` EP, a bank customer presenting their Keycloak JWT
-directly will be rejected — the EP expects an opaque backend token, not an RS256 JWT.
+A `token`+`external` EP expects an opaque backend token. An end-user presenting
+their IdP JWT directly will be rejected — wrong mode. You must create a second EP
+specifically for direct connections, and configure Runtime Identity for the tenant.
 
-To allow direct calls you must:
-1. Configure Runtime Identity for the tenant (JWKS URI + issuer)
-2. Create an EP with `access_mode=external_jwt`, `allowed_principals=external`
+### Q3: How do I restrict the application so only the tenant backend can call it?
 
-### Q3: How do I restrict an application so only the bank (mediated) can access it — no direct calls?
+Use `access_mode=token`, `allowed_principals=external` on all EPs.
 
-Use **`access_mode=token`, `allowed_principals=external`** on all EPs.
-
-- Bank backend token (`is_backend=true`) → ✅ admitted
-- Bank customer's Keycloak JWT presented directly → ❌ rejected (wrong mode — `external_jwt` not accepted on a `token` EP)
-- Regular the-M token → ❌ rejected (`allowed_principals=external` blocks internal callers)
+- Backend service token (`is_backend=true`) → ✅ admitted
+- End-user IdP JWT presented directly → ❌ rejected (wrong mode)
+- Regular the-M token → ❌ rejected (`allowed_principals=external`)
 - the-M user JWT → ❌ rejected
 
-### Q4: How do I allow bank customers to access the-M directly, without going through the bank?
+### Q4: How do I allow end users to connect directly (without going through the tenant backend)?
 
-Use **`access_mode=external_jwt`, `allowed_principals=external`** on all EPs, and
-configure Runtime Identity.
+Use `access_mode=external_jwt`, `allowed_principals=external` on all EPs, and configure
+Runtime Identity for the tenant (JWKS URI + Issuer).
 
-- Bank customer's Keycloak JWT → ✅ admitted (validated via JWKS)
-- Bank backend token → ❌ rejected (`external_jwt` EP only accepts RS256 JWTs, not opaque tokens)
+- End-user IdP JWT → ✅ admitted (validated via JWKS)
+- Backend service token → ❌ rejected (`external_jwt` mode only accepts JWTs, not opaque tokens)
 - Regular the-M token → ❌ rejected
 - the-M user JWT → ❌ rejected
 
-### Q5: Can I allow both paths (bank-mediated AND direct customer JWT) on the same application?
+### Q5: Can both paths (mediated AND direct) work on the same application?
 
-Yes, but **not on the same entry point** — access modes cannot be combined. Use two EPs:
+Yes — use two EPs:
 
-- **EP-1**: `access_mode=external_jwt`, `allowed_principals=external` — for direct customer JWT
-- **EP-2**: `access_mode=token`, `allowed_principals=external` — for bank backend mediation
+- **EP-mediated**: `access_mode=token`, `allowed_principals=external` — for backend service calls
+- **EP-direct**: `access_mode=external_jwt`, `allowed_principals=external` — for direct end-user JWTs
 
-Each EP gets its own WS/SSE URL. Route clients to the appropriate EP based on how they authenticate.
+Each EP has its own URL. Route clients to the correct EP based on how they authenticate.
 
 ---
 
@@ -224,32 +243,23 @@ WebSocket:  ws://<host>/{tenant_slug}/apps/{app_slug}/{ep_slug}/ws
 SSE:        http://<host>/{tenant_slug}/apps/{app_slug}/{ep_slug}/sse
 ```
 
-Example for the `default` tenant, app `myapp`, EP `bank-direct`:
-```
-ws://platform.bank.com/default/apps/myapp/bank-direct/ws
-```
-
 ---
 
-## Identity Spoofing — Security Note
+## Identity Spoofing — Security Notes
 
 **`X-External-User` is only trusted from backend tokens.**
+If a regular token (`is_backend=false`) or a user JWT includes this header, it is silently
+ignored. The header cannot be used to spoof another user's identity.
 
-If a regular caller (opaque token with `is_backend=false`, or a user JWT) includes an
-`X-External-User` header, it is silently ignored. The identity cannot be spoofed by
-non-backend callers.
+**On `external_jwt` EPs**, the user's identity comes exclusively from the validated JWT's
+sub claim (or the configured sub_claim field). The `X-External-User` header is ignored
+entirely — even from backend tokens.
 
-**For `external_jwt` EPs**, the customer's identity comes exclusively from the validated
-JWT's `sub` claim (or whichever claim is configured as `sub_claim`). The `X-External-User`
-header is ignored entirely on `external_jwt` EPs — even from backend tokens.
-
-This is verified by test P1-05 in the E2E suite.
+Verified by test P1-05 in the E2E suite.
 
 ---
 
 ## Automated E2E Test
-
-The full Phase 4 auth flow is covered by an automated integration test.
 
 **Script:** `scripts/tests/test_38_phase4_external_jwt.py`
 
@@ -268,7 +278,7 @@ python3.12 scripts/tests/test_38_phase4_external_jwt.py
 
 | Test | What it proves |
 |---|---|
-| P1-01 | Valid bank RS256 JWT → WS admitted (full JWKS validation path working) |
+| P1-01 | Valid RS256 JWT from IdP → WS admitted (full JWKS validation path working) |
 | P1-02 | No token → 401 on `external_jwt` EP |
 | P1-03 | Malformed JWT → 401 |
 | P1-04 | Wrong audience configured → JWT rejected |
@@ -295,11 +305,13 @@ The tenant runtime IDP config is restored to its pre-test state on teardown.
 - **JWKS URI:** Must be `https://` in production. `http://localhost*` and `http://them-*`
   (Docker-internal hostnames) are accepted in development environments.
 - **Runtime IDP config is per-tenant.** Each tenant configures its own IdP independently.
-  A tenant without runtime IDP config cannot use `external_jwt` EPs — all connections are rejected with 401.
-- **One IdP per tenant.** Each tenant can have exactly one JWKS URI / issuer configured.
-  If you need to accept tokens from multiple IdPs, use separate tenants.
+  A tenant without runtime IDP config cannot use `external_jwt` EPs — connections are rejected with 401.
+- **One IdP per tenant.** Each tenant can configure exactly one JWKS URI / issuer.
+  To accept tokens from multiple IdPs, use separate tenants.
 - **`is_backend` flag** on access tokens is not settable via the Admin UI today — set it
   directly in the DB after token creation:
   ```sql
   UPDATE them.access_tokens SET is_backend = true WHERE label = '<label>';
   ```
+- **Voice EPs** (`voice`, `webrtc`) use their own admission handler and do not enforce
+  `allowed_principals`. The Allowed Callers setting is hidden for these EP types in the UI.

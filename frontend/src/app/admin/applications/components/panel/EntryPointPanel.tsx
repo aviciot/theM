@@ -87,7 +87,7 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           <option value="token">Token required</option>
           <option value="public">Public (no auth)</option>
           <option value="user_jwt">User JWT (the-M users)</option>
-          <option value="external_jwt">External JWT (bank RS256)</option>
+          <option value="external_jwt">External JWT (RS256)</option>
         </select>
       </div>
       {d.epType !== 'voice' && d.epType !== 'webrtc' && (
@@ -99,9 +99,9 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
             <option value="both">Both — no caller-type restriction</option>
           </select>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
-            {(d.allowedPrincipals ?? 'internal') === 'internal' && 'Only regular the-M access tokens and staff user JWTs are admitted. Bank backend tokens and direct bank JWTs are blocked.'}
-            {d.allowedPrincipals === 'external' && 'Only bank backend service tokens (is_backend=true) or direct bank RS256 JWTs are admitted. Regular the-M tokens and staff logins are blocked.'}
-            {d.allowedPrincipals === 'both' && 'Any authenticated caller is admitted — both the-M tokens and bank/external callers. Use when you want no caller-type restriction beyond the Access Policy above.'}
+            {(d.allowedPrincipals ?? 'internal') === 'internal' && 'Only regular the-M access tokens and staff user JWTs are admitted. Backend service tokens and external RS256 JWTs are blocked.'}
+            {d.allowedPrincipals === 'external' && 'Only backend service tokens (is_backend=true) or direct RS256 JWTs from a third-party IdP are admitted. Regular the-M tokens and staff logins are blocked.'}
+            {d.allowedPrincipals === 'both' && 'Any authenticated caller is admitted — both the-M tokens and external callers. Use when you want no caller-type restriction beyond the Access Policy above.'}
           </div>
         </div>
       )}
