@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-09 (Tenant management: force-delete, IdP tag, OIDC redirect fix; Keycloak tenant setup)
+# Last updated: 2026-09-10 (Phase 1 Redis Metrics Foundation complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,13 +10,12 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+8f23e8a  fix(tenants): fix doubled /api/v1 prefix in logo upload/delete URLs
+737c923  feat(tenants): tenant logo upload, replace, delete
+f420688  feat(metrics): Phase 1 Redis Metrics Foundation — write side
+83a5999  docs: add Platform Roadmap (Redis metrics, observability, managed apps, deploy-to-tenant)
+6b3c21c  feat(ui): increase logo size by 30% (62px → 81px)
 c078e6d  fix(oidc): correct redirect_uri path /auth/api/v1/auth/oidc/callback → /auth/oidc/callback
-9f18da3  fix(admin): include idp_configured in tenants list and create responses
-aa72059  fix(admin): force-delete tenant cascades all FK-blocked child tables
-18f9d72  fix(tenants): use logged-in username for delete verification + show errors in modal
-304e442  feat(tenants): force-delete with confirmation modal + resource summary
-4d4b232  feat(ui): group Provider Keys into collapsible Cloud / Self-hosted sections
-782af72  feat(ui): smart placeholders + host badge for local LLM providers
 ```
 
 ---
@@ -539,19 +538,21 @@ Test SSO login: Admin → Tenants → bank or rnd → SSO tab → "Test SSO Logi
 
 ### Next recommended task
 
-**Phase 4 — Bank JWT / JWKS validation** (see `docs/END_USER_AUTH_PLAN.md`)
+**Phase 2 — Observability: Per-App Breakdown** (see `docs/PLATFORM_ROADMAP.md`)
 
-**HEAD: (pending commit)** — Phase 3 complete
+Phase 1 (Redis Metrics write side) is complete as of commit `f420688`.
 
-**Option C — Change 4 — Group Mapping UI** (lowest priority — complex, no backend yet)
-- Requires backend: extend `idp_config` JSONB (`groups_claim`, `unmatched_action`), tenant-scoped `/api/v1/tenant/group-mappings` API, OIDC handler update.
-- Frontend: add Group Mappings section to SSO tab in `frontend/src/app/tenant/settings/page.tsx`.
-- See full spec in `docs/IAM_UI_SPEC.md` (Change 4 section).
+Phase 2 adds:
+- DAL: `ListAppObservabilitySummary(ctx, tenantID)` — queries `them.runs` + `them.run_usage` grouped by application_id
+- Handler: `GET /api/v1/admin/observability/tenant/{id}/apps` — DB 30d + Redis today (HGETALL), merged
+- Frontend: expand tenant row on `/admin/observability` to show per-app table with live badge
+
+See `docs/PLATFORM_ROADMAP.md` Phase 2 section for the full step list.
 
 Key reminders:
 - Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.
 - Every Go change → `cd go && go test ./...` (must be zero failures before commit).
-- Spec file: `docs/IAM_UI_SPEC.md` — read Change 4 section before starting Group Mapping UI.
+- Phase 1 Redis key patterns documented in `docs/REDIS.md` (Metrics Keys section).
 
 ### Known blockers / pre-conditions
 
