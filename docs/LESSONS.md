@@ -3,6 +3,15 @@
 
 ---
 
+## 2026-09-10 — Bank SSO login fails: "IdP token exchange failed"
+
+**Symptom:** Logging in via bank SSO returns `{"detail":"IdP token exchange failed"}`. Keycloak logs show `error="invalid_client_credentials"` for the `them-m` client in the `bank` realm.
+**Root cause:** The `them.tenants` row for the `bank` tenant had `client_secret = "them-m-bank-secret"` (set manually from a different machine/IP), but `keycloak/bank-realm.json` defines the `them-m` client with secret `"them-m-secret"`. The DB and Keycloak were never in sync.
+**Fix:** `UPDATE them.tenants SET idp_config = jsonb_set(idp_config, '{client_secret}', '"them-m-secret"') WHERE slug = 'bank';`
+**Watch for:** When configuring a new tenant's SSO via the UI, the secret entered must exactly match what is in the Keycloak realm. The realm JSON is the source of truth for secrets — the DB row must match it.
+
+---
+
 ## 2026-09-07 — POST /admin/tokens returns 500 (FK violation on user_id)
 
 **Symptom:** `POST /admin/tokens` returns 500 for any user when no `user_id` is in the request body. Bridge logs show no error (silently swallowed).
