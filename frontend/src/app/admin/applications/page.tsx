@@ -174,6 +174,7 @@ export default function ApplicationsPage() {
             <RuntimeView
               app={runtimeApp}
               onBack={backToList}
+              onUpdate={(patch) => setRuntimeApp(prev => prev ? { ...prev, ...patch } : prev)}
             />
           </div>
         </div>

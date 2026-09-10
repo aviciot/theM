@@ -20,7 +20,7 @@ type EPLLMDraft  = { provider: string; model: string };
 type EPSumDraft  = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 type NodeLLMDraft = { provider: string; model: string };
 
-export function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
+export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBack: () => void; onUpdate?: (patch: Partial<Application>) => void }) {
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
   const [cfg, setCfg]         = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
   const [saving, setSaving]   = useState(false);
@@ -244,7 +244,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   }
   const handleSetManaged = useCallback(async (next: boolean) => {
     setIsManagedSaving(true); setManagedMsg('');
-    try { await themApi.setManagedFlag(app.id, next); setIsManaged(next); setManagedMsg('Saved'); setTimeout(() => setManagedMsg(''), 2500); }
+    try { await themApi.setManagedFlag(app.id, next); setIsManaged(next); onUpdate?.({ is_managed: next }); setManagedMsg('Saved'); setTimeout(() => setManagedMsg(''), 2500); }
     catch (e: unknown) { setManagedMsg(e instanceof Error ? e.message : 'Failed'); } finally { setIsManagedSaving(false); }
   }, [app.id]);
 
