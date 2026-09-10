@@ -705,12 +705,45 @@ new_app AS (
     FROM src
     RETURNING id, name, slug, enabled, active_definition_id
 ),
+new_orchs AS (
+    INSERT INTO them.app_orchestrators (
+        id, application_id, orchestrator_id, name, node_id, kind, delegatable, display_name,
+        system_prompt, allowed_agent_ids, llm_provider, llm_model, llm_api_key_encrypted,
+        llm_base_url, max_iterations, max_parallel_tools, rate_limit_rpm, daily_budget_usd,
+        voice_enabled, transcription_provider, transcription_model, transcription_api_key_encrypted,
+        tts_enabled, tts_provider, tts_voice, tts_api_key_encrypted,
+        memory_enabled, summarize_every_n_calls, memory_raw_fallback_n,
+        summarizer_provider, summarizer_model, summarizer_api_key_encrypted,
+        edges, history_window, budget_tokens, enabled, mcp_servers,
+        created_at, updated_at
+    )
+    SELECT
+        gen_random_uuid(), (SELECT id FROM new_app), ao.orchestrator_id,
+        -- append slug suffix so name stays unique (constraint: uq_app_orchestrators_name)
+        substr(ao.name, 1, 57) || '-' || substr((SELECT slug FROM new_app), length((SELECT slug FROM new_app))-5, 6),
+        ao.node_id, ao.kind, ao.delegatable, ao.display_name,
+        ao.system_prompt, ao.allowed_agent_ids, ao.llm_provider, ao.llm_model,
+        NULL,  -- llm_api_key_encrypted: do not copy secrets
+        ao.llm_base_url, ao.max_iterations, ao.max_parallel_tools, ao.rate_limit_rpm, ao.daily_budget_usd,
+        ao.voice_enabled, ao.transcription_provider, ao.transcription_model,
+        NULL,  -- transcription_api_key_encrypted
+        ao.tts_enabled, ao.tts_provider, ao.tts_voice,
+        NULL,  -- tts_api_key_encrypted
+        ao.memory_enabled, ao.summarize_every_n_calls, ao.memory_raw_fallback_n,
+        ao.summarizer_provider, ao.summarizer_model,
+        NULL,  -- summarizer_api_key_encrypted
+        ao.edges, ao.history_window, ao.budget_tokens, ao.enabled, ao.mcp_servers,
+        now(), now()
+    FROM them.app_orchestrators ao
+    WHERE ao.application_id = $1::uuid
+    RETURNING id, node_id
+),
 new_eps AS (
     INSERT INTO them.entry_points
         (id, application_id, tenant_id, slug, entry_point_type, enabled,
          memory_enabled, summarize_every_n_calls, memory_raw_fallback_n, history_window,
          summarizer_provider, summarizer_model, llm_provider, llm_model,
-         allowed_principals, created_at, updated_at)
+         allowed_principals, app_orchestrator_id, created_at, updated_at)
     SELECT
         gen_random_uuid(), (SELECT id FROM new_app), $2::uuid,
         ep.slug, ep.entry_point_type, ep.enabled,
@@ -721,6 +754,10 @@ new_eps AS (
         ep.summarizer_provider, ep.summarizer_model,
         ep.llm_provider, ep.llm_model,
         COALESCE(ep.allowed_principals, 'internal'),
+        -- remap app_orchestrator_id from source to cloned orchestrator via node_id match
+        (SELECT no.id FROM new_orchs no WHERE no.node_id = (
+            SELECT ao.node_id FROM them.app_orchestrators ao WHERE ao.id = ep.app_orchestrator_id
+        )),
         now(), now()
     FROM them.entry_points ep
     WHERE ep.application_id = $1::uuid
@@ -732,6 +769,7 @@ SELECT
     na.slug,
     COALESCE(t.slug, ''),
     na.enabled,
+    false,
     d.revision,
     d.status
 FROM new_app na
