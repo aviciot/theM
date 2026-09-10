@@ -106,6 +106,8 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 2. **Auth admin CRUD** — `them-auth-service` (Python, 8701) still serves users/roles/teams for the frontend. No Go implementation yet.
 
+3. **Managed-app run attribution gap** (Phase 3 known gap, deferred to Phase 4) — `go/internal/execution/lifecycle.go:403` uses `resolvedCfg.TenantID` (EP owner's tenant) for run creation. For a managed app owned by Default tenant, this attributes runs to Default even when the calling token belongs to a consuming tenant (e.g. Bank). Quota, metrics, and observability are incorrectly charged to the platform owner. Fix requires reading the calling token's `tenant_id` from context and passing it to the run recorder when the EP is a managed app (`resolvedCfg.IsManagedApp` flag or equivalent). Track this before Phase 4.
+
 ---
 
 ## Deployment environments

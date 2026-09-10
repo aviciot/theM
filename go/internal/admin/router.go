@@ -215,6 +215,8 @@ func BuildRouter(
 					NewObservabilityHandler(pools, redis).Routes(platformGlobal)
 				}
 				managedApps.PlatformRoutes(platformGlobal)
+				// Super-admin toggle: PATCH /admin/applications/{id}/managed
+				platformGlobal.Patch("/applications/{id}/managed", apps.PatchManaged)
 				if sessionReader != nil {
 					NewSessionsHandler(sessionReader).Routes(platformGlobal)
 				}

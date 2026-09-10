@@ -241,6 +241,7 @@ export interface Application {
   tenant_slug?: string;
   presentation?: Record<string, unknown>;
   enabled: boolean;
+  is_managed?: boolean;
   active_revision?: number | null;
   active_status?: string | null;
   canvas?: CanvasLayout | null;

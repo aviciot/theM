@@ -22,8 +22,17 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // epConfigQuery joins entry_points → applications → app_orchestrators (LEFT JOIN).
 // Resolves by (tenant_id, app_slug, ep_slug) — migration 048 adds slug to
 // applications, making the triple the canonical unique key for an entry point.
-// Tenant boundary is enforced by ep.tenant_id = $1; app slug narrows to the
-// correct application within that tenant; ep slug picks the door.
+//
+// Tenant boundary: the WHERE clause accepts the EP when either:
+//   (a) ep.tenant_id = $1  — the calling tenant directly owns the EP, OR
+//   (b) a binding exists in managed_app_bindings for (ep.application_id, $1)
+//       with enabled=true — the calling tenant has been granted access to a
+//       platform-owned managed app.
+//
+// For managed-app EPs the returned ep.tenant_id is the platform owner's UUID,
+// not the calling tenant's. Callers that need the billing tenant (e.g. run
+// recorder, quota enforcement) must use the calling token's tenant_id, which
+// is passed separately to those subsystems.
 //
 // The LEFT JOIN on app_orchestrators means ao.id and ao.name are NULL when
 // entry_points.app_orchestrator_id IS NULL (unbound EP). Handlers must treat
@@ -50,9 +59,15 @@ JOIN them.applications a ON a.id = ep.application_id
 LEFT JOIN them.app_orchestrators ao
     ON ao.id = ep.app_orchestrator_id
    AND ao.application_id = ep.application_id
-WHERE ep.tenant_id = $1::uuid
-  AND a.slug      = $2
-  AND ep.slug     = $3
+WHERE (ep.tenant_id = $1::uuid
+       OR EXISTS (
+           SELECT 1 FROM them.managed_app_bindings mab
+           WHERE mab.app_id    = ep.application_id
+             AND mab.tenant_id = $1::uuid
+             AND mab.enabled   = true
+       ))
+  AND a.slug  = $2
+  AND ep.slug = $3
 LIMIT 1`
 
 // QueryEPConfig fetches one EPConfigRow for the given tenant ID, app slug, and

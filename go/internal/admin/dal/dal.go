@@ -75,6 +75,10 @@ func (d *DB) IDPEncrypt(s string) (string, error) {
 	return idpcrypto.Encrypt(d.idpKey, s)
 }
 
+// Querier returns the underlying Querier for use with package-level DAL functions
+// that accept a Querier directly (e.g. SetManagedFlag).
+func (d *DB) Querier() Querier { return d.q }
+
 // NewDBFromTenantQuerier wraps a dbtype.TenantQuerier (e.g. *db.TenantTx produced by
 // db.Pools.BeginTenantTx) so it can be used by existing DAL methods on *DB.
 // The adapter bridges the pgx-native types (pgx.Rows, pgx.Row) to the dal

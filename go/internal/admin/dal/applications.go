@@ -681,3 +681,16 @@ WHERE id             = $1::uuid
   AND application_id = $2::uuid`
 	return d.q.Exec(ctx, q, epID, appID, string(card))
 }
+
+// SetManagedFlag toggles applications.app_type between 'tenant' and 'managed'.
+// This must be called via the Admin (BYPASSRLS) pool — app_type is not
+// writable by them_app (RLS). Passing isManaged=true marks the app as a
+// platform-owned managed app; false reverts it to a normal tenant app.
+func SetManagedFlag(ctx context.Context, q Querier, appID string, isManaged bool) error {
+	const query = `
+UPDATE them.applications
+SET app_type   = CASE WHEN $2 THEN 'managed' ELSE 'tenant' END,
+    updated_at = NOW()
+WHERE id = $1::uuid`
+	return q.Exec(ctx, query, appID, isManaged)
+}

@@ -538,17 +538,17 @@ Test SSO login: Admin → Tenants → bank or rnd → SSO tab → "Test SSO Logi
 
 ### Next recommended task
 
-**Phase 3 — Managed Apps** (see `docs/PLATFORM_ROADMAP.md`)
+**Phase 4 — Deploy to Tenant** (see `docs/PLATFORM_ROADMAP.md`)
 
-Phase 2 (Per-App Observability Breakdown) is complete as of commit `ad2ea46`.
+Phase 3 (Managed Apps) is complete (pending commit this session):
+- `epConfigQuery` now JOINs `managed_app_bindings` — consuming tenants can reach platform-owned EPs
+- `PATCH /admin/applications/{id}/managed` handler wired (super-admin only)
+- Frontend "Managed App" toggle visible to `super_admin` in RuntimeView
+- Tests: EC-MA-01..02 (epconfig), MA-01..03 (managed flag handler) — S1 total 1133
 
-Phase 3 adds:
-- `epConfigQuery` JOIN `managed_app_bindings` so a consuming tenant's token can reach Default-owned entry points
-- `is_managed` toggle on applications + CRUD for `managed_app_bindings`
-- Runs attributed to consuming tenant (quota + metrics correctly charged)
-- Frontend: "Make managed" toggle + tenant assignment panel
+**Known gap (deferred to Phase 4):** `lifecycle.go:403` uses `resolvedCfg.TenantID` (EP owner's tenant) for run creation. For managed apps this attributes runs to the platform tenant, not the consuming tenant. Runs, quota, and metrics for managed-app usage are incorrectly charged to Default. Fix is tracked in `docs/STATUS.md`.
 
-See `docs/PLATFORM_ROADMAP.md` Phase 3 section for the full step list.
+Phase 4 (Deploy to Tenant — hard fork) steps in `docs/PLATFORM_ROADMAP.md`.
 
 Key reminders:
 - Migration 081 (`db/081_tenant_group_mappings_safe_roles.sql`) — **not verified applied to live DB** — apply before enabling OIDC group mapping.

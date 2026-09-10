@@ -655,6 +655,29 @@ func (h *ApplicationsHandler) DeleteAppParam(w http.ResponseWriter, r *http.Requ
 }
 
 // BulkDelete handles POST /api/v1/admin/applications/bulk-delete.
+// PatchManaged handles PATCH /api/v1/admin/applications/{id}/managed.
+// Toggles the app_type between 'tenant' and 'managed'. RequireSuperAdmin.
+// Body: {"is_managed": bool}
+func (h *ApplicationsHandler) PatchManaged(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	var body struct {
+		IsManaged bool `json:"is_managed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := dal.SetManagedFlag(r.Context(), h.legacyDAL.Querier(), appID, body.IsManaged); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"is_managed": body.IsManaged})
+}
+
 func (h *ApplicationsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	var input BulkDeleteInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

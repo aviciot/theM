@@ -1080,6 +1080,8 @@ history-expired rows). Status mapping per ADR-002.
 | `TestCheckPrincipal_EmptyDefault_AllowsBoth` | EC-AP-08: empty `AllowedPrincipals` + backend → admitted (empty = no restriction) |
 | `TestBuildConfig_UnknownPrincipal_DefaultsToInternal` | EC-AP-09: unknown value in DB normalised to `"internal"` |
 | `TestBuildConfig_ExternalPrincipal_Propagated` | EC-AP-10: `"external"` from DB propagated to `EPConfig.AllowedPrincipals` |
+| `TestLoad_ManagedApp_BindingExists` | EC-MA-01: consuming tenant with active binding → Load succeeds, TenantID is platform owner |
+| `TestLoad_ManagedApp_NoBinding` | EC-MA-02: consuming tenant without binding → ErrNotFound |
 
 **Trigger:** any change to `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go`
 
@@ -2721,6 +2723,20 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-106 · Managed-app flag toggle handler — `internal/admin/managed_flag_test.go`
+
+**Purpose:** Verifies `PATCH /admin/applications/{id}/managed` sets `app_type` via `dal.SetManagedFlag`. DB errors return 500.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| MA-01 | `TestManagedFlag_SetManaged` | `{"is_managed":true}` → 200 `{"is_managed":true}`; DB Exec called |
+| MA-02 | `TestManagedFlag_SetTenant` | `{"is_managed":false}` → 200 `{"is_managed":false}` |
+| MA-03 | `TestManagedFlag_DBError` | DB returns error → 500 |
+
+**Trigger:** `internal/admin/applications.go` (PatchManaged), `internal/admin/dal/applications.go` (SetManagedFlag), `internal/admin/router.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -3212,7 +3228,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-15 | admin | 59 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
-| S1-18 | epconfig | 36 |
+| S1-18 | epconfig | 38 |
 | S1-19 | cache | 1 |
 | S1-20 | cache (runstream adapter) | 1 |
 | S1-21 | runstream (pub/sub) | 10 |
@@ -3291,7 +3307,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-103 | Tenant self-service handler (TSS-01..08): GetSettings_Success, GetSettings_NotFound, PatchSettings_Success, PatchSettings_EnabledIgnored, GetQuota_NotFound, GetQuota_Found, GetMyMembers_Empty, GetMyMembers_Populated | 8 |
 | S1-104 | Redis metrics recorder (MR-01..07): RecordRun_TenantAndApp, RecordRun_NoApp, RecordTokens_TenantAndApp, RecordMCPCall_TenantAndApp, RecordUser_PFAddAndExpiry, NoopRecorder_AllNil, RecordRun_ExpireAtFuture | 7 |
 | S1-105 | runrecorder metrics integration (MRR-01..03): WithMetricsRecorder_CreateRunFiresMetric, RecordTokensMetric_FiresMetric, RecordTokensMetric_NoopWithoutRecorder | 3 |
-| **S1 total** | | **1128** |
+| S1-106 | Managed-app flag toggle handler (MA-01..03): SetManaged → 200, SetTenant → 200, DBError → 500 | 3 |
+| **S1 total** | | **1133** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

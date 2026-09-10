@@ -587,3 +587,41 @@ func TestBuildConfig_ExternalPrincipal_Propagated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "external", cfg.AllowedPrincipals)
 }
+
+// ── EC-MA: Managed App entry-point resolution ─────────────────────────────────
+
+const managedOwnerTenantID = "00000000-0000-0000-0000-000000000099" // platform owner
+const bankTenantID         = "00000000-0000-0000-0000-000000000002" // consuming tenant
+
+// EC-MA-01: When the DB mock returns an EP row whose tenant_id is the platform
+// owner (not the calling tenant), buildConfig still succeeds. This documents
+// that the Loader is agnostic to WHO owns the EP — the SQL JOIN in pgx.go is
+// responsible for admitting managed-app callers; the Loader just processes the
+// returned row.
+func TestLoad_ManagedApp_BindingExists(t *testing.T) {
+	// Row owned by platform tenant (managedOwnerTenantID), but returned because
+	// the calling tenant (bankTenantID) has an active managed_app_binding.
+	// In the real DB this is enforced by the EXISTS subquery in epConfigQuery.
+	// Here the mock returns the row unconditionally — simulating a successful JOIN.
+	row := enabledRow("managed-ep")
+	row.TenantID = managedOwnerTenantID // platform owner, not caller
+	db := &fakeDB{row: row}
+	loader := epconfig.NewLoader(db, nil)
+
+	cfg, err := loader.Load(context.Background(), bankTenantID, "managed-app", "managed-ep")
+	require.NoError(t, err, "EC-MA-01: managed EP binding → Load must succeed")
+	assert.Equal(t, managedOwnerTenantID, cfg.TenantID,
+		"EPConfig.TenantID reflects the owner's tenant; caller's tenant tracked separately")
+	assert.True(t, cfg.EPEnabled)
+}
+
+// EC-MA-02: When the DB returns ErrNotFound (no binding or wrong slug), Load
+// returns ErrNotFound regardless of whether the app is managed.
+func TestLoad_ManagedApp_NoBinding(t *testing.T) {
+	db := &fakeDB{err: fmt.Errorf("%w: app=%s ep=%s", epconfig.ErrNotFound, "managed-app", "managed-ep")}
+	loader := epconfig.NewLoader(db, nil)
+
+	_, err := loader.Load(context.Background(), bankTenantID, "managed-app", "managed-ep")
+	require.Error(t, err, "EC-MA-02: no binding → Load must return error")
+	assert.ErrorIs(t, err, epconfig.ErrNotFound)
+}

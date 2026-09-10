@@ -1,6 +1,7 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
 import { EPSections } from './RuntimeEPSections';
@@ -85,6 +86,11 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [secCfg,          setSecCfg]          = useState<SecurityConfig>({ enabled: false });
   const [secSaving,       setSecSaving]       = useState(false);
   const [secMsg,          setSecMsg]          = useState('');
+
+  const user = useAuthStore(s => s.user);
+  const [isManaged,       setIsManaged]       = useState(app.is_managed ?? false);
+  const [isManagedSaving, setIsManagedSaving] = useState(false);
+  const [managedMsg,      setManagedMsg]      = useState('');
 
   useEffect(() => {
     themApi.getProviderKeys(app.id).then(statuses => {
@@ -226,6 +232,12 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
     try { await themApi.putSecurityConfig(app.id, secCfg); setSecMsg('Saved'); setTimeout(() => setSecMsg(''), 2500); }
     catch (e: unknown) { setSecMsg(e instanceof Error ? e.message : 'Failed'); } finally { setSecSaving(false); }
   }
+  const handleSetManaged = useCallback(async (next: boolean) => {
+    setIsManagedSaving(true); setManagedMsg('');
+    try { await themApi.setManagedFlag(app.id, next); setIsManaged(next); setManagedMsg('Saved'); setTimeout(() => setManagedMsg(''), 2500); }
+    catch (e: unknown) { setManagedMsg(e instanceof Error ? e.message : 'Failed'); } finally { setIsManagedSaving(false); }
+  }, [app.id]);
+
   async function handleSave() {
     setSaving(true); setError(null);
     try { const parsedUsers = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n)); const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean); const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers }; await themApi.putAppRuntime(app.id, payload); setCfg(payload); setSaved(true); setTimeout(() => setSaved(false), 2500); }
@@ -444,6 +456,25 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
             </div>
           )}
         </Section>
+
+        {user?.role === 'super_admin' && (
+          <Section title="Managed App" icon="storefront" accent="#a78bfa" defaultOpen={false}
+            subtitle={isManaged ? 'Exposed to consuming tenants' : 'Private to owner tenant'}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <button
+                onClick={() => handleSetManaged(!isManaged)}
+                disabled={isManagedSaving}
+                style={{ padding: '8px 18px', borderRadius: 7, border: `1px solid ${isManaged ? 'rgba(167,139,250,0.4)' : 'rgba(132,158,190,0.3)'}`, background: isManaged ? 'rgba(167,139,250,0.12)' : 'transparent', color: isManaged ? '#a78bfa' : C.textMuted, cursor: isManagedSaving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: isManagedSaving ? 0.6 : 1 }}
+              >
+                {isManagedSaving ? 'Saving…' : isManaged ? 'Managed — click to make private' : 'Private — click to make managed'}
+              </button>
+              {managedMsg && <span style={{ fontSize: 12, fontWeight: 600, color: managedMsg === 'Saved' ? C.green : C.error }}>{managedMsg}</span>}
+            </div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>
+              Managed apps are accessible to consuming tenants that have an active binding. Entry points remain owned by this application's tenant.
+            </div>
+          </Section>
+        )}
       </div>
     </div>
   );

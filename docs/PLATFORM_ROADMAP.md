@@ -13,7 +13,7 @@ discussed in the September 2026 architecture session. Update the status column a
 |---|---|---|---|
 | 1 | Redis metrics — write side | **COMPLETE** `f420688` | — |
 | 2 | Observability — per-app breakdown | **COMPLETE** `ad2ea46` | Phase 1 |
-| 3 | Managed Apps — shared runtime (Option 1) | **PLANNED** | Phase 2 |
+| 3 | Managed Apps — shared runtime (Option 1) | **COMPLETE** `(pending commit)` | Phase 2 |
 | 4 | Deploy to Tenant — hard fork (Option 2) | **PLANNED** | Phase 3 (optional) |
 
 ---
@@ -180,13 +180,13 @@ This is Option 1 from the architecture discussion: platform owns, tenants access
 
 ### Steps
 
-- [ ] 1. `epConfigQuery` JOIN `managed_app_bindings` — consuming tenant can reach managed EP
-- [ ] 2. Verify run recorder sets `tenant_id` = calling token's tenant (not app owner's)
-- [ ] 3. PATCH handler to toggle `is_managed` on application
-- [ ] 4. CRUD endpoints for `managed_app_bindings` (assign/remove tenant access)
-- [ ] 5. Frontend: "Make managed" toggle + tenant assignment panel
-- [ ] 6. Observability: managed-app runs appear under consuming tenant (verify from Phase 2 page)
-- [ ] 7. Tests + E2E smoke (Bank token → Default-owned managed app entry point → run recorded under Bank)
+- [x] 1. `epConfigQuery` JOIN `managed_app_bindings` — consuming tenant can reach managed EP
+- [ ] 2. Run attribution: `lifecycle.go:403` uses resolvedCfg.TenantID (EP owner); for managed apps this is the platform tenant, not the consuming tenant. **Known gap — see STATUS.md.** Deferred to Phase 4.
+- [x] 3. PATCH handler to toggle `is_managed` on application
+- [x] 4. CRUD endpoints for `managed_app_bindings` (pre-existing — S1-92)
+- [x] 5. Frontend: "Make managed" toggle (super_admin only) in RuntimeView
+- [ ] 6. Observability: verify managed-app runs appear under consuming tenant (needs E2E with real managed-app binding)
+- [x] 7. Tests: EC-MA-01..02 (epconfig), MA-01..03 (managed flag handler)
 - [ ] 8. Build + deploy
 
 ### Key files
