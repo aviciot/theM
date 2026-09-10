@@ -357,6 +357,10 @@ func TestLifecycle_ReleaseNilHandle_NoOp(t *testing.T) {
 	lc.Release(nil)
 }
 
+// TestLifecycle_TenantIDFromEPConfig_NotFromRequest verifies that:
+//   - The Temporal workflow always receives TenantID from resolvedCfg (the app owner).
+//   - The caller cannot override TenantID in the WorkflowInput.
+//   - For a normal (non-managed) run, billing tenant equals the EP owner tenant.
 func TestLifecycle_TenantIDFromEPConfig_NotFromRequest(t *testing.T) {
 	g := &fakeGate{}
 	s := &fakeSession{}
@@ -368,10 +372,11 @@ func TestLifecycle_TenantIDFromEPConfig_NotFromRequest(t *testing.T) {
 	ep.AppID = "server-app-id"
 
 	lc := buildLifecycle(ep, &fakeAuth{info: validToken()}, g, s, r, tmp)
-	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	// req.TenantID matches EP owner → normal (non-managed) run.
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", TenantID: "server-tenant-id"})
 	require.NoError(t, err)
 
-	// Caller attempts to supply tenant override — must be ignored.
+	// Caller attempts to supply tenant override in WorkflowInput — must be ignored.
 	_, startErr := lc.Start(context.Background(), h, temporal.WorkflowInput{
 		TenantID:         "attacker-tenant",
 		ApplicationID:    "attacker-app",
@@ -379,10 +384,45 @@ func TestLifecycle_TenantIDFromEPConfig_NotFromRequest(t *testing.T) {
 	})
 	require.NoError(t, startErr)
 
-	assert.Equal(t, "server-tenant-id", tmp.lastInput.TenantID, "TenantID must come from EPConfig, not request")
+	// Workflow must use the EP owner's tenant (for LLM key lookup, orchestrator).
+	assert.Equal(t, "server-tenant-id", tmp.lastInput.TenantID, "workflow TenantID must come from EPConfig, not WorkflowInput")
 	assert.Equal(t, "server-app-id", tmp.lastInput.ApplicationID, "ApplicationID must come from EPConfig, not request")
-	assert.Equal(t, "server-tenant-id", r.lastRun.TenantID, "recorder must persist server TenantID")
+	// Run record uses billing tenant = req.TenantID (same as EP owner for non-managed).
+	assert.Equal(t, "server-tenant-id", r.lastRun.TenantID, "run billing tenant must equal caller's tenant for non-managed EP")
 	assert.Equal(t, "server-app-id", r.lastRun.ApplicationID, "recorder must persist server AppID")
+	// BillingTenantID on handle must equal req.TenantID.
+	assert.Equal(t, "server-tenant-id", h.BillingTenantID, "BillingTenantID must be set on handle")
+}
+
+// TestLifecycle_ManagedApp_BillingTenantIsCallerNotOwner verifies that when a
+// consuming tenant (bank) calls a managed app owned by a different tenant (platform),
+// the run is billed to the caller's tenant, not the app owner's.
+// The Temporal workflow still receives the app owner's TenantID (needed for LLM key lookup).
+func TestLifecycle_ManagedApp_BillingTenantIsCallerNotOwner(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	ep := publicEP("slug")
+	ep.TenantID = "platform-tenant-id" // app owner (Default tenant)
+	ep.AppID = "platform-app-id"
+
+	lc := buildLifecycle(ep, &fakeAuth{info: validToken()}, g, s, r, tmp)
+	// req.TenantID is the consuming tenant (Bank) — differs from EP owner.
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", TenantID: "bank-tenant-id"})
+	require.NoError(t, err)
+
+	_, startErr := lc.Start(context.Background(), h, temporal.WorkflowInput{OrchestratorName: "slug"})
+	require.NoError(t, startErr)
+
+	// Workflow uses the app owner's tenant for LLM key resolution.
+	assert.Equal(t, "platform-tenant-id", tmp.lastInput.TenantID, "workflow TenantID must be the app owner's for LLM key lookup")
+	// Run is billed to the consuming tenant (Bank).
+	assert.Equal(t, "bank-tenant-id", r.lastRun.TenantID, "run must be billed to the consuming tenant, not the app owner")
+	assert.Equal(t, "bank-tenant-id", h.BillingTenantID, "BillingTenantID must reflect the consuming tenant")
+	// Session also attributed to the consuming tenant.
+	assert.Equal(t, "bank-tenant-id", s.lastInfo.TenantID, "session must be attributed to consuming tenant")
 }
 
 func TestLifecycle_ContextIDProvidedByCaller_Preserved(t *testing.T) {

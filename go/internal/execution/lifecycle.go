@@ -270,10 +270,17 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	// ── 5b. Quota enforcement ─────────────────────────────────────────────────
+	// billingTenantID is the tenant charged for this run.
+	// For normal runs it equals resolvedCfg.TenantID (the app owner).
+	// For managed-app runs the consuming tenant (req.TenantID) is charged instead —
+	// req.TenantID is always the caller's authenticated tenant from their auth token;
+	// it is never taken from request data, so this substitution is safe.
+	billingTenantID := req.TenantID
+
 	// Check per-tenant run limits before consuming a gate slot.
 	// Fail-open when no QuotaEnforcer is configured (nil).
 	if lc.quota != nil {
-		if qErr := lc.quota.CheckQuota(ctx, resolvedCfg.TenantID); qErr != nil {
+		if qErr := lc.quota.CheckQuota(ctx, billingTenantID); qErr != nil {
 			switch {
 			case errors.Is(qErr, ErrQuotaConcurrentRuns):
 				return nil, admitErr(AdmitErrQuotaConcurrentRuns)
@@ -286,7 +293,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 			case errors.Is(qErr, ErrQuotaMonthlyLLMTokens):
 				return nil, admitErr(AdmitErrQuotaMonthlyLLMTokens)
 			default:
-				lc.logger.Warn("execution: quota check failed", "tenant_id", resolvedCfg.TenantID, "error", qErr)
+				lc.logger.Warn("execution: quota check failed", "tenant_id", billingTenantID, "error", qErr)
 				return nil, admitErr(AdmitErrInternal)
 			}
 		}
@@ -345,7 +352,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		OrchestratorName: resolvedCfg.OrchestratorName, // resolved from EP binding (SEC-04)
 		EPSlug:           req.EPSlug,
 		AppID:            resolvedCfg.AppID,
-		TenantID:         resolvedCfg.TenantID,
+		TenantID:         billingTenantID,
 		ContextID:        contextID,
 		RunID:            runID,
 		StartedAt:        time.Now().UTC().Format(time.RFC3339),
@@ -400,7 +407,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		ID:               runID,
 		ContextID:        contextID,
 		EntryPointSlug:   req.EPSlug,
-		TenantID:         resolvedCfg.TenantID,
+		TenantID:         billingTenantID,
 		ApplicationID:    resolvedCfg.AppID,
 		Status:           domain.RunStatusAdmitted,
 		Goal:             firstTextPart(req.UserMessage),
@@ -422,16 +429,17 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	return &ExecutionHandle{
-		RunID:          runID,
-		ContextID:      contextID,
-		SessionID:      sessionID,
-		InstanceID:     req.InstanceID,
-		EPConfig:       resolvedCfg,
-		ExternalUserID: req.ExternalUserID,
-		UserID:         req.UserID,
-		gateCfg:        gateCfg,
-		gateAdmitted:   gateAdmitted,
-		runCreated:     runCreated,
+		RunID:           runID,
+		ContextID:       contextID,
+		SessionID:       sessionID,
+		InstanceID:      req.InstanceID,
+		EPConfig:        resolvedCfg,
+		ExternalUserID:  req.ExternalUserID,
+		UserID:          req.UserID,
+		BillingTenantID: billingTenantID,
+		gateCfg:         gateCfg,
+		gateAdmitted:    gateAdmitted,
+		runCreated:      runCreated,
 	}, nil
 }
 

@@ -287,7 +287,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
 
 	if h.metricsRec != nil && handle.UserID != 0 {
-		tenantID := handle.EPConfig.TenantID
+		tenantID := handle.BillingTenantID
 		userID := handle.UserID
 		go func() {
 			if err := h.metricsRec.RecordUser(context.Background(), tenantID, userID); err != nil {

@@ -47,6 +47,11 @@ type ExecutionHandle struct {
 	ExternalUserID string // end-user identity; empty for internal/service-token runs
 	// UserID is the the-M internal user ID from AccessModeUser JWT. Zero otherwise.
 	UserID int64
+	// BillingTenantID is the tenant that owns this run for quota and billing purposes.
+	// For normal runs this equals EPConfig.TenantID (the app owner).
+	// For managed-app runs this is the consuming tenant (req.TenantID from the caller's token),
+	// which differs from EPConfig.TenantID (the platform-owned app's tenant).
+	BillingTenantID string
 
 	// internal gate state — used by Release only
 	gateAdmitted bool
@@ -72,13 +77,17 @@ func (h *ExecutionHandle) SessionInfo() session.SessionInfo {
 	if cfg == nil {
 		cfg = &epconfig.EPConfig{}
 	}
+	tenantID := h.BillingTenantID
+	if tenantID == "" {
+		tenantID = cfg.TenantID // fallback for handles built outside Admit (tests)
+	}
 	return session.SessionInfo{
 		SessionID:        h.SessionID,
 		InstanceID:       h.InstanceID,
 		OrchestratorName: cfg.OrchestratorName,
 		EPSlug:           cfg.EPSlug,
 		AppID:            cfg.AppID,
-		TenantID:         cfg.TenantID,
+		TenantID:         tenantID,
 		ContextID:        h.ContextID,
 		RunID:            h.RunID,
 	}

@@ -811,13 +811,14 @@ func TestSSENoTemporalReturns503(t *testing.T) {
 // ── R-4d: Tenant propagation tests ───────────────────────────────────────────
 
 // 17. SSE-created run carries TenantID and ApplicationID from EPConfig, not from client.
+// The caller's token carries the same TenantID as the EP owner (normal, non-managed run).
 func TestSSE_RunStoresTenantID(t *testing.T) {
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	capRec := &captureRunCreator{}
-	capTC := &fakeTemporalClient{}
-
 	tenantID := "aaaabbbb-0000-0000-0000-000000000001"
 	appID := "ccccdddd-0000-0000-0000-000000000002"
+	// Token carries the same tenant as the EP — billing tenant == EP owner for non-managed apps.
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1, TenantID: tenantID}}
+	capRec := &captureRunCreator{}
+	capTC := &fakeTemporalClient{}
 
 	b := &sseBuilder{
 		authn:    authn,
@@ -862,11 +863,13 @@ func TestSSE_RunStoresTenantID(t *testing.T) {
 }
 
 // 18. A client-supplied X-Tenant-ID header must NOT override the server-resolved TenantID.
+// The run is billed to the token's tenant (same as the EP owner for non-managed apps).
 func TestSSE_ClientTenantHeaderIgnored(t *testing.T) {
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	serverTenantID := "eeeeffff-0000-0000-0000-000000000001"
+	// Token carries the same tenant as the EP. The attacker header must have no effect.
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1, TenantID: serverTenantID}}
 	capRec := &captureRunCreator{}
 	capTC := &fakeTemporalClient{}
-	serverTenantID := "eeeeffff-0000-0000-0000-000000000001"
 
 	b := &sseBuilder{
 		authn:    authn,

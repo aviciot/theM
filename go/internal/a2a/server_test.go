@@ -213,7 +213,8 @@ func publicEPConfig() *epconfig.EPConfig {
 }
 
 func validTokenInfo() *auth.TokenInfo {
-	return &auth.TokenInfo{TokenID: 42}
+	// TenantID matches tokenEPConfig().TenantID — normal (non-managed) run; billing == EP owner.
+	return &auth.TokenInfo{TokenID: 42, TenantID: "tenant-uuid-1"}
 }
 
 // serverBuilder holds the overridable deps for building a test Server.

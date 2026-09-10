@@ -837,13 +837,14 @@ func TestWS_NoTemporalReturnsErrorEvent(t *testing.T) {
 // ── R-4d: Tenant propagation tests ───────────────────────────────────────────
 
 // 18. WS-created run stores TenantID and ApplicationID from EPConfig — not from client.
+// The caller's token carries the same TenantID as the EP owner (normal, non-managed run).
 func TestWS_RunStoresTenantID(t *testing.T) {
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	tc := &fakeTemporalClient{}
-	capRec := &captureRunCreator{}
-
 	tenantID := "cccccccc-0000-0000-0000-000000000001"
 	appID := "dddddddd-0000-0000-0000-000000000002"
+	// Token carries the same tenant as the EP — billing == EP owner for non-managed apps.
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1, TenantID: tenantID}}
+	tc := &fakeTemporalClient{}
+	capRec := &captureRunCreator{}
 	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
 		EPSlug:            "ep1",
 		EPType:            "websocket",
@@ -895,12 +896,13 @@ func TestWS_RunStoresTenantID(t *testing.T) {
 }
 
 // 19. Client-supplied X-Tenant-ID header must NOT override EPConfig.TenantID.
+// The run is billed to the token's tenant (same as EP owner for non-managed apps).
 func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	serverTenantID := "eeeeeeee-0000-0000-0000-000000000001"
+	// Token carries the server tenant. Attacker header must be ignored.
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1, TenantID: serverTenantID}}
 	tc := &fakeTemporalClient{}
 	capRec := &captureRunCreator{}
-
-	serverTenantID := "eeeeeeee-0000-0000-0000-000000000001"
 	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
 		EPSlug:     "ep1",
 		EPType:     "websocket",
