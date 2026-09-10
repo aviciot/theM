@@ -590,12 +590,12 @@ export const themApi = {
   uploadTenantLogo: async (id: string, file: File): Promise<{ logo_url: string }> => {
     const form = new FormData();
     form.append('logo', file);
-    const res = await fetch(`/api/them/api/v1/admin/tenants/${id}/logo`, { method: 'POST', body: form });
+    const res = await fetch(`/api/them/admin/tenants/${id}/logo`, { method: 'POST', body: form });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   deleteTenantLogo: async (id: string): Promise<void> => {
-    const res = await fetch(`/api/them/api/v1/admin/tenants/${id}/logo`, { method: 'DELETE' });
+    const res = await fetch(`/api/them/admin/tenants/${id}/logo`, { method: 'DELETE' });
     if (!res.ok && res.status !== 204) throw new Error(await res.text());
   },
 
