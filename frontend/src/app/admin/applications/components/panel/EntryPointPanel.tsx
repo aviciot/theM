@@ -1,8 +1,11 @@
 'use client';
+import { useState, useEffect } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import type { Application, EntryPointData, OrchestratorData, EntryPointType } from '../../types';
 import { C } from '../../constants';
 import { labelStyle, inputStyle, fieldWrap } from './panelStyles';
+import { SCENARIOS, resolveScenario, isDead } from '../epScenario';
+import { themApi } from '@/lib/api';
 
 interface Props {
   selectedNode: Node;
@@ -16,6 +19,10 @@ interface Props {
 
 export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlugManualEdit, app, nodes, edges }: Props) {
   const d = selectedNode.data as EntryPointData;
+  const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null>(null);
+  useEffect(() => {
+    themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp(false));
+  }, []);
   const orchEdge = edges.find((e: Edge) => e.source === selectedNode.id);
   const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
   const orchName = orchNode ? (orchNode.data as OrchestratorData).name : '';
@@ -81,30 +88,74 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           <option value="voice">Voice (STT/TTS)</option>
         </select>
       </div>
-      <div style={fieldWrap}>
-        <label style={labelStyle}>Access Policy</label>
-        <select style={{ ...inputStyle }} value={d.accessMode} onChange={e => onUpdateNode(selectedNode.id, { accessMode: e.target.value as 'token' | 'public' | 'user_jwt' | 'external_jwt' })}>
-          <option value="token">Token required</option>
-          <option value="public">Public (no auth)</option>
-          <option value="user_jwt">User JWT (the-M users)</option>
-          <option value="external_jwt">External JWT (RS256)</option>
-        </select>
-      </div>
-      {d.epType !== 'voice' && d.epType !== 'webrtc' && (
-        <div style={fieldWrap}>
-          <label style={labelStyle}>Allowed Callers</label>
-          <select style={{ ...inputStyle }} value={d.allowedPrincipals ?? 'internal'} onChange={e => onUpdateNode(selectedNode.id, { allowedPrincipals: e.target.value as 'internal' | 'external' | 'both' })}>
-            <option value="internal">Internal only — the-M tokens &amp; staff</option>
-            <option value="external">External only — backend service or RS256 JWT</option>
-            <option value="both">Both — no caller-type restriction</option>
-          </select>
-          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
-            {(d.allowedPrincipals ?? 'internal') === 'internal' && 'Only regular the-M access tokens and staff user JWTs are admitted. Backend service tokens and external RS256 JWTs are blocked.'}
-            {d.allowedPrincipals === 'external' && 'Only backend service tokens (is_backend=true) or direct RS256 JWTs from a third-party IdP are admitted. Regular the-M tokens and staff logins are blocked.'}
-            {d.allowedPrincipals === 'both' && 'Any authenticated caller is admitted — both the-M tokens and external callers. Use when you want no caller-type restriction beyond the Access Policy above.'}
+      {d.epType !== 'voice' && d.epType !== 'webrtc' && (() => {
+        const accessMode = d.accessMode ?? 'token';
+        const allowedPrincipals = d.allowedPrincipals ?? 'internal';
+        const scenarioKey = resolveScenario(accessMode, allowedPrincipals);
+        const isDeadCombo = isDead(accessMode, allowedPrincipals);
+        const isLegacy = scenarioKey !== null && scenarioKey !== undefined &&
+          !SCENARIOS.find(s => s.accessMode === accessMode && s.allowedPrincipals === allowedPrincipals);
+        const selectedScenario = SCENARIOS.find(s => s.key === scenarioKey);
+
+        function handleScenarioChange(key: string) {
+          const s = SCENARIOS.find(sc => sc.key === key);
+          if (!s) return;
+          onUpdateNode(selectedNode.id, { accessMode: s.accessMode as 'token' | 'public' | 'user_jwt' | 'external_jwt', allowedPrincipals: s.allowedPrincipals as 'internal' | 'external' | 'both' });
+        }
+
+        return (
+          <div style={fieldWrap}>
+            <label style={labelStyle}>Who can connect?</label>
+            <select
+              style={{ ...inputStyle, borderColor: isDeadCombo ? '#ef4444' : undefined }}
+              value={isDeadCombo ? '__invalid__' : (scenarioKey ?? '__unknown__')}
+              onChange={e => handleScenarioChange(e.target.value)}
+            >
+              {isDeadCombo && (
+                <option value="__invalid__" disabled>⚠ Unsupported combination — select a valid option</option>
+              )}
+              {!isDeadCombo && scenarioKey === undefined && (
+                <option value="__unknown__" disabled>⚠ Unknown combination — select a valid option</option>
+              )}
+              {SCENARIOS.map(s => (
+                <option
+                  key={s.key}
+                  value={s.key}
+                  disabled={s.requiresRuntimeIdp && hasRuntimeIdp === false}
+                >
+                  {s.label}{s.requiresRuntimeIdp && hasRuntimeIdp === false ? ' (Runtime Identity not configured)' : ''}
+                </option>
+              ))}
+            </select>
+
+            {isDeadCombo && (
+              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
+                This combination ({accessMode} + {allowedPrincipals}) rejects all callers. Select a valid option above.
+              </div>
+            )}
+            {isLegacy && selectedScenario && (
+              <div style={{ fontSize: 11, color: C.amber, marginTop: 5, lineHeight: 1.5 }}>
+                Stored as {accessMode} + {allowedPrincipals} — displayed as nearest equivalent.
+              </div>
+            )}
+            {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === false && (
+              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
+                Requires Runtime Identity — configure it in Tenant Settings → Runtime Identity before this EP can admit callers.
+              </div>
+            )}
+            {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === true && (
+              <div style={{ fontSize: 11, color: C.green, marginTop: 5, lineHeight: 1.5 }}>
+                Runtime Identity is configured.
+              </div>
+            )}
+            {selectedScenario && !isDeadCombo && (
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
+                {selectedScenario.prerequisite}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
       <div style={fieldWrap}>
         <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
           Slug

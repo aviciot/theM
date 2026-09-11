@@ -444,6 +444,15 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			}
 		}
 
+		// Validate (access_mode, allowed_principals) — dead combinations are rejected.
+		accessMode := ""
+		if ep.Config != nil {
+			accessMode, _ = ep.Config["access_mode"].(string)
+		}
+		if err := validateEPAuthCombination(accessMode, allowedPrincipals); err != nil {
+			return nil, validation(err.Error())
+		}
+
 		// Extract per-EP memory config from the orchestrator's canvas config.
 		// Stored as config.ep_memory[ep.instance_id] on the orchestrator node.
 		var (
@@ -530,6 +539,39 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	}
 
 	return &result, nil
+}
+
+// ── EP auth validation ────────────────────────────────────────────────────────
+
+// validateEPAuthCombination rejects (access_mode, allowed_principals) pairs that
+// produce a permanently-closed EP — no caller can ever be admitted.
+//
+// Dead combinations:
+//   - external_jwt + internal: external JWT callers are synthesised as isBackend=true;
+//     allowed_principals=internal blocks all isBackend=true → nobody admitted.
+//   - user_jwt + external: user JWTs are always isBackend=false;
+//     allowed_principals=external blocks all isBackend=false → nobody admitted.
+//   - public + external: no token means isBackend=false;
+//     allowed_principals=external blocks all isBackend=false → nobody admitted.
+func validateEPAuthCombination(accessMode, allowedPrincipals string) error {
+	if accessMode == "" {
+		accessMode = "token"
+	}
+	if allowedPrincipals == "" {
+		allowedPrincipals = "internal"
+	}
+	type combo struct{ mode, principals string }
+	dead := []combo{
+		{"external_jwt", "internal"},
+		{"user_jwt", "external"},
+		{"public", "external"},
+	}
+	for _, d := range dead {
+		if accessMode == d.mode && allowedPrincipals == d.principals {
+			return fmt.Errorf("invalid EP auth combination: %s + %s rejects all callers", accessMode, allowedPrincipals)
+		}
+	}
+	return nil
 }
 
 // ── config extraction helpers ─────────────────────────────────────────────────

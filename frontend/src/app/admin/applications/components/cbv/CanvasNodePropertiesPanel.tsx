@@ -1,8 +1,11 @@
 'use client';
+import { useState, useEffect } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import type { OrchNodeData, AgentNodeData, MwNodeData, EpNodeData } from '../../types';
 import { C } from '../../constants';
 import type { MCPServer, MCPServerAttachment } from '@/lib/api';
+import { themApi } from '@/lib/api';
+import { SCENARIOS, resolveScenario, isDead } from '../epScenario';
 
 // ── CanvasNodePropertiesPanel ────────────────────────────────────────────────
 
@@ -54,6 +57,11 @@ export function CanvasNodePropertiesPanel({
   const selectStyle: React.CSSProperties = {
     ...fieldStyle, padding: '7px 10px', fontSize: 13, cursor: 'pointer',
   };
+
+  const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null>(null);
+  useEffect(() => {
+    themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp(false));
+  }, []);
 
   function isSectionOpen(id: string, def: boolean) {
     return openSections[id] ?? def;
@@ -443,39 +451,74 @@ export function CanvasNodePropertiesPanel({
         </div>
 
         {/* Section C — Access */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
-          <div style={{ ...sectionHdrStyleLocal, marginBottom: 8 }}>Access</div>
-          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Access Mode</label>
-          <select
-            style={selectStyle}
-            value={(cfg.access_mode as string) || 'token'}
-            onChange={e => setEpConfig(selectedNode!.id, { access_mode: e.target.value })}
-          >
-            <option value="token">token</option>
-            <option value="public">public</option>
-            <option value="user_jwt">user_jwt (the-M users)</option>
-            <option value="external_jwt">external_jwt (RS256 from IdP)</option>
-          </select>
-          {d.protocol !== 'voice' && d.protocol !== 'webrtc' && (
-            <>
-              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4, marginTop: 10 }}>Allowed Callers</label>
+        {d.protocol !== 'voice' && d.protocol !== 'webrtc' && (() => {
+          const accessMode = (cfg.access_mode as string) || 'token';
+          const allowedPrincipals = (cfg.allowed_principals as string) || 'internal';
+          const scenarioKey = resolveScenario(accessMode, allowedPrincipals);
+          const isDeadCombo = isDead(accessMode, allowedPrincipals);
+          const isLegacy = scenarioKey !== null && scenarioKey !== undefined &&
+            !SCENARIOS.find(s => s.accessMode === accessMode && s.allowedPrincipals === allowedPrincipals);
+          const selectedScenario = SCENARIOS.find(s => s.key === scenarioKey);
+
+          function handleScenarioChange(key: string) {
+            const s = SCENARIOS.find(sc => sc.key === key);
+            if (!s) return;
+            setEpConfig(selectedNode!.id, { access_mode: s.accessMode, allowed_principals: s.allowedPrincipals });
+          }
+
+          return (
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+              <div style={{ ...sectionHdrStyleLocal, marginBottom: 8 }}>Access</div>
+              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Who can connect?</label>
               <select
-                style={selectStyle}
-                value={(cfg.allowed_principals as string) || 'internal'}
-                onChange={e => setEpConfig(selectedNode!.id, { allowed_principals: e.target.value })}
+                style={{ ...selectStyle, borderColor: isDeadCombo ? '#ef4444' : undefined }}
+                value={isDeadCombo ? '__invalid__' : (scenarioKey ?? '__unknown__')}
+                onChange={e => handleScenarioChange(e.target.value)}
               >
-                <option value="internal">Internal only — the-M tokens &amp; staff</option>
-                <option value="external">External only — backend service or RS256 JWT</option>
-                <option value="both">Both — no caller-type restriction</option>
+                {isDeadCombo && (
+                  <option value="__invalid__" disabled>⚠ Unsupported combination — select a valid option</option>
+                )}
+                {!isDeadCombo && scenarioKey === undefined && (
+                  <option value="__unknown__" disabled>⚠ Unknown combination — select a valid option</option>
+                )}
+                {SCENARIOS.map(s => (
+                  <option
+                    key={s.key}
+                    value={s.key}
+                    disabled={s.requiresRuntimeIdp && hasRuntimeIdp === false}
+                  >
+                    {s.label}{s.requiresRuntimeIdp && hasRuntimeIdp === false ? ' (Runtime Identity not configured)' : ''}
+                  </option>
+                ))}
               </select>
-              <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>
-                {((cfg.allowed_principals as string) || 'internal') === 'internal' && 'Regular the-M tokens and staff logins only.'}
-                {(cfg.allowed_principals as string) === 'external' && 'Backend service tokens (is_backend=true) or direct RS256 JWTs from a third-party IdP only.'}
-                {(cfg.allowed_principals as string) === 'both' && 'Any authenticated caller — no caller-type restriction.'}
-              </div>
-            </>
-          )}
-        </div>
+              {isDeadCombo && (
+                <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
+                  This combination ({accessMode} + {allowedPrincipals}) rejects all callers.
+                </div>
+              )}
+              {isLegacy && selectedScenario && (
+                <div style={{ fontSize: 10, color: C.amber, marginTop: 4, lineHeight: 1.5 }}>
+                  Stored as {accessMode} + {allowedPrincipals} — displayed as nearest equivalent.
+                </div>
+              )}
+              {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === false && (
+                <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
+                  Requires Runtime Identity — configure it in Tenant Settings → Runtime Identity.
+                </div>
+              )}
+              {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === true && (
+                <div style={{ fontSize: 10, color: C.green, marginTop: 4, lineHeight: 1.5 }}>
+                  Runtime Identity is configured.
+                </div>
+              )}
+              {selectedScenario && !isDeadCombo && (
+                <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+                  {selectedScenario.prerequisite}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Section D — Capacity */}
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
