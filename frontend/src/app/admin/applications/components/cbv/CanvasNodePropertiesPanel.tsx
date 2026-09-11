@@ -58,9 +58,9 @@ export function CanvasNodePropertiesPanel({
     ...fieldStyle, padding: '7px 10px', fontSize: 13, cursor: 'pointer',
   };
 
-  const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null>(null);
+  const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null | 'error'>(null);
   useEffect(() => {
-    themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp(false));
+    themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp('error'));
   }, []);
 
   function isSectionOpen(id: string, def: boolean) {
@@ -485,9 +485,9 @@ export function CanvasNodePropertiesPanel({
                   <option
                     key={s.key}
                     value={s.key}
-                    disabled={s.requiresRuntimeIdp && hasRuntimeIdp === false}
+                    disabled={s.requiresRuntimeIdp && hasRuntimeIdp !== true}
                   >
-                    {s.label}{s.requiresRuntimeIdp && hasRuntimeIdp === false ? ' (Runtime Identity not configured)' : ''}
+                    {s.label}{s.requiresRuntimeIdp && hasRuntimeIdp === false ? ' (Runtime Identity not configured)' : s.requiresRuntimeIdp && hasRuntimeIdp === 'error' ? ' (could not load status)' : ''}
                   </option>
                 ))}
               </select>
@@ -503,7 +503,12 @@ export function CanvasNodePropertiesPanel({
               )}
               {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === false && (
                 <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
-                  Requires Runtime Identity — configure it in Tenant Settings → Runtime Identity.
+                  Runtime Identity is not configured — go to Tenant Settings → Runtime Identity to set it up.
+                </div>
+              )}
+              {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === 'error' && (
+                <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
+                  Could not load Runtime Identity status — check your connection and reload.
                 </div>
               )}
               {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === true && (

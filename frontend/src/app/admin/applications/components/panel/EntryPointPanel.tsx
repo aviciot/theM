@@ -19,9 +19,9 @@ interface Props {
 
 export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlugManualEdit, app, nodes, edges }: Props) {
   const d = selectedNode.data as EntryPointData;
-  const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null>(null);
+  const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null | 'error'>(null);
   useEffect(() => {
-    themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp(false));
+    themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp('error'));
   }, []);
   const orchEdge = edges.find((e: Edge) => e.source === selectedNode.id);
   const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
@@ -121,9 +121,9 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
                 <option
                   key={s.key}
                   value={s.key}
-                  disabled={s.requiresRuntimeIdp && hasRuntimeIdp === false}
+                  disabled={s.requiresRuntimeIdp && hasRuntimeIdp !== true}
                 >
-                  {s.label}{s.requiresRuntimeIdp && hasRuntimeIdp === false ? ' (Runtime Identity not configured)' : ''}
+                  {s.label}{s.requiresRuntimeIdp && hasRuntimeIdp === false ? ' (Runtime Identity not configured)' : s.requiresRuntimeIdp && hasRuntimeIdp === 'error' ? ' (could not load status)' : ''}
                 </option>
               ))}
             </select>
@@ -140,7 +140,12 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
             )}
             {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === false && (
               <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
-                Requires Runtime Identity — configure it in Tenant Settings → Runtime Identity before this EP can admit callers.
+                Runtime Identity is not configured — go to Tenant Settings → Runtime Identity to set it up before this EP can admit callers.
+              </div>
+            )}
+            {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === 'error' && (
+              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
+                Could not load Runtime Identity status — check your connection and reload.
               </div>
             )}
             {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === true && (
