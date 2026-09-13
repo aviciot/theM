@@ -1,6 +1,8 @@
 export type Scenario = {
   key: string;
   label: string;
+  description: string;
+  whenToUse: string;
   accessMode: string;
   allowedPrincipals: string;
   prerequisite: string;
@@ -10,7 +12,9 @@ export type Scenario = {
 export const SCENARIOS: Scenario[] = [
   {
     key: 'staff',
-    label: 'the-M user account',
+    label: 'Staff login',
+    description: 'A person who has a the-M account logs in and connects. Their login session is the credential.',
+    whenToUse: 'Your own team testing the app, or internal staff using it directly.',
     accessMode: 'user_jwt',
     allowedPrincipals: 'internal',
     requiresRuntimeIdp: false,
@@ -18,7 +22,9 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     key: 'service_token',
-    label: 'Internal API access',
+    label: 'API key — no user',
+    description: 'A machine connects using a long-lived API key. No user identity is attached — the platform only knows the key, not who is behind the call.',
+    whenToUse: 'Automated scripts, test pipelines, batch jobs — any programmatic access where there is no real end user.',
     accessMode: 'token',
     allowedPrincipals: 'internal',
     requiresRuntimeIdp: false,
@@ -26,7 +32,9 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     key: 'backend_service',
-    label: 'Backend service (on behalf of user)',
+    label: 'API key — with user identity',
+    description: 'A machine connects using an API key, and also tells the platform who the end user is. The platform records each user\'s sessions separately.',
+    whenToUse: 'Your server calls the app on behalf of real customers. You want per-user conversation history and session tracking.',
     accessMode: 'token',
     allowedPrincipals: 'external',
     requiresRuntimeIdp: false,
@@ -34,23 +42,19 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     key: 'org_jwt',
-    label: 'Organization-issued access token',
+    label: 'External identity token',
+    description: 'End users connect directly using a token issued by your own identity system (SSO, Okta, Auth0, Keycloak). The platform validates the token without issuing one itself.',
+    whenToUse: 'Your customers already log in via your SSO and you want them to connect directly — no server in the middle.',
     accessMode: 'external_jwt',
     allowedPrincipals: 'external',
     requiresRuntimeIdp: true,
     prerequisite: 'Runtime Identity must be configured in Tenant Settings → Runtime Identity',
   },
   {
-    key: 'service_token_any',
-    label: 'Service token — regular or backend',
-    accessMode: 'token',
-    allowedPrincipals: 'both',
-    requiresRuntimeIdp: false,
-    prerequisite: 'An access token must be created in Admin → Tokens',
-  },
-  {
     key: 'open',
-    label: 'Open (no auth)',
+    label: 'Public — no auth',
+    description: 'Anyone who knows the URL can connect. No credential required.',
+    whenToUse: 'Public demos, prototypes, or marketing chatbots. Never use for production apps with real data.',
     accessMode: 'public',
     allowedPrincipals: 'both',
     requiresRuntimeIdp: false,
@@ -82,6 +86,8 @@ export function resolveScenario(accessMode: string, allowedPrincipals: string): 
   if (accessMode === 'user_jwt'     && allowedPrincipals === 'both')     return 'staff';
   if (accessMode === 'external_jwt' && allowedPrincipals === 'both')     return 'org_jwt';
   if (accessMode === 'public'       && allowedPrincipals === 'internal') return 'open';
+  // Legacy: service_token_any — map to backend_service (closest meaningful option).
+  if (accessMode === 'token'        && allowedPrincipals === 'both')     return 'backend_service';
 
   return undefined; // unknown combination
 }

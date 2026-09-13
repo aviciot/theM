@@ -130,7 +130,7 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
 
             {isDeadCombo && (
               <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
-                This combination ({accessMode} + {allowedPrincipals}) rejects all callers. Select a valid option above.
+                This combination rejects all callers. Select a valid option above.
               </div>
             )}
             {isLegacy && selectedScenario && (
@@ -138,14 +138,28 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
                 Stored as {accessMode} + {allowedPrincipals} — displayed as nearest equivalent.
               </div>
             )}
-            {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === false && (
-              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
-                Runtime Identity is not configured — go to Tenant Settings → Runtime Identity to set it up before this EP can admit callers.
-              </div>
-            )}
-            {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === 'error' && (
-              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, lineHeight: 1.5 }}>
-                Could not load Runtime Identity status — check your connection and reload.
+
+            {selectedScenario && !isDeadCombo && (
+              <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(124,58,237,0.06)', border: '1px solid rgba(124,58,237,0.18)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--tm-text)', lineHeight: 1.5 }}>
+                  {selectedScenario.description}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', lineHeight: 1.5 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--tm-text)' }}>Use when: </span>{selectedScenario.whenToUse}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', lineHeight: 1.5 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--tm-text)' }}>Requires: </span>{selectedScenario.prerequisite}
+                </div>
+                {selectedScenario.requiresRuntimeIdp && hasRuntimeIdp === false && (
+                  <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
+                    ⚠ Runtime Identity is not configured — go to Tenant Settings → Runtime Identity before this EP can admit callers.
+                  </div>
+                )}
+                {selectedScenario.requiresRuntimeIdp && hasRuntimeIdp === 'error' && (
+                  <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
+                    ⚠ Could not load Runtime Identity status — check your connection and reload.
+                  </div>
+                )}
               </div>
             )}
             {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === true && (
