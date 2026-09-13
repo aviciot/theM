@@ -82,11 +82,6 @@ export type {
   TenantQuota,
   QuotaPlan,
   IDPConfig,
-  ManagedApp,
-  ManagedAppDetail,
-  ManagedAppParam,
-  ManagedAppBinding,
-  ManagedAppBindingInput,
   AuditLog,
   TenantObservabilitySummary,
   AppObservabilitySummary,
@@ -154,10 +149,6 @@ import type {
   TenantLookup,
   TenantQuota,
   QuotaPlan,
-  ManagedApp,
-  ManagedAppDetail,
-  ManagedAppBinding,
-  ManagedAppBindingInput,
   AuditLog,
   TenantObservabilitySummary,
   AppObservabilitySummary,
@@ -443,7 +434,6 @@ export const themApi = {
   getAppParams: (appId: string) => api.get<AppGlobalParam[]>(`/admin/applications/${appId}/app-params`),
   setAppParam: (appId: string, name: string, value: string, type: string) => api.put<{ name: string; updated: boolean }>(`/admin/applications/${appId}/app-params/${name}`, { value, type }),
   deleteAppParam: (appId: string, name: string) => api.delete<{ name: string; deleted: boolean }>(`/admin/applications/${appId}/app-params/${name}`),
-  setManagedFlag: (appId: string, isManaged: boolean) => api.patch<{ is_managed: boolean }>(`/admin/applications/${appId}/managed`, { is_managed: isManaged }),
   deployApplication: (appId: string, targetTenantId: string): Promise<DeployResult> => api.post<DeployResult>(`/admin/applications/${appId}/deploy`, { target_tenant_id: targetTenantId }),
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
@@ -646,18 +636,6 @@ export const themApi = {
     api.put<RuntimeIDPConfig>('/tenant/runtime-idp', input),
   deleteRuntimeIDP: () =>
     api.delete<void>('/tenant/runtime-idp'),
-
-  // Managed App catalog (platform-level)
-  listManagedApps: () =>
-    api.get<ManagedApp[]>('/admin/managed-apps'),
-  getManagedApp: (id: string) =>
-    api.get<ManagedAppDetail>('/admin/managed-apps/' + id),
-
-  // Managed App bindings (platform-level — by tenant ID)
-  listManagedAppBindings: (tenantId: string) =>
-    api.get<ManagedAppBinding[]>(`/admin/tenants/${tenantId}/managed-app-bindings`),
-  upsertManagedAppBinding: (tenantId: string, appId: string, input: ManagedAppBindingInput) =>
-    api.put<ManagedAppBinding>(`/admin/tenants/${tenantId}/managed-app-bindings/${appId}`, input),
 
   // Audit logs
   getAuditLogs: (limit = 50, offset = 0) =>

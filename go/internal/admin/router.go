@@ -138,8 +138,6 @@ func BuildRouter(
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
 	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
 	tenants := NewTenantsHandler(dbq, auditWriter, idpKey, logoDir)
-	managedApps := NewManagedAppsHandler(dbq)
-
 	// Admin + runs routes — all require JWT. Within /admin, routes are split into
 	// two authorization tiers via sub-groups:
 	//   - Tenant-scoped: RequireTenantAdmin (admin OR super_admin) + AdminTenantMiddleware
@@ -193,8 +191,6 @@ func BuildRouter(
 					ct.Routes(tenantScoped)
 				}
 
-				managedApps.TenantRoutes(tenantScoped)
-
 				auditLogs := NewAuditLogsHandler(dbq, pools)
 				auditLogs.Routes(tenantScoped)
 			})
@@ -214,9 +210,6 @@ func BuildRouter(
 				if pools != nil {
 					NewObservabilityHandler(pools, redis).Routes(platformGlobal)
 				}
-				managedApps.PlatformRoutes(platformGlobal)
-				// Super-admin toggle: PATCH /admin/applications/{id}/managed
-				platformGlobal.Patch("/applications/{id}/managed", apps.PatchManaged)
 				// Super-admin deploy: POST /admin/applications/{id}/deploy
 				platformGlobal.Post("/applications/{id}/deploy", apps.DeployApplication)
 				if sessionReader != nil {

@@ -89,6 +89,9 @@ function EPCredentialSelector({ target, applications, overrideToken, onToken }: 
         {creating ? 'Creating…' : overrideToken ? `${tokenLabel} (active)` : `Connect with token`}
       </button>
       {error && <span style={{ fontSize: 11, color: '#f87171' }}>{error}</span>}
+      {overrideToken && !error && (
+        <span style={{ fontSize: 11, color: '#4edea3' }}>Token active — send a message to connect</span>
+      )}
     </div>
   );
 }
@@ -344,18 +347,30 @@ function PlaygroundInner() {
           ) : compareMode ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                {tabs.map((t, idx) => (
-                  <ChatColumn
-                    key={targetId(t)}
-                    target={t}
-                    color={TAB_COLORS[idx % TAB_COLORS.length]}
-                    sharedInput={broadcastText}
-                    onSharedSent={onBroadcastSent}
-                    showHeader
-                    compact={tabs.length >= 3}
-                    overrideToken={overrideTokens[targetId(t)]}
-                  />
-                ))}
+                {tabs.map((t, idx) => {
+                  const tabId = targetId(t);
+                  const app = t.kind === 'entrypoint' ? applications.find(a => (a.slug ?? a.id) === t.appSlug) : null;
+                  const ep = app?.entry_points.find(e => e.slug === (t as {slug:string}).slug);
+                  const principals = ep?.allowed_principals ?? 'both';
+                  const isBackend = principals !== 'internal';
+                  return (
+                    <ChatColumn
+                      key={tabId}
+                      target={t}
+                      color={TAB_COLORS[idx % TAB_COLORS.length]}
+                      sharedInput={broadcastText}
+                      onSharedSent={onBroadcastSent}
+                      showHeader
+                      compact={tabs.length >= 3}
+                      overrideToken={overrideTokens[tabId]}
+                      tokenIsBackend={isBackend}
+                      onToken={tok => setOverrideTokens(prev => {
+                        if (tok === null) { const next = { ...prev }; delete next[tabId]; return next; }
+                        return { ...prev, [tabId]: tok };
+                      })}
+                    />
+                  );
+                })}
               </div>
               <div style={{ padding: '10px 16px', borderTop: '2px solid var(--tm-border)', display: 'flex', gap: 8, background: 'var(--tm-surface)', alignItems: 'flex-end', flexShrink: 0 }}>
                 <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', alignSelf: 'center', flexShrink: 0 }}>

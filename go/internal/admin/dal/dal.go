@@ -75,8 +75,7 @@ func (d *DB) IDPEncrypt(s string) (string, error) {
 	return idpcrypto.Encrypt(d.idpKey, s)
 }
 
-// Querier returns the underlying Querier for use with package-level DAL functions
-// that accept a Querier directly (e.g. SetManagedFlag).
+// Querier returns the underlying Querier for use with package-level DAL functions.
 func (d *DB) Querier() Querier { return d.q }
 
 // NewDBFromTenantQuerier wraps a dbtype.TenantQuerier (e.g. *db.TenantTx produced by
@@ -317,7 +316,6 @@ type Application struct {
 	Slug             string                   `json:"slug"`
 	TenantSlug       string                   `json:"tenant_slug,omitempty"`
 	Enabled          bool                     `json:"enabled"`
-	IsManaged        bool                     `json:"is_managed"`
 	ActiveRevision   *int                     `json:"active_revision,omitempty"`
 	ActiveStatus     *string                  `json:"active_status,omitempty"`
 	EntryPoints      []EntryPoint             `json:"entry_points"`

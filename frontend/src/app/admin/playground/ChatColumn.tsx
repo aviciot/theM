@@ -72,6 +72,35 @@ export function ActivityBar({ activities }: { activities: AgentActivity[] }) {
   );
 }
 
+// ── InlineConnectButton ───────────────────────────────────────────────────
+
+function InlineConnectButton({ target, onToken, isBackend }: { target: ConnTarget; onToken: (tok: string | null) => void; isBackend: boolean }) {
+  const [creating, setCreating] = useState(false);
+  const handleClick = async () => {
+    setCreating(true);
+    try {
+      const expiresAt = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+      const result = await themApi.createToken({
+        label: `playground-${target.kind === 'entrypoint' ? target.slug : 'orch'}`,
+        user_id: 0,
+        is_backend: isBackend,
+        expires_at: expiresAt,
+      });
+      if (!result.token) throw new Error('no token');
+      onToken(result.token);
+    } catch {
+      // silently fail — user can retry
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <button onClick={handleClick} disabled={creating} style={{ marginLeft: 'auto', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--tm-border)', background: 'transparent', color: '#f59e0b', cursor: creating ? 'wait' : 'pointer', fontSize: 11, flexShrink: 0 }}>
+      {creating ? 'Connecting…' : 'Connect'}
+    </button>
+  );
+}
+
 // ── ChatColumn ────────────────────────────────────────────────────────────
 
 export interface ChatColumnProps {
@@ -81,9 +110,12 @@ export interface ChatColumnProps {
   onSharedSent?: () => void;
   showHeader?: boolean;
   compact?: boolean;
+  overrideToken?: string;
+  onToken?: (tok: string | null) => void;
+  tokenIsBackend?: boolean;
 }
 
-export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = true, compact = false }: ChatColumnProps) {
+export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = true, compact = false, overrideToken, onToken, tokenIsBackend = true }: ChatColumnProps) {
   const [input, setInput] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
@@ -108,7 +140,7 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
 
   const orchName = target.kind === 'orchestrator' ? target.name : target.orchName;
 
-  const conn = useChatConnection({ target, ttsEnabled, orchName });
+  const conn = useChatConnection({ target, ttsEnabled, orchName, overrideToken });
   const { messages, trace, busy, status, setStatus: connSetStatus, activities, contextId, restoredSession,
     setRestoredSession, runId, runIdRef, sendText, stopRun, clearChat, resumeSession } = conn;
 
@@ -373,7 +405,12 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
           )}
           {speaking && <span style={{ fontSize: 11, color: '#a78bfa', marginLeft: 'auto' }}>🔊</span>}
           {!speaking && status && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{status}</span>}
-          <button onClick={clearChat} style={{ marginLeft: status || speaking ? 0 : 'auto', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: 11, flexShrink: 0 }}>
+          {onToken && (
+            overrideToken
+              ? <span onClick={() => onToken(null)} style={{ marginLeft: 'auto', fontSize: 11, color: '#4edea3', cursor: 'pointer', flexShrink: 0 }} title="Click to disconnect">Token active ×</span>
+              : <InlineConnectButton target={target} onToken={onToken} isBackend={tokenIsBackend} />
+          )}
+          <button onClick={clearChat} style={{ marginLeft: status || speaking || onToken ? 0 : 'auto', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: 11, flexShrink: 0 }}>
             Clear
           </button>
         </div>

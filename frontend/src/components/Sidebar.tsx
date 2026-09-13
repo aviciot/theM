@@ -31,7 +31,6 @@ const ORGANIZATION_NAV = [
 const PLATFORM_ADMIN_NAV = [
   { href: '/admin/tenants',       icon: 'domain',     label: 'Tenants' },
   { href: '/admin/users',         icon: 'group',      label: 'Platform Users' },
-  { href: '/admin/managed-apps',  icon: 'extension',  label: 'Managed Apps' },
   { href: '/admin/observability', icon: 'monitoring', label: 'Usage & Quotas' },
   { href: '/admin/settings',      icon: 'settings',   label: 'System Settings' },
 ];

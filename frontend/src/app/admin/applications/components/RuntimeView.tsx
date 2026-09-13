@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
@@ -88,9 +88,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   const [secMsg,          setSecMsg]          = useState('');
 
   const user = useAuthStore(s => s.user);
-  const [isManaged,       setIsManaged]       = useState(app.is_managed ?? false);
-  const [isManagedSaving, setIsManagedSaving] = useState(false);
-  const [managedMsg,      setManagedMsg]      = useState('');
 
   const [tenants,      setTenants]      = useState<import('@/lib/api').TenantRecord[]>([]);
   const [deployTarget, setDeployTarget] = useState('');
@@ -242,12 +239,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     try { await themApi.putSecurityConfig(app.id, secCfg); setSecMsg('Saved'); setTimeout(() => setSecMsg(''), 2500); }
     catch (e: unknown) { setSecMsg(e instanceof Error ? e.message : 'Failed'); } finally { setSecSaving(false); }
   }
-  const handleSetManaged = useCallback(async (next: boolean) => {
-    setIsManagedSaving(true); setManagedMsg('');
-    try { await themApi.setManagedFlag(app.id, next); setIsManaged(next); onUpdate?.({ is_managed: next }); setManagedMsg('Saved'); setTimeout(() => setManagedMsg(''), 2500); }
-    catch (e: unknown) { setManagedMsg(e instanceof Error ? e.message : 'Failed'); } finally { setIsManagedSaving(false); }
-  }, [app.id]);
-
   async function handleDeploy() {
     if (!deployTarget) return;
     setDeploying(true); setDeployError(''); setDeployResult(null);
@@ -477,28 +468,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
             </div>
           )}
         </Section>
-
-        {user?.role === 'super_admin' && (
-          <Section title="Managed App" icon="storefront" accent="#a78bfa" defaultOpen={false}
-            subtitle={isManaged ? 'Exposed to consuming tenants' : 'Private to owner tenant'}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${isManaged ? 'rgba(167,139,250,0.25)' : 'rgba(255,255,255,0.07)'}` }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Managed App</div>
-                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                  {isManaged ? 'Accessible to tenants with an active binding' : 'Private — only this tenant can use it'}
-                </div>
-              </div>
-              <button
-                onClick={() => !isManagedSaving && handleSetManaged(!isManaged)}
-                disabled={isManagedSaving}
-                style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: isManagedSaving ? 'not-allowed' : 'pointer', background: isManaged ? '#a78bfa' : 'rgba(255,255,255,0.1)', position: 'relative', transition: 'background 0.2s', flexShrink: 0, opacity: isManagedSaving ? 0.6 : 1 }}
-              >
-                <span style={{ position: 'absolute', top: 3, left: isManaged ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
-              </button>
-            </div>
-            {managedMsg && <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: managedMsg === 'Saved' ? C.green : C.error }}>{managedMsg}</div>}
-          </Section>
-        )}
 
         {user?.role === 'super_admin' && (
           <Section title="Deploy to Tenant" icon="rocket_launch" accent="#34d399" defaultOpen={false}

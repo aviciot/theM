@@ -7,7 +7,11 @@ const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-go-bridge:8002';
 const GO_ROOT_PATTERNS = [/^[^/]+\/apps\//, /^[^/]+\/a2a\//];
 
 async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
-  const token = req.cookies.get('them_access_token')?.value;
+  // X-Playground-Token allows the playground to test EPs with a specific opaque
+  // token (e.g. a Service token for backend-only EPs) instead of the session cookie.
+  const playgroundToken = req.headers.get('x-playground-token');
+  const cookieToken = req.cookies.get('them_access_token')?.value;
+  const token = playgroundToken ?? cookieToken;
   const { path: segments } = await params;
   const path = segments.join('/');
   const isGoRoot = GO_ROOT_PATTERNS.some(p => p.test(path));

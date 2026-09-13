@@ -17,18 +17,17 @@ SELECT
     COALESCE(a.slug, ''),
     COALESCE(t.slug, ''),
     a.enabled,
-    COALESCE(a.app_type, 'tenant') = 'managed',
     d.revision,
     d.status
 FROM them.applications a
-JOIN them.tenants t ON t.id = a.tenant_id
+JOIN  them.tenants t ON t.id = a.tenant_id
 LEFT JOIN them.application_definitions d ON d.id = a.active_definition_id
 WHERE a.tenant_id = $1::uuid`
 
 // scanApplication scans one application row from listAppQuery.
 func scanApplication(rows SingleRowScanner) (Application, error) {
 	var a Application
-	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.IsManaged, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
 		return a, err
 	}
 	return a, nil
@@ -908,15 +907,3 @@ WHERE a.id = $1::uuid`
 	return r, nil
 }
 
-// SetManagedFlag toggles applications.app_type between 'tenant' and 'managed'.
-// This must be called via the Admin (BYPASSRLS) pool — app_type is not
-// writable by them_app (RLS). Passing isManaged=true marks the app as a
-// platform-owned managed app; false reverts it to a normal tenant app.
-func SetManagedFlag(ctx context.Context, q Querier, appID string, isManaged bool) error {
-	const query = `
-UPDATE them.applications
-SET app_type   = CASE WHEN $2 THEN 'managed' ELSE 'tenant' END,
-    updated_at = NOW()
-WHERE id = $1::uuid`
-	return q.Exec(ctx, query, appID, isManaged)
-}

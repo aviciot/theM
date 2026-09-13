@@ -10,6 +10,7 @@ export interface UseChatConnectionProps {
   target: ConnTarget;
   ttsEnabled: boolean;
   orchName: string | undefined;
+  overrideToken?: string;
 }
 
 export interface UseChatConnectionResult {
@@ -35,7 +36,7 @@ export interface UseChatConnectionResult {
   openDashWs: (rid: string) => Promise<void>;
 }
 
-export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConnectionProps): UseChatConnectionResult {
+export function useChatConnection({ target, ttsEnabled, orchName, overrideToken }: UseChatConnectionProps): UseChatConnectionResult {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [busy, setBusy] = useState(false);
@@ -130,9 +131,14 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
     setTrace([]);
     setMessages(prev => [...prev, { role: 'user', text }]);
 
-    const r = await fetch('/api/auth/token');
-    if (!r.ok) { setBusy(false); busyRef.current = false; return; }
-    const { token } = await r.json();
+    let token: string;
+    if (overrideToken) {
+      token = overrideToken;
+    } else {
+      const r = await fetch('/api/auth/token');
+      if (!r.ok) { setBusy(false); busyRef.current = false; return; }
+      ({ token } = await r.json());
+    }
 
     // ── A2A path ────────────────────────────────────────────────────────────
     if (target.kind === 'entrypoint' && target.epType === 'a2a') {
@@ -448,7 +454,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
       }
       setBusy(false); busyRef.current = false;
     };
-  }, [target, openDashWs, ttsEnabled, orchName]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [target, openDashWs, ttsEnabled, orchName, overrideToken]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopRun = useCallback(() => {
     if (chatWsRef.current?.readyState === WebSocket.OPEN) chatWsRef.current.send(JSON.stringify({ type: 'cancel' }));
