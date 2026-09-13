@@ -18,11 +18,11 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     key: 'service_token',
-    label: 'Service token',
+    label: 'Internal API access',
     accessMode: 'token',
     allowedPrincipals: 'internal',
     requiresRuntimeIdp: false,
-    prerequisite: 'An access token must be created in Admin → Tokens',
+    prerequisite: 'Create an Internal token in Admin → Tokens',
   },
   {
     key: 'backend_service',
@@ -30,7 +30,7 @@ export const SCENARIOS: Scenario[] = [
     accessMode: 'token',
     allowedPrincipals: 'external',
     requiresRuntimeIdp: false,
-    prerequisite: 'A token with is_backend=true must be provisioned',
+    prerequisite: 'Create a Service token in Admin → Tokens',
   },
   {
     key: 'org_jwt',
