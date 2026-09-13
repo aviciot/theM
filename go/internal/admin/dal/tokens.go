@@ -16,6 +16,7 @@ const tokenSelectCols = `
 	COALESCE(user_id, 0),
 	COALESCE(orchestrator_id::text, ''),
 	enabled,
+	is_backend,
 	COALESCE((expires_at AT TIME ZONE 'UTC')::text, ''),
 	COALESCE((last_used_at AT TIME ZONE 'UTC')::text, ''),
 	(created_at AT TIME ZONE 'UTC')::text,
@@ -33,7 +34,7 @@ func scanToken(row SingleRowScanner) (Token, error) {
 	)
 	if err := row.Scan(
 		&t.ID, &t.Label, &t.UserID,
-		&orchID, &t.Enabled,
+		&orchID, &t.Enabled, &t.IsBackend,
 		&expiresAt, &lastUsedAt, &createdAt,
 		&t.TokenHash,
 	); err != nil {
@@ -155,7 +156,7 @@ func (db *DB) CreateToken(ctx context.Context, tenantID string, in TokenCreateRo
 	}
 	row := db.q.ExecReturning(ctx, fmt.Sprintf(`
 		INSERT INTO them.access_tokens
-			(tenant_id, token_hash, label, user_id, orchestrator_id, expires_at, enabled)
+			(tenant_id, token_hash, label, user_id, orchestrator_id, expires_at, enabled, is_backend)
 		VALUES (
 			$1::uuid,
 			$2,
@@ -163,10 +164,11 @@ func (db *DB) CreateToken(ctx context.Context, tenantID string, in TokenCreateRo
 			NULLIF($4, 0)::integer,
 			NULLIF($5, '')::uuid,
 			NULLIF($6, '')::timestamptz,
-			true
+			true,
+			$7
 		)
 		RETURNING %s`, tokenSelectCols),
-		tenantID, in.TokenHash, in.Label, in.UserID, orchID, expiresAt)
+		tenantID, in.TokenHash, in.Label, in.UserID, orchID, expiresAt, in.IsBackend)
 	return scanToken(row)
 }
 

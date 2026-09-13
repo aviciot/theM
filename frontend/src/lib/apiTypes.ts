@@ -323,6 +323,7 @@ export interface AccessToken {
   user_id: number;
   orchestrator_id: string | null;
   enabled: boolean;
+  is_backend: boolean;
   expires_at: string | null;
   last_used_at: string | null;
   created_at: string;

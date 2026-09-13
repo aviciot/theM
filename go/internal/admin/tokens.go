@@ -68,6 +68,7 @@ func (h *TokensHandler) Routes(r chi.Router) {
 type tokenCreateBody struct {
 	Label          string  `json:"label"`
 	UserID         int64   `json:"user_id"`
+	IsBackend      bool    `json:"is_backend"`
 	OrchestratorID *string `json:"orchestrator_id"`
 	ExpiresAt      *string `json:"expires_at"`
 }
@@ -120,6 +121,7 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 	in := dal.TokenCreateRow{
 		Label:     body.Label,
 		UserID:    body.UserID,
+		IsBackend: body.IsBackend,
 		ExpiresAt: body.ExpiresAt,
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())

@@ -486,6 +486,7 @@ type Token struct {
 	UserID         int64   `json:"user_id"`
 	OrchestratorID *string `json:"orchestrator_id"` // null in JSON when unset
 	Enabled        bool    `json:"enabled"`
+	IsBackend      bool    `json:"is_backend"`
 	ExpiresAt      *string `json:"expires_at"`   // RFC3339 or null
 	LastUsedAt     *string `json:"last_used_at"` // RFC3339 or null
 	CreatedAt      string  `json:"created_at"`
@@ -503,6 +504,7 @@ type TokenCreateRow struct {
 	TokenHash      string
 	Label          string
 	UserID         int64
+	IsBackend      bool
 	OrchestratorID *string // nil → DB NULL
 	ExpiresAt      *string // ISO8601 string or nil → DB NULL
 }

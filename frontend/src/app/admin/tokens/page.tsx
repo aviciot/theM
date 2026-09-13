@@ -30,7 +30,7 @@ const TOKEN_CSS = `
   }
   .token-row {
     display: grid;
-    grid-template-columns: 1fr 200px 130px 130px 90px 80px;
+    grid-template-columns: 1fr 110px 200px 130px 130px 90px 80px;
     gap: 12px;
     align-items: center;
     padding: 14px 20px;
@@ -132,7 +132,7 @@ export default function TokensPage() {
   const [loading, setLoading]             = useState(true);
   const [showForm, setShowForm]           = useState(false);
   const [newToken, setNewToken]           = useState('');
-  const [form, setForm]                   = useState({ label: '', user_id: 1, orchestrator_id: '' });
+  const [form, setForm]                   = useState({ label: '', user_id: 1, orchestrator_id: '', is_backend: false });
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState('');
   const [expandedId, setExpandedId]       = useState<string | null>(null);
@@ -147,7 +147,7 @@ export default function TokensPage() {
   useEffect(() => { load(); }, []);
 
   function openCreate() {
-    setForm({ label: '', user_id: 1, orchestrator_id: '' });
+    setForm({ label: '', user_id: 1, orchestrator_id: '', is_backend: false });
     setError('');
     setShowForm(true);
   }
@@ -155,7 +155,7 @@ export default function TokensPage() {
   async function save() {
     setSaving(true); setError('');
     try {
-      const body: any = { label: form.label, user_id: Number(form.user_id) };
+      const body: any = { label: form.label, user_id: Number(form.user_id), is_backend: form.is_backend };
       if (form.orchestrator_id) body.orchestrator_id = form.orchestrator_id;
       const created = await themApi.createToken(body);
       setNewToken(created.token ?? '');
@@ -209,12 +209,12 @@ export default function TokensPage() {
               {/* Column headers */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 200px 130px 130px 90px 80px',
+                gridTemplateColumns: '1fr 110px 200px 130px 130px 90px 80px',
                 gap: 12, padding: '10px 20px',
                 borderBottom: `1px solid ${BORDER}`,
                 background: 'var(--tm-filter-bg)',
               }}>
-                {['Token', 'Scope', 'Expires', 'Last used', 'Status', ''].map((h) => (
+                {['Token', 'Type', 'Scope', 'Expires', 'Last used', 'Status', ''].map((h) => (
                   <div key={h} style={{ fontSize: 10, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.6px' }}>{h}</div>
                 ))}
               </div>
@@ -264,6 +264,22 @@ export default function TokensPage() {
                       </div>
                       <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>user #{t.user_id}</div>
                     </div>
+                  </div>
+
+                  {/* Type badge */}
+                  <div>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '3px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                      background: t.is_backend ? 'rgba(0,209,255,0.08)' : 'rgba(255,255,255,0.05)',
+                      color: t.is_backend ? CYAN : MUTED,
+                      border: `1px solid ${t.is_backend ? 'rgba(0,209,255,0.25)' : 'rgba(255,255,255,0.1)'}`,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 12 }}>
+                        {t.is_backend ? 'dns' : 'person'}
+                      </span>
+                      {t.is_backend ? 'Service' : 'Internal'}
+                    </span>
                   </div>
 
                   {/* Scope */}
@@ -400,12 +416,47 @@ export default function TokensPage() {
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Token type */}
+              <div>
+                <label style={LBL}>Token type</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {([
+                    { value: false, label: 'Internal', icon: 'person', desc: 'For the-M staff, CI pipelines, internal tools' },
+                    { value: true,  label: 'Service',  icon: 'dns',    desc: 'For a partner or tenant backend system' },
+                  ] as const).map(opt => (
+                    <button
+                      key={String(opt.value)}
+                      type="button"
+                      onClick={() => setForm(p => ({ ...p, is_backend: opt.value }))}
+                      style={{
+                        flex: 1, padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
+                        border: `1px solid ${form.is_backend === opt.value ? (opt.value ? 'rgba(0,209,255,0.5)' : 'rgba(255,255,255,0.25)') : 'rgba(255,255,255,0.08)'}`,
+                        background: form.is_backend === opt.value ? (opt.value ? 'rgba(0,209,255,0.08)' : 'rgba(255,255,255,0.06)') : 'transparent',
+                        color: form.is_backend === opt.value ? (opt.value ? CYAN : TEXT) : MUTED,
+                        textAlign: 'left', transition: 'all 150ms ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{opt.icon}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>{opt.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.4 }}>{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                {form.is_backend && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: CYAN, lineHeight: 1.5, padding: '8px 12px', borderRadius: 8, background: 'rgba(0,209,255,0.05)', border: '1px solid rgba(0,209,255,0.15)' }}>
+                    This token can pass end-user identity via the <code style={{ fontFamily: 'JetBrains Mono, monospace' }}>X-External-User</code> header. Use it with an EP set to <strong>Backend service</strong>.
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label style={LBL}>Label</label>
                 <input
                   value={form.label}
                   onChange={(e) => setForm((p) => ({ ...p, label: e.target.value }))}
-                  placeholder="e.g. CI pipeline token"
+                  placeholder={form.is_backend ? 'e.g. bank-backend-prod' : 'e.g. CI pipeline token'}
                   style={INP}
                   autoFocus
                 />
