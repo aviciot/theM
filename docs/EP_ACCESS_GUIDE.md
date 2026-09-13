@@ -1,66 +1,74 @@
 # Entry Point Access — Operator Guide
 # the-M Platform · Last updated: 2026-09-13
 
-When you create an entry point (EP) in the Canvas, you choose **who can connect to it**.
-This guide explains each option in plain language.
+---
+
+## Who are we talking about?
+
+In the-M, a **tenant** is a customer organisation — for example, a bank.
+
+Inside that bank there are two types of people:
+
+- **Bank developers** — they build AI apps in the Canvas and test them
+- **Bank customers** — end users who use the app (e.g. chat with AI on the bank's website)
+
+When you set up an entry point (EP), you are deciding: **who is allowed to connect to this app, and how do they prove their identity?**
 
 ---
 
-## The big picture
-
-Every EP has a door and a lock. The lock decides who gets in.
-There are three kinds of people who might want to connect to your app:
-
-1. **Your own team** — developers, admins, testers using the-M directly
-2. **A partner system** — an external server (the bank's backend) calling the-M on behalf of their customers
-3. **An end user directly** — a bank customer's browser, using their own login (SSO)
+## The three real-world scenarios
 
 ```mermaid
 graph TD
-    A[Who connects to the EP?]
-    A --> B[Your own team\nor internal tools]
-    A --> C[A partner's backend server\ncalling for their customers]
-    A --> D[A customer's browser\nusing their own SSO login]
+    Q[Who is connecting to the app?]
+    Q --> A[Bank developer\ntesting their own app]
+    Q --> B[Bank's website/server\ncalling on behalf of a customer]
+    Q --> C[Bank customer's browser\nconnecting directly]
 
-    B --> E["the-M user account\nor Internal API access"]
-    C --> F["Backend service\n(on behalf of user)"]
-    D --> G["Organization-issued\naccess token"]
+    A --> OPT1["Option 1\nthe-M user account"]
+    B --> OPT3["Option 3\nBackend service"]
+    C --> OPT4["Option 4\nOrganization-issued token"]
 ```
 
 ---
 
-## The six options
+## Option 1 — the-M user account
+
+**Who:** A bank developer who is logged in to the-M.
+
+**Story:** The bank developer builds an app in the Canvas and wants to test it in the playground. They log in to the-M (either with a username/password or via the bank's SSO). The-M creates an account for them automatically on first login. They open the playground and chat with the app.
+
+**Where is the credential created?**
+- If logging in via SSO → in the **bank's Keycloak** (the developer's existing company account)
+- If logging in directly → in **the-M** (Admin → Users)
+
+**No token setup needed** — the developer's login session is the credential.
 
 ---
 
-### 1. the-M user account
-**Use when:** A person on your own team logs into the-M and uses the app directly from the dashboard or playground.
+## Option 2 — Internal API access
 
-**Example:** Your developer wants to test the customer support app. They log in to the-M, open the playground, and chat with the app.
+**Who:** An internal tool, script, or CI pipeline owned by the bank's development team.
 
-**What they need:** A the-M account on this tenant. Nothing else.
+**Story:** The bank's dev team has an automated test suite that runs every night against their AI app. It needs to call the-M programmatically — there's no human user involved, just a machine making API calls.
 
-**What they send:** Their the-M login session (handled automatically by the browser).
+**Where is the credential created?**
+→ In **the-M** — Admin → Tokens → New → pick **Internal**
 
----
+The bank's server puts this token in every request:
+```
+Authorization: Bearer <internal-token>
+```
 
-### 2. Internal API access
-**Use when:** Your own internal system, script, or CI pipeline calls the app programmatically — not on behalf of any customer.
-
-**Example:** A monitoring script that pings the app every 5 minutes to check it's alive. Or a CI pipeline that runs automated tests against the app.
-
-**What they need:** An **Internal token** created in Admin → Tokens.
-
-**What they send:** `Authorization: Bearer <internal-token>`
-
-**Key point:** There is no end user here. The caller IS the system. The-M records the token identity, not a person.
+**Key point:** There is no end customer here. The tool is calling for its own purposes.
 
 ---
 
-### 3. Backend service (on behalf of user)
-**Use when:** A partner's backend server calls the-M on behalf of one of their customers. The partner authenticates their own customers — the-M never sees the customer directly.
+## Option 3 — Backend service (on behalf of a customer)
 
-**Example:** A bank customer clicks "Chat with AI" on the bank's website. The bank's server receives that click, then calls the-M on that customer's behalf. The-M talks to the AI and sends the response back through the bank's server to the customer.
+**Who:** The bank's production server, calling the-M on behalf of a bank customer.
+
+**Story:** A bank customer opens the bank's website and clicks "Chat with AI". The bank's server receives that click. It calls the-M using a Service token, and tells the-M which customer is asking by passing their identity in the request. The-M runs the AI and sends the response back through the bank's server to the customer. The customer never connects to the-M directly — everything goes through the bank's server.
 
 ```mermaid
 sequenceDiagram
@@ -69,42 +77,26 @@ sequenceDiagram
     participant M as the-M
 
     C->>B: Click "Chat with AI"
-    B->>M: POST /ws\nAuthorization: Bearer <service-token>\nX-External-User: customer@bank.com
-    M->>M: Validate token\nRecord session for customer@bank.com
+    B->>M: Connect to EP\nAuthorization: Bearer <service-token>\nX-External-User: customer@bank.com
+    M->>M: Validate token ✅\nRecord session for customer@bank.com
     M-->>B: AI response
-    B-->>C: Show response in chat UI
+    B-->>C: Show response in chat
 ```
 
-**What they need:** A **Service token** created in Admin → Tokens.
+**Where is the credential created?**
+→ In **the-M** — Admin → Tokens → New → pick **Service**
 
-**What they send:**
-- `Authorization: Bearer <service-token>`
-- `X-External-User: customer@bank.com` (any identifier for the customer)
+The bank's server uses this token. The bank customer never sees it.
 
-**Key point:** The bank customer has no the-M account. The bank's server is the authenticated caller — it vouches for the customer. Only a Service token is trusted to do this.
-
----
-
-### The difference between option 2 and option 3
-
-This is the most important distinction:
-
-| | Internal API access (2) | Backend service (3) |
-|---|---|---|
-| Who is the caller? | Your own system | A partner's system |
-| Is there an end user? | No | Yes — a customer of the partner |
-| Token type needed | Internal | Service |
-| Can pass customer identity? | No (ignored) | Yes — via X-External-User header |
-| Use case | Internal tools, monitoring, CI | Bank website, insurance portal, any external integration |
-
-**Simple rule:** If someone's customer is at the other end of the call — use option 3. If it's just a machine talking to a machine for internal purposes — use option 2.
+**Important note on security:** One Service token covers all customers going through the bank's server. This is standard industry practice (same as Stripe, OpenAI, Twilio API keys) — but the bank must keep this token secure on their server. If it leaks, all customers are at risk until the token is revoked.
 
 ---
 
-### 4. Organization-issued access token
-**Use when:** A partner's customer connects **directly** to the-M using the JWT from their own company's SSO (Keycloak, Auth0, Azure AD, etc.). There is no middleman server.
+## Option 4 — Organization-issued access token
 
-**Example:** The bank gives their customers a mobile app. When a customer opens it, they log in with their bank credentials and get a JWT. That JWT is sent directly to the-M. No bank server involved.
+**Who:** A bank customer connecting directly — their browser or mobile app calls the-M, with no bank server in the middle.
+
+**Story:** The bank gives their customers a mobile app. When the customer opens it, they log in with their bank credentials (Keycloak SSO). They get a JWT (a digitally signed token) from the bank's SSO. Their app sends that JWT directly to the-M. The-M validates it and connects them.
 
 ```mermaid
 sequenceDiagram
@@ -113,68 +105,54 @@ sequenceDiagram
     participant M as the-M
 
     C->>K: Login with bank credentials
-    K-->>C: JWT (RS256 signed)
-    C->>M: POST /ws\nAuthorization: Bearer <jwt>
-    M->>M: Validate JWT against bank's JWKS\nExtract customer identity from 'sub' claim
+    K-->>C: JWT (signed by bank's SSO)
+    C->>M: Connect to EP\nAuthorization: Bearer <jwt>
+    M->>M: Validate JWT using bank's public keys\nExtract customer identity
     M-->>C: AI response directly
 ```
 
-**What they need:** Runtime Identity configured in Tenant Settings → Runtime Identity (JWKS URI + Issuer). No token creation needed.
+**Where is the credential created?**
+→ **Nowhere in the-M.** The JWT comes from the **bank's own SSO** (Keycloak, Auth0, etc.). The-M never issues it.
 
-**What they send:** `Authorization: Bearer <jwt-from-their-sso>`
+**What the-M admin must set up (once):**
+→ Tenant Settings → Runtime Identity → enter the bank's JWKS URI and Issuer URL.
 
-**Key point:** The customer authenticates with their own organisation's login. The-M validates the JWT cryptographically — no shared secret, no the-M account needed.
+This tells the-M where to find the bank's public keys to validate JWTs. The-M fetches those keys once and caches them — it does **not** call the bank's SSO on every customer request. Validation is done locally using cryptography.
 
----
-
-### 5. Service token — regular or backend
-**Use when:** You want to accept both Internal tokens and Service tokens on the same EP without restriction.
-
-**Example:** You're building and testing an integration. During development, your internal tools and the partner's service token both need to connect to the same EP. Rather than creating two EPs, you open it to both.
-
-**What they need:** Any token — Internal or Service — created in Admin → Tokens.
-
-> **Caution:** This is a looser setting. Use it during development or when you have specific reason to allow both. For production integrations, prefer option 2 or 3 so the EP is clearly scoped.
+**Key point:** The bank customer has no the-M account. Their bank login is their credential.
 
 ---
 
-### 6. Open (no auth)
-**Use when:** Anyone can connect — no credential required.
+## Option 5 — Service token — regular or backend
 
-**Example:** A public demo, a marketing page with a live chatbot, or a prototype you're sharing with stakeholders who don't have accounts.
+**Who:** Either an internal tool (option 2) or a backend server (option 3) — you want to accept both on the same EP.
 
-**What they need:** Nothing.
+**When to use:** Mainly during development, when your own test scripts and a partner's service token both need to hit the same EP. In production, prefer option 2 or 3 so it's clear who is allowed in.
 
-> **Caution:** Anyone who knows the URL can connect and consume tokens. Never use this for production apps with real data.
+**Where is the credential created?**
+→ In **the-M** — Admin → Tokens → either Internal or Service
 
 ---
 
-## Decision guide
+## Option 6 — Open (no auth)
 
-```mermaid
-flowchart TD
-    Q1{Is there a real customer\nat the other end?}
-    Q1 -->|No — it's a machine\nor internal tool| Q2
-    Q1 -->|Yes — a real person| Q3
+**Who:** Anyone who knows the URL.
 
-    Q2{Who owns the system\nmaking the call?}
-    Q2 -->|Us — internal| OPT2["Internal API access"]
-    Q2 -->|External partner| OPT3["Backend service\n(on behalf of user)"]
+**When to use:** Public demos, prototypes, marketing pages with a live chatbot.
 
-    Q3{Does the customer\nlog in directly to the-M?}
-    Q3 -->|No — partner server\ncalls for them| OPT3B["Backend service\n(on behalf of user)"]
-    Q3 -->|Yes — directly with\ntheir own SSO JWT| OPT4["Organization-issued\naccess token"]
-```
+**No credential needed — and no setup required.**
+
+> ⚠ Anyone can connect and consume tokens. Never use for production apps with real data.
 
 ---
 
 ## Quick reference
 
-| Option | Who connects | Token needed | End user identity |
+| Option | Who connects | Credential created where | Customer identity |
 |---|---|---|---|
-| the-M user account | Your team via the-M login | None (session JWT) | The-M user |
-| Internal API access | Your internal tools/scripts | Internal token | None |
-| Backend service | Partner's server | Service token | Passed via X-External-User |
-| Organization-issued token | Customer's browser/app directly | None (their SSO JWT) | From JWT sub claim |
-| Service token — regular or backend | Internal or partner tools | Any token | Depends on token type |
-| Open | Anyone | None | None |
+| the-M user account | Bank developer (logged in) | the-M or bank SSO | Their the-M login |
+| Internal API access | Bank's internal tools/scripts | the-M (Internal token) | None — machine call |
+| Backend service | Bank's production server | the-M (Service token) | Passed by the server |
+| Organization-issued token | Bank customer directly | Bank's own SSO | From the JWT |
+| Service token — any | Internal or partner tools | the-M (any token) | Depends on token |
+| Open | Anyone | Nowhere | None |
