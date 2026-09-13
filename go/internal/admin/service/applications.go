@@ -123,7 +123,13 @@ func (s *AppService) Create(ctx context.Context, tenantID, name, slug string, en
 
 // Update persists changes scoped to the tenant and invalidates all EP slugs for the application.
 // If slug is empty it is re-derived from name. Returns ErrSlugConflict on slug collision.
+// When enabled is true, validateReadiness is called first to ensure the app can run.
 func (s *AppService) Update(ctx context.Context, tenantID, id, name, slug string, enabled *bool) error {
+	if enabled != nil && *enabled {
+		if err := s.validateReadiness(ctx, tenantID, id); err != nil {
+			return err
+		}
+	}
 	if slug == "" {
 		slug = SlugifyName(name)
 	}
