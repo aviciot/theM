@@ -72,7 +72,9 @@ export default function ApplicationsPage() {
     try {
       const updated = await themApi.updateApplication(app.id, { name: app.name, slug: app.slug, enabled: !app.enabled });
       setList(prev => prev.map(a => a.id === app.id ? { ...a, ...updated, enabled: !app.enabled } : a));
-    } catch {/* ignore — AppCard shows toggling state */}
+    } catch (e) {
+      showListToast(e instanceof Error ? e.message : 'Could not update app', false);
+    }
   }
 
   async function handleDelete(app: Application) {

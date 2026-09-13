@@ -189,7 +189,13 @@ const authAdmin = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    }).then(r => r.json()),
+    }).then(async r => {
+      if (!r.ok) {
+        const parsed = await r.json().catch(() => null);
+        throw new Error(parsed?.detail || parsed?.error || parsed?.message || `HTTP ${r.status}`);
+      }
+      return r.json();
+    }),
   delete: (path: string): Promise<void> =>
     fetch(`/api/auth-admin/${path}`, { method: 'DELETE' }).then(() => undefined),
 };
@@ -317,8 +323,10 @@ export const themApi = {
   },
   // a2aStream: POSTs a message/stream JSON-RPC request to an A2A entry point and
   // yields parsed SSE event bodies: { kind, parts?, status?, taskId? }
-  // Auth is handled by the Next.js proxy via the them_access_token session cookie.
-  a2aStream: async function* (tenantSlug: string, appSlug: string, slug: string, text: string, _bearerToken: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+  // Auth: normally the Next.js proxy injects the session cookie. When overrideToken
+  // is provided (playground "Service token" mode), it is forwarded via X-Playground-Token
+  // and the proxy uses it instead of the cookie.
+  a2aStream: async function* (tenantSlug: string, appSlug: string, slug: string, text: string, overrideToken: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: `pg-${Date.now()}`,
@@ -327,12 +335,14 @@ export const themApi = {
         message: { messageId: `msg-${Date.now()}`, role: 'user', parts: [{ text }] },
       },
     });
+    const fetchHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    };
+    if (overrideToken) fetchHeaders['X-Playground-Token'] = overrideToken;
     const res = await fetch(`/api/them/${tenantSlug}/a2a/${appSlug}/${slug}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
+      headers: fetchHeaders,
       body,
       signal,
     });
