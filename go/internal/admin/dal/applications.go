@@ -683,8 +683,8 @@ WHERE id             = $1::uuid
 }
 
 // DeployApplication atomically clones a source application into a target tenant.
-// It copies the applications row and all entry_points rows under new UUIDs.
-// provider_keys and app_mcp_credentials are intentionally NOT copied.
+// It copies the applications row, all entry_points rows, and the active definition
+// under new UUIDs. provider_keys and app_mcp_credentials are intentionally NOT copied.
 // Returns the newly created Application (without orchestrators/EPs enrichment).
 func (d *DB) DeployApplication(ctx context.Context, sourceAppID, targetTenantID string) (Application, error) {
 	const cte = `
@@ -695,14 +695,31 @@ WITH src AS (
 ),
 new_app AS (
     INSERT INTO them.applications
-        (id, tenant_id, name, slug, enabled, provider_keys, runtime_config, app_params, active_definition_id, created_at, updated_at)
+        (id, tenant_id, name, slug, enabled, provider_keys, runtime_config, app_params, created_at, updated_at)
     SELECT
         gen_random_uuid(), $2::uuid, name,
         slug || '-' || substr(md5(random()::text), 1, 6),
-        enabled, '{}'::jsonb, runtime_config, app_params, active_definition_id,
+        enabled, '{}'::jsonb, runtime_config, app_params,
         now(), now()
     FROM src
-    RETURNING id, name, slug, enabled, active_definition_id
+    RETURNING id, name, slug, enabled
+),
+new_def AS (
+    INSERT INTO them.application_definitions
+        (id, application_id, tenant_id, revision, status, definition, definition_hash, created_at, published_at)
+    SELECT
+        gen_random_uuid(), (SELECT id FROM new_app), $2::uuid,
+        ad.revision, ad.status, ad.definition, ad.definition_hash,
+        now(), ad.published_at
+    FROM them.application_definitions ad
+    WHERE ad.id = (SELECT active_definition_id FROM src)
+    RETURNING id
+),
+set_def AS (
+    UPDATE them.applications
+    SET active_definition_id = (SELECT id FROM new_def)
+    WHERE id = (SELECT id FROM new_app)
+    RETURNING id, active_definition_id
 ),
 new_orchs AS (
     INSERT INTO them.app_orchestrators (
@@ -768,12 +785,12 @@ SELECT
     na.slug,
     COALESCE(t.slug, ''),
     na.enabled,
-    false,
     d.revision,
     d.status
 FROM new_app na
 JOIN them.tenants t ON t.id = $2::uuid
-LEFT JOIN them.application_definitions d ON d.id = na.active_definition_id`
+LEFT JOIN set_def sd ON sd.id = na.id
+LEFT JOIN them.application_definitions d ON d.id = sd.active_definition_id`
 
 	row := d.q.QueryRow(ctx, cte, sourceAppID, targetTenantID)
 	a, err := scanApplication(row)
