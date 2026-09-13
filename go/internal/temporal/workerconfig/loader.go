@@ -28,6 +28,10 @@ import (
 	"github.com/aviciot/them/internal/orchestrator"
 )
 
+// ErrNoProviderKey is returned when the worker config loader cannot resolve an API key
+// for the configured LLM provider. It means the tenant has not set up their keys.
+var ErrNoProviderKey = errors.New("no provider key configured")
+
 // ManagedAppParams holds the resolved parameters from a managed app binding.
 // Non-nil only when the application's app_type is 'managed' and an active binding exists.
 // Config values are substituted into {{PARAMS.KEY}} placeholders in system prompts.
@@ -244,14 +248,15 @@ WHERE ep.id = $1::uuid`
 		cfg.BudgetTokens = *budgetTokens
 	}
 
-	// If no provider is set on either orchestrator or EP, default to "anthropic".
+	// Provider is required — no silent default. If neither orchestrator nor EP
+	// specifies a provider, the run cannot proceed and the caller gets a clear error.
 	if providerName == "" {
-		providerName = "anthropic"
+		return RunConfig{}, fmt.Errorf("workerconfig: no LLM provider configured on orchestrator %s or its entry point — set provider and model in Runtime settings: %w", appOrchestratorID, ErrNoProviderKey)
 	}
 
-	// Resolve API key + base_url: tenant override in llm_providers takes precedence
-	// over per-app key in applications.provider_keys, which in turn takes precedence
-	// over the global environment variable. Non-fatal: fall through on miss.
+	// Resolve API key + base_url: tenant-scoped llm_providers row takes precedence
+	// over per-app key in applications.provider_keys. Platform-default rows
+	// (tenant_id IS NULL) are never used for tenant workloads.
 	tenantRow := l.loadTenantProviderKey(ctx, tenantID, providerName)
 	apiKey := tenantRow.key
 	llmBaseURL := tenantRow.baseURL
@@ -261,6 +266,9 @@ WHERE ep.id = $1::uuid`
 		if keyErr != nil {
 			return RunConfig{}, fmt.Errorf("workerconfig: decrypt provider key for %s: %w", providerName, keyErr)
 		}
+	}
+	if apiKey == "" {
+		return RunConfig{}, fmt.Errorf("workerconfig: no API key found for provider %q — add one in Runtime → Provider Keys: %w", providerName, ErrNoProviderKey)
 	}
 
 	// Summarizer key comes from app provider_keys using the EP-configured provider.
@@ -481,20 +489,14 @@ type providerRow struct {
 }
 
 // loadTenantProviderKey looks up a decrypted API key and base_url from
-// them.llm_providers, preferring the tenant-scoped override over the platform
-// default. Returns zero value when no enabled row exists or on any error
-// (fail-open).
+// them.llm_providers for the given tenant. Platform-default rows (tenant_id IS NULL)
+// are intentionally NOT used here — they are for internal platform operations only.
+// Returns zero value when no tenant-scoped row exists or on any error.
 func (l *PgxLoader) loadTenantProviderKey(ctx context.Context, tenantID, provider string) providerRow {
 	if tenantID == "" || provider == "" {
 		return providerRow{}
 	}
-
-	// Tenant override first.
-	if row := l.lookupLLMProviderKey(ctx, provider, &tenantID); row.key != "" {
-		return row
-	}
-	// Platform default fallback.
-	return l.lookupLLMProviderKey(ctx, provider, nil)
+	return l.lookupLLMProviderKey(ctx, provider, &tenantID)
 }
 
 // lookupLLMProviderKey fetches and decrypts a single llm_providers row.

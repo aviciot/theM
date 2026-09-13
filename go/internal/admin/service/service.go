@@ -57,6 +57,9 @@ type Dal interface {
 	DeleteEntryPoint(ctx context.Context, epID, appID string) error
 	ListEPSlugsForApp(ctx context.Context, appID string) []string
 	ListEPTenantSlugsForApp(ctx context.Context, appID string) []dal.EPTenantSlug
+	// App readiness validation (dry-run before enable)
+	GetAppReadinessInfo(ctx context.Context, tenantID, appID string) (dal.AppReadinessRow, error)
+
 	// Runtime config + bulk delete
 	UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, configJSON []byte) error
 	ListAppOrchestratorNames(ctx context.Context, appID string) ([]string, error)

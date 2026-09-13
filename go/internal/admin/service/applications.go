@@ -195,8 +195,15 @@ func (s *AppService) UpdateEntryPoint(ctx context.Context, tenantID, epID, appID
 }
 
 // SetEntryPointEnabled updates only the enabled column on an entry_points row.
+// When enabling (enabled=true), validateReadiness is called first; if the app
+// lacks the mandatory LLM configuration the enable is rejected with ErrNotReady.
 // Publishes cache invalidation so the runtime EP config cache is evicted.
 func (s *AppService) SetEntryPointEnabled(ctx context.Context, tenantID, appID, epID string, enabled bool) error {
+	if enabled {
+		if err := s.validateReadiness(ctx, tenantID, appID); err != nil {
+			return err
+		}
+	}
 	ts := s.dal.GetEntryPointTenantAndSlug(ctx, epID, appID)
 	effectiveTenantID := ts.TenantID
 	if effectiveTenantID == "" {
@@ -206,6 +213,33 @@ func (s *AppService) SetEntryPointEnabled(ctx context.Context, tenantID, appID, 
 		return ErrNotFound
 	}
 	s.publishEP(ctx, effectiveTenantID, ts.Slug)
+	return nil
+}
+
+// validateReadiness checks whether an application has all mandatory LLM runtime
+// configuration in place. It uses the same resolution logic the Temporal worker
+// uses (loader.go): EP-level override → orchestrator-level → tenant key → app key.
+// Returns an ErrNotReady FieldError with a specific human-readable message on failure.
+func (s *AppService) validateReadiness(ctx context.Context, tenantID, appID string) error {
+	info, err := s.dal.GetAppReadinessInfo(ctx, tenantID, appID)
+	if err != nil {
+		return fmt.Errorf("readiness check failed: %w", err)
+	}
+	if !info.HasOrchestrator {
+		return &FieldError{Kind: ErrNotReady, Message: "This app has no orchestrator. Connect one in the Canvas before enabling."}
+	}
+	if info.Provider == "" || info.Model == "" {
+		return &FieldError{Kind: ErrNotReady, Message: "Orchestrator has no LLM configured. Set provider and model in Runtime settings."}
+	}
+	if !info.HasAppKey && !info.HasTenantKey {
+		return &FieldError{Kind: ErrNotReady, Message: "No API key found for provider " + info.Provider + ". Add one in Runtime → Provider Keys."}
+	}
+	if info.MemoryEnabled && (info.SummarizerProvider == "" || info.SummarizerModel == "") {
+		return &FieldError{Kind: ErrNotReady, Message: "Memory is enabled but no summarizer provider/model is set."}
+	}
+	if info.MemoryEnabled && info.SummarizerProvider != "" && !info.HasSummarizerKey {
+		return &FieldError{Kind: ErrNotReady, Message: "Memory is enabled but no API key found for summarizer provider " + info.SummarizerProvider + "."}
+	}
 	return nil
 }
 

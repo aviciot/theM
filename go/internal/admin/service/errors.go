@@ -24,6 +24,11 @@ var (
 	// ErrQuotaExceeded signals a resource quota limit has been reached → 429 Too Many Requests.
 	// Used when max_agents, max_apps, or max_mcp_servers is exceeded.
 	ErrQuotaExceeded = errors.New("quota exceeded")
+
+	// ErrNotReady signals an application cannot be enabled because mandatory runtime
+	// configuration is missing (no orchestrator, no LLM provider/model, or no API key).
+	// Maps to 422 Unprocessable Entity so the frontend can show the specific reason.
+	ErrNotReady = errors.New("app not ready")
 )
 
 // FieldError wraps ErrValidation or ErrUnprocessable with a specific message so

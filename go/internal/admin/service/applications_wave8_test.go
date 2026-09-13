@@ -243,3 +243,99 @@ func TestAppService_Create_QuotaExceeded_ReturnsError(t *testing.T) {
 		t.Fatalf("want ErrQuotaExceeded, got %v", err)
 	}
 }
+
+// ── validateReadiness / SetEntryPointEnabled tests ────────────────────────────
+
+// RDY-1: enabling an EP when app has no orchestrator → ErrNotReady.
+func TestSetEntryPointEnabled_NoOrchestrator_Rejected(t *testing.T) {
+	d := &fakeDal{
+		readinessInfo: dal.AppReadinessRow{HasOrchestrator: false},
+		epTenantSlug:  dal.EPTenantSlug{TenantID: "t1", Slug: "ep-1"},
+	}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), "t1", "app-1", "ep-1", true)
+	if !errors.Is(err, service.ErrNotReady) {
+		t.Fatalf("want ErrNotReady, got %v", err)
+	}
+}
+
+// RDY-2: enabling when orchestrator exists but no provider/model → ErrNotReady.
+func TestSetEntryPointEnabled_NoLLM_Rejected(t *testing.T) {
+	d := &fakeDal{
+		readinessInfo: dal.AppReadinessRow{HasOrchestrator: true, Provider: "", Model: ""},
+		epTenantSlug:  dal.EPTenantSlug{TenantID: "t1", Slug: "ep-1"},
+	}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), "t1", "app-1", "ep-1", true)
+	if !errors.Is(err, service.ErrNotReady) {
+		t.Fatalf("want ErrNotReady, got %v", err)
+	}
+}
+
+// RDY-3: enabling when provider/model set but no API key → ErrNotReady.
+func TestSetEntryPointEnabled_NoAPIKey_Rejected(t *testing.T) {
+	d := &fakeDal{
+		readinessInfo: dal.AppReadinessRow{
+			HasOrchestrator: true,
+			Provider:        "anthropic",
+			Model:           "claude-3-5-sonnet-20241022",
+			HasAppKey:       false,
+			HasTenantKey:    false,
+		},
+		epTenantSlug: dal.EPTenantSlug{TenantID: "t1", Slug: "ep-1"},
+	}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), "t1", "app-1", "ep-1", true)
+	if !errors.Is(err, service.ErrNotReady) {
+		t.Fatalf("want ErrNotReady, got %v", err)
+	}
+}
+
+// RDY-4: fully configured app → enable succeeds.
+func TestSetEntryPointEnabled_FullyConfigured_Succeeds(t *testing.T) {
+	d := &fakeDal{
+		readinessInfo: dal.AppReadinessRow{
+			HasOrchestrator: true,
+			Provider:        "anthropic",
+			Model:           "claude-3-5-sonnet-20241022",
+			HasAppKey:       true,
+		},
+		epTenantSlug: dal.EPTenantSlug{TenantID: "t1", Slug: "ep-1"},
+	}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), "t1", "app-1", "ep-1", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// RDY-5: disabling an EP skips readiness check entirely.
+func TestSetEntryPointEnabled_Disable_SkipsReadiness(t *testing.T) {
+	// readinessInfo left at zero-value (HasOrchestrator=false) — would fail if checked.
+	d := &fakeDal{epTenantSlug: dal.EPTenantSlug{TenantID: "t1", Slug: "ep-1"}}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), "t1", "app-1", "ep-1", false)
+	if err != nil {
+		t.Fatalf("unexpected error on disable: %v", err)
+	}
+}
+
+// RDY-6: memory enabled but no summarizer provider → ErrNotReady.
+func TestSetEntryPointEnabled_MemoryNoSummarizer_Rejected(t *testing.T) {
+	d := &fakeDal{
+		readinessInfo: dal.AppReadinessRow{
+			HasOrchestrator:    true,
+			Provider:           "anthropic",
+			Model:              "claude-3-5-sonnet-20241022",
+			HasAppKey:          true,
+			MemoryEnabled:      true,
+			SummarizerProvider: "",
+		},
+		epTenantSlug: dal.EPTenantSlug{TenantID: "t1", Slug: "ep-1"},
+	}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.SetEntryPointEnabled(context.Background(), "t1", "app-1", "ep-1", true)
+	if !errors.Is(err, service.ErrNotReady) {
+		t.Fatalf("want ErrNotReady, got %v", err)
+	}
+}

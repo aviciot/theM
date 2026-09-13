@@ -1180,6 +1180,12 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestBulkDelete_TenantIsolation` | W8-S7: returns deleted count from BulkDeleteApplications |
 | `TestBulkDelete_FlushAfterDelete` | W8-S8: cache flush called AFTER delete, not before |
 | `TestBulkDelete_NoFlushOnDBError` | W8-S9: DB error → cache not flushed |
+| `TestSetEntryPointEnabled_NoOrchestrator_Rejected` | RDY-1: no orchestrator → ErrNotReady |
+| `TestSetEntryPointEnabled_NoLLM_Rejected` | RDY-2: no provider/model → ErrNotReady |
+| `TestSetEntryPointEnabled_NoAPIKey_Rejected` | RDY-3: no API key → ErrNotReady |
+| `TestSetEntryPointEnabled_FullyConfigured_Succeeds` | RDY-4: fully configured → enable succeeds |
+| `TestSetEntryPointEnabled_Disable_SkipsReadiness` | RDY-5: disable skips validation |
+| `TestSetEntryPointEnabled_MemoryNoSummarizer_Rejected` | RDY-6: memory on, no summarizer → ErrNotReady |
 
 **Trigger:** any change to `internal/admin/service/` (any file) OR `internal/admin/dal/` (any file)
 
@@ -3362,7 +3368,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
-| S1-93 | workerconfig managed app params (MAP-01..04): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe | 4 |
+| S1-93 | workerconfig managed app params (MAP-01..05): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe, ErrNoProviderKey_IsSentinel | 5 |
 | S1-94 | Tenant CRUD + PATCH + quota + members + email domain + group mappings + delete handler (TN-01..27 + GM-01..07): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole, AddMember_QuotaNilLimit_Allows, AddMember_QuotaUnderLimit_Allows, AddMember_QuotaAtLimit_Rejects, Patch_EmailDomain, Patch_EmailDomain_Clear, List_WithEmailDomain, ListGroupMappings_Empty, ListGroupMappings_Populated, UpsertGroupMapping_Success, UpsertGroupMapping_MissingGroupClaim, UpsertGroupMapping_InvalidRole, DeleteGroupMapping_Success, DeleteGroupMapping_NotFound, Delete_Success, Delete_NotFound | 37 |
 | S1-95 | quota enforcer (QE-01..17): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded, APIRPMNilLimit, APIRPMBelowLimit, APIRPMExceeded, MonthlyLLMTokensNilLimit, MonthlyLLMTokensBelowLimit, MonthlyLLMTokensExceeded, MonthlyLLMTokensDBError, MonthlyLLMTokensNoCounter | 17 |
 | S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
@@ -3380,7 +3386,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-108 | ExternalJWTValidator (EXT-1..7): ValidToken, ExpiredToken, WrongIssuer, WrongAudience, SkipAudCheck, MissingSub, AudAsString | 7 |
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
-| **S1 total** | | **1155** |
+| **S1 total** | | **1163** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

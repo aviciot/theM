@@ -240,3 +240,6 @@ type bindingNotFoundFake struct {
 func (f *bindingNotFoundFake) GetAgentBindingStatus(_ context.Context, _, _ string) (dal.AgentBindingSlotStatus, error) {
 	return dal.AgentBindingSlotStatus{}, pgx.ErrNoRows
 }
+func (f *bindingNotFoundFake) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
+	return dal.AppReadinessRow{}, nil
+}

@@ -547,6 +547,9 @@ func (f *isolationFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuot
 func (f *isolationFakeDal) CountAgents(_ context.Context, _ string) (int, error)       { return 0, nil }
 func (f *isolationFakeDal) CountApplications(_ context.Context, _ string) (int, error) { return 0, nil }
 func (f *isolationFakeDal) CountMCPServers(_ context.Context, _ string) (int, error)   { return 0, nil }
+func (f *isolationFakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
+	return dal.AppReadinessRow{}, nil
+}
 
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //

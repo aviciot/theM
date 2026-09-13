@@ -1,6 +1,7 @@
 package workerconfig_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,4 +63,13 @@ func TestPgxLoader_NewPgxLoader_TenantProviderKey_NilPoolSafe(t *testing.T) {
 	assert.NotNil(t, loader)
 	// Interface still satisfied after Step 15 additions.
 	var _ workerconfig.Loader = loader
+}
+
+// TestErrNoProviderKey_IsSentinel verifies that ErrNoProviderKey is exported and
+// can be matched with errors.Is.
+func TestErrNoProviderKey_IsSentinel(t *testing.T) {
+	err := workerconfig.ErrNoProviderKey
+	assert.True(t, errors.Is(err, workerconfig.ErrNoProviderKey),
+		"ErrNoProviderKey must be matchable with errors.Is")
+	assert.NotEqual(t, "", err.Error(), "ErrNoProviderKey must have a non-empty message")
 }

@@ -191,6 +191,8 @@ func writeServiceError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, service.ErrQuotaExceeded):
 		writeError(w, http.StatusTooManyRequests, "resource quota exceeded")
+	case errors.Is(err, service.ErrNotReady):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		return false
 	}

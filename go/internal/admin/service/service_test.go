@@ -62,6 +62,10 @@ type fakeDal struct {
 	createOrchCalls         []dal.OrchestratorInput
 	createOrchEnabledCalls  []bool
 
+	// readiness validation fields
+	readinessInfo dal.AppReadinessRow
+	readinessErr  error
+
 	// runtime config + bulk delete fields
 	updateRuntimeConfigErr    error
 	updateRuntimeConfigCalled bool
@@ -515,6 +519,9 @@ func (f *fakeDal) CountApplications(_ context.Context, _ string) (int, error) {
 }
 func (f *fakeDal) CountMCPServers(_ context.Context, _ string) (int, error) {
 	return f.mcpServerCount, nil
+}
+func (f *fakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
+	return f.readinessInfo, f.readinessErr
 }
 
 // fakeCache implements service.Cache.

@@ -357,6 +357,9 @@ func (f *agentDefFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota
 func (f *agentDefFakeDal) CountAgents(_ context.Context, _ string) (int, error)       { return 0, nil }
 func (f *agentDefFakeDal) CountApplications(_ context.Context, _ string) (int, error) { return 0, nil }
 func (f *agentDefFakeDal) CountMCPServers(_ context.Context, _ string) (int, error)   { return 0, nil }
+func (f *agentDefFakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
+	return dal.AppReadinessRow{}, nil
+}
 
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 

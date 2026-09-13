@@ -324,6 +324,9 @@ func (f *publishFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota,
 func (f *publishFakeDal) CountAgents(_ context.Context, _ string) (int, error)       { return 0, nil }
 func (f *publishFakeDal) CountApplications(_ context.Context, _ string) (int, error) { return 0, nil }
 func (f *publishFakeDal) CountMCPServers(_ context.Context, _ string) (int, error)   { return 0, nil }
+func (f *publishFakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
+	return dal.AppReadinessRow{}, nil
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
