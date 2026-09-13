@@ -493,7 +493,7 @@ export function CanvasNodePropertiesPanel({
               </select>
               {isDeadCombo && (
                 <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
-                  This combination ({accessMode} + {allowedPrincipals}) rejects all callers.
+                  This combination rejects all callers. Select a valid option above.
                 </div>
               )}
               {isLegacy && selectedScenario && (
@@ -501,24 +501,32 @@ export function CanvasNodePropertiesPanel({
                   Stored as {accessMode} + {allowedPrincipals} — displayed as nearest equivalent.
                 </div>
               )}
-              {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === false && (
-                <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
-                  Runtime Identity is not configured — go to Tenant Settings → Runtime Identity to set it up.
-                </div>
-              )}
-              {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === 'error' && (
-                <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4, lineHeight: 1.5 }}>
-                  Could not load Runtime Identity status — check your connection and reload.
-                </div>
-              )}
-              {selectedScenario?.requiresRuntimeIdp && hasRuntimeIdp === true && (
-                <div style={{ fontSize: 10, color: C.green, marginTop: 4, lineHeight: 1.5 }}>
-                  Runtime Identity is configured.
-                </div>
-              )}
               {selectedScenario && !isDeadCombo && (
-                <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>
-                  {selectedScenario.prerequisite}
+                <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 7, background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <div style={{ fontSize: 11, color: C.text, lineHeight: 1.5 }}>
+                    {selectedScenario.description}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMuted, lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 600, color: C.text }}>Use when: </span>{selectedScenario.whenToUse}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMuted, lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 600, color: C.text }}>Requires: </span>{selectedScenario.prerequisite}
+                  </div>
+                  {selectedScenario.requiresRuntimeIdp && hasRuntimeIdp === false && (
+                    <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>
+                      ⚠ Runtime Identity not configured — go to Tenant Settings → Runtime Identity.
+                    </div>
+                  )}
+                  {selectedScenario.requiresRuntimeIdp && hasRuntimeIdp === 'error' && (
+                    <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>
+                      ⚠ Could not load Runtime Identity status — reload and try again.
+                    </div>
+                  )}
+                  {selectedScenario.requiresRuntimeIdp && hasRuntimeIdp === true && (
+                    <div style={{ fontSize: 10, color: C.green, marginTop: 2 }}>
+                      Runtime Identity is configured.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
