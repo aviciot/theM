@@ -56,6 +56,9 @@ type TokenQuerier interface {
 	// filtering for revoked=false and unexpired rows.
 	// Returns ErrTokenNotFound when no matching row exists.
 	QueryToken(ctx context.Context, hashHex string) (*TokenRow, error)
+	// TouchLastUsed updates last_used_at to now() for the given hash.
+	// Best-effort — errors are silently ignored by callers.
+	TouchLastUsed(ctx context.Context, hashHex string) error
 }
 
 // RedisClient abstracts the Redis operations used by the token cache so tests
@@ -169,6 +172,13 @@ func (c *Cache) Validate(ctx context.Context, rawToken string) (*TokenInfo, erro
 		}
 		return nil, fmt.Errorf("auth: cache db lookup: %w", err)
 	}
+
+	// Record usage timestamp asynchronously — don't block the caller.
+	go func(h string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = c.db.TouchLastUsed(bgCtx, h)
+	}(hash)
 
 	info := rowToTokenInfo(row)
 

@@ -81,6 +81,8 @@ func (q *tmTokenQuerier) QueryToken(_ context.Context, hashHex string) (*auth.To
 	return row, nil
 }
 
+func (q *tmTokenQuerier) TouchLastUsed(_ context.Context, _ string) error { return nil }
+
 // tmRedis is an in-process Redis stub (no network).
 type tmRedis struct {
 	mu    sync.Mutex

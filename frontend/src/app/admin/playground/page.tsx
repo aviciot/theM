@@ -6,6 +6,93 @@ import { themApi, type Application } from '@/lib/api';
 import { type ConnTarget, targetId, targetLabel, TAB_COLORS } from './playgroundTypes';
 import { ChatColumn } from './ChatColumn';
 
+// ── EPCredentialSelector ──────────────────────────────────────────────────────
+// Shows EP access mode and provides a single "Connect with token" button for
+// token-mode EPs. The token's is_backend flag is set automatically based on
+// the EP's allowed_principals:
+//   external → is_backend=true (Service token)
+//   internal → is_backend=false (Internal token)
+//   both / unset → is_backend=true (defaults to Service token)
+// Tokens expire after 20 minutes.
+
+interface EPCredentialSelectorProps {
+  target: ConnTarget | null;
+  applications: Application[];
+  overrideToken: string | null;
+  onToken: (token: string | null) => void;
+}
+
+function EPCredentialSelector({ target, applications, overrideToken, onToken }: EPCredentialSelectorProps) {
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!target || target.kind !== 'entrypoint') return null;
+
+  const app = applications.find(a => (a.slug ?? a.id) === target.appSlug);
+  const ep = app?.entry_points.find(e => e.slug === target.slug);
+  const mode = (ep?.access_policy as Record<string, string> | undefined)?.mode ?? 'token';
+  const allowedPrincipals = ep?.allowed_principals ?? 'both';
+
+  // Non-token modes: just show a label, no token needed
+  if (mode === 'public') {
+    return <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', flexShrink: 0 }}>Access: public</span>;
+  }
+  if (mode === 'user_jwt') {
+    return <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', flexShrink: 0 }}>Access: staff login (JWT)</span>;
+  }
+  if (mode === 'external_jwt') {
+    return <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', flexShrink: 0 }}>Access: external JWT</span>;
+  }
+
+  // token mode — single button
+  const isBackend = allowedPrincipals !== 'internal';
+  const tokenLabel = isBackend ? 'Service token' : 'Internal token';
+
+  const handleConnect = async () => {
+    if (overrideToken) { onToken(null); return; }
+    setCreating(true);
+    setError(null);
+    try {
+      const expiresAt = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+      const result = await themApi.createToken({
+        label: `playground-${target.slug}`,
+        user_id: 0,
+        is_backend: isBackend,
+        expires_at: expiresAt,
+      });
+      if (!result.token) throw new Error('Token value not returned');
+      onToken(result.token);
+    } catch (e) {
+      setError((e as Error).message || 'Failed to create token');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', flexShrink: 0 }}>
+        Access: {allowedPrincipals === 'internal' ? 'internal only' : allowedPrincipals === 'external' ? 'external only' : 'token'}
+      </span>
+      <button
+        onClick={handleConnect}
+        disabled={creating}
+        style={{
+          padding: '3px 8px', borderRadius: 6, border: '1px solid',
+          borderColor: overrideToken ? '#10b981' : 'var(--tm-border)',
+          background: overrideToken ? 'rgba(16,185,129,0.12)' : 'transparent',
+          color: overrideToken ? '#4edea3' : 'var(--tm-text-muted)',
+          fontSize: 11, fontWeight: 600, cursor: creating ? 'wait' : 'pointer',
+        }}
+        title={overrideToken ? `Using ${tokenLabel} — click to disconnect` : `Create a 20-min ${tokenLabel} for this EP`}
+      >
+        {creating ? 'Creating…' : overrideToken ? `${tokenLabel} (active)` : `Connect with token`}
+      </button>
+      {error && <span style={{ fontSize: 11, color: '#f87171' }}>{error}</span>}
+    </div>
+  );
+}
+
 // ── TargetSelector ──────────────────────────────────────────────────────────
 // Grouped optgroup dropdown: Orchestrators (direct) + per-app EP groups.
 
@@ -64,6 +151,9 @@ function PlaygroundInner() {
   const [tabs, setTabs] = useState<ConnTarget[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>('');
   const [compareMode, setCompareMode] = useState(false);
+  // overrideTokens: keyed by tab id — holds the plain service token value for
+  // tabs where the user chose "Service token" mode. Cleared on tab close.
+  const [overrideTokens, setOverrideTokens] = useState<Record<string, string>>({});
   const [composeInput, setComposeInput] = useState('');
   const [broadcastText, setBroadcastText] = useState<string | null>(null);
   const sentCount = { current: 0 };
@@ -128,6 +218,7 @@ function PlaygroundInner() {
       if (activeTabId === id && next.length > 0) setActiveTabId(targetId(next[next.length - 1]));
       return next;
     });
+    setOverrideTokens(prev => { const next = { ...prev }; delete next[id]; return next; });
     if (compareMode && tabs.length <= 2) setCompareMode(false);
   };
 
@@ -167,6 +258,17 @@ function PlaygroundInner() {
               applications={applications}
               value={activeTab}
               onChange={t => openNewTab(t)}
+            />
+
+            <EPCredentialSelector
+              target={activeTab}
+              applications={applications}
+              overrideToken={activeTabId ? (overrideTokens[activeTabId] ?? null) : null}
+              onToken={tok => setOverrideTokens(prev => {
+                if (!activeTabId) return prev;
+                if (tok === null) { const next = { ...prev }; delete next[activeTabId]; return next; }
+                return { ...prev, [activeTabId]: tok };
+              })}
             />
 
             {/* Tab bar */}
@@ -251,6 +353,7 @@ function PlaygroundInner() {
                     onSharedSent={onBroadcastSent}
                     showHeader
                     compact={tabs.length >= 3}
+                    overrideToken={overrideTokens[targetId(t)]}
                   />
                 ))}
               </div>
@@ -276,6 +379,7 @@ function PlaygroundInner() {
                 target={activeTab}
                 color={TAB_COLORS[tabs.indexOf(activeTab) % TAB_COLORS.length]}
                 showHeader
+                overrideToken={overrideTokens[activeTabId]}
               />
             )
           )}

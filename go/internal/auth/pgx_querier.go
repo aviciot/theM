@@ -62,3 +62,10 @@ func (q *PgxQuerier) QueryToken(ctx context.Context, hashHex string) (*TokenRow,
 		ExpiresAt: expiresAt,
 	}, nil
 }
+
+// TouchLastUsed updates last_used_at to now() for the token identified by hashHex.
+func (q *PgxQuerier) TouchLastUsed(ctx context.Context, hashHex string) error {
+	const sql = `UPDATE them.access_tokens SET last_used_at = now() WHERE token_hash = $1`
+	_, err := q.pool.Exec(ctx, sql, hashHex)
+	return err
+}

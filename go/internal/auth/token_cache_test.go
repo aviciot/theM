@@ -46,6 +46,8 @@ func (m *mockTokenQuerier) QueryToken(_ context.Context, hashHex string) (*auth.
 	return row, nil
 }
 
+func (m *mockTokenQuerier) TouchLastUsed(_ context.Context, _ string) error { return nil }
+
 func (m *mockTokenQuerier) callCount(hashHex string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

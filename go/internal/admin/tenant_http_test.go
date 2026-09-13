@@ -76,6 +76,8 @@ func (q *thTokenQuerier) QueryToken(_ context.Context, hashHex string) (*auth.To
 	return row, nil
 }
 
+func (q *thTokenQuerier) TouchLastUsed(_ context.Context, _ string) error { return nil }
+
 // thRedis is a no-op in-memory Redis stub.
 type thRedis struct {
 	mu    sync.Mutex
