@@ -31,94 +31,59 @@
       "webOrigins": [
         "http://localhost:8088",
         "http://10.55.125.43:8088"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
       ]
     }
   ],
   "groups": [
-    {
-      "name": "bank-admins",
-      "path": "/bank-admins"
-    },
-    {
-      "name": "qa",
-      "path": "/qa"
-    },
-    {
-      "name": "developers",
-      "path": "/developers"
-    }
+    { "name": "them-admins", "path": "/them-admins" },
+    { "name": "developers",  "path": "/developers" },
+    { "name": "qa",          "path": "/qa" }
   ],
   "users": [
     {
-      "username": "testuser",
-      "email": "testuser@bank.com",
-      "firstName": "Test",
-      "lastName": "User",
-      "enabled": true,
-      "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "testpass", "temporary": false }]
-    },
-    {
-      "username": "avi",
-      "email": "avi@bank.com",
-      "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "avi", "temporary": false }]
-    },
-    {
-      "username": "avi1",
-      "email": "avi1@bank.com",
-      "firstName": "Avi1",
-      "lastName": "Cohen1",
-      "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "avi1", "temporary": false }]
-    },
-    {
-      "username": "avi2",
-      "email": "avi2@bank.com",
-      "firstName": "Avi2",
-      "lastName": "Avi2",
-      "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "avi2", "temporary": false }]
-    },
-    {
-      "username": "avi3",
-      "email": "avi3@bank.com",
-      "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "avi3", "temporary": false }]
-    },
-    {
-      "username": "bankadmin",
-      "email": "bankadmin@bank.com",
-      "firstName": "Bank",
+      "username": "admin",
+      "email": "admin@them.com",
+      "firstName": "the-M",
       "lastName": "Admin",
       "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "bankadmin", "temporary": false }],
-      "groups": ["/bank-admins"]
-    },
-    {
-      "username": "qa-user",
-      "email": "qa@bank.com",
-      "firstName": "QA",
-      "lastName": "Engineer",
-      "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "qa", "temporary": false }],
-      "groups": ["/qa"]
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/them-admins"]
     },
     {
       "username": "dev",
-      "email": "dev@bank.com",
-      "firstName": "Dev",
-      "lastName": "Engineer",
+      "email": "dev@them.com",
+      "firstName": "the-M",
+      "lastName": "Dev",
       "enabled": true,
-      "emailVerified": false,
-      "credentials": [{ "type": "password", "value": "dev", "temporary": false }],
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
       "groups": ["/developers"]
+    },
+    {
+      "username": "qa",
+      "email": "qa@them.com",
+      "firstName": "the-M",
+      "lastName": "QA",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/qa"]
     }
   ]
 }

@@ -11,6 +11,7 @@
   "editUsernameAllowed": false,
   "bruteForceProtected": false,
   "accessTokenLifespan": 3600,
+  "loginTheme": "bank-theme",
   "clients": [
     {
       "clientId": "them-m",
@@ -31,17 +32,30 @@
       "webOrigins": [
         "http://localhost:8088",
         "http://10.55.125.43:8088"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
       ]
     },
     {
       "clientId": "bank-test-cli",
       "name": "Bank E2E Test Client",
-      "description": "Used only by automated test scripts — direct access grants for password-flow token issuance",
       "enabled": true,
       "publicClient": false,
       "secret": "bank-test-secret",
       "standardFlowEnabled": false,
-      "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect",
@@ -50,23 +64,14 @@
     }
   ],
   "groups": [
-    {
-      "name": "bank-admins",
-      "path": "/bank-admins"
-    },
-    {
-      "name": "developers",
-      "path": "/developers"
-    },
-    {
-      "name": "qa",
-      "path": "/qa"
-    }
+    { "name": "bank-admins", "path": "/bank-admins" },
+    { "name": "developers",  "path": "/developers" },
+    { "name": "qa",          "path": "/qa" }
   ],
   "users": [
     {
-      "username": "bankadmin",
-      "email": "bankadmin@bank.com",
+      "username": "admin",
+      "email": "admin@bank.com",
       "firstName": "Bank",
       "lastName": "Admin",
       "enabled": true,
@@ -75,22 +80,24 @@
       "groups": ["/bank-admins"]
     },
     {
-      "username": "avi2",
-      "email": "avi2@bank.com",
-      "firstName": "Avi",
-      "lastName": "Two",
+      "username": "dev",
+      "email": "dev@bank.com",
+      "firstName": "Bank",
+      "lastName": "Dev",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/developers"]
     },
     {
-      "username": "avi3",
-      "email": "avi3@bank.com",
-      "firstName": "Avi",
-      "lastName": "Three",
+      "username": "qa",
+      "email": "qa@bank.com",
+      "firstName": "Bank",
+      "lastName": "QA",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/qa"]
     }
   ]
 }

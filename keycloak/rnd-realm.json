@@ -31,35 +31,54 @@
       "webOrigins": [
         "http://localhost:8088",
         "http://10.55.125.43:8088"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
       ]
     }
   ],
   "groups": [
-    {
-      "name": "developers",
-      "path": "/developers"
-    },
-    {
-      "name": "qa",
-      "path": "/qa"
-    }
+    { "name": "developers", "path": "/developers" },
+    { "name": "qa",         "path": "/qa" }
   ],
   "users": [
     {
-      "username": "dev",
-      "email": "dev@rnd.com",
-      "firstName": "Dev",
-      "lastName": "User",
+      "username": "admin",
+      "email": "admin@rnd.com",
+      "firstName": "RnD",
+      "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
       "groups": ["/developers"]
     },
     {
-      "username": "qa-user",
-      "email": "qauser@rnd.com",
-      "firstName": "QA",
-      "lastName": "User",
+      "username": "dev",
+      "email": "dev@rnd.com",
+      "firstName": "RnD",
+      "lastName": "Dev",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/developers"]
+    },
+    {
+      "username": "qa",
+      "email": "qa@rnd.com",
+      "firstName": "RnD",
+      "lastName": "QA",
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],

@@ -11,6 +11,7 @@
   "editUsernameAllowed": false,
   "bruteForceProtected": false,
   "accessTokenLifespan": 3600,
+  "loginTheme": "payops-theme",
   "clients": [
     {
       "clientId": "them-m",
@@ -31,27 +32,33 @@
       "webOrigins": [
         "http://localhost:8088",
         "http://10.55.125.43:8088"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
       ]
     }
   ],
   "groups": [
-    {
-      "name": "payops-admins",
-      "path": "/payops-admins"
-    },
-    {
-      "name": "developers",
-      "path": "/developers"
-    },
-    {
-      "name": "qa",
-      "path": "/qa"
-    }
+    { "name": "payops-admins", "path": "/payops-admins" },
+    { "name": "developers",    "path": "/developers" },
+    { "name": "qa",            "path": "/qa" }
   ],
   "users": [
     {
-      "username": "payopsadmin",
-      "email": "payops_admin@payops.ai",
+      "username": "admin",
+      "email": "admin@payops.ai",
       "firstName": "PayOps",
       "lastName": "Admin",
       "enabled": true,
@@ -60,22 +67,24 @@
       "groups": ["/payops-admins"]
     },
     {
-      "username": "avi1",
-      "email": "avi1@payops.ai",
-      "firstName": "Avi",
-      "lastName": "One",
+      "username": "dev",
+      "email": "dev@payops.ai",
+      "firstName": "PayOps",
+      "lastName": "Dev",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/developers"]
     },
     {
-      "username": "avi2",
-      "email": "avi2@payops.ai",
-      "firstName": "Avi",
-      "lastName": "Two",
+      "username": "qa",
+      "email": "qa@payops.ai",
+      "firstName": "PayOps",
+      "lastName": "QA",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "groups": ["/qa"]
     }
   ]
 }
