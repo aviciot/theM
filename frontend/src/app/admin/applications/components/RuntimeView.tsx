@@ -137,7 +137,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     }).catch(() => {});
   }, [app.id]);
 
-  const setProviders = keyStatuses.filter(k => k.key_set).map(k => k.provider);
+  const setProviders = [...new Set([...keyStatuses.filter(k => k.key_set).map(k => k.provider), 'mock'])];
   const getKeyStatus = (p: string): KeyStatus => keyStatuses.find(k => k.provider === p) ?? { provider: p, key_set: false };
   const agentIds = [...new Set([...agentLLMNodes.map(n => n.agent_id), ...agentParamsList.map(a => a.agent_id)])];
 

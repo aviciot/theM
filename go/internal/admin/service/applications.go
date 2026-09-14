@@ -329,6 +329,7 @@ var validProviders = map[string]struct{}{
 	"ollama":     {},
 	"vllm":       {},
 	"lmstudio":   {},
+	"mock":       {},
 }
 
 // localProviders is the subset of providers that require a custom base_url

@@ -84,16 +84,19 @@ func goodCfg() auth.ExternalJWTConfig {
 	}
 }
 
-// EXT-1: valid token → returns sub.
+// EXT-1: valid token → returns sub and claims.
 func TestExternalJWT_ValidToken(t *testing.T) {
 	v := newValidator()
 	token := buildExtToken("k1", goodClaims())
-	sub, err := v.Validate(context.Background(), token, goodCfg())
+	res, err := v.Validate(context.Background(), token, goodCfg())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if sub != "customer-123" {
-		t.Errorf("sub=%q, want customer-123", sub)
+	if res.ExternalUserID != "customer-123" {
+		t.Errorf("ExternalUserID=%q, want customer-123", res.ExternalUserID)
+	}
+	if res.Claims["sub"] != "customer-123" {
+		t.Errorf("Claims[sub]=%q, want customer-123", res.Claims["sub"])
 	}
 }
 
@@ -141,12 +144,12 @@ func TestExternalJWT_SkipAudCheck(t *testing.T) {
 	token := buildExtToken("k1", claims)
 	cfg := goodCfg()
 	cfg.Audience = ""
-	sub, err := v.Validate(context.Background(), token, cfg)
+	res, err := v.Validate(context.Background(), token, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if sub != "customer-123" {
-		t.Errorf("sub=%q, want customer-123", sub)
+	if res.ExternalUserID != "customer-123" {
+		t.Errorf("ExternalUserID=%q, want customer-123", res.ExternalUserID)
 	}
 }
 
@@ -168,11 +171,30 @@ func TestExternalJWT_AudAsString(t *testing.T) {
 	claims := goodClaims()
 	claims["aud"] = "them-runtime" // string, not []string
 	token := buildExtToken("k1", claims)
-	sub, err := v.Validate(context.Background(), token, goodCfg())
+	res, err := v.Validate(context.Background(), token, goodCfg())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if sub != "customer-123" {
-		t.Errorf("sub=%q, want customer-123", sub)
+	if res.ExternalUserID != "customer-123" {
+		t.Errorf("ExternalUserID=%q, want customer-123", res.ExternalUserID)
+	}
+}
+
+// EXT-8: custom claims are returned in Claims map.
+func TestExternalJWT_CustomClaims(t *testing.T) {
+	v := newValidator()
+	claims := goodClaims()
+	claims["tier"] = "premium"
+	claims["dept"] = "retail"
+	token := buildExtToken("k1", claims)
+	res, err := v.Validate(context.Background(), token, goodCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Claims["tier"] != "premium" {
+		t.Errorf("Claims[tier]=%q, want premium", res.Claims["tier"])
+	}
+	if res.Claims["dept"] != "retail" {
+		t.Errorf("Claims[dept]=%q, want retail", res.Claims["dept"])
 	}
 }

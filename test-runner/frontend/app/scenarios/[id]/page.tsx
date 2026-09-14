@@ -26,6 +26,12 @@ export default function ScenarioEditorPage() {
   const [authMode, setAuthMode] = useState<Scenario['auth_mode']>('token');
   const [nUsers, setNUsers] = useState(1);
   const [messages, setMessages] = useState<string[]>(['Hello!']);
+  // Keycloak fields
+  const [kcURL, setKcURL] = useState('');
+  const [kcRealm, setKcRealm] = useState('');
+  const [kcClientID, setKcClientID] = useState('');
+  const [kcClientSecret, setKcClientSecret] = useState('');
+  const [kcUsers, setKcUsers] = useState<{ username: string; password: string }[]>([{ username: '', password: '' }]);
 
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [apps, setApps] = useState<App[]>([]);
@@ -56,6 +62,11 @@ export default function ScenarioEditorPage() {
       setAuthMode(sc.auth_mode);
       setNUsers(sc.n_users);
       setMessages(sc.messages);
+      if (sc.keycloak_url) setKcURL(sc.keycloak_url);
+      if (sc.keycloak_realm) setKcRealm(sc.keycloak_realm);
+      if (sc.keycloak_client_id) setKcClientID(sc.keycloak_client_id);
+      if (sc.keycloak_client_secret) setKcClientSecret(sc.keycloak_client_secret);
+      if (sc.keycloak_users?.length) setKcUsers(sc.keycloak_users);
     });
   }, [id, isNew]);
 
@@ -71,10 +82,16 @@ export default function ScenarioEditorPage() {
     api.listEPs(appID).then(setEPs);
   }, [appID]);
 
+  const buildSc = () => {
+    const base = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
+    if (authMode !== 'external_jwt') return base;
+    return { ...base, keycloak_url: kcURL, keycloak_realm: kcRealm, keycloak_client_id: kcClientID, keycloak_client_secret: kcClientSecret, keycloak_users: kcUsers.filter(u => u.username) };
+  };
+
   const save = async () => {
     setSaving(true);
     setError('');
-    const sc = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
+    const sc = buildSc();
     try {
       if (isNew) {
         await api.createScenario(sc);
@@ -90,7 +107,7 @@ export default function ScenarioEditorPage() {
   };
 
   const run = async () => {
-    const sc = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
+    const sc = buildSc();
     setSaving(true);
     setError('');
     try {
@@ -178,6 +195,38 @@ export default function ScenarioEditorPage() {
             ))}
           </div>
         </Field>
+
+        {authMode === 'external_jwt' && (
+          <div className="rounded-lg border border-indigo-800/50 bg-indigo-950/20 p-4 space-y-4">
+            <p className="text-sm font-medium text-indigo-300">Keycloak Configuration</p>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Keycloak URL" hint="Base URL, e.g. http://localhost:8088/auth/keycloak">
+                <input className="input" value={kcURL} onChange={(e) => setKcURL(e.target.value)} placeholder="http://localhost:8088/auth/keycloak" />
+              </Field>
+              <Field label="Realm">
+                <input className="input" value={kcRealm} onChange={(e) => setKcRealm(e.target.value)} placeholder="payops_ai" />
+              </Field>
+              <Field label="Client ID">
+                <input className="input" value={kcClientID} onChange={(e) => setKcClientID(e.target.value)} placeholder="them-m" />
+              </Field>
+              <Field label="Client Secret">
+                <input className="input" type="password" value={kcClientSecret} onChange={(e) => setKcClientSecret(e.target.value)} placeholder="them-m-secret" />
+              </Field>
+            </div>
+            <Field label="Virtual Users (Keycloak credentials)" hint="Each virtual user cycles through this list. Add one entry per distinct user.">
+              <div className="space-y-2">
+                {kcUsers.map((u, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input className="input flex-1" value={u.username} onChange={(e) => setKcUsers(ku => ku.map((x, j) => j === i ? { ...x, username: e.target.value } : x))} placeholder="username" />
+                    <input className="input flex-1" type="password" value={u.password} onChange={(e) => setKcUsers(ku => ku.map((x, j) => j === i ? { ...x, password: e.target.value } : x))} placeholder="password" />
+                    <button onClick={() => setKcUsers(ku => ku.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 px-2" disabled={kcUsers.length === 1}>×</button>
+                  </div>
+                ))}
+                <button onClick={() => setKcUsers(ku => [...ku, { username: '', password: '' }])} className="text-indigo-400 text-sm hover:text-indigo-300">+ Add user</button>
+              </div>
+            </Field>
+          </div>
+        )}
 
         <Field label="Virtual Users" hint="Each user gets their own bearer token and WS connection">
           <div className="flex items-center gap-3">

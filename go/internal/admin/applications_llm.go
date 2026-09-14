@@ -280,6 +280,8 @@ func probeLLMWithBase(ctx context.Context, provider, model, apiKey, baseURL stri
 		return probeOpenAICompat(ctx, model, apiKey, "https://api.groq.com/openai/v1/chat/completions")
 	case "gemini":
 		return probeGemini(ctx, model, apiKey)
+	case "mock":
+		return true, ""
 	default:
 		if baseURL != "" {
 			return probeOpenAICompat(ctx, model, apiKey, baseURL)

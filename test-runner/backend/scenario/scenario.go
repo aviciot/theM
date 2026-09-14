@@ -10,25 +10,38 @@ import (
 	"github.com/google/uuid"
 )
 
+// KeycloakUser is a single virtual user credential for external_jwt auth mode.
+type KeycloakUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type Scenario struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	TenantSlug  string   `json:"tenant_slug"`
-	TenantID    string   `json:"tenant_id,omitempty"`
-	AppID       string   `json:"app_id"`
-	AppSlug     string   `json:"app_slug"`
-	EPSlug      string   `json:"ep_slug"`
-	EPType      string   `json:"ep_type,omitempty"` // "websocket" | "sse" | "a2a" — from catalog
-	AuthMode    string   `json:"auth_mode"` // "token" | "public" | "user_jwt" | "external_jwt"
-	// AuthUser/AuthPass are the credentials used to login to the-M and create
-	// bearer tokens. Use a tenant admin (e.g. admin@payops.ai) — super-admin
-	// is not required. Falls back to global config credentials when empty.
-	AuthUser    string   `json:"auth_user,omitempty"`
-	AuthPass    string   `json:"auth_pass,omitempty"`
-	NUsers      int      `json:"n_users"`
-	Messages    []string `json:"messages"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	TenantSlug string   `json:"tenant_slug"`
+	TenantID   string   `json:"tenant_id,omitempty"`
+	AppID      string   `json:"app_id"`
+	AppSlug    string   `json:"app_slug"`
+	EPSlug     string   `json:"ep_slug"`
+	EPType     string   `json:"ep_type,omitempty"` // "websocket" | "sse" | "a2a" — from catalog
+	AuthMode   string   `json:"auth_mode"`         // "token" | "public" | "user_jwt" | "external_jwt"
+	// AuthUser/AuthPass: the-M admin credentials for token creation (token mode).
+	// Falls back to global config credentials when empty.
+	AuthUser string `json:"auth_user,omitempty"`
+	AuthPass string `json:"auth_pass,omitempty"`
+	// Keycloak config — used when auth_mode == "external_jwt".
+	// The runner fetches a JWT per virtual user from Keycloak and uses it as the
+	// bearer token. KeycloakUsers cycles: user[i % len] is assigned to virtual user i.
+	KeycloakURL          string         `json:"keycloak_url,omitempty"`           // e.g. http://them-traefik:8088/auth/keycloak
+	KeycloakRealm        string         `json:"keycloak_realm,omitempty"`         // e.g. payops_ai
+	KeycloakClientID     string         `json:"keycloak_client_id,omitempty"`     // e.g. them-m
+	KeycloakClientSecret string         `json:"keycloak_client_secret,omitempty"` // e.g. them-m-secret
+	KeycloakUsers        []KeycloakUser `json:"keycloak_users,omitempty"`         // virtual user credentials
+	NUsers               int            `json:"n_users"`
+	Messages             []string       `json:"messages"`
+	CreatedAt            string         `json:"created_at"`
+	UpdatedAt            string         `json:"updated_at"`
 }
 
 type Store struct {

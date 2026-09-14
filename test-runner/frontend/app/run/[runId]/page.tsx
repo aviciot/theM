@@ -82,7 +82,7 @@ function UserCard({ user }: { user: UserResult }) {
       )}
 
       <div className="space-y-2">
-        {user.steps.map((step, i) => (
+        {(user.steps ?? []).map((step, i) => (
           <div key={i} className="text-xs space-y-1">
             <div className="text-gray-400">→ {step.sent}</div>
             {step.received && (

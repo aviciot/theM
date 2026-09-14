@@ -12,6 +12,12 @@
   "bruteForceProtected": false,
   "accessTokenLifespan": 3600,
   "loginTheme": "payops-theme",
+  "userManagedAccessAllowed": false,
+  "attributes": {
+    "userProfileEnabled": "true",
+    "unmanagedAttributePolicy": "ENABLED",
+    "frontendUrl": "http://localhost:8088/auth/keycloak"
+  },
   "clients": [
     {
       "clientId": "them-m",
@@ -21,7 +27,7 @@
       "secret": "them-m-secret",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect",
       "redirectUris": [
@@ -45,6 +51,20 @@
             "id.token.claim": "true",
             "access.token.claim": "true",
             "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "tier",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "tier",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "tier",
+            "jsonType.label": "String"
           }
         }
       ]
@@ -85,6 +105,26 @@
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
       "groups": ["/qa"]
+    },
+    {
+      "username": "alice",
+      "email": "alice@payops.ai",
+      "firstName": "Alice",
+      "lastName": "Premium",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "alice123", "temporary": false }],
+      "attributes": { "tier": ["premium"] }
+    },
+    {
+      "username": "bob",
+      "email": "bob@payops.ai",
+      "firstName": "Bob",
+      "lastName": "Standard",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "bob123", "temporary": false }],
+      "attributes": { "tier": ["standard"] }
     }
   ]
 }

@@ -21,6 +21,11 @@ export interface EP {
   enabled: boolean;
 }
 
+export interface KeycloakUser {
+  username: string;
+  password: string;
+}
+
 export interface Scenario {
   id: string;
   name: string;
@@ -31,6 +36,12 @@ export interface Scenario {
   ep_slug: string;
   ep_type?: string;
   auth_mode: 'token' | 'public' | 'user_jwt' | 'external_jwt';
+  // Keycloak fields — only used when auth_mode == 'external_jwt'
+  keycloak_url?: string;
+  keycloak_realm?: string;
+  keycloak_client_id?: string;
+  keycloak_client_secret?: string;
+  keycloak_users?: KeycloakUser[];
   n_users: number;
   messages: string[];
   created_at: string;

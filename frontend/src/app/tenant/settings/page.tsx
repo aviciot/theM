@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi, type TenantRecord, type TenantQuota, type IDPConfig, type GroupMapping, type GroupMappingInput, type OIDCDebugRecord, type RuntimeIDPConfig, type RuntimeIDPInput } from '@/lib/api';
+import { RolesTab } from '../../admin/settings/RolesTab';
 
 const ACCENT = '#818cf8';
 
@@ -45,7 +46,7 @@ export default function TenantSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'mappings' | 'runtime-idp' | 'quota'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'sso' | 'mappings' | 'runtime-idp' | 'quota' | 'roles'>('general');
 
   // Runtime IDP tab state
   const [ridp, setRidp] = useState<RuntimeIDPConfig | null>(null);
@@ -325,6 +326,7 @@ export default function TenantSettingsPage() {
                   <button style={tabStyle(activeTab === 'sso')} onClick={() => setActiveTab('sso')}>SSO / Identity Provider</button>
                   <button style={tabStyle(activeTab === 'mappings')} onClick={() => setActiveTab('mappings')}>Group Mappings</button>
                   <button style={tabStyle(activeTab === 'runtime-idp')} onClick={() => setActiveTab('runtime-idp')}>Runtime Identity</button>
+                  <button style={tabStyle(activeTab === 'roles')} onClick={() => setActiveTab('roles')}>Roles</button>
                   <button style={tabStyle(activeTab === 'quota')} onClick={() => setActiveTab('quota')}>Quota &amp; Limits</button>
                 </div>
 
@@ -883,6 +885,9 @@ export default function TenantSettingsPage() {
                     </form>
                   </div>
                 )}
+
+                {/* Roles tab */}
+                {activeTab === 'roles' && <RolesTab />}
 
                 {/* Quota tab */}
                 {activeTab === 'quota' && (

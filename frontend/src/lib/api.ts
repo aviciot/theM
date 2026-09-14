@@ -166,6 +166,9 @@ import type {
   RuntimeIDPConfig,
   RuntimeIDPInput,
   DeployResult,
+  TenantRole,
+  RoleGrant,
+  RoleMapping,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───

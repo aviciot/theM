@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,19 +122,29 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 			defer wg.Done()
 
 			var bearerToken, tokenID string
-			if sc.AuthMode == "token" {
+			switch sc.AuthMode {
+			case "token":
 				tok, err := client.CreateToken(sc.AppID, sc.TenantID, fmt.Sprintf("tr-%s-u%d", runID[:8], idx))
 				if err != nil {
-					updates <- them.UserResult{
-						UserIndex: idx,
-						Status:    "failed",
-						Error:     fmt.Sprintf("create token: %v", err),
-					}
+					updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("create token: %v", err)}
 					return
 				}
 				bearerToken = tok.Token
 				tokenID = tok.ID
 				defer client.DeleteToken(tokenID)
+
+			case "external_jwt":
+				if len(sc.KeycloakUsers) == 0 {
+					updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: "external_jwt: no keycloak_users configured"}
+					return
+				}
+				ku := sc.KeycloakUsers[idx%len(sc.KeycloakUsers)]
+				jwt, err := fetchKeycloakJWT(sc.KeycloakURL, sc.KeycloakRealm, sc.KeycloakClientID, sc.KeycloakClientSecret, ku.Username, ku.Password)
+				if err != nil {
+					updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("keycloak login (%s): %v", ku.Username, err)}
+					return
+				}
+				bearerToken = jwt
 			}
 
 			themURL := client.BaseURL()
@@ -263,4 +276,38 @@ func (m *Manager) GetHistory(runID string) (*RunSummary, error) {
 
 func (m *Manager) DeleteHistory(runID string) error {
 	return os.Remove(filepath.Join(m.histDir, runID+".json"))
+}
+
+// fetchKeycloakJWT obtains an access token from Keycloak using the resource-owner
+// password grant. Used by the external_jwt auth mode to simulate bank end-users.
+func fetchKeycloakJWT(baseURL, realm, clientID, clientSecret, username, password string) (string, error) {
+	tokenURL := strings.TrimRight(baseURL, "/") + "/realms/" + realm + "/protocol/openid-connect/token"
+	form := url.Values{
+		"grant_type":    {"password"},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+		"username":      {username},
+		"password":      {password},
+		"scope":         {"openid"},
+	}
+	resp, err := http.PostForm(tokenURL, form)
+	if err != nil {
+		return "", fmt.Errorf("keycloak token request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("keycloak token: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		AccessToken string `json:"access_token"`
+		Error       string `json:"error"`
+		ErrorDesc   string `json:"error_description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("keycloak decode: %w", err)
+	}
+	if result.Error != "" {
+		return "", fmt.Errorf("keycloak: %s — %s", result.Error, result.ErrorDesc)
+	}
+	return result.AccessToken, nil
 }

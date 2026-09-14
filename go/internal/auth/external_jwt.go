@@ -76,32 +76,39 @@ func NewExternalJWTValidator(cache *jwks.Cache) *ExternalJWTValidator {
 	return &ExternalJWTValidator{cache: cache}
 }
 
+// ValidateResult holds the output of a successful JWT validation.
+type ValidateResult struct {
+	ExternalUserID string            // value of the sub claim (or SubClaim override)
+	Claims         map[string]string // all string-valued claims for role resolution
+}
+
 // Validate verifies the RS256-signed token against the tenant's JWKS and
-// returns the external user ID (from the "sub" claim by default).
+// returns the external user ID (from the "sub" claim by default) plus all
+// string-valued claims for role resolution.
 //
 // Errors are safe to log but must not be returned verbatim to callers as they
 // may reveal internal IdP configuration details.
-func (v *ExternalJWTValidator) Validate(ctx context.Context, rawToken string, cfg ExternalJWTConfig) (externalUserID string, err error) {
+func (v *ExternalJWTValidator) Validate(ctx context.Context, rawToken string, cfg ExternalJWTConfig) (ValidateResult, error) {
 	payloadBytes, err := jwks.VerifyRS256(ctx, v.cache, cfg.JWKSUri, rawToken)
 	if err != nil {
-		return "", err
+		return ValidateResult{}, err
 	}
 
 	var claims ExternalJWTClaims
 	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
-		return "", fmt.Errorf("external_jwt: parse claims: %w", err)
+		return ValidateResult{}, fmt.Errorf("external_jwt: parse claims: %w", err)
 	}
 
 	// Validate standard claims.
 	now := time.Now().Unix()
 	if claims.Exp > 0 && now > claims.Exp {
-		return "", fmt.Errorf("external_jwt: token expired (exp=%d, now=%d)", claims.Exp, now)
+		return ValidateResult{}, fmt.Errorf("external_jwt: token expired (exp=%d, now=%d)", claims.Exp, now)
 	}
 	if claims.Nbf > 0 && now < claims.Nbf {
-		return "", fmt.Errorf("external_jwt: token not yet valid (nbf=%d, now=%d)", claims.Nbf, now)
+		return ValidateResult{}, fmt.Errorf("external_jwt: token not yet valid (nbf=%d, now=%d)", claims.Nbf, now)
 	}
 	if claims.Iss != cfg.Issuer {
-		return "", fmt.Errorf("external_jwt: issuer mismatch (got %q, want %q)", claims.Iss, cfg.Issuer)
+		return ValidateResult{}, fmt.Errorf("external_jwt: issuer mismatch (got %q, want %q)", claims.Iss, cfg.Issuer)
 	}
 	if cfg.Audience != "" {
 		found := false
@@ -112,12 +119,24 @@ func (v *ExternalJWTValidator) Validate(ctx context.Context, rawToken string, cf
 			}
 		}
 		if !found {
-			return "", fmt.Errorf("external_jwt: audience mismatch (got %v, want %q)", []string(claims.Aud), cfg.Audience)
+			return ValidateResult{}, fmt.Errorf("external_jwt: audience mismatch (got %v, want %q)", []string(claims.Aud), cfg.Audience)
 		}
 	}
 	if claims.Sub == "" {
-		return "", fmt.Errorf("external_jwt: missing sub claim")
+		return ValidateResult{}, fmt.Errorf("external_jwt: missing sub claim")
 	}
 
-	return claims.Sub, nil
+	// Extract all string-valued claims for role resolution.
+	// Non-string values (arrays, objects, numbers) are skipped.
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(payloadBytes, &raw)
+	extraClaims := make(map[string]string, len(raw))
+	for k, v := range raw {
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			extraClaims[k] = s
+		}
+	}
+
+	return ValidateResult{ExternalUserID: claims.Sub, Claims: extraClaims}, nil
 }

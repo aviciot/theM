@@ -306,9 +306,9 @@ export const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream
 export const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
 
 // ── RuntimeView provider list ─────────────────────────────────────────────────
-export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'ollama', 'vllm', 'lmstudio', 'elevenlabs'] as const;
+export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'ollama', 'vllm', 'lmstudio', 'elevenlabs', 'mock'] as const;
 export const CLOUD_PROVIDERS_LIST  = ['anthropic', 'openai', 'groq', 'gemini', 'elevenlabs'] as const;
-export const LOCAL_PROVIDERS_LIST  = ['ollama', 'vllm', 'lmstudio'] as const;
+export const LOCAL_PROVIDERS_LIST  = ['ollama', 'vllm', 'lmstudio', 'mock'] as const;
 
 export const RUNTIME_MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
@@ -319,6 +319,8 @@ export const RUNTIME_MODELS: Record<string, string[]> = {
   ollama:    ['llama3.2', 'llama3.1', 'mistral', 'qwen2.5-coder', 'gemma3'],
   vllm:      ['meta-llama/Llama-3.1-8B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3'],
   lmstudio:  ['local-model'],
+  // Mock — instant in-process reply, no API key needed, for testing only
+  mock:      ['mock'],
 };
 
 // Voice (STT / TTS) constants

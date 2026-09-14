@@ -23,17 +23,24 @@ function IconBtn({ icon, title, danger, onClick }: { icon: string; title: string
 
 // ── RoleDetail — expanded view of one role ───────────────────────────────────
 
-function RoleDetail({ role, apps, onClose }: { role: TenantRole; apps: Application[]; onClose: () => void }) {
-  const [grants, setGrants]   = useState<RoleGrant[]>([]);
+function RoleDetail({ role, apps, onClose, onUpdated }: { role: TenantRole; apps: Application[]; onClose: () => void; onUpdated: (r: TenantRole) => void }) {
+  const [grants, setGrants]     = useState<RoleGrant[]>([]);
   const [mappings, setMappings] = useState<RoleMapping[]>([]);
-  const [loading, setLoading]  = useState(true);
+  const [loading, setLoading]   = useState(true);
 
-  const [newApp, setNewApp]      = useState('');
+  const [newApp, setNewApp]       = useState('');
   const [newSource, setNewSource] = useState<'jwt_claim' | 'header'>('jwt_claim');
-  const [newField, setNewField]  = useState('');
-  const [newValue, setNewValue]  = useState('');
-  const [saving, setSaving]      = useState(false);
-  const [err, setErr]            = useState('');
+  const [newField, setNewField]   = useState('');
+  const [newValue, setNewValue]   = useState('');
+  const [saving, setSaving]       = useState(false);
+  const [err, setErr]             = useState('');
+
+  // Edit mode
+  const [editing, setEditing]         = useState(false);
+  const [editDisplay, setEditDisplay] = useState(role.display_name);
+  const [editDesc, setEditDesc]       = useState(role.description);
+  const [editSaving, setEditSaving]   = useState(false);
+  const [editErr, setEditErr]         = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -42,6 +49,16 @@ function RoleDetail({ role, apps, onClose }: { role: TenantRole; apps: Applicati
       themApi.listMappings(role.id),
     ]).then(([g, m]) => { setGrants(g); setMappings(m); }).finally(() => setLoading(false));
   }, [role.id]);
+
+  async function saveEdit() {
+    setEditSaving(true); setEditErr('');
+    try {
+      const updated = await themApi.updateRole(role.id, { name: role.name, display_name: editDisplay, description: editDesc });
+      onUpdated(updated);
+      setEditing(false);
+    } catch { setEditErr('Failed to save'); }
+    finally { setEditSaving(false); }
+  }
 
   const grantedAppIds = new Set(grants.map((g) => g.application_id));
   const availableApps = apps.filter((a) => !grantedAppIds.has(a.id));
@@ -82,14 +99,42 @@ function RoleDetail({ role, apps, onClose }: { role: TenantRole; apps: Applicati
 
   return (
     <div style={{ marginTop: '16px', padding: '24px', background: 'rgba(0,0,0,0.2)', borderRadius: '14px', border: '1px solid rgba(132,157,188,.12)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-        <div>
-          <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--tm-text)' }}>{role.display_name || role.name}</div>
-          {role.description && <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', marginTop: '2px' }}>{role.description}</div>}
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' }}>
+        {editing ? (
+          <div style={{ flex: 1, marginRight: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '8px' }}>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '4px' }}>Display Name</label>
+                <input value={editDisplay} onChange={(e) => setEditDisplay(e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '4px' }}>Description</label>
+                <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} placeholder="Optional" style={inputStyle} />
+              </div>
+            </div>
+            {editErr && <div style={{ fontSize: '12px', color: '#f87171', marginBottom: '8px' }}>{editErr}</div>}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={saveEdit} disabled={editSaving} style={{ padding: '6px 16px', borderRadius: '7px', border: 'none', background: 'var(--tm-accent)', color: '#fff', cursor: editSaving ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                {editSaving ? 'Saving…' : 'Save'}
+              </button>
+              <button onClick={() => { setEditing(false); setEditErr(''); }} style={{ padding: '6px 14px', borderRadius: '7px', border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: '12px' }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--tm-text)' }}>{role.display_name || role.name}</div>
+            {role.description && <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', marginTop: '2px' }}>{role.description}</div>}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+          {!editing && <IconBtn icon="edit" title="Edit role" onClick={() => { setEditing(true); setEditDisplay(role.display_name); setEditDesc(role.description); }} />}
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--tm-text-muted)', padding: '4px', display: 'flex', alignItems: 'center' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>close</span>
+          </button>
         </div>
-        <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--tm-text-muted)' }}>
-          <span className="material-symbols-outlined">close</span>
-        </button>
       </div>
 
       {loading && <div style={{ color: 'var(--tm-text-muted)', fontSize: '13px' }}>Loading…</div>}
@@ -144,7 +189,7 @@ function RoleDetail({ role, apps, onClose }: { role: TenantRole; apps: Applicati
               <option value="jwt_claim">JWT Claim</option>
               <option value="header">M2M Header</option>
             </select>
-            <input value={newField} onChange={(e) => setNewField(e.target.value)} placeholder={newSource === 'jwt_claim' ? 'claim name (e.g. roles)' : 'header name'} style={inputStyle} />
+            <input value={newField} onChange={(e) => setNewField(e.target.value)} placeholder={newSource === 'jwt_claim' ? 'claim name (e.g. tier)' : 'header name (e.g. X-User-Tier)'} style={inputStyle} />
             <input value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder="value to match" style={inputStyle} />
             <button onClick={addMapping} disabled={!newField || !newValue || saving} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: 'var(--tm-accent)', color: '#fff', cursor: (!newField || !newValue || saving) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600, opacity: (!newField || !newValue || saving) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
               Add
@@ -161,17 +206,17 @@ function RoleDetail({ role, apps, onClose }: { role: TenantRole; apps: Applicati
 // ── RolesTab — main component ─────────────────────────────────────────────────
 
 export function RolesTab() {
-  const [roles, setRoles]     = useState<TenantRole[]>([]);
-  const [apps, setApps]       = useState<Application[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [roles, setRoles]       = useState<TenantRole[]>([]);
+  const [apps, setApps]         = useState<Application[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const [creating, setCreating]   = useState(false);
-  const [newName, setNewName]     = useState('');
+  const [creating, setCreating]     = useState(false);
+  const [newName, setNewName]       = useState('');
   const [newDisplay, setNewDisplay] = useState('');
-  const [newDesc, setNewDesc]     = useState('');
-  const [saving, setSaving]       = useState(false);
-  const [err, setErr]             = useState('');
+  const [newDesc, setNewDesc]       = useState('');
+  const [saving, setSaving]         = useState(false);
+  const [err, setErr]               = useState('');
 
   useEffect(() => {
     Promise.all([themApi.listRoles(), themApi.applications()])
@@ -199,6 +244,10 @@ export function RolesTab() {
     if (expanded === id) setExpanded(null);
   }
 
+  function updateRole(updated: TenantRole) {
+    setRoles((prev) => prev.map((r) => r.id === updated.id ? updated : r));
+  }
+
   if (loading) return <div style={{ padding: '40px', textAlign: 'center', color: 'var(--tm-text-muted)', fontSize: '14px' }}>Loading roles…</div>;
 
   return (
@@ -218,12 +267,12 @@ export function RolesTab() {
           <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--tm-text)', marginBottom: '14px' }}>New Role</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
             <div>
-              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '5px' }}>Name *</label>
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. customer" style={inputStyle} />
+              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '5px' }}>Name * (slug)</label>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. premium-customer" style={inputStyle} />
             </div>
             <div>
               <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '5px' }}>Display Name</label>
-              <input value={newDisplay} onChange={(e) => setNewDisplay(e.target.value)} placeholder="e.g. Customer" style={inputStyle} />
+              <input value={newDisplay} onChange={(e) => setNewDisplay(e.target.value)} placeholder="e.g. Premium Customer" style={inputStyle} />
             </div>
           </div>
           <div style={{ marginBottom: '14px' }}>
@@ -261,13 +310,13 @@ export function RolesTab() {
                 {role.description && <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', marginTop: '2px', opacity: 0.8 }}>{role.description}</div>}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <IconBtn icon="delete" title="Delete role" danger onClick={(e) => { e?.stopPropagation?.(); deleteRole(role.id); }} />
+                <IconBtn icon="delete" title="Delete role" danger onClick={() => deleteRole(role.id)} />
                 <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--tm-text-muted)', transition: 'transform 0.2s', transform: expanded === role.id ? 'rotate(180deg)' : 'none' }}>expand_more</span>
               </div>
             </div>
             {expanded === role.id && (
               <div style={{ padding: '0 20px 20px' }}>
-                <RoleDetail role={role} apps={apps} onClose={() => setExpanded(null)} />
+                <RoleDetail role={role} apps={apps} onClose={() => setExpanded(null)} onUpdated={updateRole} />
               </div>
             )}
           </div>

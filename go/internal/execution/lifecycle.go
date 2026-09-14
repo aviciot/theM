@@ -287,7 +287,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 				"ep_slug", req.EPSlug, "tenant_id", resolvedCfg.TenantID, "error", ridpErr)
 			return nil, admitErr(AdmitErrUnauthorized)
 		}
-		extSub, extErr := lc.extJWTValidator.Validate(ctx, req.RawToken, auth.ExternalJWTConfig{
+		extResult, extErr := lc.extJWTValidator.Validate(ctx, req.RawToken, auth.ExternalJWTConfig{
 			JWKSUri:  ridp.JWKSUri,
 			Issuer:   ridp.Issuer,
 			Audience: ridp.Audience,
@@ -298,7 +298,8 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 				"ep_slug", req.EPSlug, "error", extErr)
 			return nil, admitErr(AdmitErrUnauthorized)
 		}
-		req.ExternalUserID = extSub
+		req.ExternalUserID = extResult.ExternalUserID
+		req.ExternalClaims = extResult.Claims
 		// Synthesise TokenInfo with IsBackend=true so CheckPrincipal classifies
 		// this caller as "external".  No opaque token exists — TenantID is set
 		// from the server-resolved EP config, never from the JWT.
