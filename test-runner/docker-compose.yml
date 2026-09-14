@@ -10,7 +10,7 @@ services:
     build: ./backend
     container_name: them-test-runner-backend
     ports:
-      - "8090:8090"
+      - "8093:8090"
     volumes:
       - ./data:/data
     environment:
