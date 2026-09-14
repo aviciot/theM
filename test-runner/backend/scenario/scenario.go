@@ -14,9 +14,11 @@ type Scenario struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	TenantSlug  string   `json:"tenant_slug"`
+	TenantID    string   `json:"tenant_id,omitempty"`
 	AppID       string   `json:"app_id"`
 	AppSlug     string   `json:"app_slug"`
 	EPSlug      string   `json:"ep_slug"`
+	EPType      string   `json:"ep_type,omitempty"` // "websocket" | "sse" | "a2a" — from catalog
 	AuthMode    string   `json:"auth_mode"` // "token" | "public" | "user_jwt" | "external_jwt"
 	// AuthUser/AuthPass are the credentials used to login to the-M and create
 	// bearer tokens. Use a tenant admin (e.g. admin@payops.ai) — super-admin

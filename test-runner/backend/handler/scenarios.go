@@ -37,12 +37,34 @@ func (h *ScenarioHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *ScenarioHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var sc scenario.Scenario
-	if err := json.NewDecoder(r.Body).Decode(&sc); err != nil {
+
+	// Load existing so fields the UI doesn't send (ep_type, auth_user, tenant_id…) are preserved.
+	existing, _ := h.store.Get(id)
+
+	var incoming scenario.Scenario
+	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
 		writeError(w, 400, "invalid JSON")
 		return
 	}
-	updated, err := h.store.Update(id, sc)
+
+	// Merge: start from existing, overwrite only non-zero incoming fields.
+	merged := incoming
+	if existing != nil {
+		if merged.EPType == "" {
+			merged.EPType = existing.EPType
+		}
+		if merged.TenantID == "" {
+			merged.TenantID = existing.TenantID
+		}
+		if merged.AuthUser == "" {
+			merged.AuthUser = existing.AuthUser
+		}
+		if merged.AuthPass == "" {
+			merged.AuthPass = existing.AuthPass
+		}
+	}
+
+	updated, err := h.store.Update(id, merged)
 	if err != nil {
 		writeError(w, 500, "failed to update scenario")
 		return

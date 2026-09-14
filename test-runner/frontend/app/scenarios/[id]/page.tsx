@@ -18,9 +18,11 @@ export default function ScenarioEditorPage() {
 
   const [name, setName] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
+  const [tenantID, setTenantID] = useState('');
   const [appID, setAppID] = useState('');
   const [appSlug, setAppSlug] = useState('');
   const [epSlug, setEPSlug] = useState('');
+  const [epType, setEPType] = useState('');
   const [authMode, setAuthMode] = useState<Scenario['auth_mode']>('token');
   const [nUsers, setNUsers] = useState(1);
   const [messages, setMessages] = useState<string[]>(['Hello!']);
@@ -46,9 +48,11 @@ export default function ScenarioEditorPage() {
       if (!sc) return;
       setName(sc.name);
       setTenantSlug(sc.tenant_slug);
+      setTenantID(sc.tenant_id ?? '');
       setAppID(sc.app_id);
       setAppSlug(sc.app_slug);
       setEPSlug(sc.ep_slug);
+      setEPType(sc.ep_type ?? '');
       setAuthMode(sc.auth_mode);
       setNUsers(sc.n_users);
       setMessages(sc.messages);
@@ -57,20 +61,20 @@ export default function ScenarioEditorPage() {
 
   // Load apps when tenant changes.
   useEffect(() => {
-    if (!tenantSlug) { setApps([]); setAppID(''); return; }
+    if (!tenantSlug) { setApps([]); setAppID(''); setTenantID(''); return; }
     api.listApps(tenantSlug).then(setApps);
   }, [tenantSlug]);
 
   // Load EPs when app changes.
   useEffect(() => {
-    if (!appID) { setEPs([]); setEPSlug(''); return; }
+    if (!appID) { setEPs([]); setEPSlug(''); setEPType(''); return; }
     api.listEPs(appID).then(setEPs);
   }, [appID]);
 
   const save = async () => {
     setSaving(true);
     setError('');
-    const sc = { name, tenant_slug: tenantSlug, app_id: appID, app_slug: appSlug, ep_slug: epSlug, auth_mode: authMode, n_users: nUsers, messages };
+    const sc = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
     try {
       if (isNew) {
         await api.createScenario(sc);
@@ -86,7 +90,7 @@ export default function ScenarioEditorPage() {
   };
 
   const run = async () => {
-    const sc = { name, tenant_slug: tenantSlug, app_id: appID, app_slug: appSlug, ep_slug: epSlug, auth_mode: authMode, n_users: nUsers, messages };
+    const sc = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
     setSaving(true);
     setError('');
     try {
@@ -128,7 +132,11 @@ export default function ScenarioEditorPage() {
 
         <div className="grid grid-cols-3 gap-4">
           <Field label="Tenant">
-            <select className="input" value={tenantSlug} onChange={(e) => setTenantSlug(e.target.value)}>
+            <select className="input" value={tenantSlug} onChange={(e) => {
+              const t = tenants.find(t => t.slug === e.target.value);
+              setTenantSlug(e.target.value);
+              setTenantID(t?.id ?? '');
+            }}>
               <option value="">Select…</option>
               {tenants.map((t) => <option key={t.id} value={t.slug}>{t.display_name}</option>)}
             </select>
@@ -146,7 +154,11 @@ export default function ScenarioEditorPage() {
           </Field>
 
           <Field label="Entry Point">
-            <select className="input" value={epSlug} onChange={(e) => setEPSlug(e.target.value)} disabled={!appID}>
+            <select className="input" value={epSlug} onChange={(e) => {
+              const ep = eps.find(ep => ep.slug === e.target.value);
+              setEPSlug(e.target.value);
+              setEPType(ep?.entry_point_type ?? '');
+            }} disabled={!appID}>
               <option value="">Select…</option>
               {eps.map((ep) => <option key={ep.id} value={ep.slug}>{ep.slug} ({ep.entry_point_type})</option>)}
             </select>

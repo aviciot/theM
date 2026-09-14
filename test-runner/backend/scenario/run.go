@@ -120,7 +120,7 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 
 			var bearerToken, tokenID string
 			if sc.AuthMode == "token" {
-				tok, err := client.CreateToken(sc.AppID, fmt.Sprintf("tr-%s-u%d", runID[:8], idx))
+				tok, err := client.CreateToken(sc.AppID, sc.TenantID, fmt.Sprintf("tr-%s-u%d", runID[:8], idx))
 				if err != nil {
 					updates <- them.UserResult{
 						UserIndex: idx,
@@ -135,7 +135,11 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 			}
 
 			themURL := client.BaseURL()
-			them.RunUser(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
+			if sc.EPType == "a2a" {
+				them.RunUserA2A(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
+			} else {
+				them.RunUser(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
+			}
 		}(i)
 	}
 

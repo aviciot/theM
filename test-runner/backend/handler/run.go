@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/aviciot/them-test-runner/scenario"
@@ -46,7 +47,8 @@ func (h *RunHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	runID, err := h.manager.Start(*sc)
 	if err != nil {
-		writeError(w, 500, "failed to start run")
+		slog.Error("run: start failed", "scenario", sc.ID, "error", err)
+		writeError(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 202, map[string]string{"run_id": runID})

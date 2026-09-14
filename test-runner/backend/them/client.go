@@ -145,13 +145,17 @@ func (c *Client) ListEPs(appID string) ([]EP, error) {
 	return result, err
 }
 
-func (c *Client) CreateToken(appID, label string) (*Token, error) {
+func (c *Client) CreateToken(appID, tenantID, label string) (*Token, error) {
 	var result Token
-	err := c.post("/api/v1/admin/tokens", map[string]any{
+	body := map[string]any{
 		"application_id": appID,
 		"label":          label,
 		"expires_in":     3600,
-	}, &result)
+	}
+	if tenantID != "" {
+		body["tenant_id"] = tenantID
+	}
+	err := c.post("/api/v1/admin/tokens", body, &result)
 	if err != nil {
 		return nil, err
 	}

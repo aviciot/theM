@@ -25,9 +25,11 @@ export interface Scenario {
   id: string;
   name: string;
   tenant_slug: string;
+  tenant_id?: string;
   app_id: string;
   app_slug: string;
   ep_slug: string;
+  ep_type?: string;
   auth_mode: 'token' | 'public' | 'user_jwt' | 'external_jwt';
   n_users: number;
   messages: string[];
