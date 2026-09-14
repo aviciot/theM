@@ -30,6 +30,13 @@ type ExecutionRequest struct {
 	// UserID is the the-M internal user ID, populated from AccessModeUser JWT claims.
 	// Zero for service-token, public, and bank-JWT (Phase 4) runs.
 	UserID int64
+	// ExternalClaims holds string-valued JWT claims from an external_jwt token,
+	// used by the role gate to resolve the caller's role via tenant_role_mappings.
+	// Nil for non-external_jwt access modes.
+	ExternalClaims map[string]string
+	// RoleHeaders holds the M2M caller's end-user role headers (e.g. X-End-User-Role),
+	// used by the role gate when access_mode is token + allowed_principals = external.
+	RoleHeaders map[string]string
 }
 
 // ExecutionHandle is the admission ticket returned by Admit on success.

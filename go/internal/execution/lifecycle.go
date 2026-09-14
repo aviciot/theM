@@ -79,6 +79,7 @@ type Lifecycle struct {
 	jwtSecret        []byte        // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
 	ridpLoader       transport.RuntimeIDPLoader    // optional; loads per-tenant external JWT config
 	extJWTValidator  *auth.ExternalJWTValidator    // optional; validates external RS256 JWTs
+	roleChecker      RoleChecker   // optional; nil = role gate disabled
 	logger           *slog.Logger
 }
 
@@ -132,6 +133,25 @@ func (lc *Lifecycle) WithJWTSecret(secret []byte) *Lifecycle {
 func (lc *Lifecycle) WithExternalJWT(loader transport.RuntimeIDPLoader, validator *auth.ExternalJWTValidator) *Lifecycle {
 	lc.ridpLoader = loader
 	lc.extJWTValidator = validator
+	return lc
+}
+
+// RoleChecker resolves a caller's role and checks whether that role has access
+// to the requested application.
+type RoleChecker interface {
+	// ResolveRole returns the roleID matching the caller's JWT claims or M2M
+	// headers against the tenant's mapping rules. Returns "" when no rule matches.
+	ResolveRole(ctx context.Context, tenantID string, claims map[string]string, headers map[string]string) (string, error)
+
+	// CheckGrant returns nil when the role has access to the application, or
+	// ErrRoleDenied when the app has grants configured but this role is not among them.
+	CheckGrant(ctx context.Context, applicationID, roleID string) error
+}
+
+// WithRoleChecker attaches a RoleChecker to enable the application-level role gate.
+// When nil (default), the role gate is disabled and all authenticated requests proceed.
+func (lc *Lifecycle) WithRoleChecker(rc RoleChecker) *Lifecycle {
+	lc.roleChecker = rc
 	return lc
 }
 
@@ -318,6 +338,21 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 			"allowed", resolvedCfg.AllowedPrincipals,
 			"is_backend", isBackend)
 		return nil, admitErr(AdmitErrForbidden)
+	}
+
+	// ── 5d. Role gate ─────────────────────────────────────────────────────────
+	if lc.roleChecker != nil {
+		roleID, roleErr := lc.roleChecker.ResolveRole(ctx, resolvedCfg.TenantID, req.ExternalClaims, req.RoleHeaders)
+		if roleErr != nil {
+			lc.logger.Warn("execution: role resolution failed", "ep_slug", req.EPSlug, "error", roleErr)
+		}
+		if grantErr := lc.roleChecker.CheckGrant(ctx, resolvedCfg.AppID, roleID); grantErr != nil {
+			lc.logger.Debug("execution: role gate denied",
+				"ep_slug", req.EPSlug,
+				"app_id", resolvedCfg.AppID,
+				"role_id", roleID)
+			return nil, admitErr(AdmitErrForbidden)
+		}
 	}
 
 	// ── 5b. Quota enforcement ─────────────────────────────────────────────────
