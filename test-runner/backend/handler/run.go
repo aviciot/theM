@@ -44,13 +44,7 @@ func (h *RunHandler) Start(w http.ResponseWriter, r *http.Request) {
 		sc.NUsers = 1
 	}
 
-	client, err := newClient()
-	if err != nil {
-		writeError(w, 502, "cannot connect to the-M: "+err.Error())
-		return
-	}
-
-	runID, err := h.manager.Start(*sc, client)
+	runID, err := h.manager.Start(*sc)
 	if err != nil {
 		writeError(w, 500, "failed to start run")
 		return

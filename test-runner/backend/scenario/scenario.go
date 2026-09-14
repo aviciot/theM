@@ -18,6 +18,11 @@ type Scenario struct {
 	AppSlug     string   `json:"app_slug"`
 	EPSlug      string   `json:"ep_slug"`
 	AuthMode    string   `json:"auth_mode"` // "token" | "public" | "user_jwt" | "external_jwt"
+	// AuthUser/AuthPass are the credentials used to login to the-M and create
+	// bearer tokens. Use a tenant admin (e.g. admin@payops.ai) — super-admin
+	// is not required. Falls back to global config credentials when empty.
+	AuthUser    string   `json:"auth_user,omitempty"`
+	AuthPass    string   `json:"auth_pass,omitempty"`
 	NUsers      int      `json:"n_users"`
 	Messages    []string `json:"messages"`
 	CreatedAt   string   `json:"created_at"`

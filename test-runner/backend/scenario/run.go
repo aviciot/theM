@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aviciot/them-test-runner/config"
 	"github.com/aviciot/them-test-runner/them"
 	"github.com/google/uuid"
 )
@@ -53,8 +54,27 @@ func NewManager(dataDir string) *Manager {
 	return &Manager{active: make(map[string]*activeRun), histDir: dir}
 }
 
+// clientForScenario builds a them.Client using the scenario's own credentials
+// when set, falling back to the global config credentials.
+func clientForScenario(sc Scenario) (*them.Client, error) {
+	cfg := config.Get()
+	user := sc.AuthUser
+	pass := sc.AuthPass
+	if user == "" {
+		user = cfg.AdminUser
+	}
+	if pass == "" {
+		pass = cfg.AdminPass
+	}
+	return them.NewClient(cfg.ThemURL, user, pass)
+}
+
 // Start launches a parallel scenario run, returns the run ID immediately.
-func (m *Manager) Start(sc Scenario, client *them.Client) (string, error) {
+func (m *Manager) Start(sc Scenario) (string, error) {
+	client, err := clientForScenario(sc)
+	if err != nil {
+		return "", fmt.Errorf("login to the-M: %w", err)
+	}
 	runID := uuid.New().String()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
@@ -66,6 +86,7 @@ func (m *Manager) Start(sc Scenario, client *them.Client) (string, error) {
 	go m.execute(ctx, runID, ar, sc, client)
 	return runID, nil
 }
+
 
 func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc Scenario, client *them.Client) {
 	log := slog.With("run_id", runID, "scenario", sc.Name, "n_users", sc.NUsers)
