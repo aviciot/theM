@@ -241,7 +241,7 @@ WHERE ep.id = $1::uuid`
 			return RunConfig{}, fmt.Errorf("workerconfig: decrypt provider key for %s: %w", providerName, keyErr)
 		}
 	}
-	if apiKey == "" {
+	if apiKey == "" && providerName != "mock" && providerName != "ollama" {
 		return RunConfig{}, fmt.Errorf("workerconfig: no API key found for provider %q — add one in Runtime → Provider Keys: %w", providerName, ErrNoProviderKey)
 	}
 

@@ -53,9 +53,17 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID string, ref DefinitionR
 		}
 	}
 
-	// Tenant access check: tenant definitions are private to their owner
+	// Tenant access check: tenant definitions are private to their owner.
+	// Cross-tenant fallback: if the stored UUID belongs to a different tenant,
+	// try to find an equivalent definition in the target tenant by kind+name.
+	// This allows canvas definitions built in one tenant to be published in another
+	// as long as the target tenant has a same-named component.
 	if def.Scope == ScopeTenant && def.TenantID != tenantID {
-		return nil, ErrNotFound // not found from the caller's perspective
+		fallback, fbErr := r.dal.ResolveByKindNameTenant(ctx, def.Kind, def.Name, tenantID)
+		if fbErr != nil {
+			return nil, ErrNotFound
+		}
+		def = fallback
 	}
 
 	if !def.Enabled {

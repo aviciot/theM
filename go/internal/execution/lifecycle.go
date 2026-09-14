@@ -342,7 +342,9 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	// ── 5d. Role gate ─────────────────────────────────────────────────────────
-	if lc.roleChecker != nil {
+	// Only apply to external_jwt EPs — role gates are designed for Keycloak JWTs.
+	// Token-mode EPs (opaque tokens, user JWTs) bypass the role gate entirely.
+	if lc.roleChecker != nil && resolvedCfg.AccessMode == epconfig.AccessModeExternal {
 		roleID, roleErr := lc.roleChecker.ResolveRole(ctx, resolvedCfg.TenantID, req.ExternalClaims, req.RoleHeaders)
 		if roleErr != nil {
 			lc.logger.Warn("execution: role resolution failed", "ep_slug", req.EPSlug, "error", roleErr)

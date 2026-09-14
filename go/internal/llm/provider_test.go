@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/aviciot/them/internal/domain"
 	"github.com/stretchr/testify/assert"
@@ -135,19 +134,20 @@ func TestDomainPartsToAnthropicContent_filtersEmptyTextParts(t *testing.T) {
 	})
 }
 
-// TestMockProvider_emptyResponsesClosesChannelImmediately verifies that a
-// MockProvider with no configured responses closes the channel without sending
-// anything.
-func TestMockProvider_emptyResponsesClosesChannelImmediately(t *testing.T) {
+// TestMockProvider_nilEventsEmitsDefaultReply verifies that a MockProvider
+// with no configured events emits a default text_delta + stop reply so the
+// playground always sees a response when using the mock provider.
+func TestMockProvider_nilEventsEmitsDefaultReply(t *testing.T) {
 	p := NewMockProvider(nil)
 	ch, err := p.Stream(context.Background(), nil, nil, Options{})
 	require.NoError(t, err)
 
-	// The channel should close promptly.
-	select {
-	case _, ok := <-ch:
-		assert.False(t, ok, "expected channel to be closed")
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("channel did not close promptly for empty provider")
+	var events []StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
 	}
+	require.Len(t, events, 2, "expected text_delta + stop from default mock events")
+	assert.Equal(t, "text_delta", events[0].Type)
+	assert.NotEmpty(t, events[0].Delta)
+	assert.Equal(t, "stop", events[1].Type)
 }

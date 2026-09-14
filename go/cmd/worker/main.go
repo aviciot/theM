@@ -322,10 +322,12 @@ func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) (ll
 			apiKey = os.Getenv("OPENAI_API_KEY")
 		}
 	}
-	if apiKey == "" && cfg.LLMProvider != "ollama" {
+	if apiKey == "" && cfg.LLMProvider != "ollama" && cfg.LLMProvider != "mock" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime or env", cfg.LLMProvider)
 	}
 	switch cfg.LLMProvider {
+	case "mock":
+		return &llm.MockProvider{}, nil
 	case "anthropic":
 		return llm.NewAnthropicProvider(apiKey, cfg.OrchestratorConfig.Model, 0), nil
 	case "openai", "groq", "ollama", "vllm", "lmstudio":

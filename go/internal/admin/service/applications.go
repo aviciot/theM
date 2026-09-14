@@ -237,7 +237,7 @@ func (s *AppService) validateReadiness(ctx context.Context, tenantID, appID stri
 	if info.Provider == "" || info.Model == "" {
 		return &FieldError{Kind: ErrNotReady, Message: "Orchestrator has no LLM configured. Set provider and model in Runtime settings."}
 	}
-	if !info.HasAppKey && !info.HasTenantKey {
+	if !info.HasAppKey && !info.HasTenantKey && info.Provider != "mock" && info.Provider != "ollama" {
 		return &FieldError{Kind: ErrNotReady, Message: "No API key found for provider " + info.Provider + ". Add one in Runtime → Provider Keys."}
 	}
 	if info.MemoryEnabled && (info.SummarizerProvider == "" || info.SummarizerModel == "") {

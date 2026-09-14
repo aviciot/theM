@@ -29,10 +29,11 @@ func (m *MockProvider) Stream(ctx context.Context, messages []domain.Message, _ 
 
 	events := m.events
 	if events == nil {
-		// No events configured — close the channel immediately.
-		ch := make(chan StreamEvent)
-		close(ch)
-		return ch, nil
+		// Default: emit a canned text reply so the playground shows a response.
+		events = []StreamEvent{
+			{Type: "text_delta", Delta: "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response."},
+			{Type: "stop", StopReason: "end_turn"},
+		}
 	}
 
 	// Use a buffered channel only for the default stop case; otherwise

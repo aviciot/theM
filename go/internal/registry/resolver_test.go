@@ -161,24 +161,30 @@ func assignTo(dest any, v any) error {
 // ─── fake DB ──────────────────────────────────────────────────────────────────
 
 // fakeQuerier implements registry.DBQuerier.
-// It maps query SQL to a fakeRow: byID for resolveByIDSQL, byRef for resolveByRefSQL.
+// It maps query SQL to a fakeRow by argument count:
+//   - 1 arg  → resolveByIDSQL
+//   - 3 args → resolveByKindNameTenantSQL (cross-tenant slug fallback)
+//   - 4 args → resolveByRefSQL
 type fakeQuerier struct {
-	byID  *fakeRow // returned when id-based query detected (arg count == 1)
-	byRef *fakeRow // returned when ref-based query detected (arg count == 4)
+	byID              *fakeRow
+	byRef             *fakeRow
+	byKindNameTenant  *fakeRow
 }
 
 func (f *fakeQuerier) QueryRow(_ context.Context, _ string, args ...any) registry.SingleRowScanner {
-	// Distinguish by number of args:
-	// resolveByIDSQL uses 1 arg ($1::uuid)
-	// resolveByRefSQL uses 4 args ($1 kind, $2 namespace, $3 name, $4 version)
-	if len(args) == 1 {
+	switch len(args) {
+	case 1:
 		if f.byID != nil {
 			return f.byID
 		}
-		return &fakeRow{err: errFakeNoRows}
-	}
-	if f.byRef != nil {
-		return f.byRef
+	case 3:
+		if f.byKindNameTenant != nil {
+			return f.byKindNameTenant
+		}
+	default:
+		if f.byRef != nil {
+			return f.byRef
+		}
 	}
 	return &fakeRow{err: errFakeNoRows}
 }
@@ -273,9 +279,10 @@ func TestResolver_BuiltinResolvesForAnyTenant(t *testing.T) {
 }
 
 // TestResolver_NoCrossTenantResolution verifies that tenant A cannot resolve
-// a definition owned by tenant B.
+// a definition owned by tenant B when the target tenant has no same-named component.
 func TestResolver_NoCrossTenantResolution(t *testing.T) {
 	// Definition belongs to testTenantID, but caller is otherTenantID.
+	// byKindNameTenant is nil → slug fallback also finds nothing.
 	def := tenantOwned(testTenantID, "private-agent")
 	q := &fakeQuerier{byRef: &fakeRow{def: def}}
 	r := registry.NewResolver(q)
@@ -283,6 +290,24 @@ func TestResolver_NoCrossTenantResolution(t *testing.T) {
 	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: def.Namespace, Name: "private-agent", Version: 1}
 	_, err := r.Resolve(context.Background(), otherTenantID, ref, "")
 	assert.ErrorIs(t, err, registry.ErrNotFound)
+}
+
+// TestResolver_CrossTenantResolutionSucceedsWhenSameNameExists verifies that
+// if the stored UUID belongs to another tenant but the target tenant has an
+// equivalent component with the same kind+name, resolution succeeds.
+func TestResolver_CrossTenantResolutionSucceedsWhenSameNameExists(t *testing.T) {
+	srcDef := tenantOwned(testTenantID, "shared-agent")
+	targetDef := tenantOwned(otherTenantID, "shared-agent")
+	q := &fakeQuerier{
+		byRef:            &fakeRow{def: srcDef},
+		byKindNameTenant: &fakeRow{def: targetDef},
+	}
+	r := registry.NewResolver(q)
+
+	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: srcDef.Namespace, Name: "shared-agent", Version: 1}
+	got, err := r.Resolve(context.Background(), otherTenantID, ref, "")
+	require.NoError(t, err)
+	assert.Equal(t, otherTenantID, got.TenantID, "should resolve to target tenant's copy")
 }
 
 // TestResolver_ExactVersionResolution verifies that the version is forwarded
