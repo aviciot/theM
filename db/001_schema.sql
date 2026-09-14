@@ -372,6 +372,42 @@ CREATE TABLE IF NOT EXISTS them.middleware_wirings (
 );
 CREATE INDEX IF NOT EXISTS idx_mw_wirings_app_agent ON them.middleware_wirings(application_id, agent_id);
 
+-- ── Migration 095: Tenant role management ────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS them.tenant_roles (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    UUID        NOT NULL REFERENCES them.tenants(id) ON DELETE CASCADE,
+    name         TEXT        NOT NULL,
+    display_name TEXT        NOT NULL DEFAULT '',
+    description  TEXT        NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS tenant_roles_tenant_idx ON them.tenant_roles(tenant_id);
+
+CREATE TABLE IF NOT EXISTS them.tenant_role_grants (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_id        UUID        NOT NULL REFERENCES them.tenant_roles(id) ON DELETE CASCADE,
+    application_id UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (role_id, application_id)
+);
+CREATE INDEX IF NOT EXISTS tenant_role_grants_role_idx ON them.tenant_role_grants(role_id);
+CREATE INDEX IF NOT EXISTS tenant_role_grants_app_idx  ON them.tenant_role_grants(application_id);
+
+CREATE TABLE IF NOT EXISTS them.tenant_role_mappings (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID        NOT NULL REFERENCES them.tenants(id) ON DELETE CASCADE,
+    source     TEXT        NOT NULL CHECK (source IN ('jwt_claim', 'header')),
+    field      TEXT        NOT NULL,
+    value      TEXT        NOT NULL,
+    role_id    UUID        NOT NULL REFERENCES them.tenant_roles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, source, field, value)
+);
+CREATE INDEX IF NOT EXISTS tenant_role_mappings_tenant_idx ON them.tenant_role_mappings(tenant_id);
+
 -- System-agents config seed (classifier role, disabled by default)
 INSERT INTO them.config (config_key, config_value, updated_at)
 VALUES (
