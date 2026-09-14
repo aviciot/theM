@@ -40,31 +40,28 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
 
-	// Config
-	r.Get("/api/config", handler.GetConfig)
-	r.Put("/api/config", handler.PutConfig)
-	r.Post("/api/config/test", handler.TestConfig)
+	// Routes registered without /api/ prefix — the Next.js proxy adds /api/ when
+	// forwarding, so chi receives /config, /tenants, etc.
+	r.Get("/config", handler.GetConfig)
+	r.Put("/config", handler.PutConfig)
+	r.Post("/config/test", handler.TestConfig)
 
-	// Catalog — proxy to the-M admin API
-	r.Get("/api/tenants", handler.ListTenants)
-	r.Get("/api/tenants/{slug}/apps", handler.ListApps)
-	r.Get("/api/apps/{id}/eps", handler.ListEPs)
+	r.Get("/tenants", handler.ListTenants)
+	r.Get("/tenants/{slug}/apps", handler.ListApps)
+	r.Get("/apps/{id}/eps", handler.ListEPs)
 
-	// Scenarios
-	r.Get("/api/scenarios", scHandler.List)
-	r.Post("/api/scenarios", scHandler.Create)
-	r.Put("/api/scenarios/{id}", scHandler.Update)
-	r.Delete("/api/scenarios/{id}", scHandler.Delete)
+	r.Get("/scenarios", scHandler.List)
+	r.Post("/scenarios", scHandler.Create)
+	r.Put("/scenarios/{id}", scHandler.Update)
+	r.Delete("/scenarios/{id}", scHandler.Delete)
 
-	// Runs
-	r.Post("/api/run", runHandler.Start)
-	r.Get("/api/run/{runId}/stream", runHandler.Stream)
-	r.Delete("/api/run/{runId}", runHandler.Cancel)
+	r.Post("/run", runHandler.Start)
+	r.Get("/run/{runId}/stream", runHandler.Stream)
+	r.Delete("/run/{runId}", runHandler.Cancel)
 
-	// History
-	r.Get("/api/history", runHandler.ListHistory)
-	r.Get("/api/history/{runId}", runHandler.GetHistory)
-	r.Delete("/api/history/{runId}", runHandler.DeleteHistory)
+	r.Get("/history", runHandler.ListHistory)
+	r.Get("/history/{runId}", runHandler.GetHistory)
+	r.Delete("/history/{runId}", runHandler.DeleteHistory)
 
 	addr := ":" + cfg.Port
 	slog.Info("test-runner backend starting", "addr", addr, "data_dir", dataDir)

@@ -4,7 +4,7 @@ const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8090';
 
 async function proxy(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params;
-  const url = `${BACKEND}/api/${path.join('/')}`;
+  const url = `${BACKEND}/api/${path.join('/')}${req.nextUrl.search}`;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
