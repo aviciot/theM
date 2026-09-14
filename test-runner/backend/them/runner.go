@@ -48,10 +48,10 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 		}
 	}
 
-	// Build WS URL: replace http(s) with ws(s).
+	// Build WS URL: /{tenant_slug}/apps/{app_slug}/{ep_slug}/ws
 	wsURL := strings.Replace(baseURL, "http://", "ws://", 1)
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
-	wsURL += fmt.Sprintf("/apps/%s/%s/%s", tenantSlug, appSlug, epSlug)
+	wsURL += fmt.Sprintf("/%s/apps/%s/%s/ws", tenantSlug, appSlug, epSlug)
 
 	log := slog.With("user", userIndex, "ep", epSlug, "app", appSlug, "tenant", tenantSlug)
 	log.Info("user: connecting", "url", wsURL, "auth", bearerToken != "")
@@ -140,15 +140,20 @@ func truncate(s string, n int) string {
 // readUntilFinal reads WS messages until a final assistant message arrives.
 func readUntilFinal(ctx context.Context, conn *websocket.Conn) (string, string) {
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	var lastContent string
+	var buf strings.Builder
 	for {
 		if ctx.Err() != nil {
-			return lastContent, "context cancelled"
+			s := buf.String()
+			if s != "" {
+				return s, ""
+			}
+			return "", "context cancelled"
 		}
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			if lastContent != "" {
-				return lastContent, ""
+			s := buf.String()
+			if s != "" {
+				return s, ""
 			}
 			return "", fmt.Sprintf("read: %v", err)
 		}
@@ -156,17 +161,28 @@ func readUntilFinal(ctx context.Context, conn *websocket.Conn) (string, string) 
 		if json.Unmarshal(raw, &msg) != nil {
 			continue
 		}
+		slog.Debug("ws: received", "raw", truncate(string(raw), 300))
 		msgType, _ := msg["type"].(string)
 		switch msgType {
-		case "message":
-			if content, ok := msg["content"].(string); ok {
-				lastContent = content
+		case "token":
+			// Streaming token — accumulate into buffer.
+			if t, ok := msg["content"].(string); ok {
+				buf.WriteString(t)
 			}
-		case "run.complete", "done":
-			return lastContent, ""
+		case "message", "assistant_message", "text":
+			// Non-streaming full message — replace buffer.
+			if content, ok := msg["content"].(string); ok {
+				buf.Reset()
+				buf.WriteString(content)
+			} else if content, ok := msg["text"].(string); ok {
+				buf.Reset()
+				buf.WriteString(content)
+			}
+		case "run.complete", "done", "complete":
+			return buf.String(), ""
 		case "error":
 			errMsg, _ := msg["message"].(string)
-			return lastContent, fmt.Sprintf("server error: %s", errMsg)
+			return buf.String(), fmt.Sprintf("server error: %s", errMsg)
 		}
 	}
 }

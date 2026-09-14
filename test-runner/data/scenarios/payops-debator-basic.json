@@ -1,0 +1,19 @@
+{
+  "id": "payops-debator-basic",
+  "name": "payops_ai — debator — 3 parallel users",
+  "tenant_slug": "payops_ai",
+  "tenant_id": "ad7d567d-b222-40be-acb6-7929cf6ae168",
+  "app_id": "15cf7c1f-60c1-4111-a40d-4c222a0cacc7",
+  "app_slug": "debator-a16419",
+  "ep_slug": "a2a",
+  "ep_type": "a2a",
+  "auth_mode": "token",
+  "auth_user": "payops-test",
+  "auth_pass": "admin123",
+  "n_users": 6,
+  "messages": [
+    "who are u - in very short?"
+  ],
+  "created_at": "",
+  "updated_at": "2026-09-14T09:01:45Z"
+}

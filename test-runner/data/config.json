@@ -1,0 +1,5 @@
+{
+  "them_url": "http://them-traefik:8088",
+  "admin_user": "admin",
+  "admin_pass": "admin123"
+}

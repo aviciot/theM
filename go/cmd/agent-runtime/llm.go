@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -74,7 +76,7 @@ type multiLLMFactory struct {
 }
 
 func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
-	if apiKey == "" && provider != "ollama" {
+	if apiKey == "" && provider != "ollama" && provider != "mock" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
 	}
 	baseURL := ""
@@ -82,6 +84,8 @@ func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, api
 		baseURL = f.baseURLs[provider]
 	}
 	switch provider {
+	case "mock":
+		return &mockProviderAdapter{}, nil
 	case "anthropic", "":
 		p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
 		return &anthropicProviderAdapter{p: p}, nil
@@ -89,7 +93,7 @@ func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, api
 		p := llm.NewOpenAIProvider(apiKey, model, baseURL, maxTokens)
 		return &openAIProviderAdapter{p: p}, nil
 	default:
-		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, or lmstudio", provider)
+		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, lmstudio, or mock", provider)
 	}
 }
 
@@ -152,8 +156,32 @@ func (a *openAIProviderAdapter) Complete(ctx context.Context, systemPrompt, user
 	return sb.String(), nil
 }
 
+// mockProviderAdapter is a zero-cost LLM stub for testing. It waits a short
+// random delay (50–500ms) then returns a canned response, so runs look realistic
+// without incurring any API cost.
+type mockProviderAdapter struct{}
+
+var mockReplies = []string{
+	"This is a mock response. The real LLM provider is not configured for this environment.",
+	"Mock agent here. I'm simulating a response with artificial latency.",
+	"[MOCK] Acknowledged. In production this would be a real LLM response.",
+	"Test response from the mock provider. No tokens were consumed.",
+	"Hello! I am the mock LLM. This response was generated locally at zero cost.",
+}
+
+func (m *mockProviderAdapter) Complete(ctx context.Context, _, userPrompt string) (string, error) {
+	delay := time.Duration(50+rand.Intn(450)) * time.Millisecond
+	select {
+	case <-time.After(delay):
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return mockReplies[rand.Intn(len(mockReplies))], nil
+}
+
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)
 var _ agentgen.LLMProvider = (*openAIProviderAdapter)(nil)
+var _ agentgen.LLMProvider = (*mockProviderAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 
 // pgxAgentEndpointQueryer implements agentgen.AgentEndpointQueryer using pgxpool.

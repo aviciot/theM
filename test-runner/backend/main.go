@@ -14,7 +14,7 @@ import (
 
 func main() {
 	// Structured JSON logging — readable by docker logs and log aggregators.
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {

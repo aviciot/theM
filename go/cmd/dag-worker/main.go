@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -427,7 +428,7 @@ type multiLLMFactory struct {
 }
 
 func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
-	if apiKey == "" && provider != "ollama" {
+	if apiKey == "" && provider != "ollama" && provider != "mock" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
 	}
 	baseURL := ""
@@ -435,6 +436,8 @@ func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, api
 		baseURL = f.baseURLs[provider]
 	}
 	switch provider {
+	case "mock":
+		return &mockAdapter{}, nil
 	case "anthropic", "":
 		p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
 		return &anthropicAdapter{p: p}, nil
@@ -442,7 +445,7 @@ func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, api
 		p := llm.NewOpenAIProvider(apiKey, model, baseURL, maxTokens)
 		return &openAIAdapter{p: p}, nil
 	default:
-		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, or lmstudio", provider)
+		return nil, fmt.Errorf("provider %q is not supported — use anthropic, openai, groq, ollama, vllm, lmstudio, or mock", provider)
 	}
 }
 
@@ -504,8 +507,31 @@ func (a *openAIAdapter) Complete(ctx context.Context, systemPrompt, userPrompt s
 	return sb.String(), nil
 }
 
+// mockAdapter is a zero-cost LLM stub for testing. Returns a canned response
+// after a short random delay (50–500ms) without calling any external API.
+type mockAdapter struct{}
+
+var mockReplies = []string{
+	"This is a mock response. The real LLM provider is not configured for this environment.",
+	"Mock agent here. I'm simulating a response with artificial latency.",
+	"[MOCK] Acknowledged. In production this would be a real LLM response.",
+	"Test response from the mock provider. No tokens were consumed.",
+	"Hello! I am the mock LLM. This response was generated locally at zero cost.",
+}
+
+func (m *mockAdapter) Complete(ctx context.Context, _, _ string) (string, error) {
+	delay := time.Duration(50+rand.Intn(450)) * time.Millisecond
+	select {
+	case <-time.After(delay):
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return mockReplies[rand.Intn(len(mockReplies))], nil
+}
+
 var _ agentgen.LLMProvider = (*anthropicAdapter)(nil)
 var _ agentgen.LLMProvider = (*openAIAdapter)(nil)
+var _ agentgen.LLMProvider = (*mockAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 var _ temporal.ContextLoader = (*dbContextLoader)(nil)
 
