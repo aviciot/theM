@@ -413,6 +413,9 @@ func (f *fakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMPro
 func (f *fakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return []dal.ComponentDefinitionSummary{}, nil
 }
+func (f *fakeDal) ResolveComponentIDByKindName(_ context.Context, _, _, _ string) (string, error) {
+	return "", nil
+}
 
 // Agent definition stubs.
 func (f *fakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }

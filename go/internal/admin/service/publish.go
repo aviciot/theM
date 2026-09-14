@@ -257,6 +257,27 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 		return nil, validation("definition is not valid JSON")
 	}
 
+	// 3b. Rewrite definition_ids to target-tenant UUIDs.
+	// The blueprint may have been built in a different tenant, so stored UUIDs
+	// may not exist here. For each component, look up by kind+name in the target
+	// tenant and replace the UUID. Builtins (scope=builtin) are found by name too.
+	for i, comp := range doc.Components {
+		if comp.DefinitionRef.Kind == "" || comp.DefinitionRef.Name == "" {
+			continue
+		}
+		id, lookupErr := s.dal.ResolveComponentIDByKindName(ctx, tenantID,
+			string(comp.DefinitionRef.Kind), comp.DefinitionRef.Name)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("lookup component %q: %w", comp.InstanceID, lookupErr)
+		}
+		if id == "" {
+			return nil, validation(fmt.Sprintf(
+				"component %q (%s/%s) not found in this tenant — publish it here first",
+				comp.InstanceID, comp.DefinitionRef.Kind, comp.DefinitionRef.Name))
+		}
+		doc.Components[i].DefinitionID = id
+	}
+
 	// 4. Resolve component definitions.
 	resolved := make(map[string]*registry.ComponentDefinition, len(doc.Components))
 	for _, comp := range doc.Components {

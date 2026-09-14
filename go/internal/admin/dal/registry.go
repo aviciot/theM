@@ -17,6 +17,28 @@ type ComponentDefinitionSummary struct {
 	Enabled            bool   `json:"enabled"`
 }
 
+// ResolveComponentIDByKindName finds the UUID of a published, enabled component
+// in the given tenant by kind+name. Returns ("", nil) when not found.
+func (d *DB) ResolveComponentIDByKindName(ctx context.Context, tenantID, kind, name string) (string, error) {
+	const q = `
+		SELECT id::text
+		  FROM them.component_definitions
+		 WHERE kind = $1 AND name = $2
+		   AND (scope = 'builtin' OR tenant_id = $3::uuid)
+		   AND enabled = true AND status = 'published'
+		 ORDER BY (tenant_id = $3::uuid) DESC, version DESC
+		 LIMIT 1`
+	var id string
+	err := d.q.QueryRow(ctx, q, kind, name, tenantID).Scan(&id)
+	if err != nil {
+		if IsNoRows(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return id, nil
+}
+
 // ListComponentDefinitions returns all published, enabled component definitions
 // accessible to the given tenant (builtins + tenant-owned).
 func (d *DB) ListComponentDefinitions(ctx context.Context, tenantID string) ([]ComponentDefinitionSummary, error) {

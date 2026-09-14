@@ -231,6 +231,10 @@ func (f *publishFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal
 func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return []dal.ComponentDefinitionSummary{}, nil
 }
+func (f *publishFakeDal) ResolveComponentIDByKindName(_ context.Context, _, kind, name string) (string, error) {
+	// Return a stable fake UUID so the pre-pass doesn't block.
+	return "00000000-0000-0000-0000-000000000099", nil
+}
 
 // Agent definition stubs.
 func (f *publishFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
