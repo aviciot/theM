@@ -1230,7 +1230,7 @@ decryption roundtrip via `GetPlaintextAppParams`.
 | `TestAppParam_Delete` | AGP-7: `DeleteAppParam` calls DAL correctly |
 | `TestAppParam_NilCryptoKey_Roundtrip` | AGP-8: nil crypto key → `plain:` prefix roundtrip works (test-mode) |
 
-**Trigger:** any change to `internal/admin/service/applications.go` (app global param methods), `go/internal/admin/dal/applications.go` (GetAppParams/SetAppParam/DeleteAppParam), OR `db/045_app_global_params.sql`
+**Trigger:** any change to `internal/admin/service/applications.go` (app global param methods), `go/internal/admin/dal/app_config.go` (GetAppParams/SetAppParam/DeleteAppParam), OR `db/045_app_global_params.sql`
 
 ---
 
@@ -2743,6 +2743,8 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 **Trigger:** `internal/admin/applications.go` (PatchManaged), `internal/admin/dal/applications.go` (SetManagedFlag), `internal/admin/router.go`
 
+> Note: `dal/applications.go` was split — entry points → `entry_points.go`, orch mutations → `app_orchestrators.go`, provider keys/params → `app_config.go`, deploy → `app_deploy.go`, readiness/card → `app_readiness.go`.
+
 ---
 
 ### S1-108 · Deploy application — `internal/admin/deploy_application_test.go`
@@ -2755,7 +2757,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | DA-02 | `TestDeployApplication_MissingTarget` | Empty `target_tenant_id` → 400 bad request |
 | DA-03 | `TestDeployApplication_DBError` | DB CTE returns error → 500 |
 
-**Trigger:** `internal/admin/applications.go` (DeployApplication), `internal/admin/dal/applications.go` (DeployApplication CTE), `internal/admin/router.go`
+**Trigger:** `internal/admin/applications.go` (DeployApplication), `internal/admin/dal/app_deploy.go` (DeployApplication CTE + CopyAgentsForDeploy), `internal/admin/router.go`
 
 ---
 
