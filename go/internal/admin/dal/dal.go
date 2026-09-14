@@ -307,6 +307,7 @@ type AppOrchestratorSummary struct {
 	TTSVoice               *string               `json:"tts_voice,omitempty"`
 	VoiceEnabled           bool                  `json:"voice_enabled"`
 	TTSEnabled             bool                  `json:"tts_enabled"`
+	AllowedAgentIDs        []string              `json:"allowed_agent_ids,omitempty"`
 }
 
 // Application is the JSON representation of a them.applications row.

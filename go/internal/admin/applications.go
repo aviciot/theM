@@ -694,13 +694,24 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 			return
 		}
 		defer tx.Rollback(r.Context()) //nolint:errcheck
-		newApp, err = dal.NewDBFromAdminQuerier(tx).DeployApplication(r.Context(), appID, body.TargetTenantID)
+		adminDB := dal.NewDBFromAdminQuerier(tx)
+		agentIDMap, agentErr := adminDB.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
+		if agentErr != nil {
+			writeError(w, http.StatusInternalServerError, "deploy failed")
+			return
+		}
+		newApp, err = adminDB.DeployApplication(r.Context(), appID, body.TargetTenantID, agentIDMap)
 		if err == nil {
 			err = tx.Commit(r.Context())
 		}
 	} else {
 		// Unit-test path: pools not wired — use legacyDAL directly.
-		newApp, err = h.legacyDAL.DeployApplication(r.Context(), appID, body.TargetTenantID)
+		agentIDMap, agentErr := h.legacyDAL.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
+		if agentErr != nil {
+			writeError(w, http.StatusInternalServerError, "deploy failed")
+			return
+		}
+		newApp, err = h.legacyDAL.DeployApplication(r.Context(), appID, body.TargetTenantID, agentIDMap)
 	}
 
 	if err != nil {
