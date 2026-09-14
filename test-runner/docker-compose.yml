@@ -16,14 +16,16 @@ services:
     environment:
       - PORT=8090
       - DATA_DIR=/data
-      - THEM_URL=${THEM_URL:-http://host.docker.internal:8088}
+      - THEM_URL=${THEM_URL:-http://them-traefik:8088}
       - THEM_ADMIN_USER=${THEM_ADMIN_USER:-admin}
       - THEM_ADMIN_PASS=${THEM_ADMIN_PASS:-}
       - TR_BASIC_AUTH_USER=${TR_BASIC_AUTH_USER:-}
       - TR_BASIC_AUTH_PASS=${TR_BASIC_AUTH_PASS:-}
+      - DB_URL=${DB_URL:-postgres://them_admin:cUhig2LqLUtCNJSkIW1bj1fU7JP_Gu2ejpxRTJRyFw0@them-postgres:5432/them?sslmode=disable}
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - them_network
 
   tr-frontend:
     build: ./frontend
@@ -35,4 +37,10 @@ services:
     depends_on:
       - tr-backend
     restart: unless-stopped
+
+networks:
+  default:
+  them_network:
+    external: true
+    name: them-network
 

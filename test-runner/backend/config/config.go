@@ -14,6 +14,7 @@ type Config struct {
 	Port       string `json:"-"`
 	BasicUser  string `json:"-"`
 	BasicPass  string `json:"-"`
+	DBURL      string `json:"-"` // postgres DSN — env only, never persisted
 }
 
 var (
@@ -30,6 +31,7 @@ func Load(dataDir string) (*Config, error) {
 		Port:      env("PORT", "8090"),
 		BasicUser: env("TR_BASIC_AUTH_USER", ""),
 		BasicPass: env("TR_BASIC_AUTH_PASS", ""),
+		DBURL:     env("DB_URL", ""),
 	}
 
 	// Override with persisted config if it exists.
