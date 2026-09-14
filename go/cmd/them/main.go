@@ -50,6 +50,7 @@ import (
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/idpcrypto"
+	"github.com/aviciot/them/internal/roles"
 	"github.com/aviciot/them/internal/transport"
 	"github.com/aviciot/them/internal/voice"
 	"github.com/aviciot/them/internal/ws"
@@ -273,6 +274,14 @@ func run() error {
 	quotaAdapter := &tenantQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
 	execLifecycle.WithQuotaEnforcer(quotaAdapter)
 	log.Info("quota enforcer wired (max_concurrent_runs + runs_per_minute + api_rpm + monthly_llm_tokens)")
+
+	// ── 16b-role. Wire role gate ─────────────────────────────────────────────
+	// Resolves end-user role from JWT claims or M2M headers, then enforces
+	// tenant_role_grants per application. Gate is a no-op when an app has no
+	// grants configured (open app — backward compatible).
+	roleQuerier := roles.NewPgxQuerier(rlsPools.Admin)
+	execLifecycle.WithRoleChecker(roles.NewService(roleQuerier))
+	log.Info("role gate wired (tenant_role_grants per application)")
 
 	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
 	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,

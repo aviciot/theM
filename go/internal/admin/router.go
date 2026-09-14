@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/rueidis"
 
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/auth"
@@ -193,6 +194,9 @@ func BuildRouter(
 
 				auditLogs := NewAuditLogsHandler(dbq, pools)
 				auditLogs.Routes(tenantScoped)
+
+				rolesH := NewRolesHandler(dal.NewDB(dbq))
+				rolesH.Routes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
