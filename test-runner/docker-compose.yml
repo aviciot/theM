@@ -1,0 +1,38 @@
+version: "3.9"
+
+# the-M Test Runner — standalone stack
+# Run: docker compose up -d
+# UI: http://localhost:3210
+
+services:
+
+  tr-backend:
+    build: ./backend
+    container_name: them-test-runner-backend
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./data:/data
+    environment:
+      - PORT=8090
+      - DATA_DIR=/data
+      - THEM_URL=${THEM_URL:-http://host.docker.internal:8088}
+      - THEM_ADMIN_USER=${THEM_ADMIN_USER:-admin}
+      - THEM_ADMIN_PASS=${THEM_ADMIN_PASS:-}
+      - TR_BASIC_AUTH_USER=${TR_BASIC_AUTH_USER:-}
+      - TR_BASIC_AUTH_PASS=${TR_BASIC_AUTH_PASS:-}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  tr-frontend:
+    build: ./frontend
+    container_name: them-test-runner-frontend
+    ports:
+      - "3210:3000"
+    environment:
+      - BACKEND_URL=http://tr-backend:8090
+    depends_on:
+      - tr-backend
+    restart: unless-stopped
+
