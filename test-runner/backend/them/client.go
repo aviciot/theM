@@ -28,7 +28,7 @@ func NewClient(baseURL, adminUser, adminPass string) (*Client, error) {
 
 func (c *Client) login(user, pass string) error {
 	body, _ := json.Marshal(map[string]string{"username": user, "password": pass})
-	resp, err := c.http.Post(c.baseURL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := c.http.Post(c.baseURL+"/auth/api/v1/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
