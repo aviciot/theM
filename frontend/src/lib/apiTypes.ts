@@ -972,5 +972,6 @@ export interface DeployResult {
     llm_keys_required: boolean;
     mcp_servers: string[];
     agents_copied: string[];
+    agents_reused: string[];
   };
 }

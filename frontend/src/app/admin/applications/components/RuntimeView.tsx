@@ -517,7 +517,12 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
                 )}
                 {deployResult.checklist.agents_copied?.length > 0 && (
                   <div style={{ fontSize: 12, color: '#34d399', marginTop: 4 }}>
-                    Agents copied: {deployResult.checklist.agents_copied.join(', ')} — auth tokens not copied, enter credentials in the tenant if needed.
+                    Agents copied (new): {deployResult.checklist.agents_copied.join(', ')} — auth tokens not copied, enter credentials in the tenant if needed.
+                  </div>
+                )}
+                {deployResult.checklist.agents_reused?.length > 0 && (
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+                    Agents reused (already in tenant): {deployResult.checklist.agents_reused.join(', ')} — existing config and credentials preserved.
                   </div>
                 )}
               </div>

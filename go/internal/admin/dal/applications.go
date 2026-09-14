@@ -690,7 +690,14 @@ WHERE id             = $1::uuid
 // kind+namespace+name+version) are reused without modification.
 // auth_token_encrypted is intentionally NOT copied — target tenant fills in their own.
 // Returns a map of old agent UUID → new agent UUID, and a list of copied agent slugs.
-func (d *DB) CopyAgentsForDeploy(ctx context.Context, sourceAppID, targetTenantID string) (map[string]string, []string, error) {
+// CopyAgentsForDeployResult holds the outcome of a CopyAgentsForDeploy call.
+type CopyAgentsForDeployResult struct {
+	IDMap        map[string]string // old UUID → new/existing UUID
+	CopiedSlugs  []string          // agents inserted fresh
+	ReusedSlugs  []string          // agents already present in target tenant (not overwritten)
+}
+
+func (d *DB) CopyAgentsForDeploy(ctx context.Context, sourceAppID, targetTenantID string) (CopyAgentsForDeployResult, error) {
 	const agentIDsQ = `
 SELECT DISTINCT unnest(ao.allowed_agent_ids)::text
 FROM them.app_orchestrators ao
@@ -699,7 +706,7 @@ WHERE ao.application_id = $1::uuid
 
 	rows, err := d.q.Query(ctx, agentIDsQ, sourceAppID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("copy agents: fetch agent ids: %w", err)
+		return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: fetch agent ids: %w", err)
 	}
 	var srcIDs []string
 	for rows.Next() {
@@ -711,7 +718,7 @@ WHERE ao.application_id = $1::uuid
 	rows.Close()
 
 	if len(srcIDs) == 0 {
-		return nil, nil, nil
+		return CopyAgentsForDeployResult{}, nil
 	}
 
 	const agentQ = `
@@ -731,7 +738,7 @@ WHERE a.id = ANY($1::uuid[])`
 
 	agentRows, err := d.q.Query(ctx, agentQ, srcIDs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("copy agents: fetch agent details: %w", err)
+		return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: fetch agent details: %w", err)
 	}
 	defer agentRows.Close()
 
@@ -776,13 +783,13 @@ WHERE a.id = ANY($1::uuid[])`
 			&ag.agentCard, &ag.agentCardURL, &ag.skills, &ag.streaming, &ag.push,
 			&ag.tags, &ag.icon, &ag.category,
 		); err != nil {
-			return nil, nil, fmt.Errorf("copy agents: scan: %w", err)
+			return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: scan: %w", err)
 		}
 		agents = append(agents, ag)
 	}
 
 	idMap := make(map[string]string, len(agents))
-	var copiedSlugs []string
+	var copiedSlugs, reusedSlugs []string
 
 	const existsQ = `
 SELECT id::text FROM them.component_definitions
@@ -813,6 +820,7 @@ ON CONFLICT (tenant_id, slug) DO NOTHING`
 		err := d.q.QueryRow(ctx, existsQ, ag.kind, ag.ns, ag.name, ag.version, targetTenantID).Scan(&existingID)
 		if err == nil {
 			idMap[ag.oldID] = existingID
+			reusedSlugs = append(reusedSlugs, ag.slug)
 			continue
 		}
 
@@ -824,7 +832,7 @@ ON CONFLICT (tenant_id, slug) DO NOTHING`
 			ag.inputSchemaCd, ag.outputSchema, ag.credSchema,
 			targetTenantID, ag.status, ag.hash, ag.enabled, ag.publishedAt,
 		).Scan(&newID); err != nil {
-			return nil, nil, fmt.Errorf("copy agents: insert component_definition for %s: %w", ag.slug, err)
+			return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert component_definition for %s: %w", ag.slug, err)
 		}
 
 		if err := d.q.Exec(ctx, insertAgent,
@@ -834,14 +842,18 @@ ON CONFLICT (tenant_id, slug) DO NOTHING`
 			ag.agentCard, ag.agentCardURL, ag.skills, ag.streaming, ag.push,
 			ag.tags, ag.icon, ag.category, ag.ns, ag.version, ag.status, ag.hash,
 		); err != nil {
-			return nil, nil, fmt.Errorf("copy agents: insert agent %s: %w", ag.slug, err)
+			return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert agent %s: %w", ag.slug, err)
 		}
 
 		idMap[ag.oldID] = newID
 		copiedSlugs = append(copiedSlugs, ag.slug)
 	}
 
-	return idMap, copiedSlugs, nil
+	return CopyAgentsForDeployResult{
+		IDMap:       idMap,
+		CopiedSlugs: copiedSlugs,
+		ReusedSlugs: reusedSlugs,
+	}, nil
 }
 
 // DeployApplication atomically clones a source application into a target tenant.
