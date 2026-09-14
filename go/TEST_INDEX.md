@@ -2295,7 +2295,7 @@ file artifact detection/recording (Phase R-3), and MCP tool dispatch.
 | `TestOrchestrator_ScanResult_Infected` | Scan subscriber returns infected → "file_blocked" event with threat field |
 | `TestOrchestrator_ScanResult_Timeout` | Scan subscriber times out (ok=false) → fallback "file" event emitted |
 
-**Trigger:** any change to `internal/orchestrator/orchestrator.go`, `internal/orchestrator/scan_subscriber.go`, or `internal/orchestrator/summary.go`
+**Trigger:** any change to `internal/orchestrator/orchestrator.go`, `internal/orchestrator/tools.go`, `internal/orchestrator/mcp.go`, `internal/orchestrator/pricing.go`, `internal/orchestrator/scan_subscriber.go`, or `internal/orchestrator/summary.go`
 
 ---
 
