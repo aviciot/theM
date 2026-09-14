@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -13,6 +13,9 @@ import (
 )
 
 func main() {
+	// Structured JSON logging — readable by docker logs and log aggregators.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = "/data"
@@ -21,7 +24,8 @@ func main() {
 
 	cfg, err := config.Load(dataDir)
 	if err != nil {
-		log.Fatalf("config load: %v", err)
+		slog.Error("config load failed", "error", err)
+		os.Exit(1)
 	}
 
 	store := scenario.NewStore(dataDir)
@@ -30,7 +34,9 @@ func main() {
 	runHandler := handler.NewRunHandler(store, mgr)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(slogMiddleware)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
 
@@ -39,7 +45,7 @@ func main() {
 	r.Put("/api/config", handler.PutConfig)
 	r.Post("/api/config/test", handler.TestConfig)
 
-	// Catalog
+	// Catalog — proxy to the-M admin API
 	r.Get("/api/tenants", handler.ListTenants)
 	r.Get("/api/tenants/{slug}/apps", handler.ListApps)
 	r.Get("/api/apps/{id}/eps", handler.ListEPs)
@@ -61,10 +67,29 @@ func main() {
 	r.Delete("/api/history/{runId}", runHandler.DeleteHistory)
 
 	addr := ":" + cfg.Port
-	log.Printf("test-runner backend listening on %s", addr)
+	slog.Info("test-runner backend starting", "addr", addr, "data_dir", dataDir)
 	if err := http.ListenAndServe(addr, r); err != nil {
-		log.Fatalf("server: %v", err)
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 	}
+}
+
+// slogMiddleware logs each HTTP request with method, path, status, and latency.
+func slogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		// Skip SSE stream endpoint from per-request log spam.
+		if r.URL.Path != "" {
+			slog.Info("http",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"remote", r.RemoteAddr,
+			)
+		}
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

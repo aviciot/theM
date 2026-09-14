@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -67,6 +68,9 @@ func (m *Manager) Start(sc Scenario, client *them.Client) (string, error) {
 }
 
 func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc Scenario, client *them.Client) {
+	log := slog.With("run_id", runID, "scenario", sc.Name, "n_users", sc.NUsers)
+	log.Info("run: started", "app", sc.AppSlug, "ep", sc.EPSlug, "tenant", sc.TenantSlug, "auth_mode", sc.AuthMode)
+
 	defer func() {
 		ar.cancel()
 		m.mu.Lock()
@@ -139,6 +143,8 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 
 	// Persist to history.
 	m.saveHistory(summary)
+
+	log.Info("run: complete", "passed", summary.Passed, "failed", summary.Failed, "duration", summary.EndedAt)
 
 	// Broadcast completion.
 	ar.broadcast(RunEvent{Type: "run_complete", Summary: &summary})

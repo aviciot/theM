@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -52,6 +53,9 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
 	wsURL += fmt.Sprintf("/apps/%s/%s/%s", tenantSlug, appSlug, epSlug)
 
+	log := slog.With("user", userIndex, "ep", epSlug, "app", appSlug, "tenant", tenantSlug)
+	log.Info("user: connecting", "url", wsURL, "auth", bearerToken != "")
+
 	headers := http.Header{}
 	if bearerToken != "" {
 		headers.Set("Authorization", "Bearer "+bearerToken)
@@ -63,21 +67,25 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 		result.Error = fmt.Sprintf("connect: %v", err)
 		result.Status = "failed"
 		result.DurationMs = time.Since(start).Milliseconds()
+		log.Error("user: connect failed", "error", err)
 		emit()
 		return
 	}
 	defer conn.Close()
 
 	result.Connected = true
+	log.Info("user: connected")
 	emit()
 
-	for _, msg := range messages {
+	for i, msg := range messages {
 		if ctx.Err() != nil {
+			log.Warn("user: context cancelled, stopping", "step", i)
 			break
 		}
 
 		step := StepResult{Sent: msg}
 		stepStart := time.Now()
+		log.Info("user: sending message", "step", i, "msg_preview", truncate(msg, 80))
 
 		// Send the message.
 		payload, _ := json.Marshal(map[string]any{
@@ -88,6 +96,7 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 			step.Error = fmt.Sprintf("send: %v", err)
 			result.Steps = append(result.Steps, step)
 			result.Status = "failed"
+			log.Error("user: send failed", "step", i, "error", err)
 			emit()
 			continue
 		}
@@ -97,6 +106,11 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 		step.LatencyMs = time.Since(stepStart).Milliseconds()
 		step.OK = step.Error == ""
 		result.Steps = append(result.Steps, step)
+		if step.OK {
+			log.Info("user: step complete", "step", i, "latency_ms", step.LatencyMs, "reply_preview", truncate(step.Received, 120))
+		} else {
+			log.Error("user: step failed", "step", i, "latency_ms", step.LatencyMs, "error", step.Error)
+		}
 		emit()
 	}
 
@@ -112,7 +126,15 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 	} else {
 		result.Status = "failed"
 	}
+	log.Info("user: done", "status", result.Status, "duration_ms", result.DurationMs, "steps", len(result.Steps))
 	emit()
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // readUntilFinal reads WS messages until a final assistant message arrives.
