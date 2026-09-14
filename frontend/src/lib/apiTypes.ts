@@ -975,3 +975,30 @@ export interface DeployResult {
     agents_reused: string[];
   };
 }
+
+export interface TenantRole {
+  id: string;
+  tenant_id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoleGrant {
+  id: string;
+  role_id: string;
+  application_id: string;
+  created_at: string;
+}
+
+export interface RoleMapping {
+  id: string;
+  tenant_id: string;
+  source: 'jwt_claim' | 'header';
+  field: string;
+  value: string;
+  role_id: string;
+  created_at: string;
+}

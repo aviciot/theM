@@ -96,6 +96,9 @@ export type {
   RuntimeIDPConfig,
   RuntimeIDPInput,
   DeployResult,
+  TenantRole,
+  RoleGrant,
+  RoleMapping,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -446,6 +449,18 @@ export const themApi = {
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
+
+  // ── Role management ────────────────────────────────────────────────────────
+  listRoles: () => api.get<TenantRole[]>('/admin/roles'),
+  createRole: (body: { name: string; display_name: string; description: string }) => api.post<TenantRole>('/admin/roles', body),
+  updateRole: (id: string, body: { name: string; display_name: string; description: string }) => api.put<TenantRole>(`/admin/roles/${id}`, body),
+  deleteRole: (id: string) => api.delete<void>(`/admin/roles/${id}`),
+  listGrants: (roleId: string) => api.get<RoleGrant[]>(`/admin/roles/${roleId}/grants`),
+  addGrant: (roleId: string, applicationId: string) => api.post<RoleGrant>(`/admin/roles/${roleId}/grants`, { application_id: applicationId }),
+  deleteGrant: (roleId: string, grantId: string) => api.delete<void>(`/admin/roles/${roleId}/grants/${grantId}`),
+  listMappings: (roleId: string) => api.get<RoleMapping[]>(`/admin/roles/${roleId}/mappings`),
+  addMapping: (roleId: string, body: { source: string; field: string; value: string }) => api.post<RoleMapping>(`/admin/roles/${roleId}/mappings`, body),
+  deleteMapping: (roleId: string, mappingId: string) => api.delete<void>(`/admin/roles/${roleId}/mappings/${mappingId}`),
   getSecurityConfig: (appId: string) => api.get<SecurityConfig>(`/admin/applications/${appId}/security-config`),
   putSecurityConfig: (appId: string, cfg: SecurityConfig) => api.put<SecurityConfig>(`/admin/applications/${appId}/security-config`, cfg),
   getServicesStats: (window: '24h' | '7d' | '30d' = '7d') => api.get<ServicesStats>(`/admin/services/stats?window=${window}`),

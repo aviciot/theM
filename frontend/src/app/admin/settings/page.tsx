@@ -6,6 +6,7 @@ import { themApi, type SystemAgentRoleOut, type SystemAgentRoleIn, type Monitori
 import { ROLE_DEFAULTS, MONITORING_DEFAULTS } from './settingsConstants';
 import { RoleCard, type RoleForm } from './RoleCard';
 import { MonitoringPanel } from './MonitoringPanel';
+import { RolesTab } from './RolesTab';
 
 function roleToForm(r: SystemAgentRoleOut): RoleForm {
   return {
@@ -18,7 +19,7 @@ function roleToForm(r: SystemAgentRoleOut): RoleForm {
   };
 }
 
-type SettingsTab = 'system_agents' | 'monitoring';
+type SettingsTab = 'system_agents' | 'monitoring' | 'roles';
 
 export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('system_agents');
@@ -134,6 +135,7 @@ export default function AdminSettingsPage() {
               {([
                 { id: 'system_agents' as SettingsTab, label: 'System Agents', icon: 'smart_toy' },
                 { id: 'monitoring'    as SettingsTab, label: 'Monitoring',    icon: 'monitoring' },
+                { id: 'roles'         as SettingsTab, label: 'Roles',         icon: 'badge' },
               ]).map((tab) => {
                 const active = activeTab === tab.id;
                 return (
@@ -150,6 +152,8 @@ export default function AdminSettingsPage() {
             {activeTab === 'monitoring' && (
               <MonitoringPanel monConfig={monConfig} setMonConfig={setMonConfig} monSaving={monSaving} monSaveMsg={monSaveMsg} onSave={handleSaveMonitoring} />
             )}
+
+            {activeTab === 'roles' && <RolesTab />}
 
             {activeTab === 'system_agents' && (
               <>
