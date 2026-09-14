@@ -515,6 +515,11 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
                     MCP servers used: {deployResult.checklist.mcp_servers.join(', ')} — re-bind or re-credential in the tenant.
                   </div>
                 )}
+                {deployResult.checklist.agents_copied?.length > 0 && (
+                  <div style={{ fontSize: 12, color: '#34d399', marginTop: 4 }}>
+                    Agents copied: {deployResult.checklist.agents_copied.join(', ')} — auth tokens not copied, enter credentials in the tenant if needed.
+                  </div>
+                )}
               </div>
             )}
           </Section>

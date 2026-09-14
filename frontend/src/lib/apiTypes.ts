@@ -971,5 +971,6 @@ export interface DeployResult {
   checklist: {
     llm_keys_required: boolean;
     mcp_servers: string[];
+    agents_copied: string[];
   };
 }

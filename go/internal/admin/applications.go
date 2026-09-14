@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -663,6 +664,7 @@ type deployInput struct {
 type deployChecklist struct {
 	LLMKeysRequired bool     `json:"llm_keys_required"`
 	MCPServers      []string `json:"mcp_servers"`
+	AgentsCopied    []string `json:"agents_copied"`
 }
 
 // DeployApplication handles POST /api/v1/admin/applications/{id}/deploy.
@@ -684,39 +686,51 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 
 	var newApp dal.Application
 	var err error
+	var copiedAgents []string
 
 	if h.pools != nil {
 		// Production path: use BYPASSRLS Admin pool so the CTE can INSERT into
 		// the target tenant's applications row regardless of app.tenant_id GUC.
 		tx, txErr := h.pools.BeginAdminTx(r.Context())
 		if txErr != nil {
+			slog.Error("deploy: begin admin tx", "app_id", appID, "error", txErr)
 			writeError(w, http.StatusInternalServerError, "deploy failed")
 			return
 		}
 		defer tx.Rollback(r.Context()) //nolint:errcheck
 		adminDB := dal.NewDBFromAdminQuerier(tx)
-		agentIDMap, agentErr := adminDB.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
+		agentIDMap, slugs, agentErr := adminDB.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
 		if agentErr != nil {
-			writeError(w, http.StatusInternalServerError, "deploy failed")
+			slog.Error("deploy: copy agents", "app_id", appID, "target_tenant", body.TargetTenantID, "error", agentErr)
+			writeError(w, http.StatusInternalServerError, "deploy failed: could not copy agents")
 			return
 		}
+		copiedAgents = slugs
 		newApp, err = adminDB.DeployApplication(r.Context(), appID, body.TargetTenantID, agentIDMap)
 		if err == nil {
 			err = tx.Commit(r.Context())
 		}
+		if err != nil {
+			slog.Error("deploy: deploy application", "app_id", appID, "target_tenant", body.TargetTenantID, "error", err)
+		}
 	} else {
 		// Unit-test path: pools not wired — use legacyDAL directly.
-		agentIDMap, agentErr := h.legacyDAL.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
+		agentIDMap, slugs, agentErr := h.legacyDAL.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
 		if agentErr != nil {
-			writeError(w, http.StatusInternalServerError, "deploy failed")
+			writeError(w, http.StatusInternalServerError, "deploy failed: could not copy agents")
 			return
 		}
+		copiedAgents = slugs
 		newApp, err = h.legacyDAL.DeployApplication(r.Context(), appID, body.TargetTenantID, agentIDMap)
 	}
 
 	if err != nil {
 		if dal.IsNoRows(err) {
 			writeError(w, http.StatusBadRequest, "source application or target tenant not found")
+			return
+		}
+		if dal.IsUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "application already deployed to this tenant")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "deploy failed")
@@ -732,11 +746,15 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 	}
 	llmRequired := len(newApp.AppOrchestrators) > 0
 
+	if copiedAgents == nil {
+		copiedAgents = []string{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application": newApp,
 		"checklist": deployChecklist{
 			LLMKeysRequired: llmRequired,
 			MCPServers:      mcpNames,
+			AgentsCopied:    copiedAgents,
 		},
 	})
 }
