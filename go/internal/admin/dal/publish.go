@@ -144,8 +144,8 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 			 $15::uuid, $16,
 			 $17::uuid, $18,
 			 true)
-		ON CONFLICT (application_id, name) DO UPDATE SET
-			node_id               = EXCLUDED.node_id,
+		ON CONFLICT (application_id, node_id) DO UPDATE SET
+			name                  = EXCLUDED.name,
 			kind                  = EXCLUDED.kind,
 			delegatable           = EXCLUDED.delegatable,
 			llm_provider          = EXCLUDED.llm_provider,
