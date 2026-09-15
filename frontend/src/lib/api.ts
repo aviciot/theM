@@ -26,6 +26,9 @@ export type {
   AppOrchestratorIn,
   MiddlewareDef,
   MiddlewareWiringIn,
+  MiddlewareWiring,
+  MiddlewareWiringCreate,
+  MiddlewareWiringUpdate,
   AccessToken,
   RunStats,
   TaskOut,
@@ -114,6 +117,9 @@ import type {
   Application,
   AppRuntimeConfig,
   MiddlewareWiringIn,
+  MiddlewareWiring,
+  MiddlewareWiringCreate,
+  MiddlewareWiringUpdate,
   AccessToken,
   Run,
   RunDetail,
@@ -393,6 +399,14 @@ export const themApi = {
   listMiddlewareDefs: () => api.get<{ id: string; slug: string; kind: string; display_name: string; description: string; config: Record<string, unknown>; is_builtin: boolean; enabled: boolean }[]>('/admin/middleware-defs'),
   putMiddlewareWirings: (appId: string, wirings: MiddlewareWiringIn[]) =>
     api.put<void>(`/admin/applications/${appId}/middleware-wirings`, { wirings }),
+  listMiddlewareWirings: (appId: string) =>
+    api.get<MiddlewareWiring[]>(`/admin/applications/${appId}/middleware-wirings`),
+  createMiddlewareWiring: (appId: string, body: MiddlewareWiringCreate) =>
+    api.post<MiddlewareWiring>(`/admin/applications/${appId}/middleware-wirings`, body),
+  updateMiddlewareWiring: (appId: string, wiringId: string, body: MiddlewareWiringUpdate) =>
+    api.put<MiddlewareWiring>(`/admin/applications/${appId}/middleware-wirings/${wiringId}`, body),
+  deleteMiddlewareWiring: (appId: string, wiringId: string) =>
+    api.delete<void>(`/admin/applications/${appId}/middleware-wirings/${wiringId}`),
   tokens: () => api.get<AccessToken[]>('/admin/tokens'),
   createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),

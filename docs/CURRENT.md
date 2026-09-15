@@ -59,7 +59,11 @@ In progress:
 - `go/internal/admin/middleware_wirings.go`: HTTP handler — CRUD under `/admin/applications/{id}/middleware-wirings`. ✅
 - `go/internal/admin/middleware_wirings_test.go`: 4 handler tests. ✅
 - `go/internal/admin/router.go`: `mwWirings` mounted into apps.Routes alongside bindings. ✅
-- Next: Canvas node (Step 4). See `docs/FILE_GUARD_PLAN.md`.
+- `frontend/src/lib/apiTypes.ts`: `MiddlewareWiring`, `MiddlewareWiringCreate`, `MiddlewareWiringUpdate` types added. ✅
+- `frontend/src/lib/api.ts`: `listMiddlewareWirings`, `createMiddlewareWiring`, `updateMiddlewareWiring`, `deleteMiddlewareWiring` added. ✅
+- `frontend/.../CanvasNodePropertiesPanel.tsx`: middleware node panel replaced with structured File Guard panel (enabled, mode, max_file_size_mb, allowed_types, blocked_types, notify_on_fail + Save/Remove actions). `appId` prop added. ✅
+- `frontend/.../CanvasBuilderView.tsx`: `appId={app.id}` passed to panel. ✅
+- Next: Step 5 — run history quarantine events, Step 6 — security aggregate view. See `docs/FILE_GUARD_PLAN.md`.
 
 ---
 
