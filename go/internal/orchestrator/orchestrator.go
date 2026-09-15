@@ -181,7 +181,9 @@ type ArtifactRecorder interface {
 // security pipeline. Returns the artifact ID stored by the gate (scan_status='pending')
 // when scanning is enabled, or ("", nil) when disabled/not-configured.
 type FileGateInliner interface {
-	InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, filename, contentType string, data []byte) (artifactID string, err error)
+	// agentSlug identifies the agent that produced the file; used for per-agent
+	// middleware_wirings lookup. Pass empty string to use app-level config.
+	InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, agentSlug, filename, contentType string, data []byte) (artifactID string, err error)
 }
 
 // ScanResult carries the outcome of a completed security scan.

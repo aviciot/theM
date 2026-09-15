@@ -1045,7 +1045,7 @@ type fakeFileGateInliner struct {
 	retID string
 }
 
-func (f *fakeFileGateInliner) InterceptInlineArtifact(_ context.Context, _, _, _, _, _ string, _ []byte) (string, error) {
+func (f *fakeFileGateInliner) InterceptInlineArtifact(_ context.Context, _, _, _, _, _, _ string, _ []byte) (string, error) {
 	return f.retID, nil
 }
 

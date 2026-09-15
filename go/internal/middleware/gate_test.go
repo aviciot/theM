@@ -256,6 +256,96 @@ func TestFileGate_StoreFail_FailsOpen(t *testing.T) {
 	}
 }
 
+// TestFileGate_WiringOverride verifies that when AgentSlug is set, loadWiringCfg
+// is attempted first. When the DB returns a wiring row with enabled=true, the
+// gate proceeds to quarantine (enabled path). When no wiring row is found (fakeRows
+// returns nothing), the gate falls back to app-level config.
+func TestFileGate_WiringOverride_Enabled(t *testing.T) {
+	// DB that returns an enabled wiring row for the wiring query,
+	// and enabled security_config for the app-level fallback query.
+	db := &wiringEnabledDB{}
+	store := &fakeStore{}
+	g := middleware.NewFileGate(db, store)
+
+	data := []byte("wiring test data")
+	res, err := g.InterceptInline(context.Background(), middleware.GateInput{
+		FileName:      "report.pdf",
+		ContentType:   "application/pdf",
+		ApplicationID: "app-wiring",
+		RunID:         "00000000-0000-0000-0000-000000000010",
+		AgentSlug:     "crm-agent",
+	}, data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ScanStatus != "pending" {
+		t.Errorf("expected pending (wiring enabled), got %q", res.ScanStatus)
+	}
+	if store.putCalled != 1 {
+		t.Errorf("expected 1 PutQuarantine call, got %d", store.putCalled)
+	}
+}
+
+// wiringEnabledDB returns an enabled wiring row when Query is called (wiring lookup),
+// and an enabled app-level config when QueryRow is called (fallback path).
+type wiringEnabledDB struct {
+	enqueueCount int
+}
+
+func (d *wiringEnabledDB) Exec(_ context.Context, sql string, _ ...any) error {
+	if findSub(sql, "middleware_jobs") {
+		d.enqueueCount++
+	}
+	return nil
+}
+
+func (d *wiringEnabledDB) QueryRow(_ context.Context, _ string, _ ...any) middleware.SingleRowScanner {
+	// App-level fallback: return enabled config.
+	return &fakeRow{val: `{"enabled":true,"processors":{"av_scan":{"enabled":true,"max_file_mb":5}}}`}
+}
+
+func (d *wiringEnabledDB) Query(_ context.Context, _ string, _ ...any) (middleware.RowScanner, error) {
+	// Return one wiring row: enabled=true, def_config with av_scan enabled, empty override.
+	defCfg := `{"enabled":true,"processors":{"av_scan":{"enabled":true,"max_file_mb":5},"audit_capture":{"enabled":true}}}`
+	return &fakeWiringRows{
+		rows: []wiringRow{{enabled: true, defConfig: defCfg, override: `{}`}},
+	}, nil
+}
+
+type wiringRow struct {
+	enabled   bool
+	defConfig string
+	override  string
+}
+
+type fakeWiringRows struct {
+	rows  []wiringRow
+	index int
+}
+
+func (r *fakeWiringRows) Next() bool {
+	r.index++
+	return r.index <= len(r.rows)
+}
+
+func (r *fakeWiringRows) Scan(dest ...any) error {
+	row := r.rows[r.index-1]
+	if len(dest) >= 3 {
+		if d, ok := dest[0].(*bool); ok {
+			*d = row.enabled
+		}
+		if d, ok := dest[1].(*[]byte); ok {
+			*d = []byte(row.defConfig)
+		}
+		if d, ok := dest[2].(*[]byte); ok {
+			*d = []byte(row.override)
+		}
+	}
+	return nil
+}
+
+func (r *fakeWiringRows) Close() error { return nil }
+
 // TestFileGate_NilStore_DoesNotPanic verifies that a nil store (no S3 configured)
 // does not panic when security scanning is enabled for the application.
 // Regression test for the nil pointer dereference that crashed them-go-worker.

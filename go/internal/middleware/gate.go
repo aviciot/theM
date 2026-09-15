@@ -58,6 +58,11 @@ type GateInput struct {
 	RunID         string
 	SessionID     string
 	TenantID      string
+
+	// AgentSlug identifies the agent that produced the file.
+	// When non-empty, gate checks middleware_wirings for a per-agent config
+	// before falling back to applications.security_config.
+	AgentSlug string
 }
 
 // GateResult is returned by Intercept / InterceptInline.
@@ -96,7 +101,7 @@ func NewFileGate(db GateQuerier, store Store) *FileGate {
 // The returned ArtifactID is the quarantine_artifacts UUID; it becomes a
 // run_artifacts UUID only after a clean scan (same UUID is reused).
 func (g *FileGate) Intercept(ctx context.Context, in GateInput) (GateResult, error) {
-	cfg, err := g.loadSecCfg(ctx, in.ApplicationID)
+	cfg, err := g.resolveSecCfg(ctx, in.ApplicationID, in.AgentSlug)
 	if err != nil {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
@@ -122,7 +127,7 @@ func (g *FileGate) Intercept(ctx context.Context, in GateInput) (GateResult, err
 // InterceptInline processes an already-decoded file artifact (bytes in memory).
 // Equivalent to Intercept but skips the HTTP fetch step.
 func (g *FileGate) InterceptInline(ctx context.Context, in GateInput, data []byte) (GateResult, error) {
-	cfg, err := g.loadSecCfg(ctx, in.ApplicationID)
+	cfg, err := g.resolveSecCfg(ctx, in.ApplicationID, in.AgentSlug)
 	if err != nil {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
@@ -233,14 +238,112 @@ func (g *FileGate) cleanupQuarantine(ctx context.Context, key string) error {
 	return nil
 }
 
-// loadSecCfg returns the security config for an application with a 30s cache.
+// resolveSecCfg returns the effective security config for a file interception.
+// When agentSlug is non-empty it first checks middleware_wirings for a per-agent
+// wiring on this application; if found, merges wiring.config_override over the
+// builtin file-guard defaults. Falls back to applications.security_config
+// (the legacy app-level toggle) when no wiring exists or agentSlug is empty.
+func (g *FileGate) resolveSecCfg(ctx context.Context, appID, agentSlug string) (SecurityConfig, error) {
+	if agentSlug != "" {
+		cfg, found, err := g.loadWiringCfg(ctx, appID, agentSlug)
+		if err == nil && found {
+			return cfg, nil
+		}
+	}
+	return g.loadSecCfg(ctx, appID)
+}
+
+// loadWiringCfg looks up a middleware_wirings row for (application_id, agent.slug)
+// with kind='guard'. Returns (config, true, nil) when a wiring is found and enabled.
+// Returns (zero, false, nil) when no wiring exists (caller should fall back).
+func (g *FileGate) loadWiringCfg(ctx context.Context, appID, agentSlug string) (SecurityConfig, bool, error) {
+	cacheKey := appID + ":" + agentSlug
+	g.cacheMu.Lock()
+	if cached, ok := g.cache[cacheKey]; ok && time.Now().Before(cached.expiry) {
+		g.cacheMu.Unlock()
+		return cached.cfg, true, nil
+	}
+	g.cacheMu.Unlock()
+
+	// Query wiring: join agents to resolve slug → agent_id; join middleware_defs
+	// to get the builtin defaults; merge with config_override.
+	const q = `
+SELECT
+    mw.enabled,
+    COALESCE(md.config, '{}')      AS def_config,
+    COALESCE(mw.config_override, '{}') AS override
+FROM them.middleware_wirings mw
+JOIN them.agents             a  ON a.id  = mw.agent_id
+JOIN them.middleware_defs    md ON md.id = mw.def_id
+WHERE mw.application_id = $1::uuid
+  AND a.slug            = $2
+  AND md.kind           = 'guard'
+  AND md.slug           = 'file-guard'
+LIMIT 1`
+
+	rows, err := g.db.Query(ctx, q, appID, agentSlug)
+	if err != nil {
+		return SecurityConfig{}, false, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	if !rows.Next() {
+		return SecurityConfig{}, false, nil // no wiring
+	}
+
+	var (
+		wiringEnabled bool
+		defRaw        []byte
+		overrideRaw   []byte
+	)
+	if err := rows.Scan(&wiringEnabled, &defRaw, &overrideRaw); err != nil {
+		return SecurityConfig{}, false, err
+	}
+
+	if !wiringEnabled {
+		// Wiring exists but is disabled — return disabled config (not "not found").
+		return SecurityConfig{Enabled: false}, true, nil
+	}
+
+	// Parse base config from middleware_defs.config.
+	var cfg SecurityConfig
+	if err := json.Unmarshal(defRaw, &cfg); err != nil {
+		cfg = DefaultSecurityConfig()
+	}
+
+	// Merge config_override on top (override wins for any key present).
+	if len(overrideRaw) > 2 { // skip empty '{}'
+		var override SecurityConfig
+		if err := json.Unmarshal(overrideRaw, &override); err == nil {
+			if override.Enabled {
+				cfg.Enabled = true
+			}
+			for k, v := range override.Processors {
+				if cfg.Processors == nil {
+					cfg.Processors = make(map[string]json.RawMessage)
+				}
+				cfg.Processors[k] = v
+			}
+		}
+	}
+	cfg = MergeDefaults(cfg)
+
+	g.cacheMu.Lock()
+	g.cache[cacheKey] = cachedSecCfg{cfg: cfg, expiry: time.Now().Add(30 * time.Second)}
+	g.cacheMu.Unlock()
+
+	return cfg, true, nil
+}
+
+// loadSecCfg returns the app-level security config from applications.security_config
+// with a 30s cache. Used as fallback when no per-agent wiring is found.
 func (g *FileGate) loadSecCfg(ctx context.Context, appID string) (SecurityConfig, error) {
 	g.cacheMu.Lock()
-	defer g.cacheMu.Unlock()
-
 	if cached, ok := g.cache[appID]; ok && time.Now().Before(cached.expiry) {
+		g.cacheMu.Unlock()
 		return cached.cfg, nil
 	}
+	g.cacheMu.Unlock()
 
 	const q = `SELECT COALESCE(security_config, '{}') FROM them.applications WHERE id = $1::uuid`
 	var raw []byte
@@ -252,14 +355,25 @@ func (g *FileGate) loadSecCfg(ctx context.Context, appID string) (SecurityConfig
 		return DefaultSecurityConfig(), nil
 	}
 	cfg = MergeDefaults(cfg)
+
+	g.cacheMu.Lock()
 	g.cache[appID] = cachedSecCfg{cfg: cfg, expiry: time.Now().Add(30 * time.Second)}
+	g.cacheMu.Unlock()
+
 	return cfg, nil
 }
 
-// InvalidateCache evicts the security config cache entry for appID.
+// InvalidateCache evicts the security config cache entry for appID and any
+// per-agent wiring entries for that app (keys prefixed appID+":").
 func (g *FileGate) InvalidateCache(appID string) {
+	prefix := appID + ":"
 	g.cacheMu.Lock()
 	delete(g.cache, appID)
+	for k := range g.cache {
+		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			delete(g.cache, k)
+		}
+	}
 	g.cacheMu.Unlock()
 }
 

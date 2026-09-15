@@ -342,11 +342,12 @@ type workerFileGateAdapter struct {
 	gate *middleware.FileGate
 }
 
-func (a *workerFileGateAdapter) InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, filename, contentType string, data []byte) (string, error) {
+func (a *workerFileGateAdapter) InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, agentSlug, filename, contentType string, data []byte) (string, error) {
 	gr, err := a.gate.InterceptInline(ctx, middleware.GateInput{
 		ApplicationID: appID,
 		RunID:         runID,
 		SessionID:     sessionID,
+		AgentSlug:     agentSlug,
 		FileName:      filename,
 		ContentType:   contentType,
 	}, data)

@@ -509,6 +509,7 @@ func (a *fileGateAdapter) Intercept(ctx context.Context, in a2a.FileInterceptInp
 		RunID:         in.RunID,
 		SessionID:     in.SessionID,
 		TenantID:      in.TenantID,
+		AgentSlug:     in.AgentSlug,
 	})
 	if err != nil {
 		return a2a.FileInterceptResult{ScanStatus: "error"}, err

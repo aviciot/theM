@@ -64,6 +64,9 @@ type FileInterceptInput struct {
 	RunID         string
 	SessionID     string
 	TenantID      string
+	// AgentSlug identifies the A2A agent that produced the file.
+	// Used to look up per-agent middleware_wirings config.
+	AgentSlug string
 }
 
 // FileInterceptResult is the result of FileInterceptor.Intercept.

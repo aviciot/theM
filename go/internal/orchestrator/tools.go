@@ -152,7 +152,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 			out, err := o.agents.InvokeForRunStreaming(ctx, rctx.TenantID, rctx.ApplicationID, slug, inputBytes,
 				func(filename, contentType, dataBase64 string) {
 					body := &artifactBody{Filename: filename, ContentType: contentType, DataBase64: dataBase64}
-					o.emitArtifactEvent(ctx, contextID, runID, rctx, body)
+					o.emitArtifactEvent(ctx, contextID, runID, slug, rctx, body)
 				},
 			)
 			latencyMS := time.Since(stepStart).Milliseconds()
@@ -199,7 +199,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 						}
 						if len(bodies) > 0 {
 							for i := range bodies {
-								o.emitArtifactEvent(ctx, contextID, runID, rctx, &bodies[i])
+								o.emitArtifactEvent(ctx, contextID, runID, slug, rctx, &bodies[i])
 							}
 							// Replace out with artifact-stripped version for LLM tool_result.
 							var stripped map[string]any
@@ -228,7 +228,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 // emitArtifactEvent records a file artifact and publishes a "file" event to the
 // bus. The event payload contains only metadata (no binary data, no paths).
 // SECURITY: artifact data must never appear in any log line or event payload.
-func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID string, rctx RunContext, body *artifactBody) {
+func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID, agentSlug string, rctx RunContext, body *artifactBody) {
 	if o.artifactRecorder == nil {
 		return
 	}
@@ -263,7 +263,7 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 	if o.fileGateInliner != nil && rctx.ApplicationID != "" {
 		gatedID, gateErr := o.fileGateInliner.InterceptInlineArtifact(
 			ctx, rctx.ApplicationID, runID, rctx.SessionID,
-			body.Filename, body.ContentType, data,
+			agentSlug, body.Filename, body.ContentType, data,
 		)
 		if gateErr == nil && gatedID != "" {
 			artifactID = gatedID
