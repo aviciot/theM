@@ -179,7 +179,8 @@ func BuildRouter(
 				// Agent bindings are mounted inside apps.Routes under the /applications/{id}
 				// sub-tree so they share the same chi node and don't shadow the flat DELETE /{id}.
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
-				apps.Routes(tenantScoped, bindings)
+				mwWirings := NewMiddlewareWiringsHandler(dbq, redis)
+				apps.Routes(tenantScoped, bindings, mwWirings)
 
 				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)

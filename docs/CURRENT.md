@@ -55,7 +55,11 @@ In progress:
 - `go/internal/a2a/server.go`: `FileInterceptInput.AgentSlug` added. ✅
 - `go/internal/orchestrator/orchestrator.go` + `tools.go`: `FileGateInliner.InterceptInlineArtifact` now takes `agentSlug`; passed through from `emitArtifactEvent` with the tool-call slug. ✅
 - `go/cmd/them/main.go` + `go/cmd/worker/main.go`: Adapters updated to pass `AgentSlug`. ✅
-- Next: Admin API (Step 3), Canvas node (Step 4). See `docs/FILE_GUARD_PLAN.md`.
+- `go/internal/admin/dal/middleware_wirings.go`: DAL — List/Get/Create/Update/Delete wirings + ListMiddlewareDefs. ✅
+- `go/internal/admin/middleware_wirings.go`: HTTP handler — CRUD under `/admin/applications/{id}/middleware-wirings`. ✅
+- `go/internal/admin/middleware_wirings_test.go`: 4 handler tests. ✅
+- `go/internal/admin/router.go`: `mwWirings` mounted into apps.Routes alongside bindings. ✅
+- Next: Canvas node (Step 4). See `docs/FILE_GUARD_PLAN.md`.
 
 ---
 
