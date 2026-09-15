@@ -46,6 +46,14 @@ Key facts:
 
 ## Current migration slice
 
+**Step 38 — File Guard (Phase 1: per-agent file scanning via canvas)**
+
+In progress:
+- `db/096_file_guard_seed.sql`: Seeds builtin `file-guard` row in `middleware_defs` + `component_definitions`. Applied 2026-09-15. ✅
+- Next: Go gate logic (Step 2), Admin API (Step 3), Canvas node (Step 4). See `docs/FILE_GUARD_PLAN.md`.
+
+---
+
 **Step H2 — RLS Closure (full superuser removal)**
 
 Completed:
