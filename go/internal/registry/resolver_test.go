@@ -161,30 +161,26 @@ func assignTo(dest any, v any) error {
 // ─── fake DB ──────────────────────────────────────────────────────────────────
 
 // fakeQuerier implements registry.DBQuerier.
-// It maps query SQL to a fakeRow by argument count:
-//   - 1 arg  → resolveByIDSQL
-//   - 3 args → resolveByKindNameTenantSQL (cross-tenant slug fallback)
-//   - 4 args → resolveByRefSQL
+// resolveByRefSQL now takes 5 args (kind, namespace, name, version, tenantID).
+// The fake simulates tenant scoping: it returns byRef only when the tenantID arg
+// matches the definition's tenant (or the definition is builtin).
 type fakeQuerier struct {
-	byID              *fakeRow
-	byRef             *fakeRow
-	byKindNameTenant  *fakeRow
+	byRef *fakeRow
 }
 
 func (f *fakeQuerier) QueryRow(_ context.Context, _ string, args ...any) registry.SingleRowScanner {
-	switch len(args) {
-	case 1:
-		if f.byID != nil {
-			return f.byID
-		}
-	case 3:
-		if f.byKindNameTenant != nil {
-			return f.byKindNameTenant
-		}
-	default:
-		if f.byRef != nil {
-			return f.byRef
-		}
+	if f.byRef == nil || f.byRef.def == nil {
+		return &fakeRow{err: errFakeNoRows}
+	}
+	// args: kind, namespace, name, version, tenantID
+	if len(args) < 5 {
+		return &fakeRow{err: errFakeNoRows}
+	}
+	callerTenant, _ := args[4].(string)
+	def := f.byRef.def
+	// Simulate SQL tenant filter: return row only if builtin or tenant matches.
+	if def.Scope == registry.ScopeBuiltin || def.TenantID == callerTenant {
+		return f.byRef
 	}
 	return &fakeRow{err: errFakeNoRows}
 }
@@ -270,7 +266,6 @@ func TestResolver_BuiltinResolvesForAnyTenant(t *testing.T) {
 
 	ref := registry.DefinitionRef{Kind: registry.KindOrchestrator, Namespace: "them.builtin", Name: "llm-orchestrator", Version: 1}
 
-	// Any tenant should be able to resolve a builtin.
 	for _, tenantID := range []string{testTenantID, otherTenantID, "some-random-tenant"} {
 		got, err := r.Resolve(context.Background(), tenantID, ref, "")
 		require.NoError(t, err, "tenant %s should resolve builtin", tenantID)
@@ -278,11 +273,11 @@ func TestResolver_BuiltinResolvesForAnyTenant(t *testing.T) {
 	}
 }
 
-// TestResolver_NoCrossTenantResolution verifies that tenant A cannot resolve
-// a definition owned by tenant B when the target tenant has no same-named component.
-func TestResolver_NoCrossTenantResolution(t *testing.T) {
-	// Definition belongs to testTenantID, but caller is otherTenantID.
-	// byKindNameTenant is nil → slug fallback also finds nothing.
+// TestResolver_TenantIsolationEnforcedBySQL verifies that tenant A cannot resolve
+// a definition owned by tenant B — enforced by the SQL tenant filter, not post-hoc Go logic.
+func TestResolver_TenantIsolationEnforcedBySQL(t *testing.T) {
+	// Definition belongs to testTenantID. Caller is otherTenantID.
+	// fakeQuerier simulates the SQL filter: returns no-rows when tenants don't match.
 	def := tenantOwned(testTenantID, "private-agent")
 	q := &fakeQuerier{byRef: &fakeRow{def: def}}
 	r := registry.NewResolver(q)
@@ -292,22 +287,47 @@ func TestResolver_NoCrossTenantResolution(t *testing.T) {
 	assert.ErrorIs(t, err, registry.ErrNotFound)
 }
 
-// TestResolver_CrossTenantResolutionSucceedsWhenSameNameExists verifies that
-// if the stored UUID belongs to another tenant but the target tenant has an
-// equivalent component with the same kind+name, resolution succeeds.
-func TestResolver_CrossTenantResolutionSucceedsWhenSameNameExists(t *testing.T) {
-	srcDef := tenantOwned(testTenantID, "shared-agent")
-	targetDef := tenantOwned(otherTenantID, "shared-agent")
-	q := &fakeQuerier{
-		byRef:            &fakeRow{def: srcDef},
-		byKindNameTenant: &fakeRow{def: targetDef},
-	}
+// TestResolver_SameTenantRefResolvesCorrectly verifies that same-tenant publish works —
+// the ref resolves to the right definition even when definition_id is ignored.
+func TestResolver_SameTenantRefResolvesCorrectly(t *testing.T) {
+	def := tenantOwned(testTenantID, "my-agent")
+	q := &fakeQuerier{byRef: &fakeRow{def: def}}
 	r := registry.NewResolver(q)
 
-	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: srcDef.Namespace, Name: "shared-agent", Version: 1}
+	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: def.Namespace, Name: "my-agent", Version: 1}
+	// Pass a definition_id — it must be ignored.
+	got, err := r.Resolve(context.Background(), testTenantID, ref, "some-uuid-from-another-tenant")
+	require.NoError(t, err)
+	assert.Equal(t, def.Name, got.Name)
+	assert.Equal(t, testTenantID, got.TenantID)
+}
+
+// TestResolver_CrossTenantRefResolvesWhenTargetHasMatchingComponent verifies that
+// publishing a blueprint built in tenant A to tenant B succeeds when tenant B has
+// a component with the same kind+namespace+name+version.
+func TestResolver_CrossTenantRefResolvesWhenTargetHasMatchingComponent(t *testing.T) {
+	// Tenant B has its own version of the same agent.
+	targetDef := tenantOwned(otherTenantID, "shared-agent")
+	q := &fakeQuerier{byRef: &fakeRow{def: targetDef}}
+	r := registry.NewResolver(q)
+
+	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: targetDef.Namespace, Name: "shared-agent", Version: 1}
 	got, err := r.Resolve(context.Background(), otherTenantID, ref, "")
 	require.NoError(t, err)
-	assert.Equal(t, otherTenantID, got.TenantID, "should resolve to target tenant's copy")
+	assert.Equal(t, otherTenantID, got.TenantID)
+}
+
+// TestResolver_CrossTenantRefFailsWhenTargetLacksComponent verifies that publishing
+// to a tenant that does not have the referenced component returns ErrNotFound.
+func TestResolver_CrossTenantRefFailsWhenTargetLacksComponent(t *testing.T) {
+	// Source tenant's definition — SQL filter blocks it for otherTenantID.
+	srcDef := tenantOwned(testTenantID, "missing-in-target")
+	q := &fakeQuerier{byRef: &fakeRow{def: srcDef}}
+	r := registry.NewResolver(q)
+
+	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: srcDef.Namespace, Name: "missing-in-target", Version: 1}
+	_, err := r.Resolve(context.Background(), otherTenantID, ref, "")
+	assert.ErrorIs(t, err, registry.ErrNotFound)
 }
 
 // TestResolver_ExactVersionResolution verifies that the version is forwarded
@@ -327,7 +347,7 @@ func TestResolver_ExactVersionResolution(t *testing.T) {
 // TestResolver_MissingDefinitionReturnsErrNotFound verifies that a missing
 // definition returns ErrNotFound and nothing else.
 func TestResolver_MissingDefinitionReturnsErrNotFound(t *testing.T) {
-	q := &fakeQuerier{} // no rows for either path
+	q := &fakeQuerier{}
 	r := registry.NewResolver(q)
 
 	ref := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: "them.builtin", Name: "nonexistent", Version: 1}
@@ -375,49 +395,6 @@ func TestResolver_DeprecatedDefinition_ResolveForPublishReturnsErrDeprecated(t *
 	assert.ErrorIs(t, err, registry.ErrDeprecated)
 }
 
-// TestResolver_UUIDFastPathHitsBeforeRef verifies that when a definitionID is provided
-// and found via UUID lookup, the ref lookup is not used.
-func TestResolver_UUIDFastPathHitsBeforeRef(t *testing.T) {
-	idDef := builtin("id-path-orch")
-	idDef.ID = "cccccccc-0000-0000-0000-000000000003"
-	idDef.Name = "id-path-orch"
-
-	refDef := builtin("ref-path-orch")
-	refDef.ID = "dddddddd-0000-0000-0000-000000000004"
-	refDef.Name = "ref-path-orch"
-
-	// byID returns idDef; byRef returns refDef (should not be reached).
-	q := &fakeQuerier{
-		byID:  &fakeRow{def: idDef},
-		byRef: &fakeRow{def: refDef},
-	}
-	r := registry.NewResolver(q)
-
-	ref := registry.DefinitionRef{Kind: registry.KindOrchestrator, Namespace: "them.builtin", Name: "ref-path-orch", Version: 1}
-	got, err := r.Resolve(context.Background(), testTenantID, ref, idDef.ID)
-	require.NoError(t, err)
-	// Should have come from the UUID fast path, not the ref path.
-	assert.Equal(t, "id-path-orch", got.Name)
-}
-
-// TestResolver_UUIDMissFallsThroughToRef verifies that when the UUID lookup fails,
-// the resolver falls through to the portable ref lookup.
-func TestResolver_UUIDMissFallsThroughToRef(t *testing.T) {
-	refDef := builtin("ref-fallback-orch")
-
-	// byID returns error (UUID miss); byRef returns refDef.
-	q := &fakeQuerier{
-		byID:  &fakeRow{err: errFakeNoRows},
-		byRef: &fakeRow{def: refDef},
-	}
-	r := registry.NewResolver(q)
-
-	ref := registry.DefinitionRef{Kind: registry.KindOrchestrator, Namespace: "them.builtin", Name: "ref-fallback-orch", Version: 1}
-	got, err := r.Resolve(context.Background(), testTenantID, ref, "some-nonexistent-uuid")
-	require.NoError(t, err)
-	assert.Equal(t, "ref-fallback-orch", got.Name)
-}
-
 // TestResolver_ResolveForPublish_PublishedDefinitionSucceeds verifies the happy path
 // for the publish/compile pipeline with a published definition.
 func TestResolver_ResolveForPublish_PublishedDefinitionSucceeds(t *testing.T) {
@@ -438,19 +415,15 @@ func TestResolver_TwoTenantsIndependent(t *testing.T) {
 	defA := tenantOwned(testTenantID, "shared-name")
 	defB := tenantOwned(otherTenantID, "shared-name")
 
-	// Simulate: tenant A's definition returned when querying with tenantA's namespace.
 	qA := &fakeQuerier{byRef: &fakeRow{def: defA}}
 	rA := registry.NewResolver(qA)
-
 	refA := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: defA.Namespace, Name: "shared-name", Version: 1}
 	gotA, err := rA.Resolve(context.Background(), testTenantID, refA, "")
 	require.NoError(t, err)
 	assert.Equal(t, testTenantID, gotA.TenantID)
 
-	// Simulate: tenant B's definition returned when querying with tenantB's namespace.
 	qB := &fakeQuerier{byRef: &fakeRow{def: defB}}
 	rB := registry.NewResolver(qB)
-
 	refB := registry.DefinitionRef{Kind: registry.KindAgent, Namespace: defB.Namespace, Name: "shared-name", Version: 1}
 	gotB, err := rB.Resolve(context.Background(), otherTenantID, refB, "")
 	require.NoError(t, err)

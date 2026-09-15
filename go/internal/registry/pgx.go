@@ -35,6 +35,10 @@ type PgxQuerier struct {
 // NewPgxQuerier creates a PgxQuerier.
 func NewPgxQuerier(q DBQuerier) *PgxQuerier { return &PgxQuerier{q: q} }
 
+// resolveByRefSQL resolves a component by stable ref within the target tenant.
+// Builtins (scope='builtin', tenant_id IS NULL) are accessible to all tenants.
+// Tenant-scoped components (scope='tenant') must belong to the requesting tenant.
+// Exact version match is required — no "latest" fallback.
 const resolveByRefSQL = `
 SELECT id::text, kind, namespace, name, version, display_name,
        COALESCE(description,''), implementation_type,
@@ -44,47 +48,13 @@ SELECT id::text, kind, namespace, name, version, display_name,
        enabled, created_at, published_at
 FROM them.component_definitions
 WHERE kind = $1 AND namespace = $2 AND name = $3 AND version = $4
+  AND (scope = 'builtin' OR tenant_id = $5::uuid)
 LIMIT 1`
 
-const resolveByIDSQL = `
-SELECT id::text, kind, namespace, name, version, display_name,
-       COALESCE(description,''), implementation_type,
-       configuration_schema, default_config, capabilities,
-       input_schema, output_schema, credential_schema,
-       scope, COALESCE(tenant_id::text,''), status, content_hash,
-       enabled, created_at, published_at
-FROM them.component_definitions
-WHERE id = $1::uuid
-LIMIT 1`
-
-// ResolveByRef resolves a ComponentDefinition by portable reference (kind, namespace, name, version).
-func (q *PgxQuerier) ResolveByRef(ctx context.Context, ref DefinitionRef) (*ComponentDefinition, error) {
-	row := q.q.QueryRow(ctx, resolveByRefSQL, string(ref.Kind), ref.Namespace, ref.Name, ref.Version)
-	return scanDefinition(row)
-}
-
-const resolveByKindNameTenantSQL = `
-SELECT id::text, kind, namespace, name, version, display_name,
-       COALESCE(description,''), implementation_type,
-       configuration_schema, default_config, capabilities,
-       input_schema, output_schema, credential_schema,
-       scope, COALESCE(tenant_id::text,''), status, content_hash,
-       enabled, created_at, published_at
-FROM them.component_definitions
-WHERE kind = $1 AND name = $2 AND tenant_id = $3::uuid AND enabled = true
-ORDER BY version DESC
-LIMIT 1`
-
-// ResolveByKindNameTenant finds a definition by kind+name within a specific tenant.
-// Used as a cross-tenant slug fallback when the stored UUID belongs to a different tenant.
-func (q *PgxQuerier) ResolveByKindNameTenant(ctx context.Context, kind ComponentKind, name, tenantID string) (*ComponentDefinition, error) {
-	row := q.q.QueryRow(ctx, resolveByKindNameTenantSQL, string(kind), name, tenantID)
-	return scanDefinition(row)
-}
-
-// ResolveByID resolves a ComponentDefinition by UUID (fast-path cache).
-func (q *PgxQuerier) ResolveByID(ctx context.Context, id string) (*ComponentDefinition, error) {
-	row := q.q.QueryRow(ctx, resolveByIDSQL, id)
+// ResolveByRef resolves a ComponentDefinition by portable reference (kind, namespace, name, version)
+// scoped to the target tenant. Builtins are accessible to all tenants.
+func (q *PgxQuerier) ResolveByRef(ctx context.Context, ref DefinitionRef, tenantID string) (*ComponentDefinition, error) {
+	row := q.q.QueryRow(ctx, resolveByRefSQL, string(ref.Kind), ref.Namespace, ref.Name, ref.Version, tenantID)
 	return scanDefinition(row)
 }
 

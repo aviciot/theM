@@ -149,7 +149,6 @@ type Dal interface {
 
 	// Component definitions registry — platform-global for builtins, tenant-scoped for tenant-owned
 	ListComponentDefinitions(ctx context.Context, tenantID string) ([]dal.ComponentDefinitionSummary, error)
-	ResolveComponentIDByKindName(ctx context.Context, tenantID, kind, name string) (string, error)
 
 	// Config table (monitoring, llm_routing, …) — platform-global, no tenant
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)

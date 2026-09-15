@@ -453,9 +453,6 @@ func (f *isolationFakeDal) DeactivateStaleEntryPoints(_ context.Context, _, _, _
 func (f *isolationFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return []dal.ComponentDefinitionSummary{}, nil
 }
-func (f *isolationFakeDal) ResolveComponentIDByKindName(_ context.Context, _, _, _ string) (string, error) {
-	return "", nil
-}
 
 // Agent definition stubs (no isolation-specific behavior needed for current tests).
 func (f *isolationFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }

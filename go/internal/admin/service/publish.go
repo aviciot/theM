@@ -131,6 +131,28 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 
 	// Validate components — structural + registry resolution.
 	for _, comp := range doc.Components {
+		// Reject incomplete or version=0 refs before attempting registry resolution.
+		// definition_id (UUID) is ignored — stable refs are the only identity.
+		if string(comp.DefinitionRef.Kind) == "" || comp.DefinitionRef.Name == "" {
+			errs = append(errs, ValidationError{
+				InstanceID: comp.InstanceID,
+				Field:      "definition_ref",
+				Code:       "incomplete_ref",
+				Message:    fmt.Sprintf("component %q: definition_ref must have kind and name — re-save from the canvas palette", comp.InstanceID),
+			})
+			instanceIDs[comp.InstanceID] = struct{}{}
+			continue
+		}
+		if comp.DefinitionRef.Version <= 0 {
+			errs = append(errs, ValidationError{
+				InstanceID: comp.InstanceID,
+				Field:      "definition_ref",
+				Code:       "missing_version",
+				Message:    fmt.Sprintf("component %q: version must be set (got %d) — re-save from the canvas palette", comp.InstanceID, comp.DefinitionRef.Version),
+			})
+			instanceIDs[comp.InstanceID] = struct{}{}
+			continue
+		}
 		if _, dup := instanceIDs[comp.InstanceID]; dup {
 			errs = append(errs, ValidationError{
 				InstanceID: comp.InstanceID,
@@ -142,8 +164,9 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 		}
 
 		// Registry resolution (skip if no registry wired — test mode).
+		// definition_id is intentionally ignored — resolve by stable ref only.
 		if s.registry != nil {
-			_, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, comp.DefinitionID)
+			_, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, "")
 			if resolveErr != nil {
 				code := "component_not_found"
 				switch {
@@ -257,27 +280,6 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 		return nil, validation("definition is not valid JSON")
 	}
 
-	// 3b. Rewrite definition_ids to target-tenant UUIDs.
-	// The blueprint may have been built in a different tenant, so stored UUIDs
-	// may not exist here. For each component, look up by kind+name in the target
-	// tenant and replace the UUID. Builtins (scope=builtin) are found by name too.
-	for i, comp := range doc.Components {
-		if comp.DefinitionRef.Kind == "" || comp.DefinitionRef.Name == "" {
-			continue
-		}
-		id, lookupErr := s.dal.ResolveComponentIDByKindName(ctx, tenantID,
-			string(comp.DefinitionRef.Kind), comp.DefinitionRef.Name)
-		if lookupErr != nil {
-			return nil, fmt.Errorf("lookup component %q: %w", comp.InstanceID, lookupErr)
-		}
-		if id == "" {
-			return nil, validation(fmt.Sprintf(
-				"component %q (%s/%s) not found in this tenant — publish it here first",
-				comp.InstanceID, comp.DefinitionRef.Kind, comp.DefinitionRef.Name))
-		}
-		doc.Components[i].DefinitionID = id
-	}
-
 	// 4. Resolve component definitions.
 	resolved := make(map[string]*registry.ComponentDefinition, len(doc.Components))
 	for _, comp := range doc.Components {
@@ -285,7 +287,7 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			// No registry wired (tests without registry) — skip resolution.
 			continue
 		}
-		cd, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, comp.DefinitionID)
+		cd, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, "")
 		if resolveErr != nil {
 			return nil, fmt.Errorf("registry resolution failed for %q: %w", comp.InstanceID, resolveErr)
 		}

@@ -250,9 +250,6 @@ func (f *agentDefFakeDal) DeactivateStaleEntryPoints(_ context.Context, _, _, _ 
 func (f *agentDefFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return nil, nil
 }
-func (f *agentDefFakeDal) ResolveComponentIDByKindName(_ context.Context, _, _, _ string) (string, error) {
-	return "", nil
-}
 func (f *agentDefFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
 	return nil, nil
 }
