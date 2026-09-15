@@ -480,6 +480,62 @@ func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Art
 	return artifacts, nil
 }
 
+// GuardEvent represents one file interception by the FileGuard middleware for a run.
+// scan_status mirrors them.run_artifacts.scan_status values.
+type GuardEvent struct {
+	ID          string  `json:"id"`
+	Filename    string  `json:"filename"`
+	ContentType string  `json:"content_type"`
+	SizeBytes   int64   `json:"size_bytes"`
+	ScanStatus  string  `json:"scan_status"`  // pending|scanning|clean|infected|flagged|error|failed|disabled
+	ScanResult  *string `json:"scan_result"`  // JSON blob from middleware_jobs.result, null if not yet scanned
+	ScannedAt   *string `json:"scanned_at"`   // ISO timestamp, null if not yet scanned
+	CreatedAt   string  `json:"created_at"`
+}
+
+// GetRunGuardEvents returns file interceptions recorded for a run, joining
+// run_artifacts (which carry scan_status/scan_result) with optional middleware_jobs
+// result data. Only rows that went through scanning (scan_status != 'disabled')
+// are returned, ordered by creation time.
+func (d *DB) GetRunGuardEvents(ctx context.Context, tenantID, runID string) ([]GuardEvent, error) {
+	const q = `
+SELECT ra.id::text,
+       ra.filename,
+       ra.content_type,
+       ra.size,
+       ra.scan_status,
+       mj.result::text,
+       ra.scanned_at::text,
+       ra.created_at::text
+FROM them.run_artifacts ra
+LEFT JOIN them.middleware_jobs mj ON mj.artifact_id = ra.id
+WHERE ra.run_id    = $1::uuid
+  AND ra.tenant_id = $2::uuid
+  AND ra.scan_status <> 'disabled'
+ORDER BY ra.created_at`
+
+	rows, err := d.q.Query(ctx, q, runID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]GuardEvent, 0)
+	for rows.Next() {
+		var ev GuardEvent
+		var scanResult, scannedAt *string
+		if err := rows.Scan(
+			&ev.ID, &ev.Filename, &ev.ContentType, &ev.SizeBytes,
+			&ev.ScanStatus, &scanResult, &scannedAt, &ev.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		ev.ScanResult = scanResult
+		ev.ScannedAt = scannedAt
+		events = append(events, ev)
+	}
+	return events, nil
+}
+
 // isTextMediaType returns true for content types that are safe to represent as
 // a UTF-8 string (no base64 decode needed in the browser).
 func isTextMediaType(ct string) bool {

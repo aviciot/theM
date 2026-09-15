@@ -38,6 +38,7 @@ func (h *RunsHandler) Routes(r chi.Router) {
 	r.Delete("/runs/{run_id}", h.Delete)
 	r.Get("/runs/{run_id}/tasks", h.Tasks)
 	r.Get("/runs/{run_id}/artifacts", h.Artifacts)
+	r.Get("/runs/{run_id}/guard-events", h.GuardEvents)
 	r.Post("/runs/{run_id}/signal", h.Signal)
 }
 
@@ -182,6 +183,23 @@ func (h *RunsHandler) Artifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, artifacts)
+}
+
+// GuardEvents handles GET /api/v1/runs/{run_id}/guard-events.
+// Returns FileGuard interception events for a run (files scanned by the security middleware).
+func (h *RunsHandler) GuardEvents(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	if runID == "" {
+		writeError(w, http.StatusBadRequest, "run_id is required")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	events, err := h.svc.GetGuardEvents(r.Context(), tenantID, runID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 
 // bulkDeleteRunsInput is the request body for POST /api/v1/runs/bulk-delete.

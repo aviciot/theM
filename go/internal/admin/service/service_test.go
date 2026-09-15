@@ -272,6 +272,9 @@ func (f *fakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Task, error
 func (f *fakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
+func (f *fakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) {
+	return []dal.GuardEvent{}, nil
+}
 func (f *fakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
 	return []dal.ContextSession{}, nil
 }

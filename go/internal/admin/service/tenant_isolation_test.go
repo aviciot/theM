@@ -284,6 +284,13 @@ func (f *isolationFakeDal) GetRunArtifacts(_ context.Context, tenantID, runID st
 	}
 	return []dal.Artifact{}, nil
 }
+func (f *isolationFakeDal) GetRunGuardEvents(_ context.Context, tenantID, runID string) ([]dal.GuardEvent, error) {
+	_, ok := f.findByIDAndTenant(f.runs, tenantID, runID)
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return []dal.GuardEvent{}, nil
+}
 func (f *isolationFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
 	return []dal.ContextSession{}, nil
 }

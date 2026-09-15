@@ -405,6 +405,17 @@ export interface ArtifactOut {
   created_at: string;
 }
 
+export interface GuardEvent {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  scan_status: 'pending' | 'scanning' | 'clean' | 'infected' | 'flagged' | 'error' | 'failed' | 'disabled';
+  scan_result: string | null;
+  scanned_at: string | null;
+  created_at: string;
+}
+
 export interface ContextSession {
   context_id: string;
   orchestrator_name: string;

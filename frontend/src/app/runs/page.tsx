@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Run, type RunDetail, type RunStep, type TaskOut, type ArtifactOut } from '@/lib/api';
+import { themApi, type Run, type RunDetail, type RunStep, type TaskOut, type ArtifactOut, type GuardEvent } from '@/lib/api';
 import { formatDuration, formatTs, buildGraph, statusColor } from './runsTypes';
 import { StatusBadge, NodeGraph } from './RunGraph';
 
@@ -12,18 +12,21 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [tasks, setTasks] = useState<TaskOut[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactOut[]>([]);
+  const [guardEvents, setGuardEvents] = useState<GuardEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graph' | 'steps' | 'answer'>('graph');
+  const [tab, setTab] = useState<'graph' | 'steps' | 'answer' | 'security'>('graph');
 
   useEffect(() => {
     Promise.all([
       themApi.runDetail(run.id),
       themApi.runTasks(run.id),
       themApi.runArtifacts(run.id),
-    ]).then(([d, t, a]) => {
+      themApi.runGuardEvents(run.id),
+    ]).then(([d, t, a, g]) => {
       setDetail(d);
       setTasks(t);
       setArtifacts(a);
+      setGuardEvents(g ?? []);
     }).finally(() => setLoading(false));
   }, [run.id]);
 
@@ -94,7 +97,7 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '4px', padding: '12px 28px 0', borderBottom: '1px solid var(--tm-border)', flexShrink: 0 }}>
-          {([['graph', 'account_tree', 'Flow'], ['steps', 'list', 'Steps'], ['answer', 'chat', 'Answer']] as const).map(([t, icon, label]) => (
+          {([['graph', 'account_tree', 'Flow'], ['steps', 'list', 'Steps'], ['answer', 'chat', 'Answer'], ['security', 'security', 'Security']] as const).map(([t, icon, label]) => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '8px 16px', borderRadius: '8px 8px 0 0', border: 'none',
               background: tab === t ? 'var(--tm-surface)' : 'transparent',
@@ -105,6 +108,13 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
             }}>
               <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>{icon}</span>
               {label}
+              {t === 'security' && guardEvents.length > 0 && (
+                <span style={{
+                  fontSize: '10px', fontWeight: 700, padding: '1px 5px', borderRadius: '8px',
+                  background: guardEvents.some(e => e.scan_status === 'infected' || e.scan_status === 'flagged') ? '#ef4444' : '#3b82f6',
+                  color: '#fff',
+                }}>{guardEvents.length}</span>
+              )}
             </button>
           ))}
         </div>
@@ -202,6 +212,56 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
                   ) : (
                     <div style={{ color: 'var(--tm-text-muted)', fontSize: '13px' }}>No final answer recorded for this run</div>
                   )}
+                </div>
+              )}
+
+              {/* Security tab */}
+              {tab === 'security' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {guardEvents.length === 0 ? (
+                    <div style={{ color: 'var(--tm-text-muted)', fontSize: '13px', padding: '24px 0', textAlign: 'center' }}>
+                      No file guard events for this run
+                    </div>
+                  ) : guardEvents.map(ev => {
+                    const statusMeta: Record<string, { color: string; icon: string; label: string }> = {
+                      pending:  { color: '#94a3b8', icon: 'hourglass_empty', label: 'Pending' },
+                      scanning: { color: '#60a5fa', icon: 'manage_search',   label: 'Scanning' },
+                      clean:    { color: '#4ade80', icon: 'verified_user',   label: 'Clean' },
+                      infected: { color: '#f87171', icon: 'coronavirus',     label: 'Infected' },
+                      flagged:  { color: '#fb923c', icon: 'flag',            label: 'Flagged' },
+                      error:    { color: '#fbbf24', icon: 'warning',         label: 'Error' },
+                      failed:   { color: '#f87171', icon: 'error',           label: 'Failed' },
+                      disabled: { color: '#475569', icon: 'shield_off',      label: 'Disabled' },
+                    };
+                    const meta = statusMeta[ev.scan_status] ?? statusMeta.pending;
+                    const sizeMb = (ev.size_bytes / 1024 / 1024).toFixed(2);
+                    return (
+                      <div key={ev.id} style={{
+                        border: `1px solid ${meta.color}40`,
+                        borderLeft: `3px solid ${meta.color}`,
+                        borderRadius: '8px',
+                        background: 'var(--tm-surface)',
+                        padding: '10px 14px',
+                        display: 'flex', alignItems: 'center', gap: '12px',
+                      }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '20px', color: meta.color, flexShrink: 0 }}>{meta.icon}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tm-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.filename}</span>
+                            <span style={{
+                              fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px',
+                              background: `${meta.color}20`, color: meta.color,
+                            }}>{meta.label}</span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginTop: '2px' }}>
+                            {ev.content_type} · {sizeMb} MB
+                            {ev.scanned_at && ` · scanned ${new Date(ev.scanned_at).toLocaleString()}`}
+                          </div>
+                        </div>
+                        <span title={ev.id} style={{ fontSize: '10px', color: 'var(--tm-text-muted)', fontFamily: 'monospace', flexShrink: 0 }}>{ev.id.slice(0, 8)}…</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </>

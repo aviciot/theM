@@ -741,6 +741,8 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestRunsTasks_WithData` | RT-2: GET /runs/{run_id}/tasks with rows → Task array with correct fields |
 | `TestRunsArtifacts_Empty` | RA-1: GET /runs/{run_id}/artifacts, no rows → `[]` not null |
 | `TestRunsArtifacts_WithData` | RA-2: GET /runs/{run_id}/artifacts with rows → Artifact array with parts parsed |
+| `TestRunsGuardEvents_Empty` | RG-1: GET /runs/{run_id}/guard-events, no rows → `[]` not null |
+| `TestRunsGuardEvents_WithData` | RG-2: GET /runs/{run_id}/guard-events with rows → GuardEvent array with scan_status/scan_result/scanned_at |
 | `TestRunsRoute_StatsNotParsedAsRunID` | RO-1: GET /runs/stats → stats JSON not run-not-found (static route wins over /{run_id} wildcard) |
 | `TestRunsCancel_Success` | RW-1: PATCH /runs/{run_id}/cancel with matching run → 200 Run JSON |
 | `TestRunsCancel_NotFound` | RW-2: PATCH /runs/{run_id}/cancel run not found (both QueryRows return ErrNoRows) → 404 |

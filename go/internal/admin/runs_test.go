@@ -253,6 +253,42 @@ func TestRunsBulkDelete_EmptyIDs(t *testing.T) {
 
 // ── Route ordering test ────────────────────────────────────────────────────────
 
+// ── GuardEvents tests ──────────────────────────────────────────────────────────
+
+// RG-1: GET /runs/{run_id}/guard-events with no scanned artifacts → empty array, not null.
+func TestRunsGuardEvents_Empty(t *testing.T) {
+	db := &fakeDB{queryRows: newFakeRows(nil)}
+	w := serveRuns(t, db, http.MethodGet, "/runs/run-abc/guard-events")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var events []any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &events))
+	assert.NotNil(t, events, "guard-events must not be null when empty")
+	assert.Empty(t, events)
+}
+
+// RG-2: GET /runs/{run_id}/guard-events with one scanned artifact → GuardEvent array.
+// Row columns (8): id, filename, content_type, size, scan_status, scan_result, scanned_at, created_at
+func TestRunsGuardEvents_WithData(t *testing.T) {
+	scanResult := `{"threat":"none"}`
+	scannedAt := "2026-09-01T12:00:00Z"
+	rows := newFakeRows([][]any{
+		{"ga-1", "invoice.pdf", "application/pdf", int64(2048), "clean", &scanResult, &scannedAt, "2026-09-01T11:59:00Z"},
+	})
+	db := &fakeDB{queryRows: rows}
+	w := serveRuns(t, db, http.MethodGet, "/runs/run-abc/guard-events")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var events []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &events))
+	require.Len(t, events, 1)
+	assert.Equal(t, "ga-1", events[0]["id"])
+	assert.Equal(t, "invoice.pdf", events[0]["filename"])
+	assert.Equal(t, "clean", events[0]["scan_status"])
+	assert.Equal(t, scanResult, events[0]["scan_result"])
+	assert.Equal(t, scannedAt, events[0]["scanned_at"])
+}
+
 // RO-1: GET /runs/stats must not be matched by /runs/{run_id} — chi static routes
 // take precedence over parameterised routes, so "stats" must not be treated as run_id.
 func TestRunsRoute_StatsNotParsedAsRunID(t *testing.T) {

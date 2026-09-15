@@ -200,6 +200,7 @@ func (f *publishFakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats,
 func (f *publishFakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) { return dal.RunDetail{Steps: []dal.RunStep{}, Usage: []dal.RunUsage{}, Children: []dal.Run{}}, nil }
 func (f *publishFakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Task, error)  { return nil, nil }
 func (f *publishFakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) { return nil, nil }
+func (f *publishFakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) { return []dal.GuardEvent{}, nil }
 func (f *publishFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) { return nil, nil }
 func (f *publishFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) { return nil, nil }
 func (f *publishFakeDal) GetContextMessages(_ context.Context, _, _ string, _ int) ([]dal.ContextMessage, error) { return nil, nil }

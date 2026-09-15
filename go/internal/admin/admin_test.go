@@ -91,6 +91,14 @@ func scanInto(dest, src any) error {
 	case **string:
 		if src == nil {
 			*d = nil
+		} else if ps, ok := src.(*string); ok {
+			// src is already a *string — use the pointed-to value directly.
+			if ps == nil {
+				*d = nil
+			} else {
+				s := *ps
+				*d = &s
+			}
 		} else {
 			s := fmt.Sprintf("%v", src)
 			*d = &s

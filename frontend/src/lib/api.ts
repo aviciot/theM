@@ -34,6 +34,7 @@ export type {
   TaskOut,
   ArtifactPart,
   ArtifactOut,
+  GuardEvent,
   ContextSession,
   AgentCard,
   BridgeHealth,
@@ -126,6 +127,7 @@ import type {
   RunStats,
   TaskOut,
   ArtifactOut,
+  GuardEvent,
   ContextSession,
   AgentCard,
   MonitoringConfig,
@@ -417,6 +419,7 @@ export const themApi = {
   runStats: () => api.get<RunStats>('/runs/stats'),
   runTasks: (runId: string) => api.get<TaskOut[]>(`/runs/${runId}/tasks`),
   runArtifacts: (runId: string) => api.get<ArtifactOut[]>(`/runs/${runId}/artifacts`),
+  runGuardEvents: (runId: string) => api.get<GuardEvent[]>(`/runs/${runId}/guard-events`),
   contextArtifacts: (contextId: string, limit = 100) =>
     api.get<ArtifactOut[]>(`/runs/context/${contextId}/artifacts?limit=${limit}`),
   contextMessages: (contextId: string, limit = 100) =>

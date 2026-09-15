@@ -184,6 +184,9 @@ func (f *agentDefFakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Tas
 func (f *agentDefFakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) {
 	return nil, nil
 }
+func (f *agentDefFakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) {
+	return []dal.GuardEvent{}, nil
+}
 func (f *agentDefFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
 	return nil, nil
 }

@@ -60,6 +60,11 @@ func (s *RunService) GetArtifacts(ctx context.Context, tenantID, runID string) (
 	return s.dal.GetRunArtifacts(ctx, tenantID, runID)
 }
 
+// GetGuardEvents returns FileGuard interception events for a run, scoped to the tenant.
+func (s *RunService) GetGuardEvents(ctx context.Context, tenantID, runID string) ([]dal.GuardEvent, error) {
+	return s.dal.GetRunGuardEvents(ctx, tenantID, runID)
+}
+
 // ListContextSessions returns distinct conversation contexts for the tenant.
 func (s *RunService) ListContextSessions(ctx context.Context, tenantID, orchestrator string, limit int) ([]dal.ContextSession, error) {
 	return s.dal.ListContextSessions(ctx, tenantID, orchestrator, limit)
