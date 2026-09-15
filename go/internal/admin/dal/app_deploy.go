@@ -8,16 +8,24 @@ import (
 
 // CopyAgentsForDeployResult holds the outcome of a CopyAgentsForDeploy call.
 type CopyAgentsForDeployResult struct {
-	IDMap        map[string]string // old UUID → new/existing UUID
-	CopiedSlugs  []string          // agents inserted fresh
-	ReusedSlugs  []string          // agents already present in target tenant (not overwritten)
+	IDMap         map[string]string // old UUID → new/existing UUID
+	CopiedSlugs   []string          // agents inserted fresh
+	ReusedSlugs   []string          // agents already present in target tenant (not overwritten)
+	ConflictSlugs []string          // reused agents whose content_hash differs from source
 }
 
 // CopyAgentsForDeploy copies all agents referenced by sourceAppID's orchestrators
 // into targetTenantID. Agents already present in the target tenant (matched by
 // kind+namespace+name+version) are reused without modification.
-// auth_token_encrypted is intentionally NOT copied — target tenant fills in their own.
-// Returns a map of old agent UUID → new agent UUID, and a list of copied agent slugs.
+//
+// For canvas agents (implementation_type='canvas_a2a'), agent_runtime_specs is also
+// copied so the agent is executable in the target tenant.
+//
+// Secrets (auth_token_encrypted and all *_api_key_encrypted columns) are intentionally
+// NOT copied — the target tenant must supply their own credentials.
+//
+// Returns IDMap (old UUID → new/existing UUID), CopiedSlugs, ReusedSlugs, and
+// ConflictSlugs (reused agents whose content_hash differs from the source).
 func (d *DB) CopyAgentsForDeploy(ctx context.Context, sourceAppID, targetTenantID string) (CopyAgentsForDeployResult, error) {
 	const agentIDsQ = `
 SELECT DISTINCT unnest(ao.allowed_agent_ids)::text
@@ -110,10 +118,11 @@ WHERE a.id = ANY($1::uuid[])`
 	}
 
 	idMap := make(map[string]string, len(agents))
-	var copiedSlugs, reusedSlugs []string
+	var copiedSlugs, reusedSlugs, conflictSlugs []string
 
+	// existsQ returns id + content_hash so we can detect conflicts.
 	const existsQ = `
-SELECT id::text FROM them.component_definitions
+SELECT id::text, content_hash FROM them.component_definitions
 WHERE kind=$1 AND namespace=$2 AND name=$3 AND version=$4 AND tenant_id=$5::uuid
 LIMIT 1`
 
@@ -136,15 +145,58 @@ INSERT INTO them.agents
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'tenant',$23,$24,now(),now())
 ON CONFLICT (tenant_id, slug) DO NOTHING`
 
+	// insertAgentDef copies the agent_definitions source row into the target tenant.
+	// Required before inserting agent_runtime_specs due to FK agent_runtime_specs.definition_id → agent_definitions.id.
+	// owner_id is set NULL — target tenant has different user IDs.
+	const insertAgentDef = `
+INSERT INTO them.agent_definitions
+    (id, tenant_id, agent_slug, revision, definition, definition_hash, status, created_at, updated_at, owner_id)
+SELECT $2::uuid, $1::uuid, agent_slug, revision, definition, definition_hash, status, now(), now(), NULL
+FROM them.agent_definitions
+WHERE id = $2::uuid
+ON CONFLICT DO NOTHING`
+
+	// insertSpec copies the compiled AgentSpec for canvas agents (implementation_type='canvas_a2a').
+	// Secrets are not stored in agent_runtime_specs so no filtering is needed.
+	// definition_id = agent_id (same UUID) as per canvas agent publish convention.
+	const insertSpec = `
+INSERT INTO them.agent_runtime_specs (id, tenant_id, definition_id, agent_id, spec, spec_hash, deployed_at)
+SELECT gen_random_uuid(), $1::uuid, $2::uuid, $2::uuid, spec, spec_hash, now()
+FROM them.agent_runtime_specs
+WHERE agent_id = $3::uuid
+ON CONFLICT (definition_id) DO NOTHING`
+
+	// ensureSpecQ inserts a missing spec for an already-existing canvas agent in the target.
+	const ensureSpecQ = `
+INSERT INTO them.agent_runtime_specs (id, tenant_id, definition_id, agent_id, spec, spec_hash, deployed_at)
+SELECT gen_random_uuid(), $1::uuid, $2::uuid, $2::uuid, spec, spec_hash, now()
+FROM them.agent_runtime_specs
+WHERE agent_id = $3::uuid
+ON CONFLICT (definition_id) DO NOTHING`
+
 	for _, ag := range agents {
-		var existingID string
-		err := d.q.QueryRow(ctx, existsQ, ag.kind, ag.ns, ag.name, ag.version, targetTenantID).Scan(&existingID)
+		var existingID, existingHash string
+		err := d.q.QueryRow(ctx, existsQ, ag.kind, ag.ns, ag.name, ag.version, targetTenantID).Scan(&existingID, &existingHash)
 		if err == nil {
+			// Agent already exists in target tenant.
 			idMap[ag.oldID] = existingID
 			reusedSlugs = append(reusedSlugs, ag.slug)
+			if existingHash != ag.hash {
+				conflictSlugs = append(conflictSlugs, ag.slug)
+			}
+			// For canvas agents: ensure agent_definitions + spec exist even when agent row is reused.
+			if ag.implType == "canvas_a2a" {
+				if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, existingID); err != nil {
+					return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: ensure agent_definition for reused canvas agent %s: %w", ag.slug, err)
+				}
+				if err := d.q.Exec(ctx, ensureSpecQ, targetTenantID, existingID, ag.oldID); err != nil {
+					return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: ensure spec for reused canvas agent %s: %w", ag.slug, err)
+				}
+			}
 			continue
 		}
 
+		// Agent not in target — insert component_definitions + agents + spec (canvas only).
 		var newID string
 		if err := d.q.QueryRow(ctx, insertCD,
 			ag.kind, ag.ns, ag.name, ag.version,
@@ -166,14 +218,25 @@ ON CONFLICT (tenant_id, slug) DO NOTHING`
 			return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert agent %s: %w", ag.slug, err)
 		}
 
+		if ag.implType == "canvas_a2a" {
+			// Copy agent_definitions row first (FK required by agent_runtime_specs).
+			if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, newID); err != nil {
+				return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert agent_definition for canvas agent %s: %w", ag.slug, err)
+			}
+			if err := d.q.Exec(ctx, insertSpec, targetTenantID, newID, ag.oldID); err != nil {
+				return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert spec for canvas agent %s: %w", ag.slug, err)
+			}
+		}
+
 		idMap[ag.oldID] = newID
 		copiedSlugs = append(copiedSlugs, ag.slug)
 	}
 
 	return CopyAgentsForDeployResult{
-		IDMap:       idMap,
-		CopiedSlugs: copiedSlugs,
-		ReusedSlugs: reusedSlugs,
+		IDMap:         idMap,
+		CopiedSlugs:   copiedSlugs,
+		ReusedSlugs:   reusedSlugs,
+		ConflictSlugs: conflictSlugs,
 	}, nil
 }
 

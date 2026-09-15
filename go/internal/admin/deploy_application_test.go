@@ -79,6 +79,7 @@ func TestDeployApplication_Success(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"new-app-uuid"`)
 	assert.Contains(t, w.Body.String(), `"llm_keys_required"`)
 	assert.Contains(t, w.Body.String(), `"mcp_servers"`)
+	assert.Contains(t, w.Body.String(), `"agents_conflict"`) // Task 2: conflict field always present
 }
 
 // DA-02: missing target_tenant_id → 400.

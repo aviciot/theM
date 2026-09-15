@@ -666,6 +666,7 @@ type deployChecklist struct {
 	MCPServers      []string `json:"mcp_servers"`
 	AgentsCopied    []string `json:"agents_copied"`
 	AgentsReused    []string `json:"agents_reused"`
+	AgentsConflict  []string `json:"agents_conflict"` // reused agents whose content differs from source
 }
 
 // DeployApplication handles POST /api/v1/admin/applications/{id}/deploy.
@@ -747,11 +748,15 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 
 	copied := agentResult.CopiedSlugs
 	reused := agentResult.ReusedSlugs
+	conflict := agentResult.ConflictSlugs
 	if copied == nil {
 		copied = []string{}
 	}
 	if reused == nil {
 		reused = []string{}
+	}
+	if conflict == nil {
+		conflict = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application": newApp,
@@ -760,6 +765,7 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 			MCPServers:      mcpNames,
 			AgentsCopied:    copied,
 			AgentsReused:    reused,
+			AgentsConflict:  conflict,
 		},
 	})
 }
