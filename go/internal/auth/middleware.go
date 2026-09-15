@@ -41,6 +41,12 @@ func ClaimsFromCtx(ctx context.Context) (*Claims, bool) {
 	return v, ok && v != nil
 }
 
+// WithClaims returns a new context with the given Claims stored under the same
+// key used by JWTMiddleware. Use this in tests to inject claims without a real JWT.
+func WithClaims(ctx context.Context, claims *Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, claims)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Middleware constructors
 // ──────────────────────────────────────────────────────────────────────────────

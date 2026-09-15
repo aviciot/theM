@@ -16,11 +16,14 @@ var errNoRows = errors.New("no rows")
 // ── fake querier ──────────────────────────────────────────────────────────────
 
 type deployFakeQuerier struct {
-	agentIDs     []string
-	agentRows    []agentRowData
-	existsResult map[string]existsData
-	execErr      error
-	execCalls    []string
+	agentIDs        []string
+	agentRows       []agentRowData
+	existsResult    map[string]existsData
+	execErr         error
+	execCalls       []string
+	srcDefExists    bool // controls srcAgentDefExistsQ response (default false)
+	srcSpecExists   bool // controls srcSpecExistsQ response (default false)
+	existsCallCount int  // counts 1-arg EXISTS QueryRow calls
 }
 
 type existsData struct{ id, hash string }
@@ -51,6 +54,17 @@ func (f *deployFakeQuerier) Query(_ context.Context, _ string, args ...any) (dal
 }
 
 func (f *deployFakeQuerier) QueryRow(_ context.Context, _ string, args ...any) dal.SingleRowScanner {
+	// 1-arg: srcAgentDefExistsQ or srcSpecExistsQ — return bool
+	if len(args) == 1 {
+		f.existsCallCount++
+		exists := false
+		if f.existsCallCount == 1 {
+			exists = f.srcDefExists
+		} else {
+			exists = f.srcSpecExists
+		}
+		return &boolRow{v: exists}
+	}
 	// existsQ: 5 scalar args (kind, ns, name, version, tenantID)
 	if len(args) == 5 {
 		name, _ := args[2].(string)
@@ -77,6 +91,18 @@ func (f *deployFakeQuerier) ExecReturning(_ context.Context, _ string, _ ...any)
 type errFakeRow struct{ err error }
 
 func (r *errFakeRow) Scan(_ ...any) error { return r.err }
+
+// boolRow returns a single bool — used for EXISTS queries.
+type boolRow struct{ v bool }
+
+func (r *boolRow) Scan(dest ...any) error {
+	if len(dest) >= 1 {
+		if bp, ok := dest[0].(*bool); ok {
+			*bp = r.v
+		}
+	}
+	return nil
+}
 
 type existsFakeRow struct{ id, hash string }
 
@@ -278,13 +304,56 @@ func TestCopyAgentsForDeploy_CanvasAgent_Copied_ExecutesSpecInsert(t *testing.T)
 			{id: "canvas-uuid-1", kind: "agent", ns: "ns", name: "canvas-agent",
 				version: 1, implType: "canvas_a2a", hash: "hash-xyz", slug: "canvas-agent"},
 		},
-		existsResult: map[string]existsData{}, // not in target
+		existsResult:  map[string]existsData{}, // not in target
+		srcDefExists:  true,
+		srcSpecExists: true,
 	}
 	db := dal.NewDB(q)
 	result, err := db.CopyAgentsForDeploy(context.Background(), "app-1", "tenant-target")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"canvas-agent"}, result.CopiedSlugs)
 	assert.Empty(t, result.ReusedSlugs)
-	// Verify that Exec was called for agent_definitions and agent_runtime_specs inserts.
+	// Verify that Exec was called for insertAgent + insertAgentDef + insertSpec.
 	require.GreaterOrEqual(t, len(q.execCalls), 2, "expected at least insertAgentDef + insertSpec exec calls")
+}
+
+func TestCopyAgentsForDeploy_CanvasAgent_MissingSourceDef_Fails(t *testing.T) {
+	q := &deployFakeQuerier{
+		agentIDs: []string{"canvas-uuid-1"},
+		agentRows: []agentRowData{
+			{id: "canvas-uuid-1", kind: "agent", ns: "ns", name: "canvas-agent",
+				version: 1, implType: "canvas_a2a", hash: "hash-xyz", slug: "canvas-agent"},
+		},
+		existsResult:  map[string]existsData{}, // not in target
+		srcDefExists:  false,                    // source agent_definition missing
+		srcSpecExists: true,
+	}
+	db := dal.NewDB(q)
+	_, err := db.CopyAgentsForDeploy(context.Background(), "app-1", "tenant-target")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source agent_definition missing")
+	// insertAgentDef and insertSpec must NOT have been called (insertAgent may be called first).
+	for _, call := range q.execCalls {
+		assert.NotContains(t, call, "INSERT INTO them.agent_definitions", "insertAgentDef must not execute when source def is missing")
+		assert.NotContains(t, call, "INSERT INTO them.agent_runtime_specs", "insertSpec must not execute when source def is missing")
+	}
+}
+
+func TestCopyAgentsForDeploy_CanvasAgent_MissingSourceSpec_Fails(t *testing.T) {
+	q := &deployFakeQuerier{
+		agentIDs: []string{"canvas-uuid-1"},
+		agentRows: []agentRowData{
+			{id: "canvas-uuid-1", kind: "agent", ns: "ns", name: "canvas-agent",
+				version: 1, implType: "canvas_a2a", hash: "hash-xyz", slug: "canvas-agent"},
+		},
+		existsResult:  map[string]existsData{},
+		srcDefExists:  true,
+		srcSpecExists: false, // source spec missing
+	}
+	db := dal.NewDB(q)
+	_, err := db.CopyAgentsForDeploy(context.Background(), "app-1", "tenant-target")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source agent_runtime_spec missing")
+	// insertSpec must NOT have been called.
+	assert.NotContains(t, q.execCalls, "insertSpec")
 }

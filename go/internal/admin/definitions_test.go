@@ -16,6 +16,8 @@ import (
 
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // ── fakeDefDB — minimal Querier fake for definitions tests ────────────────────
@@ -448,6 +450,11 @@ type fakeDefDBMulti struct {
 	deleteID  string
 	deleteErr error
 
+	// appTenantID: when non-empty, the first QueryRow returns this string (for GetAppTenantID).
+	// Used in Validate/Publish tests where resolveAndAuthorizeAppTenant is called first.
+	appTenantID    string
+	appTenantIDErr error
+
 	// callCountExecRet tracks ExecReturning calls so we can multiplex.
 	callCountExecRet int
 	// callCountQueryRow tracks QueryRow calls so we can multiplex.
@@ -510,12 +517,15 @@ func (r *fakeDefRows) Scan(dest ...any) error {
 
 func (f *fakeDefDBMulti) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
 	f.callCountQueryRow++
-	// First QueryRow call: GetNextRevision — returns int.
-	// Subsequent calls: GetDefinition — returns full AppDefinition row.
+	// When appTenantID is set, the first call is GetAppTenantID — return a string UUID.
+	if f.callCountQueryRow == 1 && (f.appTenantID != "" || f.appTenantIDErr != nil) {
+		return &fakeDefStrRow{val: f.appTenantID, err: f.appTenantIDErr}
+	}
+	// First QueryRow call (no appTenantID set): GetNextRevision — returns int.
 	if f.callCountQueryRow == 1 && f.nextRevision != 0 {
 		return &fakeDefIntRow{val: f.nextRevision}
 	}
-	// GetDefinition path (called when update/delete returns ErrNoRows).
+	// Subsequent calls: GetDefinition — returns full AppDefinition row.
 	return &fakeDefFullRow{def: f.getDef, err: f.getDefErr}
 }
 
@@ -549,4 +559,117 @@ func (f *fakeDefDBMulti) ExecReturning(_ context.Context, _ string, _ ...any) ad
 		// Should not be called in these tests.
 		return &fakeDefStrRow{err: errors.New("unexpected ExecReturning call")}
 	}
+}
+
+// ── Cross-tenant authorization tests ─────────────────────────────────────────
+//
+// resolveAndAuthorizeAppTenant enforces:
+//   - Ordinary tenant admin (role="admin") may only access apps in their own tenant.
+//   - super_admin may access apps in any tenant.
+//
+// These tests use a separate router that injects both JWT claims and tenantctx.
+
+const otherTenantID = "ffffffff-0000-0000-0000-000000000002"
+
+// withClaimsAndTenant is a middleware that injects both auth.Claims (with the
+// given role) and the caller's tenantID into the request context.
+func withClaimsAndTenant(callerTenantID, role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := tenantctx.WithTenantID(r.Context(), callerTenantID)
+			ctx = auth.WithClaims(ctx, &auth.Claims{
+				TenantID: callerTenantID,
+				Roles:    []string{role},
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func defRouterWithClaims(db admin.DBQuerier, callerTenantID, role string) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(withClaimsAndTenant(callerTenantID, role))
+	h := admin.NewDefinitionsHandlerWithRegistry(db, nil)
+	h.Routes(r)
+	return r
+}
+
+// S1-54: Validate — ordinary tenant admin accessing own tenant's app → 200.
+func TestS1_54_Validate_OwnTenant_Allowed(t *testing.T) {
+	// App belongs to testTenantID; caller is admin in testTenantID.
+	db := &fakeDefDBMulti{
+		appTenantID: testTenantID, // GetAppTenantID returns caller's own tenant
+		getDef: dal.AppDefinition{
+			ID:            "def-uuid-1",
+			ApplicationID: "app-1",
+			TenantID:      testTenantID,
+			Revision:      1,
+			Status:        "draft",
+			Definition:    []byte(`{"components":[],"entry_points":[],"connections":[]}`),
+			DefinitionHash: "sha256:abc",
+			CreatedAt:     "2026-01-01T00:00:00Z",
+		},
+	}
+	r := defRouterWithClaims(db, testTenantID, "admin")
+
+	req := httptest.NewRequest(http.MethodPost, "/applications/app-1/definitions/def-uuid-1/validate", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// S1-55: Validate — ordinary tenant admin (role="admin") accessing a different
+// tenant's app → 403. The admin must not be able to scope-elevate by guessing an appID.
+func TestS1_55_Validate_CrossTenant_AdminDenied(t *testing.T) {
+	// App belongs to otherTenantID; caller is admin in testTenantID.
+	db := &fakeDefDBMulti{
+		appTenantID: otherTenantID, // GetAppTenantID returns a different tenant
+	}
+	r := defRouterWithClaims(db, testTenantID, "admin")
+
+	req := httptest.NewRequest(http.MethodPost, "/applications/other-app/definitions/def-uuid-1/validate", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}
+
+// S1-56: Validate — super_admin accessing a different tenant's app → 200.
+func TestS1_56_Validate_CrossTenant_SuperAdminAllowed(t *testing.T) {
+	// App belongs to otherTenantID; caller is super_admin in testTenantID.
+	db := &fakeDefDBMulti{
+		appTenantID: otherTenantID,
+		getDef: dal.AppDefinition{
+			ID:            "def-uuid-1",
+			ApplicationID: "other-app",
+			TenantID:      otherTenantID,
+			Revision:      1,
+			Status:        "draft",
+			Definition:    []byte(`{"components":[],"entry_points":[],"connections":[]}`),
+			DefinitionHash: "sha256:xyz",
+			CreatedAt:     "2026-01-01T00:00:00Z",
+		},
+	}
+	r := defRouterWithClaims(db, testTenantID, "super_admin")
+
+	req := httptest.NewRequest(http.MethodPost, "/applications/other-app/definitions/def-uuid-1/validate", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// S1-57: Publish — ordinary tenant admin accessing a different tenant's app → 403.
+func TestS1_57_Publish_CrossTenant_AdminDenied(t *testing.T) {
+	db := &fakeDefDBMulti{
+		appTenantID: otherTenantID,
+	}
+	r := defRouterWithClaims(db, testTenantID, "admin")
+
+	req := httptest.NewRequest(http.MethodPost, "/applications/other-app/definitions/def-uuid-1/publish", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 }

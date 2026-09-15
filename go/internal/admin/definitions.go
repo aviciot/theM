@@ -11,6 +11,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/registry"
 	"github.com/aviciot/them/internal/tenantctx"
 )
@@ -184,6 +185,38 @@ func (h *DefinitionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// resolveAndAuthorizeAppTenant resolves the app's owning tenant and enforces
+// caller authorization:
+//   - If caller's JWT tenant == app tenant: allowed for admin or super_admin.
+//   - If caller's JWT tenant != app tenant: only super_admin is allowed (cross-tenant).
+//
+// Returns the app's tenant_id on success, writes 403/404 and returns ("", false) on failure.
+func (h *DefinitionsHandler) resolveAndAuthorizeAppTenant(w http.ResponseWriter, r *http.Request, appID string) (string, bool) {
+	appTenantID, err := h.svc.ResolveAppTenantID(r.Context(), appID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return "", false
+	}
+	callerTenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if appTenantID != callerTenantID {
+		// Cross-tenant access: require super_admin.
+		claims, ok := auth.ClaimsFromCtx(r.Context())
+		isSuperAdmin := ok && func() bool {
+			for _, r := range claims.Roles {
+				if r == "super_admin" {
+					return true
+				}
+			}
+			return false
+		}()
+		if !isSuperAdmin {
+			writeError(w, http.StatusForbidden, "access to this application requires super_admin role")
+			return "", false
+		}
+	}
+	return appTenantID, true
+}
+
 // Validate handles POST /api/v1/admin/applications/{id}/definitions/{def_id}/validate.
 // Returns a ValidationReport — always 200 even when valid=false (caller checks the body).
 func (h *DefinitionsHandler) Validate(w http.ResponseWriter, r *http.Request) {
@@ -194,11 +227,8 @@ func (h *DefinitionsHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the app's owning tenant. Super-admins have their home-tenant JWT
-	// but may manage apps in other tenants — use the app's actual tenant here.
-	tenantID, err := h.svc.ResolveAppTenantID(r.Context(), appID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "application not found")
+	tenantID, ok := h.resolveAndAuthorizeAppTenant(w, r, appID)
+	if !ok {
 		return
 	}
 	report, err := h.svc.ValidateDefinition(r.Context(), tenantID, appID, defID)
@@ -227,10 +257,8 @@ func (h *DefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the app's owning tenant (see Validate for rationale).
-	tenantID, tenantErr := h.svc.ResolveAppTenantID(r.Context(), appID)
-	if tenantErr != nil {
-		writeError(w, http.StatusNotFound, "application not found")
+	tenantID, ok := h.resolveAndAuthorizeAppTenant(w, r, appID)
+	if !ok {
 		return
 	}
 	result, err := h.svc.PublishDefinition(r.Context(), tenantID, appID, defID)

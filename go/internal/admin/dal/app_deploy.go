@@ -148,6 +148,9 @@ INSERT INTO them.agents
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'tenant',$23,$24,now(),now())
 ON CONFLICT (tenant_id, slug) DO NOTHING`
 
+	// srcAgentDefExistsQ checks that the source agent_definitions row exists.
+	const srcAgentDefExistsQ = `SELECT EXISTS(SELECT 1 FROM them.agent_definitions WHERE id = $1::uuid)`
+
 	// insertAgentDef copies the source agent_definitions row into the target tenant
 	// with a new target UUID. $1=targetTenantID, $2=targetID (new), $3=sourceID.
 	// Required before insertSpec due to FK agent_runtime_specs.definition_id → agent_definitions.id.
@@ -158,6 +161,9 @@ SELECT $2::uuid, $1::uuid, agent_slug, revision, definition, definition_hash, st
 FROM them.agent_definitions
 WHERE id = $3::uuid
 ON CONFLICT (tenant_id, agent_slug) DO NOTHING`
+
+	// srcSpecExistsQ checks that the source agent_runtime_specs row exists.
+	const srcSpecExistsQ = `SELECT EXISTS(SELECT 1 FROM them.agent_runtime_specs WHERE agent_id = $1::uuid)`
 
 	// insertSpec copies the compiled AgentSpec from source agent to target agent.
 	// $1=targetTenantID, $2=targetID, $3=sourceID.
@@ -192,6 +198,34 @@ ON CONFLICT (definition_id) DO NOTHING`
 			fmt.Errorf("%w: %v", ErrDeployConflict, conflictSlugs)
 	}
 
+	// copyCanvasAgentDeps copies agent_definitions and agent_runtime_specs from
+	// sourceID into the target tenant under targetID. Fails if either source row
+	// is missing — a missing spec indicates the source agent was never published
+	// and the deploy must be aborted.
+	copyCanvasAgentDeps := func(slug, sourceID, targetID string) error {
+		var hasDef bool
+		if err := d.q.QueryRow(ctx, srcAgentDefExistsQ, sourceID).Scan(&hasDef); err != nil {
+			return fmt.Errorf("copy agents: check source agent_definition for %s: %w", slug, err)
+		}
+		if !hasDef {
+			return fmt.Errorf("copy agents: source agent_definition missing for canvas agent %s (id=%s) — agent must be published before deploy", slug, sourceID)
+		}
+		var hasSpec bool
+		if err := d.q.QueryRow(ctx, srcSpecExistsQ, sourceID).Scan(&hasSpec); err != nil {
+			return fmt.Errorf("copy agents: check source spec for %s: %w", slug, err)
+		}
+		if !hasSpec {
+			return fmt.Errorf("copy agents: source agent_runtime_spec missing for canvas agent %s (id=%s) — agent must be published before deploy", slug, sourceID)
+		}
+		if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, targetID, sourceID); err != nil {
+			return fmt.Errorf("copy agents: insert agent_definition for canvas agent %s: %w", slug, err)
+		}
+		if err := d.q.Exec(ctx, insertSpec, targetTenantID, targetID, sourceID); err != nil {
+			return fmt.Errorf("copy agents: insert spec for canvas agent %s: %w", slug, err)
+		}
+		return nil
+	}
+
 	// ── Phase 2: writes ───────────────────────────────────────────────────────
 	idMap := make(map[string]string, len(agents))
 	var copiedSlugs, reusedSlugs []string
@@ -201,13 +235,10 @@ ON CONFLICT (definition_id) DO NOTHING`
 			// Agent already exists in target with matching hash — reuse.
 			idMap[ag.oldID] = res.id
 			reusedSlugs = append(reusedSlugs, ag.slug)
-			// For canvas agents: ensure agent_definitions + spec exist.
+			// For canvas agents: ensure agent_definitions + spec are present in target.
 			if ag.implType == "canvas_a2a" {
-				if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, res.id, ag.oldID); err != nil {
-					return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: ensure agent_definition for reused canvas agent %s: %w", ag.slug, err)
-				}
-				if err := d.q.Exec(ctx, insertSpec, targetTenantID, res.id, ag.oldID); err != nil {
-					return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: ensure spec for reused canvas agent %s: %w", ag.slug, err)
+				if err := copyCanvasAgentDeps(ag.slug, ag.oldID, res.id); err != nil {
+					return CopyAgentsForDeployResult{}, err
 				}
 			}
 			continue
@@ -236,12 +267,8 @@ ON CONFLICT (definition_id) DO NOTHING`
 		}
 
 		if ag.implType == "canvas_a2a" {
-			// Copy agent_definitions row first (FK required by agent_runtime_specs).
-			if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, newID, ag.oldID); err != nil {
-				return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert agent_definition for canvas agent %s: %w", ag.slug, err)
-			}
-			if err := d.q.Exec(ctx, insertSpec, targetTenantID, newID, ag.oldID); err != nil {
-				return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert spec for canvas agent %s: %w", ag.slug, err)
+			if err := copyCanvasAgentDeps(ag.slug, ag.oldID, newID); err != nil {
+				return CopyAgentsForDeployResult{}, err
 			}
 		}
 
