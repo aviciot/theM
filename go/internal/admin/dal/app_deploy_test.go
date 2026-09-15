@@ -264,10 +264,11 @@ func TestCopyAgentsForDeploy_ExternalAgent_Reused_Conflict(t *testing.T) {
 	}
 	db := dal.NewDB(q)
 	result, err := db.CopyAgentsForDeploy(context.Background(), "app-1", "tenant-target")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"my-agent"}, result.ReusedSlugs)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, dal.ErrDeployConflict), "expected ErrDeployConflict, got: %v", err)
 	assert.Equal(t, []string{"my-agent"}, result.ConflictSlugs)
-	assert.Empty(t, result.CopiedSlugs)
+	// Writes must not have occurred — no exec calls.
+	assert.Empty(t, q.execCalls)
 }
 
 func TestCopyAgentsForDeploy_CanvasAgent_Copied_ExecutesSpecInsert(t *testing.T) {

@@ -80,6 +80,14 @@ func (e *errValidationFailed) Unwrap() error { return ErrValidation }
 
 // ── DefinitionService extension ───────────────────────────────────────────────
 
+// ResolveAppTenantID returns the tenant_id that owns the given application.
+// Super-admins operate with their home-tenant JWT but may manage apps in other
+// tenants; call this to resolve the correct tenant scope before any definition
+// query that filters by tenant_id.
+func (s *DefinitionService) ResolveAppTenantID(ctx context.Context, appID string) (string, error) {
+	return s.dal.GetAppTenantID(ctx, appID)
+}
+
 // ValidateDefinition performs full publish-time validation of a definition:
 //   - Structural validation (delegated to validateDefinition)
 //   - Component registry resolution for every component

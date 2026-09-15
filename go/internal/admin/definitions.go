@@ -194,7 +194,13 @@ func (h *DefinitionsHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	// Resolve the app's owning tenant. Super-admins have their home-tenant JWT
+	// but may manage apps in other tenants — use the app's actual tenant here.
+	tenantID, err := h.svc.ResolveAppTenantID(r.Context(), appID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
 	report, err := h.svc.ValidateDefinition(r.Context(), tenantID, appID, defID)
 	if err != nil {
 		if writeServiceError(w, err) {
@@ -221,7 +227,12 @@ func (h *DefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	// Resolve the app's owning tenant (see Validate for rationale).
+	tenantID, tenantErr := h.svc.ResolveAppTenantID(r.Context(), appID)
+	if tenantErr != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
 	result, err := h.svc.PublishDefinition(r.Context(), tenantID, appID, defID)
 	if err != nil {
 		// ErrValidation carries a structured report — surface the message.

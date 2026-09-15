@@ -415,6 +415,9 @@ func (f *isolationFakeDal) GetAgentTokenEncrypted(_ context.Context, _ string) (
 }
 
 // Application definition stubs (no business logic needed for isolation tests).
+func (f *isolationFakeDal) GetAppTenantID(_ context.Context, _ string) (string, error) {
+	return "00000000-0000-0000-0000-000000000001", nil
+}
 func (f *isolationFakeDal) GetNextRevision(_ context.Context, _ string) (int, error) {
 	return 1, nil
 }

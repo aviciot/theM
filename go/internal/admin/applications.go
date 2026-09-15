@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -703,6 +704,13 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 		adminDB := dal.NewDBFromAdminQuerier(tx)
 		agentResult, err = adminDB.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
 		if err != nil {
+			if errors.Is(err, dal.ErrDeployConflict) {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":           "agent content conflict: target tenant has agents with different content",
+					"conflict_agents": agentResult.ConflictSlugs,
+				})
+				return
+			}
 			slog.Error("deploy: copy agents", "app_id", appID, "target_tenant", body.TargetTenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "deploy failed: could not copy agents")
 			return
@@ -718,6 +726,13 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 		// Unit-test path: pools not wired — use legacyDAL directly.
 		agentResult, err = h.legacyDAL.CopyAgentsForDeploy(r.Context(), appID, body.TargetTenantID)
 		if err != nil {
+			if errors.Is(err, dal.ErrDeployConflict) {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":           "agent content conflict: target tenant has agents with different content",
+					"conflict_agents": agentResult.ConflictSlugs,
+				})
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "deploy failed: could not copy agents")
 			return
 		}

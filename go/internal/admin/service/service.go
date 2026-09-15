@@ -104,6 +104,7 @@ type Dal interface {
 	DeleteToken(ctx context.Context, tenantID, id string) (hash string, err error)
 
 	// Application definitions — tenant+app scoped
+	GetAppTenantID(ctx context.Context, appID string) (string, error)
 	GetNextRevision(ctx context.Context, appID string) (int, error)
 	CreateDefinition(ctx context.Context, tenantID, appID string, rev int, defJSON []byte, hash string) (string, error)
 	GetDefinition(ctx context.Context, tenantID, appID, defID string) (dal.AppDefinition, error)

@@ -2,9 +2,15 @@ package dal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrDeployConflict is returned by CopyAgentsForDeploy when one or more agents
+// already exist in the target tenant with a different content_hash. The deploy
+// is aborted — no agents are copied. Callers must surface this to the user.
+var ErrDeployConflict = errors.New("deploy: agent content conflict in target tenant")
 
 // CopyAgentsForDeployResult holds the outcome of a CopyAgentsForDeploy call.
 type CopyAgentsForDeployResult struct {
@@ -117,9 +123,6 @@ WHERE a.id = ANY($1::uuid[])`
 		agents = append(agents, ag)
 	}
 
-	idMap := make(map[string]string, len(agents))
-	var copiedSlugs, reusedSlugs, conflictSlugs []string
-
 	// existsQ returns id + content_hash so we can detect conflicts.
 	const existsQ = `
 SELECT id::text, content_hash FROM them.component_definitions
@@ -145,20 +148,19 @@ INSERT INTO them.agents
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'tenant',$23,$24,now(),now())
 ON CONFLICT (tenant_id, slug) DO NOTHING`
 
-	// insertAgentDef copies the agent_definitions source row into the target tenant.
-	// Required before inserting agent_runtime_specs due to FK agent_runtime_specs.definition_id → agent_definitions.id.
-	// owner_id is set NULL — target tenant has different user IDs.
+	// insertAgentDef copies the source agent_definitions row into the target tenant
+	// with a new target UUID. $1=targetTenantID, $2=targetID (new), $3=sourceID.
+	// Required before insertSpec due to FK agent_runtime_specs.definition_id → agent_definitions.id.
 	const insertAgentDef = `
 INSERT INTO them.agent_definitions
     (id, tenant_id, agent_slug, revision, definition, definition_hash, status, created_at, updated_at, owner_id)
 SELECT $2::uuid, $1::uuid, agent_slug, revision, definition, definition_hash, status, now(), now(), NULL
 FROM them.agent_definitions
-WHERE id = $2::uuid
-ON CONFLICT DO NOTHING`
+WHERE id = $3::uuid
+ON CONFLICT (tenant_id, agent_slug) DO NOTHING`
 
-	// insertSpec copies the compiled AgentSpec for canvas agents (implementation_type='canvas_a2a').
-	// Secrets are not stored in agent_runtime_specs so no filtering is needed.
-	// definition_id = agent_id (same UUID) as per canvas agent publish convention.
+	// insertSpec copies the compiled AgentSpec from source agent to target agent.
+	// $1=targetTenantID, $2=targetID, $3=sourceID.
 	const insertSpec = `
 INSERT INTO them.agent_runtime_specs (id, tenant_id, definition_id, agent_id, spec, spec_hash, deployed_at)
 SELECT gen_random_uuid(), $1::uuid, $2::uuid, $2::uuid, spec, spec_hash, now()
@@ -166,30 +168,45 @@ FROM them.agent_runtime_specs
 WHERE agent_id = $3::uuid
 ON CONFLICT (definition_id) DO NOTHING`
 
-	// ensureSpecQ inserts a missing spec for an already-existing canvas agent in the target.
-	const ensureSpecQ = `
-INSERT INTO them.agent_runtime_specs (id, tenant_id, definition_id, agent_id, spec, spec_hash, deployed_at)
-SELECT gen_random_uuid(), $1::uuid, $2::uuid, $2::uuid, spec, spec_hash, now()
-FROM them.agent_runtime_specs
-WHERE agent_id = $3::uuid
-ON CONFLICT (definition_id) DO NOTHING`
-
+	// ── Phase 1: conflict detection — no writes ──────────────────────────────
+	type existsResult struct {
+		id   string
+		hash string
+	}
+	existsCache := make(map[string]existsResult, len(agents)) // oldID → exists
+	var conflictSlugs []string
 	for _, ag := range agents {
-		var existingID, existingHash string
-		err := d.q.QueryRow(ctx, existsQ, ag.kind, ag.ns, ag.name, ag.version, targetTenantID).Scan(&existingID, &existingHash)
+		var res existsResult
+		err := d.q.QueryRow(ctx, existsQ, ag.kind, ag.ns, ag.name, ag.version, targetTenantID).Scan(&res.id, &res.hash)
 		if err == nil {
-			// Agent already exists in target tenant.
-			idMap[ag.oldID] = existingID
-			reusedSlugs = append(reusedSlugs, ag.slug)
-			if existingHash != ag.hash {
+			existsCache[ag.oldID] = res
+			if res.hash != ag.hash {
 				conflictSlugs = append(conflictSlugs, ag.slug)
 			}
-			// For canvas agents: ensure agent_definitions + spec exist even when agent row is reused.
+		}
+	}
+
+	// Conflicts abort the deploy — caller sees ErrDeployConflict (wraps slug list in message).
+	if len(conflictSlugs) > 0 {
+		return CopyAgentsForDeployResult{ConflictSlugs: conflictSlugs},
+			fmt.Errorf("%w: %v", ErrDeployConflict, conflictSlugs)
+	}
+
+	// ── Phase 2: writes ───────────────────────────────────────────────────────
+	idMap := make(map[string]string, len(agents))
+	var copiedSlugs, reusedSlugs []string
+
+	for _, ag := range agents {
+		if res, ok := existsCache[ag.oldID]; ok {
+			// Agent already exists in target with matching hash — reuse.
+			idMap[ag.oldID] = res.id
+			reusedSlugs = append(reusedSlugs, ag.slug)
+			// For canvas agents: ensure agent_definitions + spec exist.
 			if ag.implType == "canvas_a2a" {
-				if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, existingID); err != nil {
+				if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, res.id, ag.oldID); err != nil {
 					return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: ensure agent_definition for reused canvas agent %s: %w", ag.slug, err)
 				}
-				if err := d.q.Exec(ctx, ensureSpecQ, targetTenantID, existingID, ag.oldID); err != nil {
+				if err := d.q.Exec(ctx, insertSpec, targetTenantID, res.id, ag.oldID); err != nil {
 					return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: ensure spec for reused canvas agent %s: %w", ag.slug, err)
 				}
 			}
@@ -220,7 +237,7 @@ ON CONFLICT (definition_id) DO NOTHING`
 
 		if ag.implType == "canvas_a2a" {
 			// Copy agent_definitions row first (FK required by agent_runtime_specs).
-			if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, newID); err != nil {
+			if err := d.q.Exec(ctx, insertAgentDef, targetTenantID, newID, ag.oldID); err != nil {
 				return CopyAgentsForDeployResult{}, fmt.Errorf("copy agents: insert agent_definition for canvas agent %s: %w", ag.slug, err)
 			}
 			if err := d.q.Exec(ctx, insertSpec, targetTenantID, newID, ag.oldID); err != nil {
@@ -236,7 +253,7 @@ ON CONFLICT (definition_id) DO NOTHING`
 		IDMap:         idMap,
 		CopiedSlugs:   copiedSlugs,
 		ReusedSlugs:   reusedSlugs,
-		ConflictSlugs: conflictSlugs,
+		ConflictSlugs: conflictSlugs, // always nil here (conflicts abort above)
 	}, nil
 }
 

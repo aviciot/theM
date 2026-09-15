@@ -218,6 +218,9 @@ func (f *agentDefFakeDal) UpdateToken(_ context.Context, _, _ string, _ dal.Toke
 func (f *agentDefFakeDal) DeleteToken(_ context.Context, _, _ string) (string, error) {
 	return "", nil
 }
+func (f *agentDefFakeDal) GetAppTenantID(_ context.Context, _ string) (string, error) {
+	return "00000000-0000-0000-0000-000000000001", nil
+}
 func (f *agentDefFakeDal) GetNextRevision(_ context.Context, _ string) (int, error) { return 1, nil }
 func (f *agentDefFakeDal) CreateDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
 	return "", nil

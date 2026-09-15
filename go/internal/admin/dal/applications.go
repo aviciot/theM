@@ -7,6 +7,17 @@ import (
 	"strings"
 )
 
+// GetAppTenantID returns the tenant_id for the given application by ID only.
+// Used by super_admin cross-tenant flows where the JWT tenant != the app's tenant.
+func (d *DB) GetAppTenantID(ctx context.Context, appID string) (string, error) {
+	const q = `SELECT tenant_id::text FROM them.applications WHERE id = $1::uuid`
+	var tid string
+	if err := d.q.QueryRow(ctx, q, appID).Scan(&tid); err != nil {
+		return "", err
+	}
+	return tid, nil
+}
+
 // listAppQuery is shared by ListApplications and GetApplication.
 // It returns: id, name, slug, tenant_slug, enabled, active_revision, active_status.
 // app_orchestrators are fetched separately per-app to avoid N×M fanout.
