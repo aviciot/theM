@@ -30,6 +30,9 @@ const (
 	// AppFlowFinalizeRunActivityName is the registered name for the finalize activity.
 	AppFlowFinalizeRunActivityName = "AppFlowFinalizeRunActivity"
 
+	// AppFlowInvokeAgentActivityName is the registered name for the agent invocation activity.
+	AppFlowInvokeAgentActivityName = "AppFlowInvokeAgentActivity"
+
 	// AppFlowSignalHILApproval is the signal name for HIL human approval.
 	AppFlowSignalHILApproval = "hil_approval"
 
@@ -139,6 +142,23 @@ type FinalizeRunActivityInput struct {
 	Status    string `json:"status"`              // "completed" | "failed" | "rejected"
 	FinalText string `json:"final_text,omitempty"`
 	ErrMsg    string `json:"err_msg,omitempty"`
+}
+
+// AgentInvokeActivityInput is the input to AppFlowInvokeAgentActivity.
+type AgentInvokeActivityInput struct {
+	RunID         string `json:"run_id"`
+	TenantID      string `json:"tenant_id"`
+	ApplicationID string `json:"application_id"`
+	NodeID        string `json:"node_id"`
+	// AgentID is the UUID from agents.id (server-stamped in _resolved_agent_ids).
+	AgentID     string `json:"agent_id"`
+	UserMessage string `json:"user_message"`
+}
+
+// AgentInvokeActivityOutput is returned by AppFlowInvokeAgentActivity.
+type AgentInvokeActivityOutput struct {
+	// ResponseText is the agent's plain-text reply.
+	ResponseText string `json:"response_text"`
 }
 
 // ── Workflow ──────────────────────────────────────────────────────────────────
@@ -372,16 +392,34 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 
-		case "agent", "orchestrator":
-			// Direct agent invocation within AppFlowWorkflow is not yet implemented.
-			// Return a non-retryable error so the run fails explicitly rather than
-			// silently producing a "completed" result with no agent output.
-			out.Status = "failed"
-			retErr = temporalerr.NewNonRetryableApplicationError(
-				fmt.Sprintf("AppFlowWorkflow: agent/orchestrator node %q requires direct invocation which is not yet implemented; use OrchestrationWorkflow for agent execution", node.ID),
-				"AgentInvocationNotImplemented", nil,
-			)
-			return
+		case "agent":
+			// Call agent via A2A HTTP through InvokeAgentActivity.
+			var agentOut AgentInvokeActivityOutput
+			err := workflow.ExecuteActivity(ctx, AppFlowInvokeAgentActivityName, AgentInvokeActivityInput{
+				RunID:         input.RunID,
+				TenantID:      input.TenantID,
+				ApplicationID: input.ApplicationID,
+				NodeID:        node.ID,
+				AgentID:       node.AgentID,
+				UserMessage:   accumulated,
+			}).Get(ctx, &agentOut)
+			if err != nil {
+				out.Status = "failed"
+				retErr = fmt.Errorf("agent %q: %w", node.ID, err)
+				return
+			}
+			// Accumulate the agent's response for downstream nodes.
+			if agentOut.ResponseText != "" {
+				accumulated = agentOut.ResponseText
+			}
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
+		case "orchestrator":
+			// Orchestrator nodes act as pass-through routing containers in the app canvas.
+			// The actual agent invocation happens at the agent leaf nodes.
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
 
 		case "middleware":
 			// Middleware nodes affect agent calls but are not directly executed here.
@@ -414,6 +452,14 @@ type AppFlowActivities struct {
 	StatusUpdater RunStatusUpdater
 	// StreamPub publishes events to the run's Redis Stream. May be nil (no-op).
 	StreamPub StreamPublisher
+	// AgentInvoker calls the agent identified by AgentID via A2A HTTP.
+	AgentInvoker AgentInvoker
+}
+
+// AgentInvoker calls a specific agent by its DB UUID via A2A.
+// Implemented by the dag-worker's agentA2ACaller.
+type AgentInvoker interface {
+	InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (string, error)
 }
 
 // RunStatusUpdater updates a run's terminal status in the DB.
@@ -497,6 +543,28 @@ func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILAct
 		return HILActivityOutput{}, fmt.Errorf("hil: insert approval request: %w", err)
 	}
 	return HILActivityOutput{}, nil
+}
+
+// InvokeAgentActivity calls an agent by its DB UUID via A2A HTTP.
+// The agent endpoint is resolved by the AgentInvoker (which queries DB for the
+// agent record and performs the HTTP call). Returns the agent's text response.
+func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input AgentInvokeActivityInput) (AgentInvokeActivityOutput, error) {
+	if a.AgentInvoker == nil {
+		return AgentInvokeActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			"appflow: no AgentInvoker configured on AppFlowActivities", "NoAgentInvoker", nil,
+		)
+	}
+	if input.AgentID == "" {
+		return AgentInvokeActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			fmt.Sprintf("appflow: node %q has empty agent_id (re-publish the application canvas to stamp IDs)", input.NodeID),
+			"EmptyAgentID", nil,
+		)
+	}
+	text, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.UserMessage)
+	if err != nil {
+		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
+	}
+	return AgentInvokeActivityOutput{ResponseText: text}, nil
 }
 
 // FinalizeRunActivity updates the run's DB status and publishes a terminal event

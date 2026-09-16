@@ -2856,6 +2856,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-WF-02 | `TestFinalizeRunActivity_XAddError_IsReturned` | XAdd error propagated (not swallowed) so Temporal retries activity |
 | AF-WF-02b | `TestFinalizeRunActivity_NilDeps_NoOp` | nil StatusUpdater + StreamPub returns nil (safe no-op) |
 | AF-WF-03 | `TestFinalizeRunActivityInput_JSONRoundTrip` | FinalizeRunActivityInput status/errMsg survive JSON serialization |
+| AF-WF-04 | `TestInvokeAgentActivity_Success` | InvokeAgentActivity returns agent response text via AgentInvoker |
+| AF-WF-05 | `TestInvokeAgentActivity_EmptyAgentID` | InvokeAgentActivity returns non-retryable error when agent_id is empty |
+| AF-WF-06 | `TestInvokeAgentActivity_NilInvoker` | InvokeAgentActivity returns non-retryable error when AgentInvoker is nil |
 | AF-HIL-01 | `TestHILApprove_Success` | Approve: 200 + Temporal signaled with appflow workflow ID + status=approved |
 | AF-HIL-02 | `TestHILReject_Success` | Reject: 200 + Temporal signaled + status=rejected |
 | AF-HIL-03 | `TestHILApprove_NotFound` | 404 when hil_approvals row missing; no Temporal signal |
@@ -3442,9 +3445,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| S1-112 | AppFlow compiler + workflow (AF-01..10, AF-C-01..04, AF-WF-01..03): compiler, ResolveAgentByInstanceID (server-stamped map), ParseLLMConfig (LLMOrchConfig), FinalizeRunActivity (success/fail/XAdd-error/nil-deps), JSON round-trip | 19 |
+| S1-112 | AppFlow compiler + workflow (AF-01..10, AF-C-01..04, AF-WF-01..06): compiler, ResolveAgentByInstanceID (server-stamped map), ParseLLMConfig (LLMOrchConfig), FinalizeRunActivity (success/fail/XAdd-error/nil-deps), JSON round-trip, InvokeAgentActivity (success/empty-id/nil-invoker) | 22 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
-| **S1 total** | | **1183** |
+| **S1 total** | | **1186** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

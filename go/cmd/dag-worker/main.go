@@ -159,11 +159,17 @@ func run() error {
 	}
 	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
 	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
+	agentCaller := &pgxAgentA2ACaller{
+		pool:       rlsPools.Admin,
+		cryptoKey:  cryptoKey,
+		httpClient: &http.Client{Timeout: 5 * time.Minute},
+	}
 	appFlowActs := &appflow.AppFlowActivities{
 		LLMCaller:     routerCaller,
 		DB:            rlsPools.Admin,
 		StatusUpdater: statusUpdater,
 		StreamPub:     streamPub,
+		AgentInvoker:  agentCaller,
 	}
 	appFlowWorker := temporalworker.New(temporalCli, appflow.AppFlowTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
@@ -177,6 +183,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.FinalizeRunActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowFinalizeRunActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InvokeAgentActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowInvokeAgentActivityName,
 	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)
@@ -698,6 +707,112 @@ func (c *dbRouterLLMCaller) resolveKey(ctx context.Context, providerName, tenant
 }
 
 var _ appflow.RouterLLMCaller = (*dbRouterLLMCaller)(nil)
+
+// ── pgxAgentA2ACaller ─────────────────────────────────────────────────────────
+
+// pgxAgentA2ACaller implements appflow.AgentInvoker. It resolves the agent
+// endpoint URL by agent UUID from them.agents, then calls it via A2A HTTP POST.
+// The agent auth token is decrypted with the platform crypto key.
+type pgxAgentA2ACaller struct {
+	pool       *pgxpool.Pool
+	cryptoKey  []byte
+	httpClient *http.Client
+}
+
+// InvokeByID calls the A2A agent identified by agentID via HTTP POST.
+// The message format follows the minimal A2A JSON-RPC request shape.
+func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (string, error) {
+	// Resolve agent endpoint + auth token from DB (scoped by tenant for security).
+	row := c.pool.QueryRow(ctx,
+		`SELECT COALESCE(endpoint_url,''), COALESCE(auth_token_encrypted,'')
+		   FROM them.agents
+		  WHERE id = $1::uuid AND tenant_id = $2::uuid AND enabled = true`,
+		agentID, tenantID)
+	var endpointURL, authTokenEnc string
+	if err := row.Scan(&endpointURL, &authTokenEnc); err != nil {
+		return "", fmt.Errorf("agentA2ACaller: resolve agent %s: %w", agentID, err)
+	}
+	if endpointURL == "" {
+		return "", fmt.Errorf("agentA2ACaller: agent %s has no endpoint_url", agentID)
+	}
+
+	authToken := ""
+	if authTokenEnc != "" {
+		if plain, err := crypto.DecryptStored(c.cryptoKey, authTokenEnc); err == nil {
+			authToken = plain
+		}
+	}
+
+	// Build a minimal A2A JSON-RPC "message/send" request.
+	reqBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "message/send",
+		"id":      1,
+		"params": map[string]any{
+			"message": map[string]any{
+				"role": "user",
+				"parts": []map[string]any{
+					{"kind": "text", "text": userMessage},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("agentA2ACaller: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, strings.NewReader(string(reqBody)))
+	if err != nil {
+		return "", fmt.Errorf("agentA2ACaller: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	req.Header.Set("X-Them-Application-Id", applicationID)
+	req.Header.Set("X-Them-Tenant-Id", tenantID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("agentA2ACaller: http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("agentA2ACaller: agent returned HTTP %d", resp.StatusCode)
+	}
+
+	// Parse A2A JSON-RPC response — extract the text from the first part.
+	var rpcResp struct {
+		Result struct {
+			Parts []struct {
+				Kind string `json:"kind"`
+				Text string `json:"text"`
+			} `json:"parts"`
+			// Alternative: flat text result from simpler agents.
+			Text string `json:"text"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return "", fmt.Errorf("agentA2ACaller: decode response: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return "", fmt.Errorf("agentA2ACaller: agent error: %s", rpcResp.Error.Message)
+	}
+
+	// Prefer parts[0].text, fall back to result.text for simpler agents.
+	for _, p := range rpcResp.Result.Parts {
+		if p.Kind == "text" && p.Text != "" {
+			return p.Text, nil
+		}
+	}
+	return rpcResp.Result.Text, nil
+}
+
+var _ appflow.AgentInvoker = (*pgxAgentA2ACaller)(nil)
 
 // pgxRunStatusUpdater implements appflow.RunStatusUpdater using pgxpool.
 type pgxRunStatusUpdater struct {

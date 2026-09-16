@@ -126,6 +126,67 @@ func TestFinalizeRunActivity_NilDeps_NoOp(t *testing.T) {
 }
 
 // AF-WF-03: FinalizeRunActivityInput JSON round-trip — status values survive serialization.
+// ── AF-WF-04: InvokeAgentActivity ─────────────────────────────────────────────
+
+type fakeAgentInvoker struct {
+	response string
+	err      error
+}
+
+func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _ string) (string, error) {
+	return f.response, f.err
+}
+
+// AF-WF-04: InvokeAgentActivity returns agent response text on success.
+func TestInvokeAgentActivity_Success(t *testing.T) {
+	acts := &AppFlowActivities{
+		AgentInvoker: &fakeAgentInvoker{response: "Hello from agent!"},
+	}
+	out, err := acts.InvokeAgentActivity(context.Background(), AgentInvokeActivityInput{
+		RunID:         "run-1",
+		TenantID:      "tenant-1",
+		ApplicationID: "app-1",
+		NodeID:        "node-agent-1",
+		AgentID:       "agent-uuid-1",
+		UserMessage:   "Hi!",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ResponseText != "Hello from agent!" {
+		t.Errorf("response: want %q, got %q", "Hello from agent!", out.ResponseText)
+	}
+}
+
+// AF-WF-05: InvokeAgentActivity returns non-retryable error when agent_id is empty.
+func TestInvokeAgentActivity_EmptyAgentID(t *testing.T) {
+	acts := &AppFlowActivities{
+		AgentInvoker: &fakeAgentInvoker{response: "should not be called"},
+	}
+	_, err := acts.InvokeAgentActivity(context.Background(), AgentInvokeActivityInput{
+		RunID:         "run-2",
+		TenantID:      "tenant-2",
+		ApplicationID: "app-2",
+		NodeID:        "node-agent-2",
+		AgentID:       "", // empty — stamp missing
+		UserMessage:   "Hi!",
+	})
+	if err == nil {
+		t.Fatal("expected error for empty agent_id")
+	}
+}
+
+// AF-WF-06: InvokeAgentActivity returns non-retryable error when AgentInvoker is nil.
+func TestInvokeAgentActivity_NilInvoker(t *testing.T) {
+	acts := &AppFlowActivities{AgentInvoker: nil}
+	_, err := acts.InvokeAgentActivity(context.Background(), AgentInvokeActivityInput{
+		AgentID: "some-agent-uuid",
+	})
+	if err == nil {
+		t.Fatal("expected error when AgentInvoker is nil")
+	}
+}
+
 func TestFinalizeRunActivityInput_JSONRoundTrip(t *testing.T) {
 	in := FinalizeRunActivityInput{
 		RunID:     "run-5",
