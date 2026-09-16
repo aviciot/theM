@@ -157,7 +157,14 @@ func run() error {
 		factory:   &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
 		logger:    log,
 	}
-	appFlowActs := &appflow.AppFlowActivities{LLMCaller: routerCaller, DB: rlsPools.Admin}
+	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
+	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
+	appFlowActs := &appflow.AppFlowActivities{
+		LLMCaller:     routerCaller,
+		DB:            rlsPools.Admin,
+		StatusUpdater: statusUpdater,
+		StreamPub:     streamPub,
+	}
 	appFlowWorker := temporalworker.New(temporalCli, appflow.AppFlowTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
 	})
@@ -167,6 +174,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.ExecuteHILActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowExecuteHILActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.FinalizeRunActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowFinalizeRunActivityName,
 	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)
@@ -688,3 +698,25 @@ func (c *dbRouterLLMCaller) resolveKey(ctx context.Context, providerName, tenant
 }
 
 var _ appflow.RouterLLMCaller = (*dbRouterLLMCaller)(nil)
+
+// pgxRunStatusUpdater implements appflow.RunStatusUpdater using pgxpool.
+type pgxRunStatusUpdater struct {
+	pool *pgxpool.Pool
+}
+
+func (u *pgxRunStatusUpdater) UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error {
+	terminal := status == domain.RunCompleted || status == domain.RunFailed || status == domain.RunCanceled
+	var q string
+	if terminal {
+		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,''), ended_at=now() WHERE id=$1::uuid`
+	} else {
+		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,'') WHERE id=$1::uuid`
+	}
+	_, err := u.pool.Exec(ctx, q, runID, string(status), errMsg)
+	if err != nil {
+		return fmt.Errorf("pgxRunStatusUpdater: update run %s: %w", runID, err)
+	}
+	return nil
+}
+
+var _ appflow.RunStatusUpdater = (*pgxRunStatusUpdater)(nil)

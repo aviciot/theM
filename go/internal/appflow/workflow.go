@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	temporalerr "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+
+	"github.com/aviciot/them/internal/domain"
 )
 
 const (
@@ -24,6 +26,9 @@ const (
 
 	// AppFlowExecuteHILActivityName is the registered name for the HIL activity.
 	AppFlowExecuteHILActivityName = "AppFlowExecuteHILActivity"
+
+	// AppFlowFinalizeRunActivityName is the registered name for the finalize activity.
+	AppFlowFinalizeRunActivityName = "AppFlowFinalizeRunActivity"
 
 	// AppFlowSignalHILApproval is the signal name for HIL human approval.
 	AppFlowSignalHILApproval = "hil_approval"
@@ -63,6 +68,10 @@ type AppFlowWorkflowInput struct {
 	LLMProvider string `json:"llm_provider,omitempty"`
 	// LLMModel is the model to use for Router classification.
 	LLMModel string `json:"llm_model,omitempty"`
+	// UserID is the the-M user ID (0 when not a dashboard user).
+	UserID int64 `json:"user_id,omitempty"`
+	// ExternalUserID is the caller-supplied external user identifier.
+	ExternalUserID string `json:"external_user_id,omitempty"`
 }
 
 // AppFlowWorkflowOutput is returned by AppFlowWorkflow on completion.
@@ -106,13 +115,13 @@ type RouterActivityOutput struct {
 
 // HILActivityInput is the input to AppFlowExecuteHILActivity.
 type HILActivityInput struct {
-	RunID         string `json:"run_id"`
-	TenantID      string `json:"tenant_id"`
-	ApplicationID string `json:"application_id"`
-	NodeID        string `json:"node_id"`
-	ApproverRole  string `json:"approver_role,omitempty"`
-	Prompt        string `json:"prompt,omitempty"`
-	TimeoutSecs   int    `json:"timeout_seconds,omitempty"`
+	RunID          string `json:"run_id"`
+	TenantID       string `json:"tenant_id"`
+	ApplicationID  string `json:"application_id"`
+	NodeID         string `json:"node_id"`
+	ApproverRole   string `json:"approver_role,omitempty"`
+	Prompt         string `json:"prompt,omitempty"`
+	TimeoutSecs    int    `json:"timeout_seconds,omitempty"`
 	FallbackAction string `json:"fallback_action,omitempty"` // "reject"|"approve"|"abort"
 }
 
@@ -123,16 +132,26 @@ type HILActivityOutput struct {
 	Comment  string `json:"comment,omitempty"`
 }
 
+// FinalizeRunActivityInput is the input to AppFlowFinalizeRunActivity.
+type FinalizeRunActivityInput struct {
+	RunID     string `json:"run_id"`
+	TenantID  string `json:"tenant_id"`
+	Status    string `json:"status"`              // "completed" | "failed" | "rejected"
+	FinalText string `json:"final_text,omitempty"`
+	ErrMsg    string `json:"err_msg,omitempty"`
+}
+
 // ── Workflow ──────────────────────────────────────────────────────────────────
 
 // AppFlowWorkflow executes an application canvas AppFlowSpec as a Temporal workflow.
 //
 // Execution model per EPFlow:
 //   - Walk nodes in topological order from start_id.
-//   - Agent nodes: dispatched to the orchestrator via existing activity (future integration).
+//   - Agent nodes: rejected with a non-retryable error (direct invocation not yet implemented).
 //   - Router nodes: ExecuteRouterActivity classifies the user message → chooses an outgoing label.
 //   - HIL nodes: ExecuteHILActivity persists an approval request; workflow pauses on signal.
 //   - Missing outgoing edges on a router → non-retryable error.
+//   - FinalizeRunActivity is called at every terminal exit to update DB status + publish stream event.
 func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowWorkflowOutput, error) {
 	if input.Spec == nil {
 		return AppFlowWorkflowOutput{Status: "failed"},
@@ -176,6 +195,26 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 	outEdgesBySource := make(map[string][]AppFlowEdge)
 	for _, e := range epFlow.Edges {
 		outEdgesBySource[e.Source] = append(outEdgesBySource[e.Source], e)
+	}
+
+	// Shared activity options for short-lived finalize/HIL activities.
+	shortAO := workflow.ActivityOptions{
+		TaskQueue:           AppFlowTaskQueue,
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy:         &temporalerr.RetryPolicy{MaximumAttempts: 3},
+	}
+
+	// finalize calls FinalizeRunActivity on the detached short-timeout context.
+	// Errors are logged but not propagated — the workflow already has its terminal result.
+	finalize := func(status, finalText, errMsg string) {
+		fCtx := workflow.WithActivityOptions(ctx, shortAO)
+		_ = workflow.ExecuteActivity(fCtx, AppFlowFinalizeRunActivityName, FinalizeRunActivityInput{
+			RunID:     input.RunID,
+			TenantID:  input.TenantID,
+			Status:    status,
+			FinalText: finalText,
+			ErrMsg:    errMsg,
+		}).Get(fCtx, nil)
 	}
 
 	// Walk nodes sequentially from start_id.
@@ -260,13 +299,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 			// and returns immediately. Then the workflow waits for the signal.
 			var hilOut HILActivityOutput
 
-			// Use a longer timeout for HIL activities (they just write to DB).
-			hilAO := workflow.ActivityOptions{
-				TaskQueue:           AppFlowTaskQueue,
-				StartToCloseTimeout: 30 * time.Second,
-				RetryPolicy:         &temporalerr.RetryPolicy{MaximumAttempts: 3},
-			}
-			hilCtx := workflow.WithActivityOptions(ctx, hilAO)
+			hilCtx := workflow.WithActivityOptions(ctx, shortAO)
 			err := workflow.ExecuteActivity(hilCtx, AppFlowExecuteHILActivityName, HILActivityInput{
 				RunID:          input.RunID,
 				TenantID:       input.TenantID,
@@ -310,9 +343,11 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 			}
 
 			if !approval.Approved {
+				rejMsg := "HIL gate rejected: " + approval.Comment
+				finalize("rejected", "", rejMsg)
 				return AppFlowWorkflowOutput{
 					Status:    "rejected",
-					FinalText: "HIL gate rejected: " + approval.Comment,
+					FinalText: rejMsg,
 				}, nil
 			}
 
@@ -322,14 +357,14 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 			continue
 
 		case "agent", "orchestrator":
-			// Agent/orchestrator execution is handled by the existing OrchestrationWorkflow.
-			// In the current phase, the app canvas with a DAG execution backend
-			// routes through the standard orchestrator path — agents are discovered
-			// by the orchestrator, not called directly by AppFlowWorkflow.
-			// This node type is a pass-through in the flow graph.
-			nextID := firstEdgeTarget(outEdgesBySource[node.ID])
-			currentID = nextID
-			continue
+			// Direct agent invocation within AppFlowWorkflow is not yet implemented.
+			// Return a non-retryable error so the run fails explicitly rather than
+			// silently producing a "completed" result with no agent output.
+			return AppFlowWorkflowOutput{Status: "failed"},
+				temporalerr.NewNonRetryableApplicationError(
+					fmt.Sprintf("AppFlowWorkflow: agent/orchestrator node %q requires direct invocation which is not yet implemented; use OrchestrationWorkflow for agent execution", node.ID),
+					"AgentInvocationNotImplemented", nil,
+				)
 
 		case "middleware":
 			// Middleware nodes affect agent calls but are not directly executed here.
@@ -346,10 +381,12 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 		}
 	}
 
-	return AppFlowWorkflowOutput{
+	finalOut := AppFlowWorkflowOutput{
 		Status:    "completed",
 		FinalText: accumulated,
-	}, nil
+	}
+	finalize(finalOut.Status, finalOut.FinalText, "")
+	return finalOut, nil
 }
 
 // ── Activity stubs ────────────────────────────────────────────────────────────
@@ -360,6 +397,22 @@ type AppFlowActivities struct {
 	LLMCaller RouterLLMCaller
 	// DB is used by the HIL activity to persist approval requests.
 	DB *pgxpool.Pool
+	// StatusUpdater updates run DB status on completion. May be nil (no-op).
+	StatusUpdater RunStatusUpdater
+	// StreamPub publishes events to the run's Redis Stream. May be nil (no-op).
+	StreamPub StreamPublisher
+}
+
+// RunStatusUpdater updates a run's terminal status in the DB.
+// Implemented by *runrecorder.Recorder. Nil = no-op.
+type RunStatusUpdater interface {
+	UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error
+}
+
+// StreamPublisher writes a JSON event string to the run's Redis Stream key.
+// Implemented by the dag-worker's redisStreamPublisher. Nil = no-op.
+type StreamPublisher interface {
+	XAdd(ctx context.Context, key string, fields map[string]interface{}) error
 }
 
 // RouterLLMCaller is the interface the Router activity uses to call an LLM.
@@ -431,6 +484,57 @@ func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILAct
 		return HILActivityOutput{}, fmt.Errorf("hil: insert approval request: %w", err)
 	}
 	return HILActivityOutput{}, nil
+}
+
+// FinalizeRunActivity updates the run's DB status and publishes a terminal event
+// to the Redis Stream so connected WS/SSE clients receive the "done" or "error" frame.
+// This activity is idempotent — safe to retry.
+func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input FinalizeRunActivityInput) error {
+	var domainStatus domain.RunStatus
+	var evType string
+	switch input.Status {
+	case "completed":
+		domainStatus = domain.RunCompleted
+		evType = "done"
+	case "rejected":
+		domainStatus = domain.RunFailed
+		evType = "error"
+	default:
+		domainStatus = domain.RunFailed
+		evType = "error"
+	}
+
+	errMsg := input.ErrMsg
+	if input.Status == "rejected" && errMsg == "" {
+		errMsg = "rejected by HIL gate"
+	}
+
+	if a.StatusUpdater != nil {
+		if err := a.StatusUpdater.UpdateRunStatus(ctx, input.RunID, domainStatus, errMsg); err != nil {
+			return fmt.Errorf("finalize: update run status: %w", err)
+		}
+	}
+
+	if a.StreamPub != nil {
+		key := fmt.Sprintf("them:dash:run:%s:stream", input.RunID)
+		var payload map[string]interface{}
+		if evType == "done" {
+			payload = map[string]interface{}{
+				"type":       "done",
+				"run_id":     input.RunID,
+				"final_text": input.FinalText,
+			}
+		} else {
+			payload = map[string]interface{}{
+				"type":    "error",
+				"run_id":  input.RunID,
+				"message": errMsg,
+			}
+		}
+		raw, _ := json.Marshal(payload)
+		_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
+	}
+	return nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

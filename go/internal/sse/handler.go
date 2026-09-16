@@ -444,8 +444,10 @@ func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionH
 	}
 
 	input := appflow.AppFlowWorkflowInput{
-		Spec:        singleEPSpec,
-		UserMessage: userText,
+		Spec:           singleEPSpec,
+		UserMessage:    userText,
+		UserID:         handle.UserID,
+		ExternalUserID: handle.ExternalUserID,
 	}
 	return h.lc.StartAppFlow(ctx, handle, input)
 }
