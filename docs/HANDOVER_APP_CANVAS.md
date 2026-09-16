@@ -1,6 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
-# Last updated: 2026-09-16 (Phase 2 complete)
+# Last updated: 2026-09-16 (Phase 3 complete)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -28,9 +28,10 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD: `01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas`
+HEAD: `7f898f40  feat(canvas): Phase 3 — App canvas DAG execution (appflow compiler + Router/HIL workflow)`
 
 Recent work completed (this feature):
+- **Phase 3 complete** (commit `7f898f40`) — AppFlow compiler + Temporal workflow + Router/HIL activities + frontend panels
 - **Phase 2 complete** (commit `01ddb610`) — Router + HIL flow control nodes, topology only, frontend-only
 - **Phase 1 complete** (commit `61a3d915`) — middleware node registry: emoji/color/bg_color from DB
 - Step 38 — File Guard (all 6 steps): per-agent file scanning via canvas wiring, guard events in run history, per-app health card in RuntimeView
@@ -48,8 +49,35 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 |---|---|---|---|
 | 1 | Middleware node registry — emoji/color/bg from DB, not hardcoded | S | ✅ **DONE** (commit `61a3d915`) |
 | 2 | Router + HIL nodes in app canvas (topology only) | M | ✅ **DONE** (commit `01ddb610`) |
-| **3** | App canvas DAG execution — local loop + Temporal | L | **START HERE** |
+| **3** | App canvas DAG execution — local loop + Temporal | L | ✅ **DONE** (commit `7f898f40`) |
 | 4 | Full node unification (optional/future) | L | Future |
+
+---
+
+## Phase 3 — COMPLETE
+
+Everything shipped in commit `7f898f40`. Summary of what was built:
+
+**Go — new package `go/internal/appflow/`:**
+- `compiler.go`: `Compile(raw json.RawMessage, agentByInstanceID map[string]string) (*AppFlowSpec, error)` — parses `AppDefinitionDoc` (schema_version 2), BFS walk from EP + ep.Root, classifies components as `agent | middleware | router | hil | orchestrator`, builds `EPFlow{Slug, Protocol, Nodes, Edges, StartID}`. `Validate(*AppFlowSpec)` checks router_no_edges and unresolved_agent.
+- `workflow.go`: `AppFlowWorkflow` — Temporal workflow on `appflow-dag` task queue. Walks `EPFlow` from `StartID`; router nodes run `ExecuteRouterActivity` (LLM intent → label → outgoing edge); HIL nodes run `ExecuteHILActivity` (persist, then wait for `hil_approval:<nodeID>` signal with configurable timeout + fallback); agent/middleware nodes pass through. `AppFlowActivities{LLMCaller, ExecuteRouterActivity, ExecuteHILActivity}`. Types: `RouterConfig`, `HILConfig`, `RouterActivityInput/Output`, `HILActivityInput/Output`, `HILApprovalPayload`.
+
+**Go — `go/cmd/dag-worker/main.go`:**
+- Imports `internal/appflow`.
+- Second `temporalworker` registered on `appflow-dag` task queue with `AppFlowWorkflow` + `ExecuteRouterActivity` + `ExecuteHILActivity`.
+- Both workers stopped on SIGTERM.
+
+**Frontend:**
+- `apiTypes.ts`: `AppDefinitionDoc.execution_backend?: 'local' | 'temporal'`.
+- `CanvasHelpers.ts`: `canvasToDoc(nodes, edges, name?, executionBackend?)` — spreads `execution_backend` into doc when set.
+- `CanvasBuilderView.tsx`: `executionBackend` state initialized from `def.definition.execution_backend` in `loadDef`; dropdown toggle in top bar; threaded through `canvasToDoc` call in `saveDraft`.
+- `CanvasNodePropertiesPanel.tsx`: Router panel (output_labels[], classifier_prompt textarea); HIL panel (approver_role select, prompt textarea, timeout_seconds input, fallback_action select). Both update node config via `setNodes` → `setIsDirty`.
+
+**Tests:** S1-112 (8 tests, AF-01..08). 53 packages, 0 failures.
+
+**Open gap:** `AppFlowWorkflow` is registered and compilable but is NOT yet triggered from WS/SSE dispatch. Entry points still use the standard `OrchestrationWorkflow` path regardless of `execution_backend`. Wiring the dispatch switch (check `def.execution_backend == "temporal"` at admit time → start `AppFlowWorkflow` instead of `OrchestrationWorkflow`) is the natural Phase 4-prep follow-up.
+
+**Rebuild required before testing:** `them-dag-worker` (new `appflow-dag` worker), `them-go-bridge` (no new routes but rebuild for any indirect dep changes), `them-frontend` (execution_backend toggle + Router/HIL panels).
 
 ---
 

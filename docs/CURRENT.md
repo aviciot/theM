@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-16 (App Canvas Upgrade Phase 2 — Router + HIL flow control nodes complete)
+# Last updated: 2026-09-16 (App Canvas Upgrade Phase 3 — AppFlow DAG execution compiler + Temporal workflow)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas`
+HEAD: `7f898f40  feat(canvas): Phase 3 — App canvas DAG execution (appflow compiler + Router/HIL workflow)`
 
 Recent commits (newest first):
 ```
+7f898f40  feat(canvas): Phase 3 — App canvas DAG execution (appflow compiler + Router/HIL workflow)
 01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas
 61a3d915  feat(canvas): Phase 1 — middleware node visual registry from DB
 2cbf8c54  feat(security): Step 6 — per-app File Guard health card in RuntimeView
 d57a04b2  feat(security): Step 5 — surface FileGuard events in run history Security tab
-e2716b14  feat(canvas): Step 4 — File Guard properties panel in canvas node
 (prior)   Steps 1–3: migration seed, gate logic, admin wirings CRUD
 ```
 
@@ -46,6 +46,23 @@ Key facts:
 ---
 
 ## Current migration slice
+
+**App Canvas Upgrade — Phase 3 (AppFlow DAG execution) — COMPLETE**
+
+Completed 2026-09-16. Go backend + frontend changes. `them-dag-worker` must be rebuilt and restarted.
+
+- `go/internal/appflow/compiler.go`: `Compile(raw, agentByInstanceID)` → `AppFlowSpec`. BFS from EP + ep.Root, resolves agent/middleware/router/hil node kinds. ✅
+- `go/internal/appflow/workflow.go`: `AppFlowWorkflow` (Temporal, task queue `appflow-dag`). Router activity (LLM intent → label → outgoing edge). HIL activity (persist + signal wait with timeout/fallback). `AppFlowActivities{ExecuteRouterActivity, ExecuteHILActivity}`. ✅
+- `go/cmd/dag-worker/main.go`: AppFlowWorkflow + 2 activities registered on `appflow-dag` task queue alongside existing `canvas-dag-nodes`. ✅
+- `frontend/src/lib/apiTypes.ts`: `AppDefinitionDoc.execution_backend?` added. ✅
+- `frontend/src/app/admin/applications/components/CanvasHelpers.ts`: `canvasToDoc` accepts `executionBackend` param. ✅
+- `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx`: `executionBackend` state, initialized from loaded def, dropdown toggle in toolbar, threaded through `saveDraft`. ✅
+- `frontend/src/app/admin/applications/components/cbv/CanvasNodePropertiesPanel.tsx`: Router panel (output_labels[], classifier_prompt), HIL panel (approver_role, prompt, timeout_seconds, fallback_action). ✅
+- Tests: S1-112 (8 tests, AF-01..08). 53 packages, 0 failures. ✅
+
+**Next recommended task:** Phase 4 — Full node unification (optional/future). OR: Wire `AppFlowWorkflow` into the WS/SSE lifecycle when `execution_backend = "temporal"` (currently the workflow is registered but not yet triggered from entry point dispatch). See `docs/APP_CANVAS_UPGRADE_PLAN.md`.
+
+**Rebuild needed:** `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-dag-worker them-go-bridge them-frontend && docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d`
 
 **App Canvas Upgrade — Phase 2 (Router + HIL flow control nodes) — COMPLETE**
 
