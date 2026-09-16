@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `7f898f40  feat(canvas): Phase 3 — App canvas DAG execution (appflow compiler + Router/HIL workflow)`
+HEAD: `3e6c1bbb  fix(appflow): NODE_PORTS for flowControl; skip registry for flow_control on publish/validate`
 
 Recent commits (newest first):
 ```
+3e6c1bbb  fix(appflow): NODE_PORTS for flowControl; skip registry for flow_control on publish/validate
+0a27cf28  fix(appflow): remove DefinitionID fallback in agent resolution; fail explicitly on unresolved agents
+53c056fb  fix(appflow): implement HIL activity — persist approval request to hil_approvals table
+21c0e417  fix(appflow): wire real LLMCaller in dag-worker; remove raw key from activity input
+03192156  fix(appflow): config round-trip, edge labels, remove raw API key from workflow history
 7f898f40  feat(canvas): Phase 3 — App canvas DAG execution (appflow compiler + Router/HIL workflow)
-01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas
-61a3d915  feat(canvas): Phase 1 — middleware node visual registry from DB
-2cbf8c54  feat(security): Step 6 — per-app File Guard health card in RuntimeView
-d57a04b2  feat(security): Step 5 — surface FileGuard events in run history Security tab
-(prior)   Steps 1–3: migration seed, gate logic, admin wirings CRUD
 ```
 
 ---
@@ -47,20 +47,26 @@ Key facts:
 
 ## Current migration slice
 
-**App Canvas Upgrade — Phase 3 (AppFlow DAG execution) — COMPLETE**
+**App Canvas Upgrade — Phase 3 (AppFlow DAG execution) — IN PROGRESS (fixes applied)**
 
-Completed 2026-09-16. Go backend + frontend changes. `them-dag-worker` must be rebuilt and restarted.
+Core implementation done 2026-09-16 (commit `7f898f40`). Post-review fixes applied in 5 commits.
 
-- `go/internal/appflow/compiler.go`: `Compile(raw, agentByInstanceID)` → `AppFlowSpec`. BFS from EP + ep.Root, resolves agent/middleware/router/hil node kinds. ✅
-- `go/internal/appflow/workflow.go`: `AppFlowWorkflow` (Temporal, task queue `appflow-dag`). Router activity (LLM intent → label → outgoing edge). HIL activity (persist + signal wait with timeout/fallback). `AppFlowActivities{ExecuteRouterActivity, ExecuteHILActivity}`. ✅
-- `go/cmd/dag-worker/main.go`: AppFlowWorkflow + 2 activities registered on `appflow-dag` task queue alongside existing `canvas-dag-nodes`. ✅
-- `frontend/src/lib/apiTypes.ts`: `AppDefinitionDoc.execution_backend?` added. ✅
-- `frontend/src/app/admin/applications/components/CanvasHelpers.ts`: `canvasToDoc` accepts `executionBackend` param. ✅
-- `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx`: `executionBackend` state, initialized from loaded def, dropdown toggle in toolbar, threaded through `saveDraft`. ✅
-- `frontend/src/app/admin/applications/components/cbv/CanvasNodePropertiesPanel.tsx`: Router panel (output_labels[], classifier_prompt), HIL panel (approver_role, prompt, timeout_seconds, fallback_action). ✅
-- Tests: S1-112 (8 tests, AF-01..08). 53 packages, 0 failures. ✅
+**What's done:**
+- `go/internal/appflow/compiler.go`: `Compile()` + `Validate()` — BFS, Router/HIL classification, edge labels from conn.Label, no DefinitionID fallback. ✅
+- `go/internal/appflow/workflow.go`: `AppFlowWorkflow` — Router→LLM classify→label→edge; HIL→persist+signal wait with timeout/fallback. ✅
+- `go/cmd/dag-worker/main.go`: `appflow-dag` task queue, `AppFlowActivities` fully wired (LLMCaller + DB). ✅
+- `db/098_hil_approvals.sql`: HIL approval table. Applied. ✅
+- Frontend: config round-trip (full config preserved in canvasToDoc), edge labels, NODE_PORTS flowControl entries. ✅
+- Backend publish: flow_control nodes skip registry resolution. ✅
+- Tests: S1-112 (10 tests, AF-01..10). 1174 tests, 0 failures. ✅
 
-**Next recommended task:** Phase 4 — Full node unification (optional/future). OR: Wire `AppFlowWorkflow` into the WS/SSE lifecycle when `execution_backend = "temporal"` (currently the workflow is registered but not yet triggered from entry point dispatch). See `docs/APP_CANVAS_UPGRADE_PLAN.md`.
+**Remaining gaps before Phase 3 can be called fully complete:**
+1. Dispatch switch not yet wired — WS/SSE still always uses `OrchestrationWorkflow` regardless of `execution_backend`. Entry points with `"temporal"` backend don't trigger `AppFlowWorkflow` yet.
+2. Agent/orchestrator nodes are pass-through in `AppFlowWorkflow` — the flow walks the graph but doesn't call agents directly.
+3. No E2E test yet (Router branch selection, HIL approval/rejection, output propagation).
+4. No approval API (HIL row is written but there's no endpoint to POST approval → send Temporal signal).
+
+**Next recommended task:** Wire dispatch switch — when EP's active definition has `execution_backend="temporal"`, start `AppFlowWorkflow` instead of `OrchestrationWorkflow` in WS/SSE admit path (see `go/internal/ws/handler.go` and `go/internal/sse/handler.go`). Then wire approval API for HIL.
 
 **Rebuild needed:** `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-dag-worker them-go-bridge them-frontend && docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d`
 
