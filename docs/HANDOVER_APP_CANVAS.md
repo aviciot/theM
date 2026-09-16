@@ -1,6 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
-# Last updated: 2026-09-16 (Phase 3 — review findings 1–6 addressed)
+# Last updated: 2026-09-16 (Phase 3 — second review findings 1–4 addressed)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -28,10 +28,11 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD: `ca6c5fe7  fix(appflow): shared agent resolution, LLM default, agent→flowControl edge (Phase 3 findings 3+4+6)`
+HEAD: `b7f4c83f  fix(appflow): centralize finalization, fix XAdd swallow, stamp resolved agent IDs, wire orchestrator LLM config`
 
 Recent work completed (this feature):
-- **Phase 3 review fixes** (`62431c3e`, `ca6c5fe7`) — run lifecycle, agent rejection, user context, shared helpers, LLM default, NODE_PORTS fix
+- **Phase 3 second review fixes** (`b7f4c83f`) — finalization on all exit paths (defer+disconnected ctx), XAdd error returned, _resolved_agent_ids stamped at publish, orchestrator LLM config from EPConfig
+- **Phase 3 first review fixes** (`62431c3e`, `ca6c5fe7`) — run lifecycle, agent rejection, user context, shared helpers, LLM default, NODE_PORTS fix
 - **Phase 3 dispatch switch** (commit `4ceef04b`) — WS/SSE branch on execution_backend=temporal
 - **Phase 3 core** (commit `7f898f40`) — AppFlow compiler + Temporal workflow + Router/HIL activities + frontend panels
 - **Phase 2 complete** (commit `01ddb610`) — Router + HIL flow control nodes, topology only, frontend-only
@@ -97,24 +98,29 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 
 **Stack:** `them-go-bridge` + `them-dag-worker` rebuilt and running. Both workers polling: `canvas-dag-nodes` + `appflow-dag`.
 
-### Phase 3 review findings — fixed (`62431c3e`, `ca6c5fe7`)
+### Phase 3 first review findings — fixed (`62431c3e`, `ca6c5fe7`)
 
-All 6 findings from the prior review addressed:
+1. **Finding 1 — Agent invocation (FIXED):** Agent/orchestrator nodes return `NonRetryableApplicationError("AgentInvocationNotImplemented")` — explicit failure, not silent completion.
+2. **Finding 2 — Run lifecycle (FIXED):** `FinalizeRunActivity` wired at terminal exits; updates DB + publishes Redis Stream event.
+3. **Finding 3 — agentByInstanceID resolution (FIXED):** Extracted to `appflow.ResolveAgentByInstanceID` shared by WS + SSE.
+4. **Finding 4 — LLM provider/model (FIXED - partial):** `ParseLLMConfig` reads from definition JSON; defaults to "anthropic".
+5. **Finding 5 — User context (FIXED):** `UserID`/`ExternalUserID` wired in `AppFlowWorkflowInput`.
+6. **Finding 6 — Agent→flowControl connectivity (FIXED):** `NODE_PORTS['flowControl'].accepts` includes `'result'`.
 
-1. **Finding 1 — Agent invocation (FIXED):** Agent/orchestrator nodes now return `NonRetryableApplicationError("AgentInvocationNotImplemented")` — the run fails explicitly with a clear error instead of silently returning "completed" with no agent output.
-2. **Finding 2 — Run lifecycle (FIXED):** `FinalizeRunActivity` runs at every terminal exit (completed, HIL rejection, failure). It updates DB run status (`them.runs.status → completed/failed`) and publishes "done"/"error" to Redis Stream (`them:dash:run:{runID}:stream`) so WS/SSE clients receive the terminal frame. `StatusUpdater` and `StreamPub` wired in dag-worker via `pgxRunStatusUpdater` + `cache.NewRunStreamerWriterRedisClient`.
-3. **Finding 3 — agentByInstanceID resolution (FIXED):** Extracted to `appflow.ResolveAgentByInstanceID(defJSON)` — shared between WS and SSE, single canonical implementation.
-4. **Finding 4 — LLM provider/model (FIXED):** `appflow.ParseLLMConfig(defJSON)` reads `llm_provider`/`llm_model` from definition JSON; defaults to `"anthropic"` so the Router activity can always attempt 3-tier key resolution from DB. Both WS and SSE now populate `LLMProviderName`/`LLMProvider`/`LLMModel` on `AppFlowWorkflowInput`.
-5. **Finding 5 — User context (FIXED):** `AppFlowWorkflowInput` now carries `UserID` and `ExternalUserID`, wired from `handle` in both WS and SSE `startAppFlow`.
-6. **Finding 6 — Agent→flowControl connectivity (FIXED):** `NODE_PORTS['flowControl'].accepts` now includes `'result'` so agents can connect their output handle into Router and HIL nodes in the canvas.
+### Phase 3 second review findings — fixed (`b7f4c83f`)
+
+1. **Finding 1 — Centralized finalization (FIXED):** `AppFlowWorkflow` uses named returns `(out AppFlowWorkflowOutput, retErr error)` + `defer` + `workflow.NewDisconnectedContext`. `FinalizeRunActivity` now runs on **every exit path** including workflow cancellation, `AgentInvocationNotImplemented`, router errors, HIL persist errors, unknown node kind.
+2. **Finding 2 — XAdd error returned (FIXED):** `FinalizeRunActivity` returns XAdd error so Temporal retries on Redis stream failure. `pgxRunStatusUpdater.UpdateRunStatus` adds idempotency guard `AND status NOT IN ('completed','failed','canceled')` — repeated finalize is safe.
+3. **Finding 3 — Server-stamped agent UUIDs (FIXED):** `PublishDefinition` (dal + service) stamps `_resolved_agent_ids: {instance_id→agents.id}` into definition JSON via jsonb merge. `ResolveAgentByInstanceID` reads `_resolved_agent_ids` only — client `definition_id` is ignored. Old definitions without the stamp return empty map → Validate catches `unresolved_agent` → re-publish required.
+4. **Finding 4 — Orchestrator LLM config from EPConfig (FIXED):** `epConfigQuery` fetches `ao.llm_provider`/`ao.llm_model`. `EPConfig` carries `OrchestratorLLMProvider`/`OrchestratorLLMModel`. `ParseLLMConfig` now takes `LLMOrchConfig` struct (not raw JSON). WS + SSE handlers pass `EPConfig.OrchestratorLLMProvider`/`OrchestratorLLMModel`. Silent "anthropic" substitution eliminated for OpenAI-configured apps.
 
 ### Remaining gaps (Phase 3 execution criteria not yet met)
 
-1. **Agent invocation (real):** Current: explicit rejection. Must wire real invocation — call `RunOrchestratorActivity` or per-agent A2A endpoint from `AppFlowWorkflow` — to enable actual agent execution within AppFlow DAGs.
-2. **E2E test:** Router branch selection, HIL approval/rejection, A→B output propagation, terminal DB status verified.
-3. **HIL approval API:** `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → sends `hil_approval:<nodeID>` Temporal signal. Approver role enforced (RBAC check before signal).
+1. **Agent invocation (real):** Must wire actual execution — call `RunOrchestratorActivity` or per-agent A2A endpoint from `AppFlowWorkflow` within the agent/orchestrator case.
+2. **HIL approval API:** `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → RBAC check → sends `hil_approval:<nodeID>` Temporal signal.
+3. **E2E test:** Router branch selection, HIL approval/rejection, A→B output propagation, terminal DB status verified.
 
-**Next task:** Wire HIL approval API (`go/internal/admin/` handler + route), then add WS/SSE integration test that exercises Router→HIL flow to completion.
+**Next task:** Wire HIL approval API (`go/internal/admin/` handler + route), then wire real agent invocation, then add E2E integration test.
 
 ---
 

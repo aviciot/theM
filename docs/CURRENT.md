@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-16 (App Canvas Upgrade Phase 3 — review findings fixed)
+# Last updated: 2026-09-16 (App Canvas Upgrade Phase 3 — second review findings fixed)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `ca6c5fe7  fix(appflow): shared agent resolution, LLM default, agent→flowControl edge (Phase 3 findings 3+4+6)`
+HEAD: `b7f4c83f  fix(appflow): centralize finalization, fix XAdd swallow, stamp resolved agent IDs, wire orchestrator LLM config`
 
 Recent commits (newest first):
 ```
+b7f4c83f  fix(appflow): centralize finalization, fix XAdd swallow, stamp resolved agent IDs, wire orchestrator LLM config
 ca6c5fe7  fix(appflow): shared agent resolution, LLM default, agent→flowControl edge (Phase 3 findings 3+4+6)
 62431c3e  fix(appflow): run lifecycle, agent rejection, user context (Phase 3 findings 1+2+5)
 4ceef04b  feat(appflow): wire dispatch switch — WS/SSE → AppFlowWorkflow when execution_backend=temporal
 41bb09be  docs: update CURRENT.md + SCHEMA.md after Phase 3 review fixes
 3e6c1bbb  fix(appflow): NODE_PORTS for flowControl; skip registry for flow_control on publish/validate
-0a27cf28  fix(appflow): remove DefinitionID fallback in agent resolution; fail explicitly on unresolved agents
 ```
 
 ---
@@ -52,27 +52,24 @@ Key facts:
 Core implementation done 2026-09-16 (commit `7f898f40`). Post-review fixes in 5 commits. Dispatch switch wired in `4ceef04b`.
 
 **What's done:**
-- `go/internal/appflow/compiler.go`: `Compile()` + `Validate()` — BFS, Router/HIL classification, edge labels from conn.Label, no DefinitionID fallback. + `ResolveAgentByInstanceID` + `ParseLLMConfig` shared helpers. ✅
-- `go/internal/appflow/workflow.go`: `AppFlowWorkflow` — Router→LLM classify→label→edge; HIL→persist+signal wait; `FinalizeRunActivity` updates DB status + publishes "done"/"error" to Redis Stream. Agent/orchestrator nodes now fail explicitly (`AgentInvocationNotImplemented`). `UserID`/`ExternalUserID` in input. ✅
-- `go/cmd/dag-worker/main.go`: `appflow-dag` task queue; `AppFlowActivities` wired with `LLMCaller + DB + StatusUpdater + StreamPub`; `FinalizeRunActivity` registered. ✅
+- `go/internal/appflow/compiler.go`: `Compile()` + `Validate()` — BFS, Router/HIL classification, edge labels from conn.Label, no DefinitionID fallback. `ResolveAgentByInstanceID` reads `_resolved_agent_ids` (server-stamped at publish). `ParseLLMConfig` takes `LLMOrchConfig`. ✅
+- `go/internal/appflow/workflow.go`: `AppFlowWorkflow` — named returns + `defer` + `workflow.NewDisconnectedContext` → `FinalizeRunActivity` runs on ALL exit paths including cancellation. XAdd error returned (not swallowed). ✅
+- `go/cmd/dag-worker/main.go`: `pgxRunStatusUpdater` idempotency guard (`AND status NOT IN ('completed','failed','canceled')`). ✅
+- `go/internal/admin/dal/publish.go`: `PublishDefinition` stamps `_resolved_agent_ids` into definition JSON via jsonb merge. ✅
+- `go/internal/admin/service/publish.go`: builds `resolvedAgentIDs` map (instance_id → cd.ID) in step 5b; passes to DAL. ✅
+- `go/internal/epconfig/pgx.go` + `epconfig.go`: fetches `ao.llm_provider`/`ao.llm_model` in epConfigQuery; `EPConfig.OrchestratorLLMProvider`/`OrchestratorLLMModel` populated. ✅
+- `go/internal/ws/handler.go` + `go/internal/sse/handler.go`: `ParseLLMConfig(LLMOrchConfig{...})` uses EP's orchestrator binding. ✅
 - `db/098_hil_approvals.sql`: HIL approval table. Applied. ✅
-- Frontend: config round-trip, edge labels, NODE_PORTS flowControl with `'result'` in accepts (agents→Router/HIL connections now allowed). ✅
-- Backend publish: flow_control nodes skip registry resolution. ✅
-- **Dispatch switch** (`4ceef04b`): ✅
-  - `go/internal/epconfig/pgx.go`: LEFT JOIN `application_definitions` in one query
-  - `go/internal/epconfig/epconfig.go`: `ExecutionBackend` + `ActiveDefinitionJSON` on `EPConfig`
-  - `go/internal/execution/lifecycle.go`: `StartAppFlow` on `appflow-dag` task queue
-  - `go/internal/ws/handler.go` + `go/internal/sse/handler.go`: branch on `EPConfig.ExecutionBackend=="temporal"` → compile + dispatch; else existing `lc.Start` path (SEC-04 preserved); LLM config wired; shared helpers used
-- Tests: 1178 tests, 0 failures. ✅
+- Frontend: config round-trip, edge labels, NODE_PORTS flowControl with `'result'` in accepts. ✅
+- Tests: AF-C-01..04 (compiler), AF-WF-01..03 (finalize activity); 53 pkgs, 0 failures. ✅
+- Both `them-go-bridge` and `them-dag-worker` rebuilt and running (both workers polling: `canvas-dag-nodes` + `appflow-dag`). ✅
 
 **Remaining gaps before Phase 3 is fully complete:**
-1. **Agent invocation**: Agent/orchestrator nodes explicitly rejected — must wire real invocation (call `RunOrchestratorActivity` or equivalent per-agent A2A call) to enable agent execution in AppFlow DAGs.
-2. **E2E test**: Router branch selection, HIL approval/rejection, output propagation, terminal DB status.
-3. **HIL approval API**: `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → sends Temporal `hil_approval:<nodeID>` signal. Approver role enforced.
+1. **Agent invocation (real)**: Agent/orchestrator nodes still return `AgentInvocationNotImplemented`. Must wire actual execution (call `RunOrchestratorActivity` or per-agent A2A endpoint from `AppFlowWorkflow`).
+2. **HIL approval API**: `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → sends Temporal `hil_approval:<nodeID>` signal. Approver role enforced (RBAC check before signal).
+3. **E2E test**: Router branch selection, HIL approval/rejection, terminal DB status verified.
 
-**Next recommended task:** Wire HIL approval API (admin route, RBAC-gated, sends Temporal signal). Then add the E2E integration test for the Router→HIL→agent flow.
-
-**Stack**: needs rebuild of `them-dag-worker` and `them-go-bridge` to pick up the lifecycle changes.
+**Next recommended task:** Wire HIL approval API (admin route, RBAC-gated, sends Temporal signal). Then wire real agent invocation. Then add E2E test.
 
 **App Canvas Upgrade — Phase 2 (Router + HIL flow control nodes) — COMPLETE**
 
