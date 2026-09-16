@@ -444,6 +444,26 @@ Unique constraint: `(application_id, mcp_server_id)`.
 
 ---
 
+## them.hil_approvals (migration 098)
+Human-in-the-loop approval requests written by AppFlowWorkflow before it pauses.
+One row per HIL gate per run. The Temporal workflow waits for a `hil_approval:<nodeID>` signal.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| tenant_id | UUID NOT NULL | tenant owning this run |
+| application_id | UUID NOT NULL | application being executed |
+| run_id | UUID NOT NULL | parent run |
+| node_id | TEXT NOT NULL | canvas node ID of the HIL gate |
+| approver_role | TEXT NOT NULL | minimum RBAC role required to approve (default: 'admin') |
+| prompt | TEXT | message shown to the approver |
+| fallback_action | TEXT NOT NULL | 'reject'/'approve'/'abort' on timeout |
+| status | TEXT NOT NULL | 'pending'/'approved'/'rejected'/'timed_out' |
+| decided_at | TIMESTAMPTZ | when status was set to non-pending |
+| comment | TEXT | optional approver comment |
+
+---
+
 ## them.run_artifacts (Phase R-3 binary files)
 Stores binary file artifacts produced by the Go orchestrator/worker. Source of truth: `db/025_run_artifacts.sql` + `db/050_middleware_pipeline.sql`. Contains the file bytes directly (`data BYTEA NOT NULL`).
 
@@ -691,5 +711,6 @@ All `them.*` tables are protected by Postgres RLS. Three DB roles are in use:
 | `llm_providers` | ✅ | Split: own OR NULL for SELECT; own-only for write | NULL = platform defaults, always readable by all tenants |
 | `middleware_jobs` | ✅ | EXISTS via `applications` | Worker uses admin pool (cross-tenant by design) |
 | `audit_logs` | ✅ | Direct `tenant_id` | INSERT-only for `them_app` |
+| `hil_approvals` | ✅ | Direct `tenant_id` | Written by AppFlow HIL activity; pending rows read by approval API |
 | `config` | ❌ | No RLS — global config, not tenant-scoped | |
 | `schema_migrations` | ❌ | No RLS — DDL tracking table | |

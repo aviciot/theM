@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	temporalerr "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -348,8 +349,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 // AppFlowActivities holds dependencies for AppFlow Temporal activities.
 type AppFlowActivities struct {
 	// LLMCaller is used by the Router activity to classify intent.
-	// Set by the worker at startup.
 	LLMCaller RouterLLMCaller
+	// DB is used by the HIL activity to persist approval requests.
+	DB *pgxpool.Pool
 }
 
 // RouterLLMCaller is the interface the Router activity uses to call an LLM.
@@ -397,13 +399,29 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 	)
 }
 
-// ExecuteHILActivity persists an HIL approval request to the tasks table and
-// returns immediately. The workflow pauses waiting for the hil_approval signal.
+// ExecuteHILActivity persists an HIL approval request to them.hil_approvals and
+// returns immediately. The workflow then pauses waiting for the hil_approval signal.
+// This activity is idempotent — a duplicate (same run_id + node_id) is silently ignored.
 func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILActivityInput) (HILActivityOutput, error) {
-	// In this phase the activity is a no-op that returns success.
-	// A future phase will INSERT into them.tasks with type='hil_approval'.
-	_ = ctx
-	_ = input
+	if a.DB == nil {
+		return HILActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			"hil: no DB configured on AppFlowActivities", "NoDB", nil,
+		)
+	}
+	_, err := a.DB.Exec(ctx,
+		`INSERT INTO them.hil_approvals
+			(tenant_id, application_id, run_id, node_id, approver_role, prompt, fallback_action)
+		 SELECT $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM them.hil_approvals
+		     WHERE run_id = $3::uuid AND node_id = $4
+		  )`,
+		input.TenantID, input.ApplicationID, input.RunID,
+		input.NodeID, input.ApproverRole, input.Prompt, input.FallbackAction,
+	)
+	if err != nil {
+		return HILActivityOutput{}, fmt.Errorf("hil: insert approval request: %w", err)
+	}
 	return HILActivityOutput{}, nil
 }
 

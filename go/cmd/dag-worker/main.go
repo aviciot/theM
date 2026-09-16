@@ -157,7 +157,7 @@ func run() error {
 		factory:   &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
 		logger:    log,
 	}
-	appFlowActs := &appflow.AppFlowActivities{LLMCaller: routerCaller}
+	appFlowActs := &appflow.AppFlowActivities{LLMCaller: routerCaller, DB: rlsPools.Admin}
 	appFlowWorker := temporalworker.New(temporalCli, appflow.AppFlowTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
 	})
