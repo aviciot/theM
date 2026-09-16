@@ -34,6 +34,7 @@ import (
 	temporalworker "go.temporal.io/sdk/worker"
 
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/crypto"
@@ -149,13 +150,31 @@ func run() error {
 		"max_concurrent_activities", cfg.DAGWorkerMaxConcurrentActivities,
 	)
 
+	// ── 10b. AppFlow worker — polls appflow-dag task queue ────────────────────
+	appFlowActs := &appflow.AppFlowActivities{} // LLMCaller wired in future phase
+	appFlowWorker := temporalworker.New(temporalCli, appflow.AppFlowTaskQueue, temporalworker.Options{
+		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
+	})
+	appFlowWorker.RegisterWorkflow(appflow.AppFlowWorkflow)
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.ExecuteRouterActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowExecuteRouterActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.ExecuteHILActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowExecuteHILActivityName,
+	})
+	if err := appFlowWorker.Start(); err != nil {
+		return fmt.Errorf("startup: appflow temporal worker: %w", err)
+	}
+	log.Info("appflow-worker polling", "task_queue", appflow.AppFlowTaskQueue)
+
 	// ── 11. Block on SIGTERM / SIGINT ─────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 	<-quit
 
-	log.Info("dag-worker: shutdown signal received — draining worker")
+	log.Info("dag-worker: shutdown signal received — draining workers")
 	dagWorker.Stop()
+	appFlowWorker.Stop()
 	log.Info("dag-worker stopped")
 	return nil
 }

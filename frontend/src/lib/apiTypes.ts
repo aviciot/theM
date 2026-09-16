@@ -532,6 +532,8 @@ export interface ConnectionDef {
 export interface AppDefinitionDoc {
   schema_version: 2;
   name?: string;
+  /** DAG execution backend for the app canvas. "" or "local" → orchestrator loop. "temporal" → AppFlowWorkflow. */
+  execution_backend?: 'local' | 'temporal';
   components: ComponentInstance[];
   entry_points: EPInstance[];
   connections: ConnectionDef[];

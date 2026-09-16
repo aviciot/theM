@@ -112,7 +112,7 @@ export function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'e
   return `${base}_${n}`;
 }
 
-export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): AppDefinitionDoc {
+export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executionBackend?: 'local' | 'temporal'): AppDefinitionDoc {
   const nodeTypeById = new Map(nodes.map(n => [n.id, n.type]));
   const rootByEp = new Map<string, string>();
   edges.forEach(e => {
@@ -153,7 +153,7 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): AppDef
     if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
     if (srcType === 'flowControl' || tgtType === 'flowControl') connections.push({ source: e.source, target: e.target, type: 'flow_control' });
   });
-  return { schema_version: 2 as const, name, components, entry_points, connections };
+  return { schema_version: 2 as const, name, ...(executionBackend ? { execution_backend: executionBackend } : {}), components, entry_points, connections };
 }
 
 export function docToCanvas(

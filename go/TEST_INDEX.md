@@ -2827,6 +2827,23 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 **Trigger:** any change to `internal/admin/middleware_wirings.go` (ListDefs handler), `internal/admin/dal/middleware_wirings.go` (ListMiddlewareDefs / MiddlewareDefSummary), or `db/097_middleware_defs_visual.sql`
 
+### S1-112 · AppFlow compiler — `internal/appflow/compiler_test.go`
+
+**Purpose:** Verifies the AppFlow compiler (`appflow.Compile`) correctly parses `AppDefinitionDoc` JSON into an `AppFlowSpec`, resolves agent nodes, classifies Router/HIL flow control nodes, propagates `execution_backend`, and validates structural constraints. Also verifies workflow helpers (`findEdgeByLabel`, `defaultRouterPrompt`).
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| AF-01 | `TestCompile_MinimalDoc` | Minimal EP + agent doc compiles to 1 EPFlow with 1 agent node, correct slug/protocol/start_id |
+| AF-02 | `TestCompile_RouterAndHIL` | Router + HIL + 2 agent nodes compile to correct kinds |
+| AF-03 | `TestCompile_WrongSchemaVersion` | schema_version != 2 returns error |
+| AF-04 | `TestCompile_ExecutionBackend` | execution_backend propagated from doc to spec |
+| AF-05 | `TestValidate_RouterNoEdges` | Validate returns router_no_edges error when router has no outgoing edges |
+| AF-06 | `TestValidate_ValidSpec` | Validate returns no errors for valid spec |
+| AF-07 | `TestDefaultRouterPrompt` | defaultRouterPrompt includes all labels |
+| AF-08 | `TestFindEdgeByLabel` | findEdgeByLabel case-insensitive match + no-match returns "" |
+
+**Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
+
 ---
 
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
@@ -3405,7 +3422,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| **S1 total** | | **1164** |
+| S1-112 | AppFlow compiler (AF-01..08): MinimalDoc, RouterAndHIL, WrongSchemaVersion, ExecutionBackend, Validate_RouterNoEdges, Validate_ValidSpec, DefaultRouterPrompt, FindEdgeByLabel | 8 |
+| **S1 total** | | **1172** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

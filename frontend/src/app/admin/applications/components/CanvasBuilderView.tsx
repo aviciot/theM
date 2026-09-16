@@ -67,6 +67,7 @@ export function CanvasBuilderView({
   const [showRepublishModal, setShowRepublishModal] = useState(false);
   const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
   const [mcpExpanded, setMcpExpanded] = useState<Record<string, boolean>>({});
+  const [executionBackend, setExecutionBackend] = useState<'local' | 'temporal' | undefined>(undefined);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -163,6 +164,7 @@ export function CanvasBuilderView({
   function loadDef(def: AppDefinition) {
     setActiveDef(def);
     setDraft(JSON.parse(JSON.stringify(def.definition)));
+    setExecutionBackend(def.definition.execution_backend);
     setIsDirty(false);
     setValidationReport(null);
     setSelectedNode(null);
@@ -234,7 +236,7 @@ export function CanvasBuilderView({
     if (!activeDef) return;
     setSaving(true);
     try {
-      const doc = canvasToDoc(nodes, edges, draft?.name ?? app.name);
+      const doc = canvasToDoc(nodes, edges, draft?.name ?? app.name, executionBackend);
       await themApi.updateDefinition(app.id, activeDef.id, { definition: doc });
       setDraft(doc);
       setIsDirty(false);
@@ -397,6 +399,19 @@ export function CanvasBuilderView({
           </span>
         )}
         <div style={{ flex: 1 }} />
+        {activeDef && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>Execution</span>
+            <select
+              value={executionBackend ?? 'local'}
+              onChange={e => { setExecutionBackend(e.target.value as 'local' | 'temporal'); setIsDirty(true); setLogoResult('none'); }}
+              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: C.text, fontSize: 11, padding: '3px 6px', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="local">Local (Orchestrator)</option>
+              <option value="temporal">Temporal DAG</option>
+            </select>
+          </div>
+        )}
         {activeDef && isDirty && (
           <button onClick={saveDraft} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}>
             {saving ? 'Saving…' : 'Save'}
