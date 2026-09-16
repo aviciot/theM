@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-10 (Phase 4 Deploy-to-Tenant complete — backend + frontend + tests)
+# Last updated: 2026-09-16 (Step 38 File Guard — all 6 steps complete + deployed)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,12 +10,10 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-(pending commit)  feat(phase4): Deploy to Tenant — frontend UI + TEST_INDEX + roadmap update
-1f9f520  feat(admin): deploy-to-tenant — clone app into target tenant via Admin pool
-9f4d701  feat(phase4): fix runtime IDP DB access and add E2E test — 37/37 pass
-712d5fa  docs: sync end-user auth plan and CURRENT.md to verified code state
-a8f67e2  feat(observability): Redis metrics read side — live-today counts on tenant summary
-6e91197  docs: update TEST_INDEX, CURRENT.md, STATUS.md for billing attribution fix
+2cbf8c54  feat(security): Step 6 — per-app File Guard health card in RuntimeView
+d57a04b2  feat(security): Step 5 — surface FileGuard events in run history Security tab
+e2716b14  feat(canvas): Step 4 — File Guard properties panel in canvas node
+(prior)   Steps 1–3: migration seed, gate logic, admin wirings CRUD
 ```
 
 ---
@@ -46,24 +44,20 @@ Key facts:
 
 ## Current migration slice
 
-**Step 38 — File Guard (Phase 1: per-agent file scanning via canvas)**
+**Step 38 — File Guard (Phase 1: per-agent file scanning via canvas) — COMPLETE**
 
-In progress:
-- `db/096_file_guard_seed.sql`: Seeds builtin `file-guard` row in `middleware_defs` + `component_definitions`. Applied 2026-09-15. ✅
-- `go/internal/middleware/gate.go`: `FileGate` now checks `middleware_wirings` by `(app_id, agent_slug)` first; falls back to `applications.security_config`. `GateInput.AgentSlug` added. ✅
-- `go/internal/middleware/gate_test.go`: `TestFileGate_WiringOverride_Enabled` added. ✅
-- `go/internal/a2a/server.go`: `FileInterceptInput.AgentSlug` added. ✅
-- `go/internal/orchestrator/orchestrator.go` + `tools.go`: `FileGateInliner.InterceptInlineArtifact` now takes `agentSlug`; passed through from `emitArtifactEvent` with the tool-call slug. ✅
-- `go/cmd/them/main.go` + `go/cmd/worker/main.go`: Adapters updated to pass `AgentSlug`. ✅
-- `go/internal/admin/dal/middleware_wirings.go`: DAL — List/Get/Create/Update/Delete wirings + ListMiddlewareDefs. ✅
-- `go/internal/admin/middleware_wirings.go`: HTTP handler — CRUD under `/admin/applications/{id}/middleware-wirings`. ✅
-- `go/internal/admin/middleware_wirings_test.go`: 4 handler tests. ✅
-- `go/internal/admin/router.go`: `mwWirings` mounted into apps.Routes alongside bindings. ✅
-- `frontend/src/lib/apiTypes.ts`: `MiddlewareWiring`, `MiddlewareWiringCreate`, `MiddlewareWiringUpdate` types added. ✅
-- `frontend/src/lib/api.ts`: `listMiddlewareWirings`, `createMiddlewareWiring`, `updateMiddlewareWiring`, `deleteMiddlewareWiring` added. ✅
-- `frontend/.../CanvasNodePropertiesPanel.tsx`: middleware node panel replaced with structured File Guard panel (enabled, mode, max_file_size_mb, allowed_types, blocked_types, notify_on_fail + Save/Remove actions). `appId` prop added. ✅
-- `frontend/.../CanvasBuilderView.tsx`: `appId={app.id}` passed to panel. ✅
-- Next: Step 5 — run history quarantine events, Step 6 — security aggregate view. See `docs/FILE_GUARD_PLAN.md`.
+All 6 steps complete and deployed (2026-09-16). `them-go-bridge` and `them-frontend` rebuilt and running.
+
+- **Step 1** `db/096_file_guard_seed.sql`: Builtin `file-guard` def seeded in `middleware_defs` + `component_definitions`. Applied. ✅
+- **Step 2** `go/internal/middleware/gate.go`: `FileGate` resolves per-agent wiring first (`middleware_wirings` by `app_id+agent_slug`), falls back to app-level `security_config`. `GateInput.AgentSlug` added. Cache invalidation evicts all `appID:*` wiring entries. ✅
+- **Step 3** `go/internal/admin/dal/middleware_wirings.go` + `go/internal/admin/middleware_wirings.go`: Full CRUD API under `GET|POST|PUT|DELETE /admin/applications/{id}/middleware-wirings`. Redis invalidation on write. 4 handler tests. ✅
+- **Step 4** `frontend/.../CanvasNodePropertiesPanel.tsx`: Clicking a middleware (guard) node opens structured File Guard panel — enabled toggle, mode, max_file_size_mb, allowed/blocked types, notify toggle, Save/Remove. Wiring created/updated/deleted via API. ✅
+- **Step 5** `go/internal/admin/dal/runs.go` + handler: `GET /api/v1/runs/{run_id}/guard-events` — returns `run_artifacts` rows where `scan_status != 'disabled'`, joined with `middleware_jobs`. Run history modal has a **Security** tab showing each intercepted file with scan status badge, size, content type, scanned timestamp. Count badge on tab turns red for infected/flagged. 2 handler tests (RG-1/RG-2). ✅
+- **Step 6** `go/internal/admin/dal/applications.go` + handler: `GET /api/v1/admin/applications/{id}/guard-health` — returns per-agent wiring list + app-level aggregate (scanned/clean/blocked/pending/errors/last_event). RuntimeView Security section shows File Guard Health panel with stat tiles and per-agent wiring list. 2 handler tests (GH-H1/GH-H2). ✅
+
+**Migration required (already applied):** `db/096_file_guard_seed.sql`
+
+**Next recommended task:** Phase 2 — Inline Guard node (PII redact + prompt injection on message path, separate lightweight service). See `docs/FILE_GUARD_PLAN.md`.
 
 ---
 
