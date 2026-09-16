@@ -564,6 +564,14 @@ func (t *fakeTemporal) SignalRun(_ context.Context, wfID string, _ []byte) error
 	return nil
 }
 
+func (t *fakeTemporal) SignalNamedWorkflow(_ context.Context, wfID, _ string, _ any) error {
+	if t.err != nil {
+		return t.err
+	}
+	t.signaled = append(t.signaled, wfID)
+	return nil
+}
+
 // ── fakeTokenGenerator ───────────────────────────────────────────────────────
 
 type fakeTokenGen struct {

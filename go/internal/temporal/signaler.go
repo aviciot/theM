@@ -36,3 +36,12 @@ func (s *Signaler) SignalRun(ctx context.Context, runID string, payload []byte) 
 	}
 	return nil
 }
+
+// SignalNamedWorkflow delivers an arbitrary named signal to any Temporal workflow.
+// Used by the HIL approval API to signal AppFlowWorkflow with hil_approval:<nodeID>.
+func (s *Signaler) SignalNamedWorkflow(ctx context.Context, workflowID, signalName string, payload any) error {
+	if err := s.client.SignalWorkflow(ctx, workflowID, "", signalName, payload); err != nil {
+		return fmt.Errorf("temporal: signal %s → %s: %w", workflowID, signalName, err)
+	}
+	return nil
+}

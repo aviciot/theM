@@ -280,6 +280,14 @@ func (t *fakeTemporal) SignalRun(_ context.Context, runID string, _ []byte) erro
 	return nil
 }
 
+func (t *fakeTemporal) SignalNamedWorkflow(_ context.Context, wfID, _ string, _ any) error {
+	if t.err != nil {
+		return t.err
+	}
+	t.signaled = append(t.signaled, wfID)
+	return nil
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // testTenantID is the bootstrap tenant used in handler-level unit tests.

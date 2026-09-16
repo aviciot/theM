@@ -231,6 +231,7 @@ func BuildRouter(
 			runsGroup.Use(RequireTenantAdmin(logger))
 			runsGroup.Use(AdminTenantMiddleware())
 			runs.Routes(runsGroup)
+			NewHILApprovalsHandler(dbq, temporalSig).Routes(runsGroup)
 		})
 	})
 

@@ -195,6 +195,9 @@ type Cache interface {
 // Temporal sends HITL signals to Temporal workflows.
 type Temporal interface {
 	SignalRun(ctx context.Context, workflowID string, payload []byte) error
+	// SignalNamedWorkflow delivers an arbitrary named signal to any Temporal workflow.
+	// Used by the HIL approval API to send hil_approval:<nodeID> signals to AppFlowWorkflow.
+	SignalNamedWorkflow(ctx context.Context, workflowID, signalName string, payload any) error
 }
 
 // enabledOrDefault returns *b if non-nil, otherwise true.
