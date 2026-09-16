@@ -171,7 +171,18 @@ export interface EpNodeData {
   _errorMsg?: string;
 }
 
-export type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData;
+export interface FlowControlNodeData {
+  _kind: 'flow_control';
+  instance_id: string;
+  node_type: 'router' | 'hil';
+  display_name: string;
+  config: Record<string, unknown>;
+  _error?: boolean;
+  _shake?: boolean;
+  _errorMsg?: string;
+}
+
+export type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData | FlowControlNodeData;
 
 // ── Chain/validation types ───────────────────────────────────────────────────
 export interface ChainStatus {

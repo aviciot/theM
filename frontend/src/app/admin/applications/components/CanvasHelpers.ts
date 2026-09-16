@@ -15,6 +15,7 @@ import type {
   AgentNodeData,
   MwNodeData,
   EpNodeData,
+  FlowControlNodeData,
   EntryPointData,
   EntryPointType,
   OrchestratorData,
@@ -99,11 +100,12 @@ function sanitize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
 }
 
-export function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'ep', defName: string | undefined, existing: Set<string>): string {
+export function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'ep' | 'flow_control', defName: string | undefined, existing: Set<string>): string {
   let base: string;
   if (kind === 'orchestrator') base = 'orch';
   else if (kind === 'ep') base = 'ep_' + sanitize(defName ?? 'ep');
   else if (kind === 'agent') base = 'agent_' + sanitize(defName ?? 'agent');
+  else if (kind === 'flow_control') base = 'fc_' + sanitize(defName ?? 'fc');
   else base = 'mw_' + sanitize(defName ?? 'mw');
   let n = 1;
   while (existing.has(`${base}_${n}`)) n++;
@@ -133,6 +135,9 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): AppDef
     } else if (n.type === 'middleware') {
       const d = n.data as unknown as MwNodeData;
       components.push({ instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config });
+    } else if (n.type === 'flowControl') {
+      const d = n.data as unknown as FlowControlNodeData;
+      components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { node_type: d.node_type, display_name: d.display_name } });
     } else if (n.type === 'entryPoint') {
       const d = n.data as unknown as EpNodeData;
       entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '', config: d.config ?? {} });
@@ -146,6 +151,7 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): AppDef
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
     if (srcType === 'orchestrator' && tgtType === 'middleware') connections.push({ source: e.source, target: e.target, type: 'middleware' });
     if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
+    if (srcType === 'flowControl' || tgtType === 'flowControl') connections.push({ source: e.source, target: e.target, type: 'flow_control' });
   });
   return { schema_version: 2 as const, name, components, entry_points, connections };
 }
@@ -173,6 +179,10 @@ export function docToCanvas(
     } else if (c.definition_ref.kind === 'middleware') {
       const mwVis = c.definition_id ? mwVisualById?.get(c.definition_id) : undefined;
       nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> });
+    } else if (c.definition_ref.kind === 'flow_control') {
+      const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
+      const displayName = (c.config.display_name as string) || (nodeType === 'router' ? 'Router' : 'Human-in-Loop');
+      nodes.push({ id: c.instance_id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: c.instance_id, node_type: nodeType, display_name: displayName, config: c.config } as unknown as Record<string, unknown> });
     }
   });
   (doc.entry_points ?? []).forEach(ep => {
@@ -181,7 +191,7 @@ export function docToCanvas(
     if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default' });
   });
   (doc.connections ?? []).forEach(conn => {
-    if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware') {
+    if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware' || conn.type === 'flow_control') {
       edges.push({ id: `e_${conn.source}_${conn.target}`, source: conn.source, target: conn.target, type: 'default' });
     }
   });

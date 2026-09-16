@@ -355,7 +355,7 @@ export function CanvasInner({
         <CanvasLogo state={logoState} />
         <MiniMap
           style={{ background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, borderRadius: 8 }}
-          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : n.type === 'middleware' ? C.amber : C.green}
+          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : n.type === 'middleware' ? C.amber : n.type === 'flowControl' ? '#a855f7' : C.green}
           maskColor="rgba(5,20,36,0.7)"
         />
       </ReactFlow>

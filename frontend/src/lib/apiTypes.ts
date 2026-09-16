@@ -526,7 +526,7 @@ export interface EPInstance {
 export interface ConnectionDef {
   source: string;
   target: string;
-  type: 'entry' | 'delegation' | 'tool' | 'middleware';
+  type: 'entry' | 'delegation' | 'tool' | 'middleware' | 'flow_control';
 }
 
 export interface AppDefinitionDoc {
