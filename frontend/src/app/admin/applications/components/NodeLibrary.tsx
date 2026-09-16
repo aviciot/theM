@@ -198,7 +198,7 @@ export function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
             {openMW && (
               <div className="nl-section-list">
                 {middlewareDefs.filter(m => m.enabled).map(m => {
-                  const icon = m.kind === 'guard' ? 'shield' : 'bolt';
+                  const emoji = m.kind === 'guard' ? '🛡️' : '⚡';
                   return (
                     <div key={m.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                       <div
@@ -212,7 +212,7 @@ export function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                         onMouseEnter={e => (e.currentTarget.style.background = 'rgba(245,158,11,0.1)')}
                         onMouseLeave={e => (e.currentTarget.style.background = C.amberBg)}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.amber, flexShrink: 0 }}>{icon}</span>
+                        <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>{emoji}</span>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name}</div>
                           <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.kind}</div>

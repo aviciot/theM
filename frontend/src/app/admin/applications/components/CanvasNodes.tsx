@@ -227,17 +227,26 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
         >✕</button>
       )}
       <Handle type="target" position={targetPos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-      <div
-        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
-        style={{
-          width: 56, height: 56, borderRadius: '50%',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
-          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
-          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
-          transition: 'all 0.18s ease',
-        }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+      <div style={{ position: 'relative' }}>
+        <div
+          className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+          style={{
+            width: 56, height: 56, borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
+            border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+            boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
+            transition: 'all 0.18s ease',
+          }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+        </div>
+        {data.wiringEnabled && (
+          <div style={{
+            position: 'absolute', top: 2, right: 2,
+            width: 10, height: 10, borderRadius: '50%',
+            background: '#22c55e', border: '2px solid #051424',
+          }} title="File Guard active" />
+        )}
       </div>
       <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>

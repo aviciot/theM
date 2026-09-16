@@ -102,9 +102,15 @@ export function CanvasNodePropertiesPanel({
           setGuardAllowedTypes(((cfg.allowed_types as string[]) ?? []).join(','));
           setGuardBlockedTypes(((cfg.blocked_types as string[]) ?? ['exe','sh','bat','ps1','cmd']).join(','));
           setGuardNotify((cfg.notify_on_fail as boolean) ?? true);
+          if (selectedNode) {
+            setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, wiringEnabled: w.enabled } } : n));
+          }
         } else {
           setGuardEnabled(false); setGuardMode('block'); setGuardMaxMb(5);
           setGuardAllowedTypes(''); setGuardBlockedTypes('exe,sh,bat,ps1,cmd'); setGuardNotify(true);
+          if (selectedNode) {
+            setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, wiringEnabled: false } } : n));
+          }
         }
       })
       .catch(() => setExistingWiring(null))
@@ -143,6 +149,7 @@ export function CanvasNodePropertiesPanel({
         });
         setExistingWiring(created);
       }
+      setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, wiringEnabled: guardEnabled } } : n));
       showToast('File Guard saved', true);
     } catch {
       showToast('Failed to save File Guard', false);
@@ -158,6 +165,7 @@ export function CanvasNodePropertiesPanel({
       await themApi.deleteMiddlewareWiring(appId, existingWiring.id);
       setExistingWiring(null);
       setGuardEnabled(false);
+      setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, wiringEnabled: false } } : n));
       showToast('File Guard removed', true);
     } catch {
       showToast('Failed to remove File Guard', false);

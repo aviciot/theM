@@ -86,6 +86,7 @@ export interface MiddlewareData {
   config: Record<string, unknown>;
   configOverride: Record<string, unknown>;
   nodeId: string;
+  wiringEnabled?: boolean;
   [key: string]: unknown;
 }
 
