@@ -87,6 +87,7 @@ type connDef struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Type   string `json:"type"` // "entry"|"delegation"|"tool"|"middleware"|"flow_control"
+	Label  string `json:"label,omitempty"` // intent label on router outgoing edges
 }
 
 // RouterConfig is the configuration stored in a Router node's config JSON.
@@ -257,12 +258,11 @@ func (ep epInst) connsBetween(nodeIDs []string, outEdges map[string][]connDef) [
 	return result
 }
 
-// edgeLabel extracts the intent label from a router outgoing edge.
-// Currently stored in conn.Type for flow_control edges. Future: edge metadata.
+// edgeLabel returns the intent label from a router outgoing edge.
+// The label is stored in conn.Label (set by the frontend when the user assigns
+// an output_label to the edge via the Router properties panel).
 func (c connDef) edgeLabel() string {
-	// Labels are not yet stored in connection metadata — they come from RouterConfig.OutputLabels.
-	// The workflow will resolve labels by config at runtime.
-	return ""
+	return c.Label
 }
 
 // compileNode converts a component instance to an AppFlowNode.

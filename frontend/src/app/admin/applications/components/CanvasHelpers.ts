@@ -137,7 +137,7 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
       components.push({ instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config });
     } else if (n.type === 'flowControl') {
       const d = n.data as unknown as FlowControlNodeData;
-      components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { node_type: d.node_type, display_name: d.display_name } });
+      components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name } });
     } else if (n.type === 'entryPoint') {
       const d = n.data as unknown as EpNodeData;
       entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '', config: d.config ?? {} });
@@ -151,7 +151,10 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
     if (srcType === 'orchestrator' && tgtType === 'middleware') connections.push({ source: e.source, target: e.target, type: 'middleware' });
     if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
-    if (srcType === 'flowControl' || tgtType === 'flowControl') connections.push({ source: e.source, target: e.target, type: 'flow_control' });
+    if (srcType === 'flowControl' || tgtType === 'flowControl') {
+      const edgeLabel = (e.data as Record<string, unknown> | undefined)?.label as string | undefined;
+      connections.push({ source: e.source, target: e.target, type: 'flow_control', ...(edgeLabel ? { label: edgeLabel } : {}) });
+    }
   });
   return { schema_version: 2 as const, name, ...(executionBackend ? { execution_backend: executionBackend } : {}), components, entry_points, connections };
 }
@@ -192,7 +195,13 @@ export function docToCanvas(
   });
   (doc.connections ?? []).forEach(conn => {
     if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware' || conn.type === 'flow_control') {
-      edges.push({ id: `e_${conn.source}_${conn.target}`, source: conn.source, target: conn.target, type: 'default' });
+      edges.push({
+        id: `e_${conn.source}_${conn.target}`,
+        source: conn.source,
+        target: conn.target,
+        type: 'default',
+        ...(conn.label ? { label: conn.label, data: { label: conn.label } } : {}),
+      });
     }
   });
   if (Object.keys(layout).length === 0 && nodes.length > 0) {

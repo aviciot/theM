@@ -527,6 +527,8 @@ export interface ConnectionDef {
   source: string;
   target: string;
   type: 'entry' | 'delegation' | 'tool' | 'middleware' | 'flow_control';
+  /** Intent label for Router outgoing edges. Matches RouterConfig.output_labels entries. */
+  label?: string;
 }
 
 export interface AppDefinitionDoc {

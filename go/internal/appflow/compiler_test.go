@@ -222,6 +222,39 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
+// AF-09: edge label is preserved through compilation when conn.Label is set.
+func TestCompile_EdgeLabelPreserved(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{"instance_id":"r1","definition_ref":{"kind":"flow_control","namespace":"builtin","name":"router","version":1},"config":{"node_type":"router","output_labels":["billing","support"]}},
+			{"instance_id":"a1","definition_ref":{"kind":"agent","namespace":"custom","name":"billing-agent","version":1}},
+			{"instance_id":"a2","definition_ref":{"kind":"agent","namespace":"custom","name":"support-agent","version":1}}
+		],
+		"entry_points":[{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"r1"}],
+		"connections":[
+			{"source":"r1","target":"a1","type":"flow_control","label":"billing"},
+			{"source":"r1","target":"a2","type":"flow_control","label":"support"}
+		]
+	}`)
+	agentMap := map[string]string{"a1": "uuid-billing", "a2": "uuid-support"}
+	spec, err := Compile(raw, agentMap)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	ep := spec.EntryPoints[0]
+	labelByTarget := make(map[string]string)
+	for _, e := range ep.Edges {
+		labelByTarget[e.Target] = e.Label
+	}
+	if labelByTarget["a1"] != "billing" {
+		t.Errorf("want edge to a1 label=billing, got %q", labelByTarget["a1"])
+	}
+	if labelByTarget["a2"] != "support" {
+		t.Errorf("want edge to a2 label=support, got %q", labelByTarget["a2"])
+	}
+}
+
 // AF-08: findEdgeByLabel case-insensitive match.
 func TestFindEdgeByLabel(t *testing.T) {
 	edges := []AppFlowEdge{

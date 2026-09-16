@@ -47,8 +47,9 @@ type AppFlowWorkflowInput struct {
 	Spec *AppFlowSpec `json:"spec"`
 	// UserMessage is the initial input from the caller.
 	UserMessage string `json:"user_message"`
-	// LLMProviderKey is the application's configured LLM API key (for Router classification).
-	LLMProviderKey string `json:"llm_provider_key,omitempty"`
+	// LLMProviderID is the UUID of the llm_providers row used for Router classification.
+	// The activity resolves the API key from the DB at execution time (never stored in history).
+	LLMProviderID string `json:"llm_provider_id,omitempty"`
 	// LLMProvider is the provider name ("anthropic", "openai", etc.).
 	LLMProvider string `json:"llm_provider,omitempty"`
 	// LLMModel is the model to use for Router classification.
@@ -81,10 +82,10 @@ type RouterActivityInput struct {
 	Labels      []string `json:"labels"`
 	// ClassifierPrompt overrides the default classification prompt.
 	ClassifierPrompt string `json:"classifier_prompt,omitempty"`
-	// LLM config.
-	LLMProvider    string `json:"llm_provider,omitempty"`
-	LLMModel       string `json:"llm_model,omitempty"`
-	LLMProviderKey string `json:"llm_provider_key,omitempty"`
+	// LLM config. API key is resolved by the activity from DB using LLMProviderID.
+	LLMProviderID string `json:"llm_provider_id,omitempty"`
+	LLMProvider   string `json:"llm_provider,omitempty"`
+	LLMModel      string `json:"llm_model,omitempty"`
 }
 
 // RouterActivityOutput is returned by AppFlowExecuteRouterActivity.
@@ -205,9 +206,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 				UserMessage:      accumulated,
 				Labels:           cfg.OutputLabels,
 				ClassifierPrompt: cfg.ClassifierPrompt,
+				LLMProviderID:    input.LLMProviderID,
 				LLMProvider:      input.LLMProvider,
 				LLMModel:         input.LLMModel,
-				LLMProviderKey:   input.LLMProviderKey,
 			}).Get(ctx, &routerOut)
 			if err != nil {
 				return AppFlowWorkflowOutput{Status: "failed"}, fmt.Errorf("router %q: %w", node.ID, err)
@@ -350,8 +351,10 @@ type AppFlowActivities struct {
 }
 
 // RouterLLMCaller is the interface the Router activity uses to call an LLM.
+// The implementation resolves the API key from the DB using providerID so the
+// key is never stored in Temporal workflow history.
 type RouterLLMCaller interface {
-	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, provider, model, apiKey string) (string, error)
+	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, provider, model, providerID string) (string, error)
 }
 
 // ExecuteRouterActivity calls an LLM to classify the user message and returns
@@ -362,18 +365,18 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 			"router has no output_labels configured", "NoLabels", nil,
 		)
 	}
+	if a.LLMCaller == nil {
+		return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			"router: no LLM caller configured on this worker", "NoLLMCaller", nil,
+		)
+	}
 
 	prompt := input.ClassifierPrompt
 	if prompt == "" {
 		prompt = defaultRouterPrompt(input.Labels)
 	}
 
-	if a.LLMCaller == nil {
-		// Fallback: return first label (useful when no LLM is configured).
-		return RouterActivityOutput{ChosenLabel: input.Labels[0]}, nil
-	}
-
-	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProvider, input.LLMModel, input.LLMProviderKey)
+	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProvider, input.LLMModel, input.LLMProviderID)
 	if err != nil {
 		return RouterActivityOutput{}, fmt.Errorf("router classify: %w", err)
 	}
@@ -385,8 +388,11 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 		}
 	}
 
-	// LLM returned an unknown label — fall back to first.
-	return RouterActivityOutput{ChosenLabel: input.Labels[0]}, nil
+	// LLM returned an unknown label — fail explicitly so the caller can react.
+	return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+		fmt.Sprintf("router: LLM returned unknown label %q (valid: %v)", label, input.Labels),
+		"RouterUnknownLabel", nil,
+	)
 }
 
 // ExecuteHILActivity persists an HIL approval request to the tasks table and
