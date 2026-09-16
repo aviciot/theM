@@ -25,3 +25,6 @@ CREATE INDEX IF NOT EXISTS idx_hil_approvals_run
 CREATE INDEX IF NOT EXISTS idx_hil_approvals_status
     ON them.hil_approvals(status)
     WHERE status = 'pending';
+
+GRANT SELECT, INSERT, UPDATE ON them.hil_approvals TO them_app;
+GRANT SELECT, INSERT, UPDATE ON them.hil_approvals TO them_admin;

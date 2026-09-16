@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -91,7 +92,13 @@ func (h *HILApprovalsHandler) decide(w http.ResponseWriter, r *http.Request, app
 		decision = "approved"
 	}
 
-	// Send Temporal signal — workflow is paused waiting for hil_approval:<nodeID>.
+	// Update DB status first — durable record of the decision.
+	// Idempotent: only updates rows with status='pending'.
+	if dbErr := d.UpdateHILApprovalStatus(r.Context(), tenantID, runID, nodeID, decision, req.Comment); dbErr != nil {
+		slog.WarnContext(r.Context(), "hil: db update failed", "run_id", runID, "node_id", nodeID)
+	}
+
+	// Send Temporal signal — best-effort; workflow may have already completed.
 	if h.temporal != nil {
 		signalName := appflow.AppFlowSignalHILApproval + ":" + nodeID
 		workflowID := appflow.WorkflowIDForRun(tenantID, runID)
@@ -99,14 +106,12 @@ func (h *HILApprovalsHandler) decide(w http.ResponseWriter, r *http.Request, app
 			Approved: approved,
 			Comment:  req.Comment,
 		}
-		if err := h.temporal.SignalNamedWorkflow(r.Context(), workflowID, signalName, payload); err != nil {
-			writeError(w, http.StatusInternalServerError, "signal delivery failed")
-			return
+		if sigErr := h.temporal.SignalNamedWorkflow(r.Context(), workflowID, signalName, payload); sigErr != nil {
+			// Non-fatal: the DB row is updated; the workflow may have already completed.
+			slog.WarnContext(r.Context(), "hil: temporal signal failed (workflow may have completed)",
+				"workflow_id", workflowID, "signal", signalName)
 		}
 	}
-
-	// Update DB status — idempotent (only updates 'pending' rows).
-	_ = d.UpdateHILApprovalStatus(r.Context(), tenantID, runID, nodeID, decision, req.Comment)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"run_id":  runID,
