@@ -151,7 +151,13 @@ func run() error {
 	)
 
 	// ── 10b. AppFlow worker — polls appflow-dag task queue ────────────────────
-	appFlowActs := &appflow.AppFlowActivities{} // LLMCaller wired in future phase
+	routerCaller := &dbRouterLLMCaller{
+		pool:      rlsPools.Admin,
+		cryptoKey: cryptoKey,
+		factory:   &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
+		logger:    log,
+	}
+	appFlowActs := &appflow.AppFlowActivities{LLMCaller: routerCaller}
 	appFlowWorker := temporalworker.New(temporalCli, appflow.AppFlowTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
 	})
@@ -582,3 +588,103 @@ func (q *pgxAgentEndpointQueryer) QueryAgentEndpoint(ctx context.Context, tenant
 }
 
 var _ agentgen.AgentEndpointQueryer = (*pgxAgentEndpointQueryer)(nil)
+
+// ── dbRouterLLMCaller ─────────────────────────────────────────────────────────
+
+// dbRouterLLMCaller implements appflow.RouterLLMCaller. It resolves the API key
+// from the DB at activity execution time (app-level provider_keys first, then
+// tenant llm_providers) so the key never appears in Temporal workflow history.
+type dbRouterLLMCaller struct {
+	pool      *pgxpool.Pool
+	cryptoKey []byte
+	factory   *multiLLMFactory
+	logger    *slog.Logger
+}
+
+func (c *dbRouterLLMCaller) ClassifyIntent(
+	ctx context.Context,
+	userMessage, systemPrompt string,
+	labels []string,
+	providerName, model, tenantID, applicationID string,
+) (string, error) {
+	apiKey := c.resolveKey(ctx, providerName, tenantID, applicationID)
+	if apiKey == "" {
+		return "", fmt.Errorf("router: no API key for provider %q (tenant %s, app %s)", providerName, tenantID, applicationID)
+	}
+	if model == "" {
+		model = "claude-haiku-4-5-20251001" // lean classification model
+	}
+
+	provider, err := c.factory.NewProvider(providerName, model, 64, apiKey)
+	if err != nil {
+		return "", fmt.Errorf("router: create provider: %w", err)
+	}
+
+	userPrompt := fmt.Sprintf("User message: %s\n\nChoose one label from: %v", userMessage, labels)
+	return provider.Complete(ctx, systemPrompt, userPrompt)
+}
+
+// resolveKey looks up the API key for providerName, checking the app-level
+// provider_keys first (more specific) then the tenant llm_providers row.
+func (c *dbRouterLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, applicationID string) string {
+	// 1. App-level provider_keys (JSONB column on them.applications).
+	row := c.pool.QueryRow(ctx,
+		`SELECT COALESCE(provider_keys, '{}') FROM them.applications
+		  WHERE id = $1::uuid AND tenant_id = $2::uuid`,
+		applicationID, tenantID)
+	var raw []byte
+	if err := row.Scan(&raw); err == nil {
+		type entry struct {
+			CT string `json:"ct"`
+		}
+		var m map[string]entry
+		if json.Unmarshal(raw, &m) == nil {
+			if e, ok := m[providerName]; ok && e.CT != "" {
+				if len(e.CT) > 6 && e.CT[:6] == "plain:" {
+					return e.CT[6:]
+				}
+				if plain, err := crypto.DecryptStored(c.cryptoKey, e.CT); err == nil {
+					return plain
+				}
+				c.logger.Warn("router: app-level key decryption failed", "provider", providerName, "app_id", applicationID)
+			}
+		}
+		// Flat map fallback.
+		var flat map[string]string
+		if json.Unmarshal(raw, &flat) == nil {
+			if v := flat[providerName]; v != "" {
+				return v
+			}
+		}
+	}
+
+	// 2. Tenant-scoped llm_providers row.
+	var encKey *string
+	c.pool.QueryRow(ctx,
+		`SELECT api_key_encrypted FROM them.llm_providers
+		  WHERE name = $1 AND tenant_id = $2::uuid AND enabled = true
+		  LIMIT 1`,
+		providerName, tenantID).Scan(&encKey) //nolint:errcheck
+	if encKey != nil && *encKey != "" {
+		if plain, err := crypto.DecryptStored(c.cryptoKey, *encKey); err == nil {
+			return plain
+		}
+		c.logger.Warn("router: tenant provider key decryption failed", "provider", providerName, "tenant_id", tenantID)
+	}
+
+	// 3. Platform-default llm_providers row (tenant_id IS NULL).
+	c.pool.QueryRow(ctx,
+		`SELECT api_key_encrypted FROM them.llm_providers
+		  WHERE name = $1 AND tenant_id IS NULL AND enabled = true
+		  LIMIT 1`,
+		providerName).Scan(&encKey) //nolint:errcheck
+	if encKey != nil && *encKey != "" {
+		if plain, err := crypto.DecryptStored(c.cryptoKey, *encKey); err == nil {
+			return plain
+		}
+		c.logger.Warn("router: platform provider key decryption failed", "provider", providerName)
+	}
+	return ""
+}
+
+var _ appflow.RouterLLMCaller = (*dbRouterLLMCaller)(nil)

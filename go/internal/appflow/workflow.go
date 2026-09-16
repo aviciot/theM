@@ -47,9 +47,9 @@ type AppFlowWorkflowInput struct {
 	Spec *AppFlowSpec `json:"spec"`
 	// UserMessage is the initial input from the caller.
 	UserMessage string `json:"user_message"`
-	// LLMProviderID is the UUID of the llm_providers row used for Router classification.
+	// LLMProviderName is the provider name (e.g. "anthropic") for Router classification.
 	// The activity resolves the API key from the DB at execution time (never stored in history).
-	LLMProviderID string `json:"llm_provider_id,omitempty"`
+	LLMProviderName string `json:"llm_provider_name,omitempty"`
 	// LLMProvider is the provider name ("anthropic", "openai", etc.).
 	LLMProvider string `json:"llm_provider,omitempty"`
 	// LLMModel is the model to use for Router classification.
@@ -74,18 +74,19 @@ type HILApprovalPayload struct {
 
 // RouterActivityInput is the input to AppFlowExecuteRouterActivity.
 type RouterActivityInput struct {
-	RunID       string   `json:"run_id"`
-	TenantID    string   `json:"tenant_id"`
-	NodeID      string   `json:"node_id"`
-	UserMessage string   `json:"user_message"`
+	RunID         string   `json:"run_id"`
+	TenantID      string   `json:"tenant_id"`
+	ApplicationID string   `json:"application_id"`
+	NodeID        string   `json:"node_id"`
+	UserMessage   string   `json:"user_message"`
 	// Labels are the valid output labels the router can choose.
-	Labels      []string `json:"labels"`
+	Labels []string `json:"labels"`
 	// ClassifierPrompt overrides the default classification prompt.
 	ClassifierPrompt string `json:"classifier_prompt,omitempty"`
-	// LLM config. API key is resolved by the activity from DB using LLMProviderID.
-	LLMProviderID string `json:"llm_provider_id,omitempty"`
-	LLMProvider   string `json:"llm_provider,omitempty"`
-	LLMModel      string `json:"llm_model,omitempty"`
+	// LLM config. API key resolved by activity from DB using LLMProviderName + TenantID + ApplicationID.
+	LLMProviderName string `json:"llm_provider_name,omitempty"`
+	LLMProvider     string `json:"llm_provider,omitempty"`
+	LLMModel        string `json:"llm_model,omitempty"`
 }
 
 // RouterActivityOutput is returned by AppFlowExecuteRouterActivity.
@@ -202,11 +203,12 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 			err := workflow.ExecuteActivity(ctx, AppFlowExecuteRouterActivityName, RouterActivityInput{
 				RunID:            input.RunID,
 				TenantID:         input.TenantID,
+				ApplicationID:    input.ApplicationID,
 				NodeID:           node.ID,
 				UserMessage:      accumulated,
 				Labels:           cfg.OutputLabels,
 				ClassifierPrompt: cfg.ClassifierPrompt,
-				LLMProviderID:    input.LLMProviderID,
+				LLMProviderName:  input.LLMProviderName,
 				LLMProvider:      input.LLMProvider,
 				LLMModel:         input.LLMModel,
 			}).Get(ctx, &routerOut)
@@ -351,10 +353,10 @@ type AppFlowActivities struct {
 }
 
 // RouterLLMCaller is the interface the Router activity uses to call an LLM.
-// The implementation resolves the API key from the DB using providerID so the
-// key is never stored in Temporal workflow history.
+// The implementation resolves the API key from DB using providerName + tenantID + applicationID
+// so the key is never stored in Temporal workflow history.
 type RouterLLMCaller interface {
-	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, provider, model, providerID string) (string, error)
+	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, providerName, model, tenantID, applicationID string) (string, error)
 }
 
 // ExecuteRouterActivity calls an LLM to classify the user message and returns
@@ -376,7 +378,7 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 		prompt = defaultRouterPrompt(input.Labels)
 	}
 
-	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProvider, input.LLMModel, input.LLMProviderID)
+	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProviderName, input.LLMModel, input.TenantID, input.ApplicationID)
 	if err != nil {
 		return RouterActivityOutput{}, fmt.Errorf("router classify: %w", err)
 	}
