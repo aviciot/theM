@@ -172,8 +172,9 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 		}
 
 		// Registry resolution (skip if no registry wired — test mode).
+		// flow_control nodes (router, hil) are builtins — no DB registry entry.
 		// definition_id is intentionally ignored — resolve by stable ref only.
-		if s.registry != nil {
+		if s.registry != nil && string(comp.DefinitionRef.Kind) != "flow_control" {
 			_, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, "")
 			if resolveErr != nil {
 				code := "component_not_found"
@@ -289,10 +290,10 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	}
 
 	// 4. Resolve component definitions.
+	// flow_control (router, hil) are builtins — no registry entry, skip.
 	resolved := make(map[string]*registry.ComponentDefinition, len(doc.Components))
 	for _, comp := range doc.Components {
-		if s.registry == nil {
-			// No registry wired (tests without registry) — skip resolution.
+		if s.registry == nil || string(comp.DefinitionRef.Kind) == "flow_control" {
 			continue
 		}
 		cd, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, "")

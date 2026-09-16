@@ -494,10 +494,12 @@ export const toolBtnStyle: React.CSSProperties = {
 
 // ── Node port definitions ─────────────────────────────────────────────────────
 export const NODE_PORTS: Record<string, { accepts: string[]; emits: string[]; maxOutgoing?: number; maxIncoming?: number }> = {
-  entryPoint:   { accepts: [],                           emits: ['request'] },
-  orchestrator: { accepts: ['request', 'signal'],         emits: ['task', 'signal'] },
-  agent:        { accepts: ['task', 'mw_task'],           emits: ['result'] },
-  middleware:   { accepts: ['task', 'mw_task'],           emits: ['mw_task'] },
+  entryPoint:   { accepts: [],                                    emits: ['request'] },
+  orchestrator: { accepts: ['request', 'signal', 'fc_out'],       emits: ['task', 'signal', 'fc_in'] },
+  agent:        { accepts: ['task', 'mw_task', 'fc_out'],         emits: ['result'] },
+  middleware:   { accepts: ['task', 'mw_task'],                   emits: ['mw_task'] },
+  // flowControl (Router + HIL): can connect to/from orchestrators and agents
+  flowControl:  { accepts: ['request', 'task', 'signal', 'fc_in', 'fc_out'], emits: ['fc_out', 'fc_in', 'request', 'task'] },
 };
 
 // ── Canvas rules ──────────────────────────────────────────────────────────────
