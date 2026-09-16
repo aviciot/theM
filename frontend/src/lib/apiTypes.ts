@@ -416,6 +416,23 @@ export interface GuardEvent {
   created_at: string;
 }
 
+export interface GuardAgentRow {
+  agent_id: string;
+  agent_slug: string;
+  agent_name: string;
+  enabled: boolean;
+}
+
+export interface AppGuardHealth {
+  agents: GuardAgentRow[];
+  scanned: number;
+  clean: number;
+  blocked: number;
+  pending: number;
+  errors: number;
+  last_event: string | null;
+}
+
 export interface ContextSession {
   context_id: string;
   orchestrator_name: string;

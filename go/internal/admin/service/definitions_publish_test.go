@@ -201,6 +201,7 @@ func (f *publishFakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDe
 func (f *publishFakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Task, error)  { return nil, nil }
 func (f *publishFakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) { return nil, nil }
 func (f *publishFakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) { return []dal.GuardEvent{}, nil }
+func (f *publishFakeDal) GetAppGuardHealth(_ context.Context, _ string) (dal.AppGuardHealth, error) { return dal.AppGuardHealth{Agents: []dal.GuardAgentRow{}}, nil }
 func (f *publishFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) { return nil, nil }
 func (f *publishFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) { return nil, nil }
 func (f *publishFakeDal) GetContextMessages(_ context.Context, _, _ string, _ int) ([]dal.ContextMessage, error) { return nil, nil }

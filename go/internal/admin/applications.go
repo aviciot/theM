@@ -97,6 +97,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/provider-keys/{provider}", h.SetProviderKey)
 		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
 		app.Post("/test-llm", h.TestLLM)
+		app.Get("/guard-health", h.GuardHealth)
 		app.Get("/app-params", h.GetAppParams)
 		app.Put("/app-params/{name}", h.SetAppParam)
 		app.Delete("/app-params/{name}", h.DeleteAppParam)
@@ -812,4 +813,20 @@ func (h *ApplicationsHandler) BulkDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+}
+
+// GuardHealth handles GET /api/v1/applications/{id}/guard-health.
+// Returns per-agent file-guard wiring summary and app-level scan aggregate stats.
+func (h *ApplicationsHandler) GuardHealth(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	health, err := h.legacyDAL.GetAppGuardHealth(r.Context(), appID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, health)
 }

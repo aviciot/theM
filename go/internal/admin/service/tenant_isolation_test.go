@@ -291,6 +291,9 @@ func (f *isolationFakeDal) GetRunGuardEvents(_ context.Context, tenantID, runID 
 	}
 	return []dal.GuardEvent{}, nil
 }
+func (f *isolationFakeDal) GetAppGuardHealth(_ context.Context, _ string) (dal.AppGuardHealth, error) {
+	return dal.AppGuardHealth{Agents: []dal.GuardAgentRow{}}, nil
+}
 func (f *isolationFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
 	return []dal.ContextSession{}, nil
 }

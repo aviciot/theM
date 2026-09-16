@@ -273,3 +273,44 @@ func TestPatchOrchestratorLLM_Handler_422_NoKey(t *testing.T) {
 	w := serveAppsQuerier(t, db, nil, http.MethodPatch, "/applications/app-uuid/orchestrators/orch-uuid/llm", body)
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
+
+// ── GuardHealth handler tests ─────────────────────────────────────────────────
+
+// GH-H1: GET /applications/{id}/guard-health with no wirings and no scans → 200 with empty agents and zero stats.
+func TestGuardHealth_Handler_Empty(t *testing.T) {
+	// Query (agent wirings) returns no rows; QueryRow (stats aggregate) returns zeros via fakeRow.
+	db := &multiQueryFakeDB{}
+	w := serveAppsQuerier(t, db, nil, http.MethodGet, "/applications/app-uuid/guard-health", nil)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	agents, ok := out["agents"].([]any)
+	assert.True(t, ok, "agents must be an array")
+	assert.Empty(t, agents, "agents must be empty when no wirings exist")
+	assert.Equal(t, float64(0), out["scanned"])
+	assert.Equal(t, float64(0), out["blocked"])
+}
+
+// GH-H2: GET /applications/{id}/guard-health with one agent wiring → 200 with agent in array.
+func TestGuardHealth_Handler_WithAgent(t *testing.T) {
+	db := &multiQueryFakeDB{
+		queryFn: func(sql string) *fakeRows {
+			// The first Query is for agent wirings: return one row (agent_id, slug, name).
+			return newFakeRows([][]any{
+				{"agent-uuid-1", "crm-agent", "CRM Agent"},
+			})
+		},
+	}
+	w := serveAppsQuerier(t, db, nil, http.MethodGet, "/applications/app-uuid/guard-health", nil)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	agents, ok := out["agents"].([]any)
+	assert.True(t, ok, "agents must be an array")
+	require.Len(t, agents, 1)
+	agent := agents[0].(map[string]any)
+	assert.Equal(t, "crm-agent", agent["agent_slug"])
+	assert.Equal(t, "CRM Agent", agent["agent_name"])
+}

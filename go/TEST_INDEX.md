@@ -743,6 +743,8 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestRunsArtifacts_WithData` | RA-2: GET /runs/{run_id}/artifacts with rows → Artifact array with parts parsed |
 | `TestRunsGuardEvents_Empty` | RG-1: GET /runs/{run_id}/guard-events, no rows → `[]` not null |
 | `TestRunsGuardEvents_WithData` | RG-2: GET /runs/{run_id}/guard-events with rows → GuardEvent array with scan_status/scan_result/scanned_at |
+| `TestGuardHealth_Handler_Empty` | GH-H1: GET /applications/{id}/guard-health, no wirings/scans → 200 with empty agents and zero stats |
+| `TestGuardHealth_Handler_WithAgent` | GH-H2: GET /applications/{id}/guard-health with one wiring → 200 with agent in agents array |
 | `TestRunsRoute_StatsNotParsedAsRunID` | RO-1: GET /runs/stats → stats JSON not run-not-found (static route wins over /{run_id} wildcard) |
 | `TestRunsCancel_Success` | RW-1: PATCH /runs/{run_id}/cancel with matching run → 200 Run JSON |
 | `TestRunsCancel_NotFound` | RW-2: PATCH /runs/{run_id}/cancel run not found (both QueryRows return ErrNoRows) → 404 |

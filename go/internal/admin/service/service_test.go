@@ -275,6 +275,9 @@ func (f *fakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifac
 func (f *fakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) {
 	return []dal.GuardEvent{}, nil
 }
+func (f *fakeDal) GetAppGuardHealth(_ context.Context, _ string) (dal.AppGuardHealth, error) {
+	return dal.AppGuardHealth{Agents: []dal.GuardAgentRow{}}, nil
+}
 func (f *fakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
 	return []dal.ContextSession{}, nil
 }

@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig, type AppGuardHealth } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
@@ -86,6 +86,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   const [secCfg,          setSecCfg]          = useState<SecurityConfig>({ enabled: false });
   const [secSaving,       setSecSaving]       = useState(false);
   const [secMsg,          setSecMsg]          = useState('');
+  const [guardHealth,     setGuardHealth]     = useState<AppGuardHealth | null>(null);
 
   const user = useAuthStore(s => s.user);
 
@@ -124,6 +125,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   }, [app.id]);
   useEffect(() => { themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {}); }, [app.id]);
   useEffect(() => { themApi.getSecurityConfig(app.id).then(setSecCfg).catch(() => {}); }, [app.id]);
+  useEffect(() => { themApi.getAppGuardHealth(app.id).then(setGuardHealth).catch(() => {}); }, [app.id]);
   useEffect(() => {
     if (user?.role !== 'super_admin') return;
     themApi.listTenants().catch(() => []).then(setTenants);
@@ -359,6 +361,69 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
             </button>
             {secMsg && <span style={{ fontSize: 12, color: secMsg === 'Saved' ? C.green : C.error, fontWeight: 600 }}>{secMsg}</span>}
           </div>
+
+          {/* File Guard health */}
+          {guardHealth && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                File Guard Health
+              </div>
+
+              {/* Aggregate stats row */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                {([
+                  { label: 'Scanned',  value: guardHealth.scanned,  color: '#94a3b8' },
+                  { label: 'Clean',    value: guardHealth.clean,    color: '#4ade80' },
+                  { label: 'Blocked',  value: guardHealth.blocked,  color: '#f87171' },
+                  { label: 'Pending',  value: guardHealth.pending,  color: '#60a5fa' },
+                  { label: 'Errors',   value: guardHealth.errors,   color: '#fbbf24' },
+                ] as const).map(({ label, value, color }) => (
+                  <div key={label} style={{
+                    flex: '1 0 80px', padding: '8px 12px', borderRadius: 8,
+                    background: `${color}10`, border: `1px solid ${color}30`,
+                    textAlign: 'center',
+                  }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color }}>{value}</div>
+                    <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {guardHealth.last_event && (
+                <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
+                  Last scan: {new Date(guardHealth.last_event).toLocaleString()}
+                </div>
+              )}
+
+              {/* Per-agent wirings */}
+              {guardHealth.agents.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.textMuted, padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  No per-agent file-guard wirings configured. Use the canvas to add a File Guard node.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {guardHealth.agents.map(a => (
+                    <div key={a.agent_id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderRadius: 8,
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(96,165,250,0.2)',
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#60a5fa' }}>security</span>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{a.agent_name}</span>
+                        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6, fontFamily: 'monospace' }}>{a.agent_slug}</span>
+                      </div>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                        background: 'rgba(96,165,250,0.15)', color: '#60a5fa',
+                      }}>File Guard</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </Section>
 
         <Section title="Provider Keys" icon="key" accent="#fb923c" defaultOpen={false}

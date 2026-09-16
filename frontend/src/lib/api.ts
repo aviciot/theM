@@ -35,6 +35,8 @@ export type {
   ArtifactPart,
   ArtifactOut,
   GuardEvent,
+  GuardAgentRow,
+  AppGuardHealth,
   ContextSession,
   AgentCard,
   BridgeHealth,
@@ -128,6 +130,7 @@ import type {
   TaskOut,
   ArtifactOut,
   GuardEvent,
+  AppGuardHealth,
   ContextSession,
   AgentCard,
   MonitoringConfig,
@@ -483,6 +486,7 @@ export const themApi = {
   deleteMapping: (roleId: string, mappingId: string) => api.delete<void>(`/admin/roles/${roleId}/mappings/${mappingId}`),
   getSecurityConfig: (appId: string) => api.get<SecurityConfig>(`/admin/applications/${appId}/security-config`),
   putSecurityConfig: (appId: string, cfg: SecurityConfig) => api.put<SecurityConfig>(`/admin/applications/${appId}/security-config`, cfg),
+  getAppGuardHealth: (appId: string) => api.get<AppGuardHealth>(`/admin/applications/${appId}/guard-health`),
   getServicesStats: (window: '24h' | '7d' | '30d' = '7d') => api.get<ServicesStats>(`/admin/services/stats?window=${window}`),
   // Live reachability check for a deployed application slug
   pingApp: async (slug: string): Promise<boolean> => {

@@ -214,3 +214,78 @@ func (d *DB) UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, co
 	var id string
 	return d.q.ExecReturning(ctx, q, appID, tenantID, configJSON).Scan(&id)
 }
+
+// GuardAgentRow is one agent that has a file-guard wiring configured for an application.
+type GuardAgentRow struct {
+	AgentID   string `json:"agent_id"`
+	AgentSlug string `json:"agent_slug"`
+	AgentName string `json:"agent_name"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// AppGuardHealth is the guard health summary for an application.
+type AppGuardHealth struct {
+	Agents    []GuardAgentRow `json:"agents"`     // agents with file-guard wirings
+	Scanned   int64           `json:"scanned"`    // total files scanned (non-disabled)
+	Clean     int64           `json:"clean"`
+	Blocked   int64           `json:"blocked"`    // infected + flagged
+	Pending   int64           `json:"pending"`    // pending + scanning
+	Errors    int64           `json:"errors"`
+	LastEvent *string         `json:"last_event"` // ISO timestamp of most recent scan, null if none
+}
+
+// GetAppGuardHealth returns the guard health summary for an application:
+// which agents have file-guard wirings configured and aggregate scan stats
+// from run_artifacts for the application.
+func (d *DB) GetAppGuardHealth(ctx context.Context, appID string) (AppGuardHealth, error) {
+	var h AppGuardHealth
+	h.Agents = []GuardAgentRow{}
+
+	// ── Per-agent wirings ────────────────────────────────────────────────────
+	const agentQ = `
+SELECT a.id::text, a.slug, COALESCE(a.name, a.slug)
+FROM them.middleware_wirings mw
+JOIN them.agents          a  ON a.id  = mw.agent_id
+JOIN them.middleware_defs md ON md.id = mw.def_id
+WHERE mw.application_id = $1::uuid
+  AND md.kind            = 'guard'
+  AND md.slug            = 'file-guard'
+ORDER BY a.slug`
+
+	arows, err := d.q.Query(ctx, agentQ, appID)
+	if err != nil {
+		return h, err
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var r GuardAgentRow
+		if err := arows.Scan(&r.AgentID, &r.AgentSlug, &r.AgentName); err != nil {
+			return h, err
+		}
+		h.Agents = append(h.Agents, r)
+	}
+	arows.Close()
+
+	// ── App-level scan aggregate ─────────────────────────────────────────────
+	const statsQ = `
+SELECT
+  count(*) FILTER (WHERE scan_status <> 'disabled')                         AS scanned,
+  count(*) FILTER (WHERE scan_status = 'clean')                             AS clean,
+  count(*) FILTER (WHERE scan_status IN ('infected','flagged'))             AS blocked,
+  count(*) FILTER (WHERE scan_status IN ('pending','scanning'))             AS pending,
+  count(*) FILTER (WHERE scan_status IN ('error','failed'))                 AS errors,
+  to_char(max(scanned_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_event
+FROM them.run_artifacts
+WHERE application_id = $1::uuid
+  AND scan_status    <> 'disabled'`
+
+	var lastEvent *string
+	err = d.q.QueryRow(ctx, statsQ, appID).Scan(
+		&h.Scanned, &h.Clean, &h.Blocked, &h.Pending, &h.Errors, &lastEvent,
+	)
+	if err != nil {
+		return h, err
+	}
+	h.LastEvent = lastEvent
+	return h, nil
+}

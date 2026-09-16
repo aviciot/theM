@@ -187,6 +187,9 @@ func (f *agentDefFakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal
 func (f *agentDefFakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) {
 	return []dal.GuardEvent{}, nil
 }
+func (f *agentDefFakeDal) GetAppGuardHealth(_ context.Context, _ string) (dal.AppGuardHealth, error) {
+	return dal.AppGuardHealth{Agents: []dal.GuardAgentRow{}}, nil
+}
 func (f *agentDefFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
 	return nil, nil
 }
