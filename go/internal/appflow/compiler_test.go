@@ -289,6 +289,65 @@ func TestCompile_EdgeLabelPreserved(t *testing.T) {
 	}
 }
 
+// AF-C-01: ResolveAgentByInstanceID reads _resolved_agent_ids from the definition JSON.
+func TestResolveAgentByInstanceID_ReadsServerStampedMap(t *testing.T) {
+	defJSON := []byte(`{
+		"schema_version": 2,
+		"_resolved_agent_ids": {
+			"agent_1": "server-uuid-1",
+			"agent_2": "server-uuid-2"
+		},
+		"components": [
+			{"instance_id":"agent_1","definition_ref":{"kind":"agent","namespace":"default","name":"echo","version":1},"definition_id":"client-uuid-IGNORED"}
+		]
+	}`)
+	m, err := ResolveAgentByInstanceID(defJSON)
+	if err != nil {
+		t.Fatalf("ResolveAgentByInstanceID: %v", err)
+	}
+	if m["agent_1"] != "server-uuid-1" {
+		t.Errorf("want server-uuid-1, got %q — client definition_id must be ignored", m["agent_1"])
+	}
+	if m["agent_2"] != "server-uuid-2" {
+		t.Errorf("want server-uuid-2, got %q", m["agent_2"])
+	}
+}
+
+// AF-C-02: ResolveAgentByInstanceID returns empty map for old definition without _resolved_agent_ids.
+func TestResolveAgentByInstanceID_MissingMap_ReturnsEmpty(t *testing.T) {
+	defJSON := []byte(`{
+		"schema_version": 2,
+		"components": [
+			{"instance_id":"agent_1","definition_ref":{"kind":"agent","namespace":"default","name":"echo","version":1},"definition_id":"uuid-1"}
+		]
+	}`)
+	m, err := ResolveAgentByInstanceID(defJSON)
+	if err != nil {
+		t.Fatalf("ResolveAgentByInstanceID: %v", err)
+	}
+	if len(m) != 0 {
+		t.Errorf("want empty map for old definition, got %v", m)
+	}
+}
+
+// AF-C-03: ParseLLMConfig uses orchestrator provider; defaults to "anthropic" when empty.
+func TestParseLLMConfig_UsesOrchProvider(t *testing.T) {
+	cfg := ParseLLMConfig(LLMOrchConfig{Provider: "openai", Model: "gpt-4o"})
+	if cfg.ProviderName != "openai" {
+		t.Errorf("want openai, got %q", cfg.ProviderName)
+	}
+	if cfg.Model != "gpt-4o" {
+		t.Errorf("want gpt-4o, got %q", cfg.Model)
+	}
+}
+
+func TestParseLLMConfig_DefaultsToAnthropic(t *testing.T) {
+	cfg := ParseLLMConfig(LLMOrchConfig{})
+	if cfg.ProviderName != "anthropic" {
+		t.Errorf("want anthropic default, got %q", cfg.ProviderName)
+	}
+}
+
 // AF-08: findEdgeByLabel case-insensitive match.
 func TestFindEdgeByLabel(t *testing.T) {
 	edges := []AppFlowEdge{

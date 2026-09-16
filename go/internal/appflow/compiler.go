@@ -304,62 +304,54 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 
 // ── Definition helpers ────────────────────────────────────────────────────────
 
-// ResolveAgentByInstanceID parses an application definition JSON and returns a map
-// of component instance_id → definition_id (agents.id UUID) for all agent-kind
-// components. definition_id must be set by the canvas when the component is placed
-// from the agent palette. Components without a definition_id are silently omitted —
-// Validate will catch them as unresolved_agent if they appear in the compiled spec.
+// ResolveAgentByInstanceID reads the server-stamped _resolved_agent_ids map from
+// an application definition JSON. This map is written at publish time by
+// PublishDefinition (service/publish.go) using the registry's tenant-scoped UUID
+// for each agent component, so it is never influenced by client-supplied data.
 //
-// This function is the single canonical implementation shared by the WS and SSE
-// handlers. It intentionally ignores cross-tenant concerns — tenancy is enforced
-// upstream by EPConfig resolution (the definition JSON comes from the server-resolved
-// active_definition_id, never from client-supplied data).
+// Old definitions (published before this stamp was added) return an empty map,
+// which will cause Validate to emit unresolved_agent errors — prompting a re-publish.
 func ResolveAgentByInstanceID(defJSON []byte) (map[string]string, error) {
-	type compRef struct {
-		InstanceID    string `json:"instance_id"`
-		DefinitionID  string `json:"definition_id,omitempty"`
-		DefinitionRef struct {
-			Kind string `json:"kind"`
-		} `json:"definition_ref"`
-	}
 	var doc struct {
-		Components []compRef `json:"components"`
+		ResolvedAgentIDs map[string]string `json:"_resolved_agent_ids,omitempty"`
 	}
 	if err := json.Unmarshal(defJSON, &doc); err != nil {
 		return nil, fmt.Errorf("appflow: parse definition for agent map: %w", err)
 	}
-	out := make(map[string]string, len(doc.Components))
-	for _, c := range doc.Components {
-		if c.DefinitionRef.Kind == "agent" && c.DefinitionID != "" {
-			out[c.InstanceID] = c.DefinitionID
-		}
+	if doc.ResolvedAgentIDs == nil {
+		return map[string]string{}, nil
 	}
-	return out, nil
+	return doc.ResolvedAgentIDs, nil
 }
 
-// LLMConfig holds the LLM provider and model parsed from an application definition.
+// LLMConfig holds the LLM provider and model for Router classification.
 type LLMConfig struct {
 	// ProviderName is the provider slug (e.g. "anthropic", "openai").
-	// Defaults to "anthropic" when not set in the definition.
+	// Defaults to "anthropic" when not configured.
 	ProviderName string
 	// Model is the model identifier.
 	// When empty, the Router activity defaults to its own model constant.
 	Model string
 }
 
-// ParseLLMConfig extracts the router LLM provider and model from an application
-// definition JSON. Falls back to "anthropic" provider when not configured so the
-// Router activity can always attempt key resolution from the DB.
-func ParseLLMConfig(defJSON []byte) LLMConfig {
-	var doc struct {
-		LLMProvider string `json:"llm_provider,omitempty"`
-		LLMModel    string `json:"llm_model,omitempty"`
+// LLMOrchConfig is the LLM configuration sourced from the bound app_orchestrators row.
+// Populated from EPConfig (which reads ao.llm_provider / ao.llm_model at query time).
+type LLMOrchConfig struct {
+	Provider string
+	Model    string
+}
+
+// ParseLLMConfig builds an LLMConfig from the orchestrator binding resolved for this
+// entry point. The canvas stores llm_provider/llm_model on the app_orchestrators row
+// (set at publish time from the orchestrator component config), not on the definition
+// document root. Falls back to "anthropic" so the Router can always attempt DB key
+// resolution rather than failing immediately with a blank provider.
+func ParseLLMConfig(orch LLMOrchConfig) LLMConfig {
+	provider := orch.Provider
+	if provider == "" {
+		provider = "anthropic"
 	}
-	_ = json.Unmarshal(defJSON, &doc)
-	if doc.LLMProvider == "" {
-		doc.LLMProvider = "anthropic"
-	}
-	return LLMConfig{ProviderName: doc.LLMProvider, Model: doc.LLMModel}
+	return LLMConfig{ProviderName: provider, Model: orch.Model}
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────

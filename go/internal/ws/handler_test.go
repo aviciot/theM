@@ -1217,7 +1217,8 @@ func TestWS_AppFlowDispatch_TemporalBackend(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
 
 	// A minimal published schema_version 2 definition with one agent.
-	defJSON := `{"schema_version":2,"execution_backend":"temporal","components":[{"instance_id":"a1","definition_ref":{"kind":"agent","namespace":"default","name":"echo","version":1},"definition_id":"agent-uuid-1"}],"entry_points":[{"instance_id":"ep1","slug":"ep1","protocol":"websocket","root":"a1"}],"connections":[]}`
+	// _resolved_agent_ids is stamped by PublishDefinition at publish time.
+	defJSON := `{"schema_version":2,"execution_backend":"temporal","_resolved_agent_ids":{"a1":"agent-uuid-1"},"components":[{"instance_id":"a1","definition_ref":{"kind":"agent","namespace":"default","name":"echo","version":1},"definition_id":"agent-uuid-1"}],"entry_points":[{"instance_id":"ep1","slug":"ep1","protocol":"websocket","root":"a1"}],"connections":[]}`
 
 	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
 		EPSlug:               "ep1",

@@ -2831,9 +2831,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 **Trigger:** any change to `internal/admin/middleware_wirings.go` (ListDefs handler), `internal/admin/dal/middleware_wirings.go` (ListMiddlewareDefs / MiddlewareDefSummary), or `db/097_middleware_defs_visual.sql`
 
-### S1-112 · AppFlow compiler — `internal/appflow/compiler_test.go`
+### S1-112 · AppFlow compiler + workflow — `internal/appflow/compiler_test.go`, `internal/appflow/workflow_test.go`
 
-**Purpose:** Verifies the AppFlow compiler (`appflow.Compile`) correctly parses `AppDefinitionDoc` JSON into an `AppFlowSpec`, resolves agent nodes, classifies Router/HIL flow control nodes, propagates `execution_backend`, and validates structural constraints. Also verifies workflow helpers (`findEdgeByLabel`, `defaultRouterPrompt`).
+**Purpose:** Verifies the AppFlow compiler (`appflow.Compile`) correctly parses `AppDefinitionDoc` JSON into an `AppFlowSpec`, resolves agent nodes using server-stamped `_resolved_agent_ids`, classifies Router/HIL flow control nodes, propagates `execution_backend`, and validates structural constraints. Also verifies FinalizeRunActivity lifecycle: success/error paths, XAdd error propagation, nil-dep safety. Workflow helpers (`findEdgeByLabel`, `defaultRouterPrompt`).
 
 | Test ID | Test | What it proves |
 |---|---|---|
@@ -2847,6 +2847,15 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-08 | `TestCompile_EdgeLabelPreserved` | conn.Label flows through compilation into AppFlowEdge.Label |
 | AF-09 | `TestCompile_UnresolvedAgent_CaughtByValidate` | missing agentByInstanceID entry → empty AgentID (no DefinitionID fallback) → Validate catches unresolved_agent |
 | AF-10 | `TestFindEdgeByLabel` | findEdgeByLabel case-insensitive match + no-match returns "" |
+| AF-C-01 | `TestResolveAgentByInstanceID_ReadsServerStampedMap` | reads `_resolved_agent_ids` from definition JSON; ignores client `definition_id` |
+| AF-C-02 | `TestResolveAgentByInstanceID_MissingMap_ReturnsEmpty` | old definitions without `_resolved_agent_ids` return empty map |
+| AF-C-03 | `TestParseLLMConfig_UsesOrchProvider` | ParseLLMConfig reads provider+model from LLMOrchConfig |
+| AF-C-04 | `TestParseLLMConfig_DefaultsToAnthropic` | ParseLLMConfig defaults to "anthropic" when provider is empty |
+| AF-WF-01 | `TestFinalizeRunActivity_SuccessPath` | completed status → RunCompleted + "done" stream event published |
+| AF-WF-01b | `TestFinalizeRunActivity_FailedPath` | failed status → RunFailed + "error" stream event published |
+| AF-WF-02 | `TestFinalizeRunActivity_XAddError_IsReturned` | XAdd error propagated (not swallowed) so Temporal retries activity |
+| AF-WF-02b | `TestFinalizeRunActivity_NilDeps_NoOp` | nil StatusUpdater + StreamPub returns nil (safe no-op) |
+| AF-WF-03 | `TestFinalizeRunActivityInput_JSONRoundTrip` | FinalizeRunActivityInput status/errMsg survive JSON serialization |
 
 **Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
 
@@ -3428,7 +3437,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| S1-112 | AppFlow compiler (AF-01..10): MinimalDoc, RouterAndHIL, WrongSchemaVersion, ExecutionBackend, Validate_RouterNoEdges, Validate_ValidSpec, DefaultRouterPrompt, EdgeLabelPreserved, UnresolvedAgent_CaughtByValidate, FindEdgeByLabel | 10 |
+| S1-112 | AppFlow compiler + workflow (AF-01..10, AF-C-01..04, AF-WF-01..03): compiler, ResolveAgentByInstanceID (server-stamped map), ParseLLMConfig (LLMOrchConfig), FinalizeRunActivity (success/fail/XAdd-error/nil-deps), JSON round-trip | 19 |
 | **S1 total** | | **1178** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |

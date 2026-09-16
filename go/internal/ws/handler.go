@@ -499,7 +499,10 @@ func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionH
 	if err != nil {
 		return nil, fmt.Errorf("appflow: resolve agents: %w", err)
 	}
-	llmCfg := appflow.ParseLLMConfig(defJSON)
+	llmCfg := appflow.ParseLLMConfig(appflow.LLMOrchConfig{
+		Provider: handle.EPConfig.OrchestratorLLMProvider,
+		Model:    handle.EPConfig.OrchestratorLLMModel,
+	})
 
 	spec, err := appflow.Compile(defJSON, agentByInstanceID)
 	if err != nil {

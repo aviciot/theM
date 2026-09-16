@@ -241,7 +241,7 @@ func (f *agentDefFakeDal) UpdateDraftDefinition(_ context.Context, _, _, _ strin
 	return nil
 }
 func (f *agentDefFakeDal) DeleteDraftDefinition(_ context.Context, _, _, _ string) error { return nil }
-func (f *agentDefFakeDal) PublishDefinition(_ context.Context, _, _, _, _ string) (dal.PublishResult, error) {
+func (f *agentDefFakeDal) PublishDefinition(_ context.Context, _, _, _, _ string, _ map[string]string) (dal.PublishResult, error) {
 	return dal.PublishResult{}, nil
 }
 func (f *agentDefFakeDal) UpsertAppOrchestrator(_ context.Context, _ dal.AppOrchestratorRow) (string, error) {

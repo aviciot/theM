@@ -2,6 +2,8 @@ package dal
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 )
 
 // ── Publish-related row types ─────────────────────────────────────────────────
@@ -70,26 +72,54 @@ type EntryPointRow struct {
 // PublishDefinition atomically marks a draft definition as published and sets it
 // as the active definition for the application.
 //
+// resolvedAgentIDs maps component instance_id → agents.id UUID for every agent
+// component in the definition. When non-empty, the definition JSON is updated to
+// include the _resolved_agent_ids field so the AppFlow runtime can read
+// server-authoritative UUIDs without trusting client-supplied data.
+//
 // Preconditions (enforced by SQL):
 //   - The definition row must exist with the given tenant + app.
 //   - The status must be 'draft' (AND status='draft' in WHERE clause).
 //
 // Returns pgx.ErrNoRows if not found, wrong tenant/app, or not a draft.
-// When d.pool is set (production), both UPDATEs run in a single transaction.
-func (d *DB) PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (PublishResult, error) {
+// When d.pool is set (production), all UPDATEs run in a single transaction.
+func (d *DB) PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string, resolvedAgentIDs map[string]string) (PublishResult, error) {
 	if d.pool != nil {
 		var res PublishResult
 		err := runInTx(ctx, d.pool, func(q Querier) error {
 			var e error
-			res, e = publishDefinitionWithQ(ctx, q, tenantID, appID, defID)
+			res, e = publishDefinitionWithQ(ctx, q, tenantID, appID, defID, resolvedAgentIDs)
 			return e
 		})
 		return res, err
 	}
-	return publishDefinitionWithQ(ctx, d.q, tenantID, appID, defID)
+	return publishDefinitionWithQ(ctx, d.q, tenantID, appID, defID, resolvedAgentIDs)
 }
 
-func publishDefinitionWithQ(ctx context.Context, q Querier, tenantID, appID, defID string) (PublishResult, error) {
+func publishDefinitionWithQ(ctx context.Context, q Querier, tenantID, appID, defID string, resolvedAgentIDs map[string]string) (PublishResult, error) {
+	// Stamp _resolved_agent_ids into the definition JSON when the map is non-empty.
+	// This uses a jsonb || jsonb merge so the existing definition fields are preserved.
+	if len(resolvedAgentIDs) > 0 {
+		stamped, err := json.Marshal(resolvedAgentIDs)
+		if err != nil {
+			return PublishResult{}, fmt.Errorf("publish: marshal resolved agent ids: %w", err)
+		}
+		patch, err := json.Marshal(map[string]json.RawMessage{"_resolved_agent_ids": stamped})
+		if err != nil {
+			return PublishResult{}, fmt.Errorf("publish: marshal patch: %w", err)
+		}
+		const stampDef = `
+			UPDATE them.application_definitions
+			   SET definition = definition || $4::jsonb
+			 WHERE id             = $1::uuid
+			   AND application_id = $2::uuid
+			   AND tenant_id      = $3::uuid
+			   AND status         = 'draft'`
+		if err := q.Exec(ctx, stampDef, defID, appID, tenantID, string(patch)); err != nil {
+			return PublishResult{}, fmt.Errorf("publish: stamp resolved agent ids: %w", err)
+		}
+	}
+
 	const updateDef = `
 		UPDATE them.application_definitions
 		   SET status      = 'published',

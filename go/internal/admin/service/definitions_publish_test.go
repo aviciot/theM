@@ -129,7 +129,7 @@ func (f *publishFakeDal) UpdateDraftDefinition(_ context.Context, _, _, _ string
 }
 func (f *publishFakeDal) DeleteDraftDefinition(_ context.Context, _, _, _ string) error { return nil }
 
-func (f *publishFakeDal) PublishDefinition(_ context.Context, _, _, _, _ string) (dal.PublishResult, error) {
+func (f *publishFakeDal) PublishDefinition(_ context.Context, _, _, _, _ string, _ map[string]string) (dal.PublishResult, error) {
 	f.publishCalled = true
 	return f.publishResult, f.publishErr
 }

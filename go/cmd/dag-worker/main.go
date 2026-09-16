@@ -708,7 +708,12 @@ func (u *pgxRunStatusUpdater) UpdateRunStatus(ctx context.Context, runID string,
 	terminal := status == domain.RunCompleted || status == domain.RunFailed || status == domain.RunCanceled
 	var q string
 	if terminal {
-		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,''), ended_at=now() WHERE id=$1::uuid`
+		// Idempotency guard: skip if run is already in a terminal state.
+		// This prevents a retried FinalizeRunActivity from overwriting a terminal status
+		// that was written by a previous attempt.
+		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,''), ended_at=now()
+		      WHERE id=$1::uuid
+		        AND status NOT IN ('completed','failed','canceled')`
 	} else {
 		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,'') WHERE id=$1::uuid`
 	}

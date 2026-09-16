@@ -46,6 +46,8 @@ SELECT
     COALESCE(a.runtime_config, '{}')::text,
     ep.app_orchestrator_id::text,
     ao.name,
+    COALESCE(ao.llm_provider, ''),
+    COALESCE(ao.llm_model, ''),
     COALESCE(ep.allowed_principals, 'internal'),
     COALESCE(ad.definition::text, '{}')
 FROM them.entry_points ep
@@ -67,6 +69,7 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 	var accessPolicyText string
 	var runtimeConfigText string
 	var activeDefinitionText string
+	var orchLLMProvider, orchLLMModel string
 
 	err := q.pool.QueryRow(ctx, epConfigQuery, tenantID, appSlug, epSlug).Scan(
 		&row.EPID,
@@ -82,6 +85,8 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 		&runtimeConfigText,
 		&row.AppOrchestratorID,
 		&row.OrchestratorName,
+		&orchLLMProvider,
+		&orchLLMModel,
 		&row.AllowedPrincipals,
 		&activeDefinitionText,
 	)
@@ -94,6 +99,12 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 
 	row.AccessPolicyJSON = []byte(accessPolicyText)
 	row.AppRuntimeConfigJSON = []byte(runtimeConfigText)
+	if orchLLMProvider != "" {
+		row.OrchestratorLLMProvider = &orchLLMProvider
+	}
+	if orchLLMModel != "" {
+		row.OrchestratorLLMModel = &orchLLMModel
+	}
 	if activeDefinitionText != "{}" && activeDefinitionText != "" {
 		row.ActiveDefinitionJSON = []byte(activeDefinitionText)
 	}

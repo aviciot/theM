@@ -340,7 +340,7 @@ func (f *fakeDal) DeleteDraftDefinition(_ context.Context, _, _, _ string) error
 }
 
 // Phase C publish pipeline stubs.
-func (f *fakeDal) PublishDefinition(_ context.Context, _, _, _, _ string) (dal.PublishResult, error) {
+func (f *fakeDal) PublishDefinition(_ context.Context, _, _, _, _ string, _ map[string]string) (dal.PublishResult, error) {
 	return dal.PublishResult{}, nil
 }
 func (f *fakeDal) UpsertAppOrchestrator(_ context.Context, _ dal.AppOrchestratorRow) (string, error) {

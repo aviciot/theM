@@ -393,6 +393,11 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	// cd.ID is the component_definitions.id which is also agents.id when the agent was
 	// properly created/published (both tables share the UUID). We check existence first
 	// so the error is clear rather than relying on a FK violation.
+	//
+	// Also build resolvedAgentIDs: instance_id → agents.id UUID, stamped into the
+	// definition JSON as _resolved_agent_ids. This is the server-authoritative mapping
+	// used by ResolveAgentByInstanceID at runtime — client-supplied definition_id is ignored.
+	resolvedAgentIDs := make(map[string]string)
 	for _, comp := range doc.Components {
 		if comp.DefinitionRef.Kind != registry.KindAgent {
 			continue
@@ -414,6 +419,7 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 		}); bindErr != nil {
 			return nil, fmt.Errorf("upsert agent binding %q: %w", comp.InstanceID, bindErr)
 		}
+		resolvedAgentIDs[comp.InstanceID] = cd.ID
 	}
 
 	// 6. Compile entry_points.
@@ -561,7 +567,9 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	}
 
 	// 8. Atomically mark published + update active_definition_id.
-	result, err := s.dal.PublishDefinition(ctx, tenantID, appID, defID, def.DefinitionHash)
+	// resolvedAgentIDs is stamped into the definition JSON as _resolved_agent_ids
+	// so the AppFlow runtime can read tenant-scoped UUIDs without trusting client data.
+	result, err := s.dal.PublishDefinition(ctx, tenantID, appID, defID, def.DefinitionHash, resolvedAgentIDs)
 	if err != nil {
 		if dal.IsNoRows(err) {
 			// The status changed between our check and now (e.g. concurrent publish).

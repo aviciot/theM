@@ -151,21 +151,54 @@ type FinalizeRunActivityInput struct {
 //   - Router nodes: ExecuteRouterActivity classifies the user message → chooses an outgoing label.
 //   - HIL nodes: ExecuteHILActivity persists an approval request; workflow pauses on signal.
 //   - Missing outgoing edges on a router → non-retryable error.
-//   - FinalizeRunActivity is called at every terminal exit to update DB status + publish stream event.
-func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowWorkflowOutput, error) {
+//   - FinalizeRunActivity runs via defer on every exit path (including workflow cancellation)
+//     using workflow.NewDisconnectedContext so it executes even when ctx is cancelled.
+func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppFlowWorkflowOutput, retErr error) {
+	// Shared activity options for short-lived finalize/HIL activities.
+	shortAO := workflow.ActivityOptions{
+		TaskQueue:           AppFlowTaskQueue,
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy:         &temporalerr.RetryPolicy{MaximumAttempts: 3},
+	}
+
+	// defer runs FinalizeRunActivity on a disconnected context so it executes on
+	// every exit path: normal completion, error returns, and workflow cancellation.
+	defer func() {
+		status := out.Status
+		if status == "" {
+			status = "failed"
+		}
+		errMsg := ""
+		if retErr != nil {
+			errMsg = retErr.Error()
+		}
+		dCtx, cancel := workflow.NewDisconnectedContext(ctx)
+		defer cancel()
+		fCtx := workflow.WithActivityOptions(dCtx, shortAO)
+		_ = workflow.ExecuteActivity(fCtx, AppFlowFinalizeRunActivityName, FinalizeRunActivityInput{
+			RunID:     input.RunID,
+			TenantID:  input.TenantID,
+			Status:    status,
+			FinalText: out.FinalText,
+			ErrMsg:    errMsg,
+		}).Get(fCtx, nil)
+	}()
+
 	if input.Spec == nil {
-		return AppFlowWorkflowOutput{Status: "failed"},
-			temporalerr.NewNonRetryableApplicationError(
-				"AppFlowWorkflow: spec is nil",
-				"InvalidInput", nil,
-			)
+		out.Status = "failed"
+		retErr = temporalerr.NewNonRetryableApplicationError(
+			"AppFlowWorkflow: spec is nil",
+			"InvalidInput", nil,
+		)
+		return
 	}
 	if input.TenantID == "" || input.ApplicationID == "" || input.RunID == "" {
-		return AppFlowWorkflowOutput{Status: "failed"},
-			temporalerr.NewNonRetryableApplicationError(
-				"AppFlowWorkflow: TenantID, ApplicationID, and RunID must be non-empty",
-				"InvalidInput", nil,
-			)
+		out.Status = "failed"
+		retErr = temporalerr.NewNonRetryableApplicationError(
+			"AppFlowWorkflow: TenantID, ApplicationID, and RunID must be non-empty",
+			"InvalidInput", nil,
+		)
+		return
 	}
 
 	// Find the target EPFlow.
@@ -177,11 +210,12 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 		}
 	}
 	if epFlow == nil {
-		return AppFlowWorkflowOutput{Status: "failed"},
-			temporalerr.NewNonRetryableApplicationError(
-				fmt.Sprintf("AppFlowWorkflow: entry point %q not found in spec", input.EntryPointSlug),
-				"NotFound", nil,
-			)
+		out.Status = "failed"
+		retErr = temporalerr.NewNonRetryableApplicationError(
+			fmt.Sprintf("AppFlowWorkflow: entry point %q not found in spec", input.EntryPointSlug),
+			"NotFound", nil,
+		)
+		return
 	}
 
 	// Build node index.
@@ -195,26 +229,6 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 	outEdgesBySource := make(map[string][]AppFlowEdge)
 	for _, e := range epFlow.Edges {
 		outEdgesBySource[e.Source] = append(outEdgesBySource[e.Source], e)
-	}
-
-	// Shared activity options for short-lived finalize/HIL activities.
-	shortAO := workflow.ActivityOptions{
-		TaskQueue:           AppFlowTaskQueue,
-		StartToCloseTimeout: 30 * time.Second,
-		RetryPolicy:         &temporalerr.RetryPolicy{MaximumAttempts: 3},
-	}
-
-	// finalize calls FinalizeRunActivity on the detached short-timeout context.
-	// Errors are logged but not propagated — the workflow already has its terminal result.
-	finalize := func(status, finalText, errMsg string) {
-		fCtx := workflow.WithActivityOptions(ctx, shortAO)
-		_ = workflow.ExecuteActivity(fCtx, AppFlowFinalizeRunActivityName, FinalizeRunActivityInput{
-			RunID:     input.RunID,
-			TenantID:  input.TenantID,
-			Status:    status,
-			FinalText: finalText,
-			ErrMsg:    errMsg,
-		}).Get(fCtx, nil)
 	}
 
 	// Walk nodes sequentially from start_id.
@@ -235,8 +249,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 	for currentID != "" {
 		node, ok := nodeByID[currentID]
 		if !ok {
-			return AppFlowWorkflowOutput{Status: "failed"},
-				fmt.Errorf("AppFlowWorkflow: node %q not found", currentID)
+			out.Status = "failed"
+			retErr = fmt.Errorf("AppFlowWorkflow: node %q not found", currentID)
+			return
 		}
 
 		switch node.Kind {
@@ -261,7 +276,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 				LLMModel:         input.LLMModel,
 			}).Get(ctx, &routerOut)
 			if err != nil {
-				return AppFlowWorkflowOutput{Status: "failed"}, fmt.Errorf("router %q: %w", node.ID, err)
+				out.Status = "failed"
+				retErr = fmt.Errorf("router %q: %w", node.ID, err)
+				return
 			}
 
 			// Find outgoing edge matching the chosen label.
@@ -272,11 +289,12 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 				if len(edges) == 1 {
 					nextID = edges[0].Target
 				} else {
-					return AppFlowWorkflowOutput{Status: "failed"},
-						temporalerr.NewNonRetryableApplicationError(
-							fmt.Sprintf("router %q: no outgoing edge matches label %q", node.ID, routerOut.ChosenLabel),
-							"RouterNoMatch", nil,
-						)
+					out.Status = "failed"
+					retErr = temporalerr.NewNonRetryableApplicationError(
+						fmt.Sprintf("router %q: no outgoing edge matches label %q", node.ID, routerOut.ChosenLabel),
+						"RouterNoMatch", nil,
+					)
+					return
 				}
 			}
 			currentID = nextID
@@ -311,7 +329,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 				FallbackAction: cfg.FallbackAction,
 			}).Get(hilCtx, &hilOut)
 			if err != nil {
-				return AppFlowWorkflowOutput{Status: "failed"}, fmt.Errorf("hil %q: persist: %w", node.ID, err)
+				out.Status = "failed"
+				retErr = fmt.Errorf("hil %q: persist: %w", node.ID, err)
+				return
 			}
 
 			// Wait for signal (approval or rejection).
@@ -344,49 +364,42 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (AppFlowW
 
 			if !approval.Approved {
 				rejMsg := "HIL gate rejected: " + approval.Comment
-				finalize("rejected", "", rejMsg)
-				return AppFlowWorkflowOutput{
-					Status:    "rejected",
-					FinalText: rejMsg,
-				}, nil
+				out = AppFlowWorkflowOutput{Status: "rejected", FinalText: rejMsg}
+				return
 			}
 
 			// Approved — continue to next node.
-			nextID := firstEdgeTarget(outEdgesBySource[node.ID])
-			currentID = nextID
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 
 		case "agent", "orchestrator":
 			// Direct agent invocation within AppFlowWorkflow is not yet implemented.
 			// Return a non-retryable error so the run fails explicitly rather than
 			// silently producing a "completed" result with no agent output.
-			return AppFlowWorkflowOutput{Status: "failed"},
-				temporalerr.NewNonRetryableApplicationError(
-					fmt.Sprintf("AppFlowWorkflow: agent/orchestrator node %q requires direct invocation which is not yet implemented; use OrchestrationWorkflow for agent execution", node.ID),
-					"AgentInvocationNotImplemented", nil,
-				)
+			out.Status = "failed"
+			retErr = temporalerr.NewNonRetryableApplicationError(
+				fmt.Sprintf("AppFlowWorkflow: agent/orchestrator node %q requires direct invocation which is not yet implemented; use OrchestrationWorkflow for agent execution", node.ID),
+				"AgentInvocationNotImplemented", nil,
+			)
+			return
 
 		case "middleware":
 			// Middleware nodes affect agent calls but are not directly executed here.
-			nextID := firstEdgeTarget(outEdgesBySource[node.ID])
-			currentID = nextID
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 
 		default:
-			return AppFlowWorkflowOutput{Status: "failed"},
-				temporalerr.NewNonRetryableApplicationError(
-					fmt.Sprintf("AppFlowWorkflow: unknown node kind %q at %q", node.Kind, node.ID),
-					"UnknownNodeKind", nil,
-				)
+			out.Status = "failed"
+			retErr = temporalerr.NewNonRetryableApplicationError(
+				fmt.Sprintf("AppFlowWorkflow: unknown node kind %q at %q", node.Kind, node.ID),
+				"UnknownNodeKind", nil,
+			)
+			return
 		}
 	}
 
-	finalOut := AppFlowWorkflowOutput{
-		Status:    "completed",
-		FinalText: accumulated,
-	}
-	finalize(finalOut.Status, finalOut.FinalText, "")
-	return finalOut, nil
+	out = AppFlowWorkflowOutput{Status: "completed", FinalText: accumulated}
+	return
 }
 
 // ── Activity stubs ────────────────────────────────────────────────────────────
@@ -532,7 +545,9 @@ func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input Final
 			}
 		}
 		raw, _ := json.Marshal(payload)
-		_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
+		if err := a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)}); err != nil {
+			return fmt.Errorf("finalize: publish stream event: %w", err)
+		}
 	}
 	return nil
 }

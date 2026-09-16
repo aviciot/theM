@@ -126,6 +126,12 @@ type EPConfig struct {
 	AppOrchestratorID string // entry_points.app_orchestrator_id (UUID string); empty if NULL
 	OrchestratorName  string // app_orchestrators.name; empty if unbound
 
+	// OrchestratorLLMProvider and OrchestratorLLMModel are the LLM config from
+	// the bound app_orchestrators row. Used by AppFlow dispatch to build LLMOrchConfig
+	// so Router activities use the application's configured provider, not a hardcoded one.
+	OrchestratorLLMProvider string // ao.llm_provider; empty when unset or unbound
+	OrchestratorLLMModel    string // ao.llm_model; empty when unset or unbound
+
 	// ExecutionBackend is the execution_backend field from the active application
 	// definition. "" or "local" = in-process orchestrator loop (default).
 	// "temporal" = AppFlowWorkflow via the appflow-dag Temporal task queue.
@@ -239,6 +245,10 @@ type EPConfigRow struct {
 	// Orchestrator binding (SEC-04). Nil when entry_points.app_orchestrator_id IS NULL.
 	AppOrchestratorID *string // entry_points.app_orchestrator_id
 	OrchestratorName  *string // app_orchestrators.name; nil when unbound
+
+	// LLM config from the bound app_orchestrators row. Nil/empty when unset or unbound.
+	OrchestratorLLMProvider *string // ao.llm_provider
+	OrchestratorLLMModel    *string // ao.llm_model
 
 	// Principal guard (Phase 3). "internal" | "external" | "both".
 	AllowedPrincipals string
@@ -454,12 +464,18 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 		queueTimeout = time.Duration(*row.EPQueueTimeoutSeconds) * time.Second
 	}
 
-	var appOrchID, orchName string
+	var appOrchID, orchName, orchLLMProvider, orchLLMModel string
 	if row.AppOrchestratorID != nil {
 		appOrchID = *row.AppOrchestratorID
 	}
 	if row.OrchestratorName != nil {
 		orchName = *row.OrchestratorName
+	}
+	if row.OrchestratorLLMProvider != nil {
+		orchLLMProvider = *row.OrchestratorLLMProvider
+	}
+	if row.OrchestratorLLMModel != nil {
+		orchLLMModel = *row.OrchestratorLLMModel
 	}
 
 	ap := row.AllowedPrincipals
@@ -485,9 +501,11 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 		QueueTimeout:         queueTimeout,
 		BlockedTokenHashes:   rt.BlockedTokens,
 		BlockedUserIDs:       rt.BlockedUserIDs,
-		AppOrchestratorID:    appOrchID,
-		OrchestratorName:     orchName,
-		ExecutionBackend:     execBackend,
+		AppOrchestratorID:        appOrchID,
+		OrchestratorName:         orchName,
+		OrchestratorLLMProvider:  orchLLMProvider,
+		OrchestratorLLMModel:     orchLLMModel,
+		ExecutionBackend:         execBackend,
 		ActiveDefinitionJSON: defJSON,
 		fetchedAt:            time.Now(),
 	}

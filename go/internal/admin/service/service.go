@@ -144,7 +144,7 @@ type Dal interface {
 	UpsertNodeLLMOverride(ctx context.Context, applicationID, agentID, nodeID, provider, model string) error
 
 	// Publish pipeline — Phase C
-	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (dal.PublishResult, error)
+	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string, resolvedAgentIDs map[string]string) (dal.PublishResult, error)
 	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)
 	UpsertEntryPoint(ctx context.Context, row dal.EntryPointRow) (string, error)
 	DeactivateStaleOrchestrators(ctx context.Context, tenantID, appID, defID string) error
