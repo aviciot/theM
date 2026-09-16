@@ -198,7 +198,7 @@ export function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
             {openMW && (
               <div className="nl-section-list">
                 {middlewareDefs.filter(m => m.enabled).map(m => {
-                  const emoji = m.kind === 'guard' ? '🛡️' : '⚡';
+                  const emoji = m.emoji ?? (m.kind === 'guard' ? '🛡️' : '⚡');
                   return (
                     <div key={m.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                       <div
@@ -207,12 +207,13 @@ export function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                           defId: m.id, slug: m.slug, kind: m.kind,
                           displayName: m.display_name, description: m.description,
                           config: m.config, configOverride: {}, nodeId: '',
+                          emoji: m.emoji, color: m.color, bg_color: m.bg_color,
                         } satisfies MiddlewareData)}
                         style={{ ...itemStyle, background: C.amberBg, borderColor: C.amberBorder, marginBottom: 0 }}
                         onMouseEnter={e => (e.currentTarget.style.background = 'rgba(245,158,11,0.1)')}
                         onMouseLeave={e => (e.currentTarget.style.background = C.amberBg)}
                       >
-                        <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1, fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif' }}>{emoji}</span>
+                        <div style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>{emoji}</div>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name}</div>
                           <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.kind}</div>

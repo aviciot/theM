@@ -11,7 +11,7 @@ import {
   type Edge,
   type Connection,
 } from '@xyflow/react';
-import { themApi, type Application, type Agent, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport, type MCPServer } from '@/lib/api';
+import { themApi, type Application, type Agent, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport, type MCPServer, type MiddlewareDef } from '@/lib/api';
 import type { OrchNodeData, AgentNodeData, MwNodeData, EpNodeData, LogoState } from '../types';
 import { C, EP_META } from '../constants';
 import { agentIconForLibrary, applyDagreLayout, canvasToDoc, docToCanvas, genInstanceId } from './CanvasHelpers';
@@ -43,6 +43,13 @@ export function CanvasBuilderView({
   const [draft, setDraft] = useState<AppDefinitionDoc | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [componentDefs, setComponentDefs] = useState<ComponentDefinitionSummary[]>([]);
+  const [middlewareDefs, setMiddlewareDefs] = useState<MiddlewareDef[]>([]);
+  // Map middleware def id → visual metadata (emoji, color, bg_color)
+  const mwVisualById = useMemo(() => {
+    const m = new Map<string, { emoji: string; color: string; bg_color: string }>();
+    middlewareDefs.forEach(d => { m.set(d.id, { emoji: d.emoji ?? '', color: d.color ?? '', bg_color: d.bg_color ?? '' }); });
+    return m;
+  }, [middlewareDefs]);
   const [validating, setValidating] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -160,7 +167,7 @@ export function CanvasBuilderView({
     setValidationReport(null);
     setSelectedNode(null);
     setLogoResult('none');
-    const { nodes: n, edges: e } = docToCanvas(def.definition, componentDefs, {}, agentIconBySlug);
+    const { nodes: n, edges: e } = docToCanvas(def.definition, componentDefs, {}, agentIconBySlug, mwVisualById);
     setNodes(n);
     setEdges(e);
   }
@@ -202,6 +209,7 @@ export function CanvasBuilderView({
   useEffect(() => {
     reloadDefs();
     themApi.listComponentDefinitions().then(setComponentDefs).catch(() => {});
+    themApi.listMiddlewareDefs().then(setMiddlewareDefs).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.id]);
 
@@ -340,7 +348,8 @@ export function CanvasBuilderView({
     } else if (nodeType === 'middleware' && payload.cd) {
       const cd = payload.cd;
       const id = genInstanceId('middleware', cd.name, existingIds);
-      const newNode: Node = { id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: id, display_name: cd.display_name, definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {} } as unknown as Record<string, unknown> };
+      const mwVis = mwVisualById.get(cd.id);
+      const newNode: Node = { id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: id, display_name: cd.display_name, definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {}, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'entryPoint' && payload.protocol) {
       const protocol = payload.protocol as EpNodeData['protocol'];

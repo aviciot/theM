@@ -180,6 +180,7 @@ func BuildRouter(
 				// sub-tree so they share the same chi node and don't shadow the flat DELETE /{id}.
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
 				mwWirings := NewMiddlewareWiringsHandler(dbq, redis)
+				tenantScoped.Get("/middleware-defs", mwWirings.ListDefs)
 				apps.Routes(tenantScoped, bindings, mwWirings)
 
 				secCfg := NewSecurityConfigHandler(dbq, redis)

@@ -172,7 +172,8 @@ func DeleteMiddlewareWiring(ctx context.Context, db Querier, appID, wiringID str
 // ListMiddlewareDefs returns all enabled middleware_defs (builtin + tenant-scoped).
 func ListMiddlewareDefs(ctx context.Context, db Querier) ([]MiddlewareDefSummary, error) {
 	const q = `
-SELECT id::text, slug, kind, display_name, description, config, is_builtin, scope
+SELECT id::text, slug, kind, display_name, description, config, is_builtin, scope,
+       COALESCE(emoji, ''), COALESCE(color, ''), COALESCE(bg_color, '')
 FROM   them.middleware_defs
 WHERE  enabled = true
 ORDER  BY is_builtin DESC, slug`
@@ -187,7 +188,7 @@ ORDER  BY is_builtin DESC, slug`
 	for rows.Next() {
 		var d MiddlewareDefSummary
 		var cfgRaw []byte
-		if err := rows.Scan(&d.ID, &d.Slug, &d.Kind, &d.DisplayName, &d.Description, &cfgRaw, &d.IsBuiltin, &d.Scope); err != nil {
+		if err := rows.Scan(&d.ID, &d.Slug, &d.Kind, &d.DisplayName, &d.Description, &cfgRaw, &d.IsBuiltin, &d.Scope, &d.Emoji, &d.Color, &d.BgColor); err != nil {
 			return nil, err
 		}
 		d.Config = cfgRaw
@@ -209,4 +210,7 @@ type MiddlewareDefSummary struct {
 	Config      json.RawMessage `json:"config"`
 	IsBuiltin   bool            `json:"is_builtin"`
 	Scope       string          `json:"scope"`
+	Emoji       string          `json:"emoji,omitempty"`
+	Color       string          `json:"color,omitempty"`
+	BgColor     string          `json:"bg_color,omitempty"`
 }

@@ -2817,6 +2817,18 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-111 · Middleware defs visual fields — `internal/admin/middleware_wirings_test.go`
+
+**Purpose:** Verifies `GET /admin/middleware-defs` returns `emoji`, `color`, and `bg_color` fields added by migration 097.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| MW-DEF-1 | `TestMiddlewareWirings_ListDefs` | ListDefs handler returns 200 with emoji/color/bg_color in each def row |
+
+**Trigger:** any change to `internal/admin/middleware_wirings.go` (ListDefs handler), `internal/admin/dal/middleware_wirings.go` (ListMiddlewareDefs / MiddlewareDefSummary), or `db/097_middleware_defs_visual.sql`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -3392,7 +3404,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-108 | ExternalJWTValidator (EXT-1..7): ValidToken, ExpiredToken, WrongIssuer, WrongAudience, SkipAudCheck, MissingSub, AudAsString | 7 |
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
-| **S1 total** | | **1163** |
+| S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
+| **S1 total** | | **1164** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

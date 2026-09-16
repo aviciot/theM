@@ -180,6 +180,7 @@ import type {
   TenantRole,
   RoleGrant,
   RoleMapping,
+  MiddlewareDef,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -401,7 +402,7 @@ export const themApi = {
   },
   updateApplication: (id: string, body: unknown) => api.patch<Application>(`/admin/applications/${id}`, body),
   deleteApplication: (id: string) => api.delete<void>(`/admin/applications/${id}`),
-  listMiddlewareDefs: () => api.get<{ id: string; slug: string; kind: string; display_name: string; description: string; config: Record<string, unknown>; is_builtin: boolean; enabled: boolean }[]>('/admin/middleware-defs'),
+  listMiddlewareDefs: () => api.get<MiddlewareDef[]>('/admin/middleware-defs'),
   putMiddlewareWirings: (appId: string, wirings: MiddlewareWiringIn[]) =>
     api.put<void>(`/admin/applications/${appId}/middleware-wirings`, { wirings }),
   listMiddlewareWirings: (appId: string) =>

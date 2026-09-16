@@ -113,6 +113,62 @@ func buildMWHandler(db admin.DBQuerier) http.Handler {
 	return r
 }
 
+// TestMiddlewareWirings_ListDefs returns 200 with emoji/color/bg_color fields.
+func TestMiddlewareWirings_ListDefs(t *testing.T) {
+	// Simulate a middleware_defs row with all three new visual columns.
+	db := &mwDB{listRows: [][]any{
+		{
+			"def-uuid-1",             // id
+			"file-guard",             // slug
+			"guard",                  // kind
+			"File Guard",             // display_name
+			"Scans uploaded files",   // description
+			[]byte(`{}`),             // config
+			true,                     // is_builtin
+			"builtin",                // scope
+			"🛡️",                      // emoji
+			"#f59e0b",                // color
+			"rgba(245,158,11,0.08)", // bg_color
+		},
+	}}
+
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := tenantctx.WithTenantID(r.Context(), "00000000-0000-0000-0000-000000000001")
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	})
+	h := admin.NewMiddlewareWiringsHandler(db, nil)
+	r.Get("/middleware-defs", h.ListDefs)
+
+	req := httptest.NewRequest(http.MethodGet, "/middleware-defs", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var out []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 def, got %d", len(out))
+	}
+	d := out[0]
+	if d["emoji"] != "🛡️" {
+		t.Errorf("expected emoji '🛡️', got %q", d["emoji"])
+	}
+	if d["color"] != "#f59e0b" {
+		t.Errorf("expected color '#f59e0b', got %q", d["color"])
+	}
+	if d["bg_color"] != "rgba(245,158,11,0.08)" {
+		t.Errorf("expected bg_color 'rgba(245,158,11,0.08)', got %q", d["bg_color"])
+	}
+}
+
 // TestMiddlewareWirings_List returns 200 with empty array when no wirings.
 func TestMiddlewareWirings_List(t *testing.T) {
 	db := &mwDB{listRows: nil}

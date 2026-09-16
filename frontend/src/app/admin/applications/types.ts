@@ -87,6 +87,9 @@ export interface MiddlewareData {
   configOverride: Record<string, unknown>;
   nodeId: string;
   wiringEnabled?: boolean;
+  emoji?: string;
+  color?: string;
+  bg_color?: string;
   [key: string]: unknown;
 }
 
@@ -148,6 +151,9 @@ export interface MwNodeData {
   definition_ref: import('@/lib/api').DefinitionRef;
   definition_id?: string;
   config: Record<string, unknown>;
+  emoji?: string;
+  color?: string;
+  bg_color?: string;
   _error?: boolean;
   _shake?: boolean;
   _errorMsg?: string;

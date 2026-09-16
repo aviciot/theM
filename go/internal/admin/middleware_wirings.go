@@ -128,6 +128,16 @@ func (h *MiddlewareWiringsHandler) Delete(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListDefs handles GET /admin/middleware-defs — returns all enabled middleware defs.
+func (h *MiddlewareWiringsHandler) ListDefs(w http.ResponseWriter, r *http.Request) {
+	defs, err := dal.ListMiddlewareDefs(r.Context(), h.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, defs)
+}
+
 // invalidate publishes a Redis cache-invalidation event for the application's
 // security config so the gateway's FileGate cache is evicted.
 func (h *MiddlewareWiringsHandler) invalidate(r *http.Request, appID string) {

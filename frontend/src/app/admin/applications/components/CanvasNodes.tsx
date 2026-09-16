@@ -204,10 +204,12 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
   const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
   const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const hasError = data._error || data._shake;
-  const accent = hasError ? '#f87171' : C.amber;
-  const selGlow = 'rgba(245,158,11,0.35)';
-  const selBg   = 'rgba(245,158,11,0.10)';
-  const emoji = data.kind === 'guard' ? '🛡️' : '⚡';
+  const nodeColor = data.color || C.amber;
+  const nodeBgColor = data.bg_color || 'transparent';
+  const accent = hasError ? '#f87171' : nodeColor;
+  const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${nodeColor}59`;
+  const selBg   = hasError ? 'rgba(248,113,113,0.10)' : `${nodeColor}1a`;
+  const emoji = data.emoji || (data.kind === 'guard' ? '🛡️' : '⚡');
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
       title={data._errorMsg || undefined}>
@@ -233,12 +235,12 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
           style={{
             width: 56, height: 56, borderRadius: '50%',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
+            background: selected ? selBg : data._scanning ? nodeBgColor : 'transparent',
             border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
             boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
             transition: 'all 0.18s ease',
           }}>
-          <span style={{ fontSize: 26, lineHeight: 1, fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif' }}>{emoji}</span>
+          <div style={{ fontSize: 26, lineHeight: 1 }}>{emoji}</div>
         </div>
         {data.wiringEnabled && (
           <div style={{

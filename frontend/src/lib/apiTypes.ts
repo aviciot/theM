@@ -305,6 +305,9 @@ export interface MiddlewareDef {
   config: Record<string, unknown>;
   is_builtin: boolean;
   enabled: boolean;
+  emoji?: string;
+  color?: string;
+  bg_color?: string;
 }
 
 export interface MiddlewareWiringIn {

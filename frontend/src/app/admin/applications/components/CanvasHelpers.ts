@@ -155,6 +155,7 @@ export function docToCanvas(
   componentDefs: ComponentDefinitionSummary[],
   layout: Record<string, { x: number; y: number }>,
   agentIconBySlug?: Map<string, string>,
+  mwVisualById?: Map<string, { emoji: string; color: string; bg_color: string }>,
 ): { nodes: Node[]; edges: Edge[] } {
   const defById = new Map(componentDefs.map(cd => [cd.id, cd]));
   const refKey = (r: DefinitionRef) => `${r.kind}:${r.namespace}:${r.name}:${r.version}`;
@@ -170,7 +171,8 @@ export function docToCanvas(
       const agentIcon = agentIconBySlug?.get(c.definition_ref.name);
       nodes.push({ id: c.instance_id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings, icon: agentIcon } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'middleware') {
-      nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
+      const mwVis = c.definition_id ? mwVisualById?.get(c.definition_id) : undefined;
+      nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> });
     }
   });
   (doc.entry_points ?? []).forEach(ep => {

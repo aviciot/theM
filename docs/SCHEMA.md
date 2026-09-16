@@ -467,6 +467,29 @@ Stores binary file artifacts produced by the Go orchestrator/worker. Source of t
 
 ---
 
+## them.middleware_defs
+
+Registry of middleware component types (builtin and tenant-scoped). Migration: `db/001_schema.sql`; visual columns added by `db/097_middleware_defs_visual.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| slug | TEXT UNIQUE NOT NULL | e.g. `file-guard` |
+| kind | TEXT NOT NULL | `guard` or `cache` |
+| display_name | TEXT NOT NULL | |
+| description | TEXT | |
+| config | JSONB | default config schema |
+| is_builtin | BOOLEAN | true for system-provided defs |
+| scope | TEXT | `builtin` or `tenant` |
+| enabled | BOOLEAN | |
+| emoji | TEXT | visual emoji for canvas node (e.g. `🛡️`) — added by `db/097` |
+| color | TEXT | accent hex color for canvas node (e.g. `#f59e0b`) — added by `db/097` |
+| bg_color | TEXT | background color for canvas node (e.g. `rgba(245,158,11,0.08)`) — added by `db/097` |
+| tenant_id | UUID FK→auth_service.users | NULL for builtins |
+| created_at / updated_at | TIMESTAMPTZ | |
+
+---
+
 ## them.middleware_jobs (Phase 3 middleware pipeline)
 Job queue for artifact processing pipeline. Workers claim rows using `SELECT FOR UPDATE SKIP LOCKED`. Migration: `db/050_middleware_pipeline.sql`.
 
@@ -622,6 +645,7 @@ Key relationships:
 | `db/086_phase2_user_history.sql` | Phase 2 user history isolation: `them.tasks.user_id INT` + `them.runs.user_id INT`. Dual-column SQL filter (external_user_id / user_id) isolates internal vs external identity. Legacy NULL rows excluded from user-scoped queries by SQL NULL semantics. |
 | `db/087_end_user_role.sql` | Seed `auth_service.roles` with `end_user` role (`dashboard_access='none'`, rate_limit=1000, cost_limit_daily=$10, token_expiry=3600s). Runtime-only access — no dashboard permissions. |
 | `db/088_allowed_principals.sql` | Phase 3 principal guard: `them.entry_points.allowed_principals TEXT NOT NULL DEFAULT 'internal' CHECK (IN ('internal','external','both'))`. Controls which principal types (internal token/user_jwt, external backend+X-External-User, or both) may call each EP. Default 'internal' is safe for all existing EPs. |
+| `db/097_middleware_defs_visual.sql` | Phase 1 middleware node registry: adds `emoji TEXT`, `color TEXT`, `bg_color TEXT` to `them.middleware_defs`. Seeds File Guard with `🛡️` / `#f59e0b` / `rgba(245,158,11,0.08)`. |
 
 ---
 
