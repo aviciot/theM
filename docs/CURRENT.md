@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-16 (App Canvas Upgrade Phase 1 — middleware node registry complete)
+# Last updated: 2026-09-16 (App Canvas Upgrade Phase 2 — Router + HIL flow control nodes complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `61a3d915  feat(canvas): Phase 1 — middleware node visual registry from DB`
+HEAD: `01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas`
 
 Recent commits (newest first):
 ```
+01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas
 61a3d915  feat(canvas): Phase 1 — middleware node visual registry from DB
 2cbf8c54  feat(security): Step 6 — per-app File Guard health card in RuntimeView
 d57a04b2  feat(security): Step 5 — surface FileGuard events in run history Security tab
@@ -46,24 +47,31 @@ Key facts:
 
 ## Current migration slice
 
+**App Canvas Upgrade — Phase 2 (Router + HIL flow control nodes) — COMPLETE**
+
+Completed 2026-09-16. Frontend-only changes. `them-frontend` rebuilt and running.
+
+- `frontend/src/lib/apiTypes.ts`: `ConnectionDef.type` union extended with `'flow_control'`. ✅
+- `frontend/src/app/admin/applications/types.ts`: `FlowControlNodeData` interface added; `CanvasNodeData` union updated. ✅
+- `CanvasNodes.tsx`: `FC_META` lookup, `FlowControlNode` component (dashed border, emoji, cyan/purple), `NODE_TYPES['flowControl']` registered. ✅
+- `CanvasHelpers.ts`: `genInstanceId` handles `'flow_control'`; `canvasToDoc` serializes flowControl nodes + connections; `docToCanvas` restores them. ✅
+- `CanvasBuilderView.tsx`: `flow_control` drop handler; Flow Control palette section (Router + HIL draggable items). ✅
+- `CanvasInner.tsx`: Minimap nodeColor for `flowControl` nodes (`#a855f7`). ✅
+
 **App Canvas Upgrade — Phase 1 (Middleware node registry) — COMPLETE**
 
 Completed 2026-09-16. `them-go-bridge` rebuilt and running.
 
-- `db/097_middleware_defs_visual.sql`: Added `emoji`, `color`, `bg_color` columns to `middleware_defs`; seeded File Guard with `🛡️` / `#f59e0b` / `rgba(245,158,11,0.08)`. Applied. ✅
-- `go/internal/admin/dal/middleware_wirings.go`: `MiddlewareDefSummary` extended with `Emoji`/`Color`/`BgColor` fields; `ListMiddlewareDefs` query includes the new columns. ✅
-- `go/internal/admin/middleware_wirings.go`: New `ListDefs` handler for `GET /admin/middleware-defs`. ✅
+- `db/097_middleware_defs_visual.sql`: Added `emoji`, `color`, `bg_color` columns to `middleware_defs`; seeded File Guard. Applied. ✅
+- `go/internal/admin/dal/middleware_wirings.go`: `MiddlewareDefSummary` extended; `ListMiddlewareDefs` query updated. ✅
+- `go/internal/admin/middleware_wirings.go`: `ListDefs` handler for `GET /admin/middleware-defs`. ✅
 - `go/internal/admin/router.go`: Route `GET /admin/middleware-defs` registered in tenant-scoped group. ✅
-- Frontend types (`apiTypes.ts`, `types.ts`): `MiddlewareDef`, `MiddlewareData`, `MwNodeData` all extended with `emoji?`/`color?`/`bg_color?`. ✅
-- `CanvasBuilderView.tsx`: Fetches `middlewareDefs`, builds `mwVisualById` map, passes on drop + `docToCanvas`. ✅
-- `CanvasHelpers.ts` (`docToCanvas`): New optional `mwVisualById` param; middleware nodes get emoji/color/bg_color on canvas load. ✅
-- `CanvasNodes.tsx` (`MiddlewareNode`): Reads `data.emoji`/`data.color`/`data.bg_color` from node data; plain `<div>` emoji render (no fontFamily workaround). ✅
-- `NodeLibrary.tsx`: Uses `m.emoji ?? fallback`; passes visual fields on drag. ✅
-- Tests: S1-111 `TestMiddlewareWirings_ListDefs` added; full Go suite: 1164 tests, 0 failures. ✅
+- Frontend types + canvas: visual metadata served from DB, not hardcoded. ✅
+- Tests: S1-111 `TestMiddlewareWirings_ListDefs`; 1164 tests, 0 failures. ✅
 
 **Migrations applied:** `db/096_file_guard_seed.sql`, `db/097_middleware_defs_visual.sql`
 
-**Next recommended task:** Phase 2 — Router + HIL nodes in app canvas (topology only). See `docs/APP_CANVAS_UPGRADE_PLAN.md`.
+**Next recommended task:** Phase 3 — App canvas DAG execution (local loop + Temporal). See `docs/APP_CANVAS_UPGRADE_PLAN.md` and `docs/HANDOVER_APP_CANVAS.md`.
 
 ---
 

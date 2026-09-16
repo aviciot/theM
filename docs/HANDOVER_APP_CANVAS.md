@@ -1,6 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
-# Last updated: 2026-09-16 (Phase 1 complete)
+# Last updated: 2026-09-16 (Phase 2 complete)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -8,7 +8,7 @@
 ## First prompt for new session
 
 ```
-Read docs/HANDOVER_APP_CANVAS.md and docs/APP_CANVAS_UPGRADE_PLAN.md, then implement Phase 2: Router + HIL nodes in the application canvas (topology only). The full plan is in APP_CANVAS_UPGRADE_PLAN.md. No scope creep — Phase 2 only.
+Read docs/HANDOVER_APP_CANVAS.md and docs/APP_CANVAS_UPGRADE_PLAN.md, then implement Phase 3: App canvas DAG execution — local loop + Temporal. The full plan is in APP_CANVAS_UPGRADE_PLAN.md. No scope creep — Phase 3 only.
 ```
 
 ---
@@ -28,9 +28,10 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD: `c3d5444d  docs(current): update CURRENT.md for Phase 1 canvas upgrade completion`
+HEAD: `01ddb610  feat(canvas): Phase 2 — Router + HIL flow control nodes on application canvas`
 
 Recent work completed (this feature):
+- **Phase 2 complete** (commit `01ddb610`) — Router + HIL flow control nodes, topology only, frontend-only
 - **Phase 1 complete** (commit `61a3d915`) — middleware node registry: emoji/color/bg_color from DB
 - Step 38 — File Guard (all 6 steps): per-agent file scanning via canvas wiring, guard events in run history, per-app health card in RuntimeView
 - Auth service (Python) deleted from repo — Go auth service (`them-auth-go`) is sole auth
@@ -46,9 +47,24 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 | Phase | What | Effort | Status |
 |---|---|---|---|
 | 1 | Middleware node registry — emoji/color/bg from DB, not hardcoded | S | ✅ **DONE** (commit `61a3d915`) |
-| **2** | Router + HIL nodes in app canvas (topology only) | M | **START HERE** |
-| 3 | App canvas DAG execution — local loop + Temporal | L | Pending |
+| 2 | Router + HIL nodes in app canvas (topology only) | M | ✅ **DONE** (commit `01ddb610`) |
+| **3** | App canvas DAG execution — local loop + Temporal | L | **START HERE** |
 | 4 | Full node unification (optional/future) | L | Future |
+
+---
+
+## Phase 2 — COMPLETE
+
+Everything shipped in commit `01ddb610`. Frontend-only. Summary of what was built:
+
+- `frontend/src/lib/apiTypes.ts` — `ConnectionDef.type` extended with `'flow_control'`.
+- `frontend/src/app/admin/applications/types.ts` — `FlowControlNodeData` interface added; `CanvasNodeData` union updated.
+- `CanvasNodes.tsx` — `FC_META` lookup, `FlowControlNode` component (dashed border, emoji, cyan/purple colors), `NODE_TYPES['flowControl']` registered.
+- `CanvasHelpers.ts` — `genInstanceId` handles `'flow_control'`; `canvasToDoc` serializes flowControl nodes + connections; `docToCanvas` restores them.
+- `CanvasBuilderView.tsx` — `flow_control` drop handler; Flow Control palette section (Router + HIL draggable items).
+- `CanvasInner.tsx` — minimap nodeColor for `flowControl` nodes (`#a855f7`).
+- TypeScript: `npx tsc --noEmit` — clean.
+- No Go/DB changes.
 
 ---
 
@@ -69,86 +85,39 @@ Everything shipped in commit `61a3d915`. Summary of what was built:
 
 ---
 
-## Phase 2 — what to do (concise)
+## Phase 3 — what to do (concise)
 
-**Goal:** Router and HIL nodes appear as draggable items in the application canvas node library, can be placed on the canvas, and persist through save/reload. **No execution changes** — topology only.
+**Goal:** When a user saves and publishes an application canvas that includes Router and/or HIL nodes, the Go backend executes the canvas as a DAG — dispatching to agents in the correct order, routing based on LLM intent classification (for Router), and pausing for human approval (for HIL). Temporal handles retries and long-running HIL waits.
 
-### Step 1 — Frontend types
+This is the execution layer for the topology established in Phase 2.
 
-File: `frontend/src/app/admin/applications/types.ts`
+### Key areas to touch
 
-Add a new interface:
-```ts
-export interface FlowControlNodeData {
-  _kind: 'flow_control';
-  instance_id: string;
-  node_type: 'router' | 'hil';
-  display_name: string;
-  config: Record<string, unknown>;
-  _error?: boolean;
-  _shake?: boolean;
-  _errorMsg?: string;
-}
-```
+**Backend (Go):**
+- `go/internal/admin/applications.go` — read flow_control nodes from the definition JSON on publish/compile
+- `go/internal/agentgen/compiler.go` — extend `Compile` to handle `flow_control` node kinds (router, hil) in the DAG
+- `go/internal/temporal/workflow.go` — add Router activity (LLM intent classification → pick outgoing edge) and HIL activity (pause → signal channel → resume)
 
-Update `CanvasNodeData` union to include `FlowControlNodeData`.
+**DB:**
+- No new tables needed — Router intent config can live in `flow_control.config`; HIL approvals can use the existing `tasks` table (or a new `hil_approvals` table if tasks.type can't cover it)
 
-### Step 2 — New canvas node component
+**Frontend:**
+- Router node properties panel: configure the classifier prompt and the list of outgoing labels (one label per outgoing edge)
+- HIL node properties panel: configure the approver role, timeout, and fallback action
 
-File: `frontend/src/app/admin/applications/components/CanvasNodes.tsx`
+### Order of implementation
+1. Extend `Compile` to produce a DAG with `router` and `hil` step types
+2. Add `ExecuteRouter` Temporal activity (calls LLM, returns chosen label)
+3. Add `ExecuteHIL` Temporal activity (persists approval request, waits on signal)
+4. Wire the new step types into the Temporal workflow executor
+5. Add Router and HIL properties panels in the frontend (node click → sidebar)
+6. E2E test: canvas with Router → two agents; verify correct agent is called based on intent
 
-Add `FlowControlNode` component. Reuse `StepNode` visual pattern — round node, emoji from `node_type`:
-- `router` → `🔀`, color `#06b6d4` (cyan)
-- `hil` → `✋`, color `#a855f7` (purple)
-
-Register in `NODE_TYPES` map: `{ ..., flowControl: FlowControlNode }`.
-
-### Step 3 — Node library
-
-File: `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx` (the active inline palette)
-
-Add a "Flow Control" section below the Middleware section. Two static entries (no DB needed — these are always available):
-- **Router** — `🔀` — "Routes to one of multiple agents based on message intent"
-- **HIL** — `✋` — "Pauses flow for human decision before continuing"
-
-Drag data: `{ nodeType: 'flow_control', nodeData: { node_type: 'router' | 'hil' } }`
-
-### Step 4 — Drop handler
-
-File: `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx` (`handleDropOnCanvas`)
-
-Add a `flow_control` branch:
-```ts
-} else if (nodeType === 'flow_control' && payload.node_type) {
-  const id = genInstanceId('flow_control', payload.node_type, existingIds);
-  const newNode: Node = { id, type: 'flowControl', position: pos, data: {
-    _kind: 'flow_control', instance_id: id,
-    node_type: payload.node_type, display_name: payload.node_type === 'router' ? 'Router' : 'Human-in-Loop',
-    config: {},
-  } as unknown as Record<string, unknown> };
-  setNodes(ns => [...ns, newNode]);
-}
-```
-
-Also update `genInstanceId` in `CanvasHelpers.ts` to handle `'flow_control'` kind → base `'fc_' + sanitize(defName)`.
-
-### Step 5 — canvasToDoc / docToCanvas
-
-File: `frontend/src/app/admin/applications/components/CanvasHelpers.ts`
-
-`canvasToDoc`: serialize `flow_control` nodes into `doc.components` with `definition_ref.kind = 'flow_control'` and `config.node_type`.
-
-`docToCanvas`: restore `flow_control` nodes from `definition_ref.kind === 'flow_control'`, reading `config.node_type`.
-
-### Step 6 — Canvas validation (optional but good)
-
-In `CanvasInner.tsx` or the existing `validateConnection` helper: warn if a Router node has no outgoing edges.
-
-### Verification
-- Router and HIL entries appear in the node library under "Flow Control"
-- Drag-drop places a node with correct emoji
-- Save → reload restores the node at the same position
-- No backend changes needed
+### Constraints
+- HIL approvals must be tenant-scoped and RBAC-gated
+- Router LLM call must use the application's configured LLM provider (not hardcoded)
+- If a Router has no matching outgoing edge, fail the run with a clear error (not a silent drop)
+- All new Temporal activities must be registered at worker startup
 
 ---
 
