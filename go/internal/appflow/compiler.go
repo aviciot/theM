@@ -275,14 +275,11 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 	switch c.DefinitionRef.Kind {
 	case "agent":
 		node.Kind = "agent"
-		agentID, ok := agentByInstanceID[c.InstanceID]
-		if !ok || agentID == "" {
-			// Allow missing resolution — caller may not have resolved all agents.
-			// The workflow will fail gracefully at execution time if the ID is empty.
-			node.AgentID = c.DefinitionID
-		} else {
-			node.AgentID = agentID
-		}
+		// agentByInstanceID must be populated by the caller from DB (tenant-scoped).
+		// If the instance is not in the map, AgentID stays empty and Validate will
+		// catch it as unresolved_agent — no fallback to DefinitionID to prevent
+		// cross-tenant leakage.
+		node.AgentID = agentByInstanceID[c.InstanceID]
 	case "middleware":
 		node.Kind = "middleware"
 	case "flow_control":

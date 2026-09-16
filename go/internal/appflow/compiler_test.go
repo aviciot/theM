@@ -222,6 +222,40 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
+// AF-10: unresolved agent (missing from agentByInstanceID) produces empty AgentID caught by Validate.
+func TestCompile_UnresolvedAgent_CaughtByValidate(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{"instance_id":"a1","definition_ref":{"kind":"agent","namespace":"custom","name":"my-agent","version":1},"definition_id":"some-def-id"}
+		],
+		"entry_points":[{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"a1"}],
+		"connections":[]
+	}`)
+	// Empty map — agent not resolved.
+	spec, err := Compile(raw, map[string]string{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(spec.EntryPoints[0].Nodes) == 0 {
+		t.Fatal("expected 1 node")
+	}
+	agentNode := spec.EntryPoints[0].Nodes[0]
+	if agentNode.AgentID != "" {
+		t.Errorf("want empty AgentID when unresolved, got %q (DefinitionID fallback must be removed)", agentNode.AgentID)
+	}
+	errs := Validate(spec)
+	foundUnresolved := false
+	for _, e := range errs {
+		if e.Code == "unresolved_agent" {
+			foundUnresolved = true
+		}
+	}
+	if !foundUnresolved {
+		t.Errorf("expected unresolved_agent error from Validate, got: %+v", errs)
+	}
+}
+
 // AF-09: edge label is preserved through compilation when conn.Label is set.
 func TestCompile_EdgeLabelPreserved(t *testing.T) {
 	raw := json.RawMessage(`{

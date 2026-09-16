@@ -2841,7 +2841,8 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-06 | `TestValidate_ValidSpec` | Validate returns no errors for valid spec |
 | AF-07 | `TestDefaultRouterPrompt` | defaultRouterPrompt includes all labels |
 | AF-08 | `TestCompile_EdgeLabelPreserved` | conn.Label flows through compilation into AppFlowEdge.Label |
-| AF-09 | `TestFindEdgeByLabel` | findEdgeByLabel case-insensitive match + no-match returns "" |
+| AF-09 | `TestCompile_UnresolvedAgent_CaughtByValidate` | missing agentByInstanceID entry → empty AgentID (no DefinitionID fallback) → Validate catches unresolved_agent |
+| AF-10 | `TestFindEdgeByLabel` | findEdgeByLabel case-insensitive match + no-match returns "" |
 
 **Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
 
@@ -3423,8 +3424,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| S1-112 | AppFlow compiler (AF-01..09): MinimalDoc, RouterAndHIL, WrongSchemaVersion, ExecutionBackend, Validate_RouterNoEdges, Validate_ValidSpec, DefaultRouterPrompt, EdgeLabelPreserved, FindEdgeByLabel | 9 |
-| **S1 total** | | **1173** |
+| S1-112 | AppFlow compiler (AF-01..10): MinimalDoc, RouterAndHIL, WrongSchemaVersion, ExecutionBackend, Validate_RouterNoEdges, Validate_ValidSpec, DefaultRouterPrompt, EdgeLabelPreserved, UnresolvedAgent_CaughtByValidate, FindEdgeByLabel | 10 |
+| **S1 total** | | **1174** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
