@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-16 (Step 38 File Guard — all 6 steps complete + deployed)
+# Last updated: 2026-09-16 (App Canvas Upgrade Phase 1 — middleware node registry complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,9 +7,11 @@
 ## HEAD
 
 Branch: `main`
+HEAD: `61a3d915  feat(canvas): Phase 1 — middleware node visual registry from DB`
 
 Recent commits (newest first):
 ```
+61a3d915  feat(canvas): Phase 1 — middleware node visual registry from DB
 2cbf8c54  feat(security): Step 6 — per-app File Guard health card in RuntimeView
 d57a04b2  feat(security): Step 5 — surface FileGuard events in run history Security tab
 e2716b14  feat(canvas): Step 4 — File Guard properties panel in canvas node
@@ -44,9 +46,30 @@ Key facts:
 
 ## Current migration slice
 
+**App Canvas Upgrade — Phase 1 (Middleware node registry) — COMPLETE**
+
+Completed 2026-09-16. `them-go-bridge` rebuilt and running.
+
+- `db/097_middleware_defs_visual.sql`: Added `emoji`, `color`, `bg_color` columns to `middleware_defs`; seeded File Guard with `🛡️` / `#f59e0b` / `rgba(245,158,11,0.08)`. Applied. ✅
+- `go/internal/admin/dal/middleware_wirings.go`: `MiddlewareDefSummary` extended with `Emoji`/`Color`/`BgColor` fields; `ListMiddlewareDefs` query includes the new columns. ✅
+- `go/internal/admin/middleware_wirings.go`: New `ListDefs` handler for `GET /admin/middleware-defs`. ✅
+- `go/internal/admin/router.go`: Route `GET /admin/middleware-defs` registered in tenant-scoped group. ✅
+- Frontend types (`apiTypes.ts`, `types.ts`): `MiddlewareDef`, `MiddlewareData`, `MwNodeData` all extended with `emoji?`/`color?`/`bg_color?`. ✅
+- `CanvasBuilderView.tsx`: Fetches `middlewareDefs`, builds `mwVisualById` map, passes on drop + `docToCanvas`. ✅
+- `CanvasHelpers.ts` (`docToCanvas`): New optional `mwVisualById` param; middleware nodes get emoji/color/bg_color on canvas load. ✅
+- `CanvasNodes.tsx` (`MiddlewareNode`): Reads `data.emoji`/`data.color`/`data.bg_color` from node data; plain `<div>` emoji render (no fontFamily workaround). ✅
+- `NodeLibrary.tsx`: Uses `m.emoji ?? fallback`; passes visual fields on drag. ✅
+- Tests: S1-111 `TestMiddlewareWirings_ListDefs` added; full Go suite: 1164 tests, 0 failures. ✅
+
+**Migrations applied:** `db/096_file_guard_seed.sql`, `db/097_middleware_defs_visual.sql`
+
+**Next recommended task:** Phase 2 — Router + HIL nodes in app canvas (topology only). See `docs/APP_CANVAS_UPGRADE_PLAN.md`.
+
+---
+
 **Step 38 — File Guard (Phase 1: per-agent file scanning via canvas) — COMPLETE**
 
-All 6 steps complete and deployed (2026-09-16). `them-go-bridge` and `them-frontend` rebuilt and running.
+All 6 steps complete and deployed (2026-09-16).
 
 - **Step 1** `db/096_file_guard_seed.sql`: Builtin `file-guard` def seeded in `middleware_defs` + `component_definitions`. Applied. ✅
 - **Step 2** `go/internal/middleware/gate.go`: `FileGate` resolves per-agent wiring first (`middleware_wirings` by `app_id+agent_slug`), falls back to app-level `security_config`. `GateInput.AgentSlug` added. Cache invalidation evicts all `appID:*` wiring entries. ✅
@@ -54,10 +77,6 @@ All 6 steps complete and deployed (2026-09-16). `them-go-bridge` and `them-front
 - **Step 4** `frontend/.../CanvasNodePropertiesPanel.tsx`: Clicking a middleware (guard) node opens structured File Guard panel — enabled toggle, mode, max_file_size_mb, allowed/blocked types, notify toggle, Save/Remove. Wiring created/updated/deleted via API. ✅
 - **Step 5** `go/internal/admin/dal/runs.go` + handler: `GET /api/v1/runs/{run_id}/guard-events` — returns `run_artifacts` rows where `scan_status != 'disabled'`, joined with `middleware_jobs`. Run history modal has a **Security** tab showing each intercepted file with scan status badge, size, content type, scanned timestamp. Count badge on tab turns red for infected/flagged. 2 handler tests (RG-1/RG-2). ✅
 - **Step 6** `go/internal/admin/dal/applications.go` + handler: `GET /api/v1/admin/applications/{id}/guard-health` — returns per-agent wiring list + app-level aggregate (scanned/clean/blocked/pending/errors/last_event). RuntimeView Security section shows File Guard Health panel with stat tiles and per-agent wiring list. 2 handler tests (GH-H1/GH-H2). ✅
-
-**Migration required (already applied):** `db/096_file_guard_seed.sql`
-
-**Next recommended task:** Phase 2 — Inline Guard node (PII redact + prompt injection on message path, separate lightweight service). See `docs/FILE_GUARD_PLAN.md`.
 
 ---
 
