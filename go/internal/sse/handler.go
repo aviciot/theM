@@ -33,7 +33,9 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
@@ -307,46 +309,65 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 8. Resolve orchestrator name from EP binding (SEC-04) ────────────────
-	// OrchestratorName comes from entry_points.app_orchestrator_id →
-	// app_orchestrators.name, resolved by epconfig at admission time.
-	// An unbound EP (OrchestratorName == "") is a configuration error.
-	orchName := handle.EPConfig.OrchestratorName
-	if orchName == "" {
-		epSlug := chi.URLParam(r, "entry_point_slug")
-		h.logger.Warn("sse: entry point has no orchestrator bound",
-			"ep_slug", epSlug,
-			"app_id", handle.EPConfig.AppID,
-		)
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"entry point has no orchestrator configured\"}\n\n")
-		if hasFlusher {
-			flusher.Flush()
+	// ── 8. Dispatch: AppFlowWorkflow (temporal canvas) or OrchestrationWorkflow ─
+	// If the active application definition carries execution_backend="temporal",
+	// compile it and dispatch to the appflow-dag task queue. Otherwise use the
+	// standard orchestrator-bound path (SEC-04).
+	var wfRun temporalclient.WorkflowRun
+	if handle.EPConfig.ExecutionBackend == "temporal" {
+		afRun, afErr := h.startAppFlow(ctx, handle, userText)
+		if afErr != nil {
+			h.logger.Warn("sse: start appflow failed", "run_id", handle.RunID, "error", afErr)
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"failed to start appflow workflow\"}\n\n")
+			if hasFlusher {
+				flusher.Flush()
+			}
+			return
 		}
-		return
-	}
+		wfRun = afRun
+		h.logger.Info("sse: appflow workflow started", "run_id", handle.RunID, "workflow_id", wfRun.GetID())
+	} else {
+		// ── 8a. Resolve orchestrator name from EP binding (SEC-04) ──────────
+		// OrchestratorName comes from entry_points.app_orchestrator_id →
+		// app_orchestrators.name, resolved by epconfig at admission time.
+		// An unbound EP (OrchestratorName == "") is a configuration error.
+		orchName := handle.EPConfig.OrchestratorName
+		if orchName == "" {
+			h.logger.Warn("sse: entry point has no orchestrator bound",
+				"ep_slug", epSlug,
+				"app_id", handle.EPConfig.AppID,
+			)
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"entry point has no orchestrator configured\"}\n\n")
+			if hasFlusher {
+				flusher.Flush()
+			}
+			return
+		}
 
-	// ── 9. Start Temporal workflow ────────────────────────────────────────────
-	// Run-stream is already subscribed — no events can be lost.
-	input := temporal.WorkflowInput{
-		OrchestratorName:  orchName,
-		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
-		EntryPointID:      handle.EPConfig.EPID,
-		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
-		ExternalUserID:    handle.ExternalUserID,
-		UserID:            handle.UserID,
-	}
-	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EntryPointSlug) are
-	// overwritten by Lifecycle.Start from the handle — caller values are ignored.
-	wfRun, startErr := h.lc.Start(ctx, handle, input)
-	if startErr != nil {
-		h.logger.Warn("sse: start temporal workflow failed", "run_id", handle.RunID, "error", startErr)
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"failed to start workflow\"}\n\n")
-		if hasFlusher {
-			flusher.Flush()
+		// ── 8b. Start OrchestrationWorkflow ─────────────────────────────────
+		// Run-stream is already subscribed — no events can be lost.
+		input := temporal.WorkflowInput{
+			OrchestratorName:  orchName,
+			AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
+			EntryPointID:      handle.EPConfig.EPID,
+			UserMessage:       domain.TextMessage(domain.RoleUser, userText),
+			ExternalUserID:    handle.ExternalUserID,
+			UserID:            handle.UserID,
 		}
-		return
+		// Identity fields (RunID, ContextID, TenantID, ApplicationID, EntryPointSlug) are
+		// overwritten by Lifecycle.Start from the handle — caller values are ignored.
+		orchRun, startErr := h.lc.Start(ctx, handle, input)
+		if startErr != nil {
+			h.logger.Warn("sse: start temporal workflow failed", "run_id", handle.RunID, "error", startErr)
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"failed to start workflow\"}\n\n")
+			if hasFlusher {
+				flusher.Flush()
+			}
+			return
+		}
+		wfRun = orchRun
+		h.logger.Info("sse: temporal workflow started", "run_id", handle.RunID, "workflow_id", wfRun.GetID())
 	}
-	h.logger.Info("sse: temporal workflow started", "run_id", handle.RunID, "workflow_id", wfRun.GetID())
 
 	// Send ready — client needs run_id + context_id before stream events arrive.
 	if readyJSON, err := json.Marshal(map[string]any{"type": "ready", "run_id": handle.RunID, "context_id": handle.ContextID}); err == nil {
@@ -366,6 +387,67 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// ── 9. Stream Redis run events as SSE ─────────────────────────────────────
 	h.streamEvents(ctx, cancel, w, flusher, hasFlusher, rsEvCh, nil, orchDone)
+}
+
+// streamEvents forwards run-stream events to the SSE response until orchestration
+// startAppFlow compiles the active AppFlowSpec from handle.EPConfig and launches
+// an AppFlowWorkflow. Called when EPConfig.ExecutionBackend == "temporal".
+func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionHandle, userText string) (temporalclient.WorkflowRun, error) {
+	defJSON := handle.EPConfig.ActiveDefinitionJSON
+	if len(defJSON) == 0 {
+		return nil, fmt.Errorf("appflow: no active definition on EPConfig")
+	}
+
+	type compRef struct {
+		InstanceID   string `json:"instance_id"`
+		DefinitionID string `json:"definition_id,omitempty"`
+		DefinitionRef struct {
+			Kind string `json:"kind"`
+		} `json:"definition_ref"`
+	}
+	type defShape struct {
+		Components []compRef `json:"components"`
+	}
+	var shape defShape
+	if err := json.Unmarshal(defJSON, &shape); err != nil {
+		return nil, fmt.Errorf("appflow: parse definition for agent map: %w", err)
+	}
+	agentByInstanceID := make(map[string]string, len(shape.Components))
+	for _, c := range shape.Components {
+		if c.DefinitionRef.Kind == "agent" && c.DefinitionID != "" {
+			agentByInstanceID[c.InstanceID] = c.DefinitionID
+		}
+	}
+
+	spec, err := appflow.Compile(defJSON, agentByInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("appflow: compile: %w", err)
+	}
+	if errs := appflow.Validate(spec); len(errs) > 0 {
+		return nil, fmt.Errorf("appflow: validate: %v", errs[0])
+	}
+
+	var epFlow *appflow.EPFlow
+	for i := range spec.EntryPoints {
+		if spec.EntryPoints[i].Slug == handle.EPConfig.EPSlug {
+			epFlow = &spec.EntryPoints[i]
+			break
+		}
+	}
+	if epFlow == nil {
+		return nil, fmt.Errorf("appflow: no EPFlow found for slug %q", handle.EPConfig.EPSlug)
+	}
+
+	singleEPSpec := &appflow.AppFlowSpec{
+		ExecutionBackend: spec.ExecutionBackend,
+		EntryPoints:      []appflow.EPFlow{*epFlow},
+	}
+
+	input := appflow.AppFlowWorkflowInput{
+		Spec:        singleEPSpec,
+		UserMessage: userText,
+	}
+	return h.lc.StartAppFlow(ctx, handle, input)
 }
 
 // streamEvents forwards run-stream events to the SSE response until orchestration

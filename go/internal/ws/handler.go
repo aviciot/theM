@@ -24,7 +24,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/domain"
@@ -373,44 +375,64 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 7. Resolve orchestrator name from EP binding (SEC-04) ────────────────
-	// OrchestratorName is resolved from entry_points.app_orchestrator_id →
-	// app_orchestrators.name — never from the URL slug.
-	// An unbound EP (app_orchestrator_id IS NULL) is a configuration error:
-	// return a clear error rather than silently mis-routing.
-	orchName := handle.EPConfig.OrchestratorName
-	if orchName == "" {
-		h.logger.Warn("ws: entry point has no orchestrator bound",
+	// ── 7. Dispatch: AppFlowWorkflow (temporal canvas) or OrchestrationWorkflow ─
+	// If the active application definition carries execution_backend="temporal",
+	// compile it and dispatch to the appflow-dag task queue. Otherwise fall back
+	// to the standard orchestrator-bound Temporal workflow (SEC-04).
+	var wfRun temporalclient.WorkflowRun
+	if handle.EPConfig.ExecutionBackend == "temporal" {
+		afRun, afErr := h.startAppFlow(ctx, handle, userMsg)
+		if afErr != nil {
+			h.logger.Warn("ws: start appflow failed", "run_id", handle.RunID, "error", afErr)
+			h.writeError(conn, "failed to start appflow workflow")
+			return
+		}
+		wfRun = afRun
+		h.logger.Info("ws: appflow workflow started",
 			"ep_slug", epSlug,
-			"app_id", handle.EPConfig.AppID,
+			"run_id", handle.RunID,
+			"workflow_id", wfRun.GetID(),
 		)
-		h.writeError(conn, "entry point has no orchestrator configured")
-		return
-	}
+	} else {
+		// ── 7a. Resolve orchestrator name from EP binding (SEC-04) ───────────
+		// OrchestratorName is resolved from entry_points.app_orchestrator_id →
+		// app_orchestrators.name — never from the URL slug.
+		// An unbound EP (app_orchestrator_id IS NULL) is a configuration error.
+		orchName := handle.EPConfig.OrchestratorName
+		if orchName == "" {
+			h.logger.Warn("ws: entry point has no orchestrator bound",
+				"ep_slug", epSlug,
+				"app_id", handle.EPConfig.AppID,
+			)
+			h.writeError(conn, "entry point has no orchestrator configured")
+			return
+		}
 
-	// ── 8. Lifecycle.Start → ExecuteWorkflow ─────────────────────────────────
-	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EPSlug) are
-	// overwritten inside Start from the handle — never from client-supplied data.
-	input := temporal.WorkflowInput{
-		OrchestratorName:  orchName,
-		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
-		EntryPointID:      handle.EPConfig.EPID,
-		UserMessage:       userMsg,
-		ExternalUserID:    handle.ExternalUserID,
-		UserID:            handle.UserID,
+		// ── 7b. Lifecycle.Start → OrchestrationWorkflow ──────────────────────
+		// Identity fields (RunID, ContextID, TenantID, ApplicationID, EPSlug) are
+		// overwritten inside Start from the handle — never from client-supplied data.
+		input := temporal.WorkflowInput{
+			OrchestratorName:  orchName,
+			AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
+			EntryPointID:      handle.EPConfig.EPID,
+			UserMessage:       userMsg,
+			ExternalUserID:    handle.ExternalUserID,
+			UserID:            handle.UserID,
+		}
+		orchRun, startErr := h.lc.Start(ctx, handle, input)
+		if startErr != nil {
+			h.logger.Warn("ws: start lifecycle failed", "run_id", handle.RunID)
+			h.writeError(conn, "failed to start workflow")
+			return
+		}
+		wfRun = orchRun
+		h.logger.Info("ws: temporal workflow started",
+			"ep_slug", epSlug,
+			"session_id", handle.SessionID,
+			"run_id", handle.RunID,
+			"workflow_id", wfRun.GetID(),
+		)
 	}
-	wfRun, startErr := h.lc.Start(ctx, handle, input)
-	if startErr != nil {
-		h.logger.Warn("ws: start lifecycle failed", "run_id", handle.RunID)
-		h.writeError(conn, "failed to start workflow")
-		return
-	}
-	h.logger.Info("ws: temporal workflow started",
-		"ep_slug", epSlug,
-		"session_id", handle.SessionID,
-		"run_id", handle.RunID,
-		"workflow_id", wfRun.GetID(),
-	)
 
 	// Send ready — client needs run_id + context_id to open the dashboard WS
 	// and display the thinking bubble before any stream events arrive.
@@ -463,6 +485,70 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// ── 10. Stream run events to client ──────────────────────────────────────
 	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
+}
+
+// startAppFlow compiles the active AppFlowSpec from handle.EPConfig and launches
+// an AppFlowWorkflow via lc.StartAppFlow. Called when EPConfig.ExecutionBackend == "temporal".
+func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionHandle, userMsg domain.Message) (temporalclient.WorkflowRun, error) {
+	defJSON := handle.EPConfig.ActiveDefinitionJSON
+	if len(defJSON) == 0 {
+		return nil, fmt.Errorf("appflow: no active definition on EPConfig")
+	}
+
+	// Build agentByInstanceID from the definition JSON. definition_id on each
+	// component is the agents.id UUID (set by the canvas when the component is
+	// placed). flow_control and orchestrator nodes have no agent_id.
+	type compRef struct {
+		InstanceID   string `json:"instance_id"`
+		DefinitionID string `json:"definition_id,omitempty"`
+		DefinitionRef struct {
+			Kind string `json:"kind"`
+		} `json:"definition_ref"`
+	}
+	type defShape struct {
+		Components []compRef `json:"components"`
+	}
+	var shape defShape
+	if err := json.Unmarshal(defJSON, &shape); err != nil {
+		return nil, fmt.Errorf("appflow: parse definition for agent map: %w", err)
+	}
+	agentByInstanceID := make(map[string]string, len(shape.Components))
+	for _, c := range shape.Components {
+		if c.DefinitionRef.Kind == "agent" && c.DefinitionID != "" {
+			agentByInstanceID[c.InstanceID] = c.DefinitionID
+		}
+	}
+
+	spec, err := appflow.Compile(defJSON, agentByInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("appflow: compile: %w", err)
+	}
+	if errs := appflow.Validate(spec); len(errs) > 0 {
+		return nil, fmt.Errorf("appflow: validate: %v", errs[0])
+	}
+
+	var epFlow *appflow.EPFlow
+	for i := range spec.EntryPoints {
+		if spec.EntryPoints[i].Slug == handle.EPConfig.EPSlug {
+			epFlow = &spec.EntryPoints[i]
+			break
+		}
+	}
+	if epFlow == nil {
+		return nil, fmt.Errorf("appflow: no EPFlow found for slug %q", handle.EPConfig.EPSlug)
+	}
+
+	// Build a spec containing only the matching EPFlow.
+	singleEPSpec := &appflow.AppFlowSpec{
+		ExecutionBackend: spec.ExecutionBackend,
+		EntryPoints:      []appflow.EPFlow{*epFlow},
+	}
+
+	input := appflow.AppFlowWorkflowInput{
+		Spec:        singleEPSpec,
+		UserMessage: userMsg.Text(),
+	}
+	return h.lc.StartAppFlow(ctx, handle, input)
 }
 
 // extractRawToken extracts the bearer token string from the Authorization header

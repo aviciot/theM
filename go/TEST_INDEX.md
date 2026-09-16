@@ -574,6 +574,7 @@ Release marks run "failed" when Start never ran (orphan-run prevention).
 | `TestWS_StartFailure_RunMarkedFailed` | R-5.1: Temporal Start fails → Release marks run as failed |
 | `TestWS_SlugPath_BackendToken_ExternalUserPropagated` | Identity bug regression: backend token on `AppsWSRoute` (slug path) → `X-External-User` IS propagated to CreateRun (IsBackend=true survives slug routing) |
 | `TestWS_SlugPath_NonBackendToken_ExternalUserIgnored` | Identity bug regression: non-backend token on `AppsWSRoute` → `X-External-User` is ignored (header cannot be asserted by mobile/browser tokens) |
+| `TestWS_AppFlowDispatch_TemporalBackend` | Dispatch switch: `EPConfig.ExecutionBackend=temporal` → `ExecuteWorkflow` called on `appflow-dag` task queue (not GoTaskQueue) |
 
 **Trigger:** any change to `internal/ws/handler.go` or `internal/execution/lifecycle.go`
 
@@ -1087,6 +1088,9 @@ history-expired rows). Status mapping per ADR-002.
 | `TestBuildConfig_ExternalPrincipal_Propagated` | EC-AP-10: `"external"` from DB propagated to `EPConfig.AllowedPrincipals` |
 | `TestLoad_ManagedApp_BindingExists` | EC-MA-01: consuming tenant with active binding → Load succeeds, TenantID is platform owner |
 | `TestLoad_ManagedApp_NoBinding` | EC-MA-02: consuming tenant without binding → ErrNotFound |
+| `TestLoad_ExecutionBackend_Temporal` | EC-EB-01: active def with `execution_backend=temporal` → `EPConfig.ExecutionBackend="temporal"`, `ActiveDefinitionJSON` set |
+| `TestLoad_ExecutionBackend_Local` | EC-EB-02: active def with `execution_backend=local` → `ExecutionBackend=""`, `ActiveDefinitionJSON` nil |
+| `TestLoad_ExecutionBackend_NoDefinition` | EC-EB-03: no active definition → `ExecutionBackend=""`, `ActiveDefinitionJSON` nil |
 
 **Trigger:** any change to `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go`
 
@@ -3333,13 +3337,13 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 22 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 17 |
-| S1-12 | ws | 24 |
+| S1-12 | ws | 25 |
 | S1-13 | sse | 23 |
 | S1-14 | a2a | 30 |
 | S1-15 | admin | 59 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
-| S1-18 | epconfig | 38 |
+| S1-18 | epconfig | 41 |
 | S1-19 | cache | 1 |
 | S1-20 | cache (runstream adapter) | 1 |
 | S1-21 | runstream (pub/sub) | 10 |
@@ -3425,7 +3429,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
 | S1-112 | AppFlow compiler (AF-01..10): MinimalDoc, RouterAndHIL, WrongSchemaVersion, ExecutionBackend, Validate_RouterNoEdges, Validate_ValidSpec, DefaultRouterPrompt, EdgeLabelPreserved, UnresolvedAgent_CaughtByValidate, FindEdgeByLabel | 10 |
-| **S1 total** | | **1174** |
+| **S1 total** | | **1178** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

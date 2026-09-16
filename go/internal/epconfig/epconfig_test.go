@@ -625,3 +625,49 @@ func TestLoad_ManagedApp_NoBinding(t *testing.T) {
 	require.Error(t, err, "EC-MA-02: no binding → Load must return error")
 	assert.ErrorIs(t, err, epconfig.ErrNotFound)
 }
+
+// ── EC-EB: ExecutionBackend — parsed from active definition JSON ──────────────
+
+// EC-EB-01: When active definition JSON carries execution_backend="temporal",
+// EPConfig.ExecutionBackend is "temporal" and ActiveDefinitionJSON is populated.
+func TestLoad_ExecutionBackend_Temporal(t *testing.T) {
+	row := enabledRow("chat-ep")
+	row.ActiveDefinitionJSON = []byte(`{"schema_version":2,"execution_backend":"temporal","components":[],"entry_points":[],"connections":[]}`)
+
+	db := &fakeDB{row: row}
+	loader := epconfig.NewLoader(db, nil)
+
+	cfg, err := loader.Load(context.Background(), testTenantID, "test-app", "chat-ep")
+	require.NoError(t, err)
+	assert.Equal(t, "temporal", cfg.ExecutionBackend, "EC-EB-01: execution_backend=temporal must be surfaced")
+	assert.NotNil(t, cfg.ActiveDefinitionJSON, "EC-EB-01: ActiveDefinitionJSON must be set when backend=temporal")
+}
+
+// EC-EB-02: When active definition JSON carries execution_backend="local",
+// EPConfig.ExecutionBackend is "" and ActiveDefinitionJSON is nil.
+func TestLoad_ExecutionBackend_Local(t *testing.T) {
+	row := enabledRow("chat-ep")
+	row.ActiveDefinitionJSON = []byte(`{"schema_version":2,"execution_backend":"local","components":[],"entry_points":[],"connections":[]}`)
+
+	db := &fakeDB{row: row}
+	loader := epconfig.NewLoader(db, nil)
+
+	cfg, err := loader.Load(context.Background(), testTenantID, "test-app", "chat-ep")
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.ExecutionBackend, "EC-EB-02: execution_backend=local must normalise to empty string")
+	assert.Nil(t, cfg.ActiveDefinitionJSON, "EC-EB-02: ActiveDefinitionJSON must be nil for local backend")
+}
+
+// EC-EB-03: When no active definition exists, EPConfig.ExecutionBackend is "" (default path).
+func TestLoad_ExecutionBackend_NoDefinition(t *testing.T) {
+	row := enabledRow("chat-ep")
+	// ActiveDefinitionJSON left nil — no active definition.
+
+	db := &fakeDB{row: row}
+	loader := epconfig.NewLoader(db, nil)
+
+	cfg, err := loader.Load(context.Background(), testTenantID, "test-app", "chat-ep")
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.ExecutionBackend, "EC-EB-03: no active definition → ExecutionBackend must be empty")
+	assert.Nil(t, cfg.ActiveDefinitionJSON)
+}

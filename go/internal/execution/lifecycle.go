@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
@@ -597,6 +598,73 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 		if updErr != nil {
 			// All retries exhausted. Workflow IS running — do not abort. Increment
 			// metric so the operations team can detect and reconcile stuck rows.
+			metrics.RunStatusUpdateFailed.Inc()
+		}
+	}
+	h.startedOK = true
+	return wfRun, nil
+}
+
+// StartAppFlow launches an AppFlowWorkflow on the appflow-dag Temporal task queue.
+// It is the dispatch counterpart of Start for applications whose active definition
+// carries execution_backend="temporal".
+//
+// The caller is responsible for compiling AppFlowSpec from the active definition
+// (via appflow.Compile) before calling this method. Identity fields on input
+// (RunID, TenantID, ApplicationID, EntryPointSlug) are overwritten from the
+// handle — caller-supplied values are ignored for security.
+//
+// Returns the WorkflowRun. The caller MUST have subscribed to the event bus
+// before calling StartAppFlow — same ordering invariant as Start.
+func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input appflow.AppFlowWorkflowInput) (temporalclient.WorkflowRun, error) {
+	if lc.temporal == nil {
+		return nil, startErr("temporal client not configured")
+	}
+
+	// Overwrite identity from the server-resolved handle — never trust caller.
+	input.RunID = h.RunID
+	input.TenantID = h.EPConfig.TenantID
+	input.ApplicationID = h.EPConfig.AppID
+	input.EntryPointSlug = h.EPConfig.EPSlug
+
+	wfOpts := temporalclient.StartWorkflowOptions{
+		ID:        appflow.WorkflowIDForRun(h.EPConfig.TenantID, h.RunID),
+		TaskQueue: appflow.AppFlowTaskQueue,
+	}
+
+	lc.logger.Info("execution: starting appflow workflow",
+		"run_id", h.RunID,
+		"ep_slug", h.EPConfig.EPSlug,
+		"user_id", h.UserID,
+	)
+
+	wfRun, wfErr := lc.temporal.ExecuteWorkflow(ctx, wfOpts, appflow.AppFlowWorkflow, input)
+	if wfErr != nil {
+		lc.logger.Warn("execution: start appflow workflow failed",
+			"run_id", h.RunID,
+			"ep_slug", h.EPConfig.EPSlug,
+			"error", wfErr)
+		return nil, startErr(wfErr.Error())
+	}
+
+	if lc.recorder != nil && h.runCreated {
+		const maxAttempts = 3
+		const retryDelay = 100 * time.Millisecond
+		var updErr error
+		for attempt := range maxAttempts {
+			updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			updErr = lc.recorder.UpdateRunStatus(updateCtx, h.RunID, domain.RunStatusRunning, "")
+			updateCancel()
+			if updErr == nil {
+				break
+			}
+			lc.logger.Warn("execution: update appflow run to running failed",
+				"run_id", h.RunID, "attempt", attempt+1, "error", updErr)
+			if attempt < maxAttempts-1 {
+				time.Sleep(retryDelay)
+			}
+		}
+		if updErr != nil {
 			metrics.RunStatusUpdateFailed.Inc()
 		}
 	}

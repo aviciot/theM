@@ -32,6 +32,14 @@ const (
 	appFlowHILTimeout      = 24 * time.Hour // HIL can wait up to 24h before fallback
 )
 
+// WorkflowIDForRun returns a deterministic Temporal workflow ID for an AppFlowWorkflow
+// given the tenant UUID and run UUID. Format: "appflow:{tenantID}:{runID}".
+// Using run_id (unique per execution) allows the same context to execute multiple
+// runs without conflicting on Temporal's unique workflow-ID constraint.
+func WorkflowIDForRun(tenantID, runID string) string {
+	return "appflow:" + tenantID + ":" + runID
+}
+
 // ── Workflow types ─────────────────────────────────────────────────────────────
 
 // AppFlowWorkflowInput is the input to AppFlowWorkflow.

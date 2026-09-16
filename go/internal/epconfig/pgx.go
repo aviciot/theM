@@ -19,7 +19,8 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 	return &PgxQuerier{pool: pool}
 }
 
-// epConfigQuery joins entry_points → applications → app_orchestrators (LEFT JOIN).
+// epConfigQuery joins entry_points → applications → app_orchestrators (LEFT JOIN)
+// and the active application_definitions row (LEFT JOIN on a.active_definition_id).
 // Resolves by (tenant_id, app_slug, ep_slug) — migration 048 adds slug to
 // applications, making the triple the canonical unique key for an entry point.
 //
@@ -27,6 +28,9 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // entry_points.app_orchestrator_id IS NULL (unbound EP). Handlers must treat
 // an empty OrchestratorName as a configuration error — they must NOT fall back
 // to using the EP slug as the orchestrator name (SEC-04).
+//
+// ad.definition is included so EPConfig can carry execution_backend for the
+// AppFlow dispatch switch without a second DB round-trip.
 const epConfigQuery = `
 SELECT
     ep.id::text,
@@ -42,12 +46,15 @@ SELECT
     COALESCE(a.runtime_config, '{}')::text,
     ep.app_orchestrator_id::text,
     ao.name,
-    COALESCE(ep.allowed_principals, 'internal')
+    COALESCE(ep.allowed_principals, 'internal'),
+    COALESCE(ad.definition::text, '{}')
 FROM them.entry_points ep
 JOIN them.applications a ON a.id = ep.application_id
 LEFT JOIN them.app_orchestrators ao
     ON ao.id = ep.app_orchestrator_id
    AND ao.application_id = ep.application_id
+LEFT JOIN them.application_definitions ad
+    ON ad.id = a.active_definition_id
 WHERE ep.tenant_id = $1::uuid
   AND a.slug  = $2
   AND ep.slug = $3
@@ -59,6 +66,7 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 	var row EPConfigRow
 	var accessPolicyText string
 	var runtimeConfigText string
+	var activeDefinitionText string
 
 	err := q.pool.QueryRow(ctx, epConfigQuery, tenantID, appSlug, epSlug).Scan(
 		&row.EPID,
@@ -75,6 +83,7 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 		&row.AppOrchestratorID,
 		&row.OrchestratorName,
 		&row.AllowedPrincipals,
+		&activeDefinitionText,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -85,5 +94,8 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 
 	row.AccessPolicyJSON = []byte(accessPolicyText)
 	row.AppRuntimeConfigJSON = []byte(runtimeConfigText)
+	if activeDefinitionText != "{}" && activeDefinitionText != "" {
+		row.ActiveDefinitionJSON = []byte(activeDefinitionText)
+	}
 	return &row, nil
 }

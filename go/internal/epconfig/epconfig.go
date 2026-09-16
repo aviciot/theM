@@ -126,6 +126,17 @@ type EPConfig struct {
 	AppOrchestratorID string // entry_points.app_orchestrator_id (UUID string); empty if NULL
 	OrchestratorName  string // app_orchestrators.name; empty if unbound
 
+	// ExecutionBackend is the execution_backend field from the active application
+	// definition. "" or "local" = in-process orchestrator loop (default).
+	// "temporal" = AppFlowWorkflow via the appflow-dag Temporal task queue.
+	// Set only when an active definition with execution_backend is present.
+	ExecutionBackend string
+
+	// ActiveDefinitionJSON is the raw definition JSON from application_definitions.
+	// Non-nil only when execution_backend == "temporal" — used by the WS/SSE
+	// dispatch switch to compile AppFlowSpec without a second DB round-trip.
+	ActiveDefinitionJSON []byte
+
 	// Session limits
 	EPMaxConcurrent  int           // entry_points.max_concurrent_sessions; 0 = unlimited
 	AppMaxConcurrent int           // runtime_config.max_concurrent_sessions; 0 = unlimited
@@ -231,6 +242,10 @@ type EPConfigRow struct {
 
 	// Principal guard (Phase 3). "internal" | "external" | "both".
 	AllowedPrincipals string
+
+	// ActiveDefinitionJSON is the raw JSON of the active application_definitions row.
+	// Nil when no active definition exists (legacy app without a published canvas).
+	ActiveDefinitionJSON []byte
 }
 
 // DBQuerier is the single query needed by the epconfig loader.
@@ -452,25 +467,58 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 		ap = "internal" // safe default for missing / unknown values
 	}
 
+	execBackend, defJSON := parseExecutionBackend(l.logger, row.ActiveDefinitionJSON)
+
 	return &EPConfig{
-		EPID:               row.EPID,
-		AppID:              row.AppID,
-		TenantID:           row.TenantID,
-		EPSlug:             row.EPSlug,
-		EPType:             row.EPType,
-		EPEnabled:          row.EPEnabled,
-		AppEnabled:         row.AppEnabled,
-		AccessMode:         accessMode,
-		AllowedPrincipals:  ap,
-		EPMaxConcurrent:    epMax,
-		AppMaxConcurrent:   rt.MaxConcurrentSessions,
-		RateLimitRPM:       rt.RateLimitRPM,
-		QueueTimeout:       queueTimeout,
-		BlockedTokenHashes: rt.BlockedTokens,
-		BlockedUserIDs:     rt.BlockedUserIDs,
-		AppOrchestratorID:  appOrchID,
-		OrchestratorName:   orchName,
-		fetchedAt:          time.Now(),
+		EPID:                 row.EPID,
+		AppID:                row.AppID,
+		TenantID:             row.TenantID,
+		EPSlug:               row.EPSlug,
+		EPType:               row.EPType,
+		EPEnabled:            row.EPEnabled,
+		AppEnabled:           row.AppEnabled,
+		AccessMode:           accessMode,
+		AllowedPrincipals:    ap,
+		EPMaxConcurrent:      epMax,
+		AppMaxConcurrent:     rt.MaxConcurrentSessions,
+		RateLimitRPM:         rt.RateLimitRPM,
+		QueueTimeout:         queueTimeout,
+		BlockedTokenHashes:   rt.BlockedTokens,
+		BlockedUserIDs:       rt.BlockedUserIDs,
+		AppOrchestratorID:    appOrchID,
+		OrchestratorName:     orchName,
+		ExecutionBackend:     execBackend,
+		ActiveDefinitionJSON: defJSON,
+		fetchedAt:            time.Now(),
+	}
+}
+
+// activeDefDoc is the minimal parse target for execution_backend extraction.
+type activeDefDoc struct {
+	ExecutionBackend string `json:"execution_backend"`
+}
+
+// parseExecutionBackend extracts execution_backend from the active definition JSON.
+// Returns ("", nil) when no definition is present or the field is absent/invalid.
+// Returns (backend, defJSON) only when backend == "temporal" — the JSON is
+// carried on EPConfig only when needed to avoid keeping it in cache unnecessarily.
+func parseExecutionBackend(logger *slog.Logger, defJSON []byte) (string, []byte) {
+	if len(defJSON) == 0 {
+		return "", nil
+	}
+	var doc activeDefDoc
+	if err := json.Unmarshal(defJSON, &doc); err != nil {
+		logger.Warn("epconfig: malformed active definition JSON, treating as local backend", "error", err)
+		return "", nil
+	}
+	switch doc.ExecutionBackend {
+	case "temporal":
+		return "temporal", defJSON
+	case "local", "":
+		return "", nil
+	default:
+		logger.Warn("epconfig: unknown execution_backend in active definition, treating as local", "backend", doc.ExecutionBackend)
+		return "", nil
 	}
 }
 

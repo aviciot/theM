@@ -1208,5 +1208,67 @@ func (f *failingTemporalClient) ExecuteWorkflow(_ context.Context, _ temporalcli
 	return nil, errors.New("temporal: unavailable")
 }
 
+// ── AppFlow dispatch switch ────────────────────────────────────────────────────
+
+// TestWS_AppFlowDispatch_TemporalBackend verifies that when EPConfig.ExecutionBackend
+// is "temporal" the WS handler compiles the definition and dispatches to the
+// appflow-dag task queue (not the standard orchestrator queue).
+func TestWS_AppFlowDispatch_TemporalBackend(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+
+	// A minimal published schema_version 2 definition with one agent.
+	defJSON := `{"schema_version":2,"execution_backend":"temporal","components":[{"instance_id":"a1","definition_ref":{"kind":"agent","namespace":"default","name":"echo","version":1},"definition_id":"agent-uuid-1"}],"entry_points":[{"instance_id":"ep1","slug":"ep1","protocol":"websocket","root":"a1"}],"connections":[]}`
+
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:               "ep1",
+		EPType:               "websocket",
+		AccessMode:           epconfig.AccessModeToken,
+		EPEnabled:            true,
+		AppEnabled:           true,
+		TenantID:             "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:                "bbbbbbbb-0000-0000-0000-000000000001",
+		ExecutionBackend:     "temporal",
+		ActiveDefinitionJSON: []byte(defJSON),
+	}}
+
+	tc := &appflowCapturingClient{}
+	streamMsgs := []string{`{"type":"done","run_id":"af-run"}`}
+	b := &wsBuilder{authn: authn, epLoader: ep, temporal: tc, streamMsgs: streamMsgs}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hello appflow")
+	_ = readUntilDone(t, conn, 5*time.Second)
+
+	tc.mu.Lock()
+	called := tc.called
+	usedQueue := tc.taskQueue
+	tc.mu.Unlock()
+
+	assert.True(t, called, "ExecuteWorkflow must be called for appflow backend")
+	assert.Equal(t, "appflow-dag", usedQueue, "appflow dispatch must target appflow-dag task queue")
+}
+
+// appflowCapturingClient records the task queue used when ExecuteWorkflow is called.
+type appflowCapturingClient struct {
+	mu        sync.Mutex
+	called    bool
+	taskQueue string
+}
+
+func (c *appflowCapturingClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, _ ...interface{}) (temporalclient.WorkflowRun, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.called = true
+	c.taskQueue = opts.TaskQueue
+	return &fakeWorkflowRun{id: opts.ID}, nil
+}
+
 // Ensure domain import is used.
 var _ = domain.Message{}
