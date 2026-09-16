@@ -1,6 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
-# Last updated: 2026-09-16 (Phase 3 complete)
+# Last updated: 2026-09-16 (Phase 3 — dispatch switch wired)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -54,9 +54,9 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 
 ---
 
-## Phase 3 — COMPLETE
+## Phase 3 — IN PROGRESS (dispatch switch wired; agent invocation + E2E pending)
 
-Everything shipped in commit `7f898f40`. Summary of what was built:
+### Phase 3a — core compiler + workflow (commit `7f898f40`, fixes `03192156`..`3e6c1bbb`)
 
 **Go — new package `go/internal/appflow/`:**
 - `compiler.go`: `Compile(raw json.RawMessage, agentByInstanceID map[string]string) (*AppFlowSpec, error)` — parses `AppDefinitionDoc` (schema_version 2), BFS walk from EP + ep.Root, classifies components as `agent | middleware | router | hil | orchestrator`, builds `EPFlow{Slug, Protocol, Nodes, Edges, StartID}`. `Validate(*AppFlowSpec)` checks router_no_edges and unresolved_agent.
@@ -64,20 +64,44 @@ Everything shipped in commit `7f898f40`. Summary of what was built:
 
 **Go — `go/cmd/dag-worker/main.go`:**
 - Imports `internal/appflow`.
-- Second `temporalworker` registered on `appflow-dag` task queue with `AppFlowWorkflow` + `ExecuteRouterActivity` + `ExecuteHILActivity`.
+- Second `temporalworker` registered on `appflow-dag` task queue with `AppFlowWorkflow` + `ExecuteRouterActivity` + `ExecuteHILActivity`. `AppFlowActivities.LLMCaller` wired with `dbRouterLLMCaller` (3-tier key resolution). `AppFlowActivities.DB` wired for HIL persistence.
 - Both workers stopped on SIGTERM.
 
 **Frontend:**
-- `apiTypes.ts`: `AppDefinitionDoc.execution_backend?: 'local' | 'temporal'`.
-- `CanvasHelpers.ts`: `canvasToDoc(nodes, edges, name?, executionBackend?)` — spreads `execution_backend` into doc when set.
-- `CanvasBuilderView.tsx`: `executionBackend` state initialized from `def.definition.execution_backend` in `loadDef`; dropdown toggle in top bar; threaded through `canvasToDoc` call in `saveDraft`.
-- `CanvasNodePropertiesPanel.tsx`: Router panel (output_labels[], classifier_prompt textarea); HIL panel (approver_role select, prompt textarea, timeout_seconds input, fallback_action select). Both update node config via `setNodes` → `setIsDirty`.
+- `apiTypes.ts`: `AppDefinitionDoc.execution_backend?: 'local' | 'temporal'`, `ConnectionDef.label?: string`.
+- `CanvasHelpers.ts`: `canvasToDoc` preserves full flowControl config + edge labels. `docToCanvas` restores edge labels.
+- `CanvasBuilderView.tsx`: `executionBackend` state initialized from `def.definition.execution_backend` in `loadDef`; dropdown toggle in top bar.
+- `CanvasNodePropertiesPanel.tsx`: Router panel (output_labels[], classifier_prompt textarea); HIL panel (approver_role select, prompt textarea, timeout_seconds input, fallback_action select).
+- `constants.ts`: `NODE_PORTS['flowControl']` entry added so flow_control connections are accepted.
 
-**Tests:** S1-112 (8 tests, AF-01..08). 53 packages, 0 failures.
+**DB:** `db/098_hil_approvals.sql` — `hil_approvals` table. Applied.
 
-**Open gap:** `AppFlowWorkflow` is registered and compilable but is NOT yet triggered from WS/SSE dispatch. Entry points still use the standard `OrchestrationWorkflow` path regardless of `execution_backend`. Wiring the dispatch switch (check `def.execution_backend == "temporal"` at admit time → start `AppFlowWorkflow` instead of `OrchestrationWorkflow`) is the natural Phase 4-prep follow-up.
+**Tests:** S1-112 (10 tests, AF-01..10). 0 failures.
 
-**Rebuild required before testing:** `them-dag-worker` (new `appflow-dag` worker), `them-go-bridge` (no new routes but rebuild for any indirect dep changes), `them-frontend` (execution_backend toggle + Router/HIL panels).
+### Phase 3b — dispatch switch (commit `4ceef04b`)
+
+**Go — dispatch switch:**
+- `go/internal/epconfig/pgx.go`: LEFT JOIN `application_definitions` to fetch active definition JSON in the same query. Zero extra round-trips on admission.
+- `go/internal/epconfig/epconfig.go`: `EPConfig.ExecutionBackend` + `EPConfig.ActiveDefinitionJSON` — only populated when `execution_backend="temporal"` (safe to carry in 30s cache, `local` never stored).
+- `go/internal/appflow/workflow.go`: `WorkflowIDForRun(tenantID, runID)` → `"appflow:{tenantID}:{runID}"` — collision-free Temporal ID per run.
+- `go/internal/execution/lifecycle.go`: `StartAppFlow(ctx, handle, AppFlowWorkflowInput)` — dispatches on `appflow-dag` task queue; overwrites identity fields from handle (same security model as `Start`).
+- `go/internal/ws/handler.go` + `go/internal/sse/handler.go`: branch on `EPConfig.ExecutionBackend == "temporal"`:
+  - Parses definition JSON for `agentByInstanceID` (instance_id → definition_id = agents.id)
+  - Calls `appflow.Compile()` + `appflow.Validate()` — rejects invalid specs at admission
+  - Calls `lc.StartAppFlow()` with compiled spec
+  - Else: existing `lc.Start()` path (OrchestrationWorkflow) — SEC-04 preserved
+
+**Tests:** 3 EC-EB epconfig tests + 1 WS dispatch switch test (asserts `appflow-dag` task queue). 1178 tests total, 0 failures.
+
+**Stack:** `them-go-bridge` + `them-dag-worker` rebuilt and running. Both workers polling: `canvas-dag-nodes` + `appflow-dag`.
+
+### Remaining gaps (Phase 3 execution criteria not yet met)
+
+1. **Agent invocation:** `AppFlowWorkflow` currently passes through agent/orchestrator nodes — no actual agent call happens.
+2. **E2E test:** Router branch selection, HIL approval/rejection, A→B output propagation.
+3. **HIL approval API:** `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → sends `hil_approval` Temporal signal. Approver role enforced.
+
+**Next task:** Wire HIL approval API + E2E test, OR wire agent invocation in `AppFlowWorkflow` so the flow actually calls agents.
 
 ---
 
