@@ -28,7 +28,7 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD: `b7f4c83f  fix(appflow): centralize finalization, fix XAdd swallow, stamp resolved agent IDs, wire orchestrator LLM config`
+HEAD: `52c90f01  docs: update CURRENT.md + HANDOVER_APP_CANVAS after second review findings fix`
 
 Recent work completed (this feature):
 - **Phase 3 second review fixes** (`b7f4c83f`) — finalization on all exit paths (defer+disconnected ctx), XAdd error returned, _resolved_agent_ids stamped at publish, orchestrator LLM config from EPConfig
@@ -120,7 +120,7 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 2. **HIL approval API:** `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → RBAC check → sends `hil_approval:<nodeID>` Temporal signal.
 3. **E2E test:** Router branch selection, HIL approval/rejection, A→B output propagation, terminal DB status verified.
 
-**Next task:** Wire HIL approval API (`go/internal/admin/` handler + route), then wire real agent invocation, then add E2E integration test.
+**Next task (start here):** Wire HIL approval API first — `go/internal/admin/` handler + route (`POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve`), RBAC-gated, sends Temporal signal `hil_approval:<nodeID>`. Then wire real agent invocation in `AppFlowWorkflow`. Then add E2E integration test.
 
 ---
 
