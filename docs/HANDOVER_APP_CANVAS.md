@@ -1,6 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
-# Last updated: 2026-09-16 (Phase 3 — dispatch switch wired)
+# Last updated: 2026-09-16 (Phase 3 — review findings 1–6 addressed)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -28,10 +28,12 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD: `7f898f40  feat(canvas): Phase 3 — App canvas DAG execution (appflow compiler + Router/HIL workflow)`
+HEAD: `ca6c5fe7  fix(appflow): shared agent resolution, LLM default, agent→flowControl edge (Phase 3 findings 3+4+6)`
 
 Recent work completed (this feature):
-- **Phase 3 complete** (commit `7f898f40`) — AppFlow compiler + Temporal workflow + Router/HIL activities + frontend panels
+- **Phase 3 review fixes** (`62431c3e`, `ca6c5fe7`) — run lifecycle, agent rejection, user context, shared helpers, LLM default, NODE_PORTS fix
+- **Phase 3 dispatch switch** (commit `4ceef04b`) — WS/SSE branch on execution_backend=temporal
+- **Phase 3 core** (commit `7f898f40`) — AppFlow compiler + Temporal workflow + Router/HIL activities + frontend panels
 - **Phase 2 complete** (commit `01ddb610`) — Router + HIL flow control nodes, topology only, frontend-only
 - **Phase 1 complete** (commit `61a3d915`) — middleware node registry: emoji/color/bg_color from DB
 - Step 38 — File Guard (all 6 steps): per-agent file scanning via canvas wiring, guard events in run history, per-app health card in RuntimeView
@@ -95,13 +97,24 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 
 **Stack:** `them-go-bridge` + `them-dag-worker` rebuilt and running. Both workers polling: `canvas-dag-nodes` + `appflow-dag`.
 
+### Phase 3 review findings — fixed (`62431c3e`, `ca6c5fe7`)
+
+All 6 findings from the prior review addressed:
+
+1. **Finding 1 — Agent invocation (FIXED):** Agent/orchestrator nodes now return `NonRetryableApplicationError("AgentInvocationNotImplemented")` — the run fails explicitly with a clear error instead of silently returning "completed" with no agent output.
+2. **Finding 2 — Run lifecycle (FIXED):** `FinalizeRunActivity` runs at every terminal exit (completed, HIL rejection, failure). It updates DB run status (`them.runs.status → completed/failed`) and publishes "done"/"error" to Redis Stream (`them:dash:run:{runID}:stream`) so WS/SSE clients receive the terminal frame. `StatusUpdater` and `StreamPub` wired in dag-worker via `pgxRunStatusUpdater` + `cache.NewRunStreamerWriterRedisClient`.
+3. **Finding 3 — agentByInstanceID resolution (FIXED):** Extracted to `appflow.ResolveAgentByInstanceID(defJSON)` — shared between WS and SSE, single canonical implementation.
+4. **Finding 4 — LLM provider/model (FIXED):** `appflow.ParseLLMConfig(defJSON)` reads `llm_provider`/`llm_model` from definition JSON; defaults to `"anthropic"` so the Router activity can always attempt 3-tier key resolution from DB. Both WS and SSE now populate `LLMProviderName`/`LLMProvider`/`LLMModel` on `AppFlowWorkflowInput`.
+5. **Finding 5 — User context (FIXED):** `AppFlowWorkflowInput` now carries `UserID` and `ExternalUserID`, wired from `handle` in both WS and SSE `startAppFlow`.
+6. **Finding 6 — Agent→flowControl connectivity (FIXED):** `NODE_PORTS['flowControl'].accepts` now includes `'result'` so agents can connect their output handle into Router and HIL nodes in the canvas.
+
 ### Remaining gaps (Phase 3 execution criteria not yet met)
 
-1. **Agent invocation:** `AppFlowWorkflow` currently passes through agent/orchestrator nodes — no actual agent call happens.
-2. **E2E test:** Router branch selection, HIL approval/rejection, A→B output propagation.
-3. **HIL approval API:** `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → sends `hil_approval` Temporal signal. Approver role enforced.
+1. **Agent invocation (real):** Current: explicit rejection. Must wire real invocation — call `RunOrchestratorActivity` or per-agent A2A endpoint from `AppFlowWorkflow` — to enable actual agent execution within AppFlow DAGs.
+2. **E2E test:** Router branch selection, HIL approval/rejection, A→B output propagation, terminal DB status verified.
+3. **HIL approval API:** `POST /api/v1/admin/runs/{run_id}/hil/{node_id}/approve` → sends `hil_approval:<nodeID>` Temporal signal. Approver role enforced (RBAC check before signal).
 
-**Next task:** Wire HIL approval API + E2E test, OR wire agent invocation in `AppFlowWorkflow` so the flow actually calls agents.
+**Next task:** Wire HIL approval API (`go/internal/admin/` handler + route), then add WS/SSE integration test that exercises Router→HIL flow to completion.
 
 ---
 
