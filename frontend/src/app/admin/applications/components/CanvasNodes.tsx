@@ -207,7 +207,7 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
   const accent = hasError ? '#f87171' : C.amber;
   const selGlow = 'rgba(245,158,11,0.35)';
   const selBg   = 'rgba(245,158,11,0.10)';
-  const icon = data.kind === 'guard' ? 'shield' : 'bolt';
+  const emoji = data.kind === 'guard' ? '🛡️' : '⚡';
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
       title={data._errorMsg || undefined}>
@@ -238,7 +238,7 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
             boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
             transition: 'all 0.18s ease',
           }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+          <span style={{ fontSize: 28, lineHeight: 1, transition: 'all 0.18s' }}>{emoji}</span>
         </div>
         {data.wiringEnabled && (
           <div style={{
