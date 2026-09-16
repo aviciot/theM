@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig, type AppGuardHealth } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type AppGuardHealth } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
@@ -83,9 +83,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   const [addParamSaving,  setAddParamSaving]  = useState(false);
   const [addParamMsg,     setAddParamMsg]     = useState('');
 
-  const [secCfg,          setSecCfg]          = useState<SecurityConfig>({ enabled: false });
-  const [secSaving,       setSecSaving]       = useState(false);
-  const [secMsg,          setSecMsg]          = useState('');
   const [guardHealth,     setGuardHealth]     = useState<AppGuardHealth | null>(null);
 
   const user = useAuthStore(s => s.user);
@@ -124,7 +121,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     }).catch(() => {});
   }, [app.id]);
   useEffect(() => { themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {}); }, [app.id]);
-  useEffect(() => { themApi.getSecurityConfig(app.id).then(setSecCfg).catch(() => {}); }, [app.id]);
   useEffect(() => { themApi.getAppGuardHealth(app.id).then(setGuardHealth).catch(() => {}); }, [app.id]);
   useEffect(() => {
     if (user?.role !== 'super_admin') return;
@@ -236,11 +232,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     try { await themApi.deleteAppParam(app.id, name); setAppParams(await themApi.getAppParams(app.id) ?? []); }
     catch (e: unknown) { setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' })); } finally { setParamSaving(null); }
   }
-  async function handleSaveSecurity() {
-    setSecSaving(true); setSecMsg('');
-    try { await themApi.putSecurityConfig(app.id, secCfg); setSecMsg('Saved'); setTimeout(() => setSecMsg(''), 2500); }
-    catch (e: unknown) { setSecMsg(e instanceof Error ? e.message : 'Failed'); } finally { setSecSaving(false); }
-  }
   async function handleDeploy() {
     if (!deployTarget) return;
     setDeploying(true); setDeployError(''); setDeployResult(null);
@@ -339,28 +330,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
         </div>
 
         <Section title="Security" icon="security" accent="#60a5fa" defaultOpen={false}
-          subtitle={secCfg.enabled ? 'File scanning enabled' : 'File scanning disabled'}>
-          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4, marginBottom: 12 }}>
-            When enabled, agent-delivered file artifacts are intercepted, stored, and scanned before serving.
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${secCfg.enabled ? 'rgba(96,165,250,0.25)' : 'rgba(255,255,255,0.07)'}` }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>File Artifact Scanning</div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Intercept, store and scan files delivered by agents</div>
-            </div>
-            <button
-              onClick={() => setSecCfg(c => ({ ...c, enabled: !c.enabled }))}
-              style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: secCfg.enabled ? '#3b82f6' : 'rgba(255,255,255,0.1)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}
-            >
-              <span style={{ position: 'absolute', top: 3, left: secCfg.enabled ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
-            </button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
-            <button onClick={handleSaveSecurity} disabled={secSaving} style={{ padding: '8px 20px', borderRadius: 7, border: 'none', cursor: secSaving ? 'not-allowed' : 'pointer', background: '#3b82f6', color: '#fff', fontSize: 13, fontWeight: 600, opacity: secSaving ? 0.6 : 1 }}>
-              {secSaving ? 'Saving…' : 'Save Security'}
-            </button>
-            {secMsg && <span style={{ fontSize: 12, color: secMsg === 'Saved' ? C.green : C.error, fontWeight: 600 }}>{secMsg}</span>}
-          </div>
+          subtitle="File Guard wirings configured on the canvas">
 
           {/* File Guard health */}
           {guardHealth && (
