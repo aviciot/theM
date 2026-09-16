@@ -1,5 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
+# Last updated: 2026-09-16 (Phase 1 complete)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -7,7 +8,7 @@
 ## First prompt for new session
 
 ```
-Read docs/HANDOVER_APP_CANVAS.md and docs/APP_CANVAS_UPGRADE_PLAN.md, then implement Phase 1: Middleware node registry. The full plan is in APP_CANVAS_UPGRADE_PLAN.md. Start with the DB migration, then extend the Go DAL, then update the frontend. No scope creep — Phase 1 only.
+Read docs/HANDOVER_APP_CANVAS.md and docs/APP_CANVAS_UPGRADE_PLAN.md, then implement Phase 2: Router + HIL nodes in the application canvas (topology only). The full plan is in APP_CANVAS_UPGRADE_PLAN.md. No scope creep — Phase 2 only.
 ```
 
 ---
@@ -27,67 +28,127 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD (as of 2026-09-16): See `docs/CURRENT.md` for exact commit hash.
+HEAD: `c3d5444d  docs(current): update CURRENT.md for Phase 1 canvas upgrade completion`
 
-Recent work completed:
+Recent work completed (this feature):
+- **Phase 1 complete** (commit `61a3d915`) — middleware node registry: emoji/color/bg_color from DB
 - Step 38 — File Guard (all 6 steps): per-agent file scanning via canvas wiring, guard events in run history, per-app health card in RuntimeView
 - Auth service (Python) deleted from repo — Go auth service (`them-auth-go`) is sole auth
-- Canvas bug fixes: middleware edges now persisted in `canvasToDoc`, emoji font fix applied, runtime file scan toggle removed
 
 Active stack: `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d`
 
 ---
 
-## The 4-phase plan (all phases pending)
+## The 4-phase plan
 
 Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 
 | Phase | What | Effort | Status |
 |---|---|---|---|
-| **1** | Middleware node registry — emoji/color/bg from DB, not hardcoded | S | **START HERE** |
-| 2 | Router + HIL nodes in app canvas (topology only) | M | Pending |
+| 1 | Middleware node registry — emoji/color/bg from DB, not hardcoded | S | ✅ **DONE** (commit `61a3d915`) |
+| **2** | Router + HIL nodes in app canvas (topology only) | M | **START HERE** |
 | 3 | App canvas DAG execution — local loop + Temporal | L | Pending |
 | 4 | Full node unification (optional/future) | L | Future |
 
 ---
 
-## Phase 1 — what to do (concise)
+## Phase 1 — COMPLETE
 
-**Goal:** Middleware visual metadata (emoji, color, bg_color) comes from the DB, not hardcoded frontend code. Same pattern as agent builder's node registry.
+Everything shipped in commit `61a3d915`. Summary of what was built:
 
-### Step 1 — DB migration
-File: `db/097_middleware_defs_visual.sql`
+- `db/097_middleware_defs_visual.sql` — `emoji`/`color`/`bg_color` columns added to `middleware_defs`; File Guard seeded. **Applied to DB.**
+- `go/internal/admin/dal/middleware_wirings.go` — `MiddlewareDefSummary` extended; `ListMiddlewareDefs` SELECT updated.
+- `go/internal/admin/middleware_wirings.go` — new `ListDefs` handler.
+- `go/internal/admin/router.go` — `GET /admin/middleware-defs` registered.
+- Frontend: `MiddlewareDef`, `MiddlewareData`, `MwNodeData` all have `emoji?`/`color?`/`bg_color?`.
+- `CanvasBuilderView.tsx` — fetches `middlewareDefs`, builds `mwVisualById` map, applies on drop + load.
+- `CanvasHelpers.ts` (`docToCanvas`) — new optional `mwVisualById` param.
+- `CanvasNodes.tsx` (`MiddlewareNode`) — reads emoji/color/bg_color from node data; plain `<div>` render.
+- `NodeLibrary.tsx` — `m.emoji ?? fallback`; passes visual fields on drag.
+- Test S1-111 added (`TestMiddlewareWirings_ListDefs`). Full suite: 1164 tests, 0 failures.
 
-```sql
-ALTER TABLE them.middleware_defs
-  ADD COLUMN IF NOT EXISTS emoji     TEXT,
-  ADD COLUMN IF NOT EXISTS color     TEXT,
-  ADD COLUMN IF NOT EXISTS bg_color  TEXT;
+---
 
-UPDATE them.middleware_defs
-SET emoji = '🛡️', color = '#f59e0b', bg_color = 'rgba(245,158,11,0.08)'
-WHERE slug = 'file-guard';
+## Phase 2 — what to do (concise)
+
+**Goal:** Router and HIL nodes appear as draggable items in the application canvas node library, can be placed on the canvas, and persist through save/reload. **No execution changes** — topology only.
+
+### Step 1 — Frontend types
+
+File: `frontend/src/app/admin/applications/types.ts`
+
+Add a new interface:
+```ts
+export interface FlowControlNodeData {
+  _kind: 'flow_control';
+  instance_id: string;
+  node_type: 'router' | 'hil';
+  display_name: string;
+  config: Record<string, unknown>;
+  _error?: boolean;
+  _shake?: boolean;
+  _errorMsg?: string;
+}
 ```
 
-Apply: `docker cp db/097_middleware_defs_visual.sql them-postgres:/tmp/ && docker exec them-postgres psql -U them -d them -f /tmp/097_middleware_defs_visual.sql`
+Update `CanvasNodeData` union to include `FlowControlNodeData`.
 
-### Step 2 — Go DAL
-File: `go/internal/admin/dal/` — wherever `ListMiddlewareDefs` is (check `middleware_wirings.go` or `applications.go`).
-- Add `Emoji`, `Color`, `BgColor` fields to the `MiddlewareDef` struct
-- Extend the SELECT query to include these columns
+### Step 2 — New canvas node component
 
-### Step 3 — Frontend
-Files to change:
-- `frontend/src/lib/apiTypes.ts`: Add `emoji?: string; color?: string; bg_color?: string` to `MiddlewareDef` interface
-- `frontend/src/app/admin/applications/types.ts`: Add same fields to `MiddlewareData` and `MwNodeData`
-- `frontend/src/app/admin/applications/components/CanvasHelpers.ts` (`docToCanvas`): Pass `emoji`, `color`, `bg_color` from the component def through to node data on canvas load
-- `frontend/src/app/admin/applications/components/NodeLibrary.tsx`: Replace `const emoji = m.kind === 'guard' ? '🛡️' : '⚡'` with `m.emoji ?? (m.kind === 'guard' ? '🛡️' : '⚡')` (fallback for safety)
-- `frontend/src/app/admin/applications/components/CanvasNodes.tsx` (`MiddlewareNode`): Read `data.emoji`, `data.color`, `data.bg_color` from node data instead of deriving from `data.kind`; render emoji in plain `<div style={{ fontSize: 26, lineHeight: 1 }}>` (no material-symbols, no forced font-family — same as `StepNode` line 411)
+File: `frontend/src/app/admin/applications/components/CanvasNodes.tsx`
+
+Add `FlowControlNode` component. Reuse `StepNode` visual pattern — round node, emoji from `node_type`:
+- `router` → `🔀`, color `#06b6d4` (cyan)
+- `hil` → `✋`, color `#a855f7` (purple)
+
+Register in `NODE_TYPES` map: `{ ..., flowControl: FlowControlNode }`.
+
+### Step 3 — Node library
+
+File: `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx` (the active inline palette)
+
+Add a "Flow Control" section below the Middleware section. Two static entries (no DB needed — these are always available):
+- **Router** — `🔀` — "Routes to one of multiple agents based on message intent"
+- **HIL** — `✋` — "Pauses flow for human decision before continuing"
+
+Drag data: `{ nodeType: 'flow_control', nodeData: { node_type: 'router' | 'hil' } }`
+
+### Step 4 — Drop handler
+
+File: `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx` (`handleDropOnCanvas`)
+
+Add a `flow_control` branch:
+```ts
+} else if (nodeType === 'flow_control' && payload.node_type) {
+  const id = genInstanceId('flow_control', payload.node_type, existingIds);
+  const newNode: Node = { id, type: 'flowControl', position: pos, data: {
+    _kind: 'flow_control', instance_id: id,
+    node_type: payload.node_type, display_name: payload.node_type === 'router' ? 'Router' : 'Human-in-Loop',
+    config: {},
+  } as unknown as Record<string, unknown> };
+  setNodes(ns => [...ns, newNode]);
+}
+```
+
+Also update `genInstanceId` in `CanvasHelpers.ts` to handle `'flow_control'` kind → base `'fc_' + sanitize(defName)`.
+
+### Step 5 — canvasToDoc / docToCanvas
+
+File: `frontend/src/app/admin/applications/components/CanvasHelpers.ts`
+
+`canvasToDoc`: serialize `flow_control` nodes into `doc.components` with `definition_ref.kind = 'flow_control'` and `config.node_type`.
+
+`docToCanvas`: restore `flow_control` nodes from `definition_ref.kind === 'flow_control'`, reading `config.node_type`.
+
+### Step 6 — Canvas validation (optional but good)
+
+In `CanvasInner.tsx` or the existing `validateConnection` helper: warn if a Router node has no outgoing edges.
 
 ### Verification
-- File Guard node in library shows 🛡️ from DB
-- File Guard node on canvas shows 🛡️ after drag-drop
-- Adding a second middleware def with custom emoji requires only a DB UPDATE, no frontend change
+- Router and HIL entries appear in the node library under "Flow Control"
+- Drag-drop places a node with correct emoji
+- Save → reload restores the node at the same position
+- No backend changes needed
 
 ---
 
@@ -95,19 +156,24 @@ Files to change:
 
 | What | Where | Notes |
 |---|---|---|
-| Node registry pattern | `go/internal/agentgen/nodes.go` + `frontend/src/lib/nodeRegistry.ts` | Model Phase 1 on this — emoji/color/label per type, served from backend |
-| StepNode emoji rendering | `frontend/src/app/admin/agents/builder/components/StepNode.tsx` line 411 | `<div style={{ fontSize: '26px', lineHeight: 1 }}>{meta.emoji}</div>` — copy this exactly |
-| ExecutionBackend concept | `go/internal/agentgen/compiler.go` lines 64–67 + `spec.go` lines 20–24 | Phase 3: app canvas gains same `execution_backend: "local" | "temporal"` |
-| Temporal workflow | `go/internal/temporal/workflow.go` | Phase 3: extend `CanvasAgentWorkflow` for app-level agent invocations |
-| dag-worker | `go/cmd/dag-worker/` | Phase 3: register new `ExecuteAgent` activity here |
+| Phase 1 pattern | `CanvasNodes.tsx` `MiddlewareNode` | Same round-node structure — copy for `FlowControlNode` |
+| `genInstanceId` | `CanvasHelpers.ts` line ~102 | Add `'flow_control'` case |
+| `canvasToDoc` / `docToCanvas` | `CanvasHelpers.ts` | Both need a `flow_control` branch |
+| `NODE_TYPES` map | `CanvasNodes.tsx` bottom | Add `flowControl: FlowControlNode` |
+| Agent builder node types | `GET /admin/node-types` | Phase 2 does NOT need this — flow control nodes are static in the app canvas |
+| ExecutionBackend concept | `go/internal/agentgen/compiler.go` | Phase 3 only |
+| Temporal workflow | `go/internal/temporal/workflow.go` | Phase 3 only |
 
 ---
 
 ## Rules to follow
 
 - Read `CLAUDE.md` and `go/CLAUDE.md` at session start
-- Every Go change needs a test; run `docker run --rm -v /opt/docker/them/go:/src -w /src golang:1.25-alpine go test ./...` before committing
-- `TEST_INDEX.md` updated in same commit as tests
+- Phase 2 is **frontend-only** — no Go changes needed, no DB migration
+- If any Go file is touched, run `docker run --rm -v /opt/docker/them/go:/src -w /src golang:1.25-alpine go test ./...` before committing
+- `TEST_INDEX.md` updated in same commit as any Go tests
 - Never commit `.env` or `secrets.local`
-- One phase at a time — do not start Phase 2 in the same session as Phase 1
-- After Phase 1 is complete and tested, update `docs/CURRENT.md` with HEAD and next recommended task
+- One phase at a time — do not start Phase 3 in the same session as Phase 2
+- After Phase 2 is complete and tested, update `docs/CURRENT.md` and this doc
+- TypeScript must compile clean (`npx tsc --noEmit`) before committing frontend changes
+- When context tokens drop below ~2M, stop, commit current state, update `docs/CURRENT.md` and this doc, and hand over
