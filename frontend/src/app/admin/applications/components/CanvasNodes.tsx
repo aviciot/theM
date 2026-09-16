@@ -238,7 +238,7 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
             boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
             transition: 'all 0.18s ease',
           }}>
-          <span style={{ fontSize: 28, lineHeight: 1, transition: 'all 0.18s' }}>{emoji}</span>
+          <span style={{ fontSize: 26, lineHeight: 1, fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif' }}>{emoji}</span>
         </div>
         {data.wiringEnabled && (
           <div style={{

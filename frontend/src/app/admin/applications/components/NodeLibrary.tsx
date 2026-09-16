@@ -212,7 +212,7 @@ export function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                         onMouseEnter={e => (e.currentTarget.style.background = 'rgba(245,158,11,0.1)')}
                         onMouseLeave={e => (e.currentTarget.style.background = C.amberBg)}
                       >
-                        <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>{emoji}</span>
+                        <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1, fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif' }}>{emoji}</span>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name}</div>
                           <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.kind}</div>

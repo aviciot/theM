@@ -144,6 +144,8 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): AppDef
     if (srcType === 'entryPoint' && tgtType === 'orchestrator') return;
     if (srcType === 'orchestrator' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'tool' });
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
+    if (srcType === 'orchestrator' && tgtType === 'middleware') connections.push({ source: e.source, target: e.target, type: 'middleware' });
+    if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
   });
   return { schema_version: 2 as const, name, components, entry_points, connections };
 }
@@ -177,7 +179,7 @@ export function docToCanvas(
     if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default' });
   });
   (doc.connections ?? []).forEach(conn => {
-    if (conn.type === 'tool' || conn.type === 'delegation') {
+    if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware') {
       edges.push({ id: `e_${conn.source}_${conn.target}`, source: conn.source, target: conn.target, type: 'default' });
     }
   });

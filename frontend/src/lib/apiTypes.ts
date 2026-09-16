@@ -523,7 +523,7 @@ export interface EPInstance {
 export interface ConnectionDef {
   source: string;
   target: string;
-  type: 'entry' | 'delegation' | 'tool';
+  type: 'entry' | 'delegation' | 'tool' | 'middleware';
 }
 
 export interface AppDefinitionDoc {
