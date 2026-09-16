@@ -495,29 +495,11 @@ func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionH
 		return nil, fmt.Errorf("appflow: no active definition on EPConfig")
 	}
 
-	// Build agentByInstanceID from the definition JSON. definition_id on each
-	// component is the agents.id UUID (set by the canvas when the component is
-	// placed). flow_control and orchestrator nodes have no agent_id.
-	type compRef struct {
-		InstanceID   string `json:"instance_id"`
-		DefinitionID string `json:"definition_id,omitempty"`
-		DefinitionRef struct {
-			Kind string `json:"kind"`
-		} `json:"definition_ref"`
+	agentByInstanceID, err := appflow.ResolveAgentByInstanceID(defJSON)
+	if err != nil {
+		return nil, fmt.Errorf("appflow: resolve agents: %w", err)
 	}
-	type defShape struct {
-		Components []compRef `json:"components"`
-	}
-	var shape defShape
-	if err := json.Unmarshal(defJSON, &shape); err != nil {
-		return nil, fmt.Errorf("appflow: parse definition for agent map: %w", err)
-	}
-	agentByInstanceID := make(map[string]string, len(shape.Components))
-	for _, c := range shape.Components {
-		if c.DefinitionRef.Kind == "agent" && c.DefinitionID != "" {
-			agentByInstanceID[c.InstanceID] = c.DefinitionID
-		}
-	}
+	llmCfg := appflow.ParseLLMConfig(defJSON)
 
 	spec, err := appflow.Compile(defJSON, agentByInstanceID)
 	if err != nil {
@@ -545,10 +527,13 @@ func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionH
 	}
 
 	input := appflow.AppFlowWorkflowInput{
-		Spec:           singleEPSpec,
-		UserMessage:    userMsg.Text(),
-		UserID:         handle.UserID,
-		ExternalUserID: handle.ExternalUserID,
+		Spec:            singleEPSpec,
+		UserMessage:     userMsg.Text(),
+		UserID:          handle.UserID,
+		ExternalUserID:  handle.ExternalUserID,
+		LLMProviderName: llmCfg.ProviderName,
+		LLMProvider:     llmCfg.ProviderName,
+		LLMModel:        llmCfg.Model,
 	}
 	return h.lc.StartAppFlow(ctx, handle, input)
 }

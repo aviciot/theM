@@ -302,6 +302,66 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 	return node, nil
 }
 
+// ── Definition helpers ────────────────────────────────────────────────────────
+
+// ResolveAgentByInstanceID parses an application definition JSON and returns a map
+// of component instance_id → definition_id (agents.id UUID) for all agent-kind
+// components. definition_id must be set by the canvas when the component is placed
+// from the agent palette. Components without a definition_id are silently omitted —
+// Validate will catch them as unresolved_agent if they appear in the compiled spec.
+//
+// This function is the single canonical implementation shared by the WS and SSE
+// handlers. It intentionally ignores cross-tenant concerns — tenancy is enforced
+// upstream by EPConfig resolution (the definition JSON comes from the server-resolved
+// active_definition_id, never from client-supplied data).
+func ResolveAgentByInstanceID(defJSON []byte) (map[string]string, error) {
+	type compRef struct {
+		InstanceID    string `json:"instance_id"`
+		DefinitionID  string `json:"definition_id,omitempty"`
+		DefinitionRef struct {
+			Kind string `json:"kind"`
+		} `json:"definition_ref"`
+	}
+	var doc struct {
+		Components []compRef `json:"components"`
+	}
+	if err := json.Unmarshal(defJSON, &doc); err != nil {
+		return nil, fmt.Errorf("appflow: parse definition for agent map: %w", err)
+	}
+	out := make(map[string]string, len(doc.Components))
+	for _, c := range doc.Components {
+		if c.DefinitionRef.Kind == "agent" && c.DefinitionID != "" {
+			out[c.InstanceID] = c.DefinitionID
+		}
+	}
+	return out, nil
+}
+
+// LLMConfig holds the LLM provider and model parsed from an application definition.
+type LLMConfig struct {
+	// ProviderName is the provider slug (e.g. "anthropic", "openai").
+	// Defaults to "anthropic" when not set in the definition.
+	ProviderName string
+	// Model is the model identifier.
+	// When empty, the Router activity defaults to its own model constant.
+	Model string
+}
+
+// ParseLLMConfig extracts the router LLM provider and model from an application
+// definition JSON. Falls back to "anthropic" provider when not configured so the
+// Router activity can always attempt key resolution from the DB.
+func ParseLLMConfig(defJSON []byte) LLMConfig {
+	var doc struct {
+		LLMProvider string `json:"llm_provider,omitempty"`
+		LLMModel    string `json:"llm_model,omitempty"`
+	}
+	_ = json.Unmarshal(defJSON, &doc)
+	if doc.LLMProvider == "" {
+		doc.LLMProvider = "anthropic"
+	}
+	return LLMConfig{ProviderName: doc.LLMProvider, Model: doc.LLMModel}
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 // ValidationError is a structured compilation/validation error.
