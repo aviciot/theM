@@ -1,6 +1,6 @@
 # Handover — Application Canvas Upgrade
 # Created: 2026-09-16
-# Last updated: 2026-09-16 (Phase 3 — COMPLETE: HIL API + agent invocation + E2E)
+# Last updated: 2026-09-17 (Phase 3 — FULLY COMPLETE: A2A v1.0 fix + full canvas E2E test passes)
 # Use this doc when starting a fresh Claude session to continue this work.
 
 ---
@@ -8,7 +8,7 @@
 ## First prompt for new session
 
 ```
-Read docs/HANDOVER_APP_CANVAS.md and docs/APP_CANVAS_UPGRADE_PLAN.md, then continue the App Canvas work. Phase 3 is complete. Next: full canvas E2E test — create an app with Router→HIL→Agent flow, publish, start a session, verify HIL pause, approve, verify agent invoked, run completes.
+Read docs/HANDOVER_APP_CANVAS.md and docs/APP_CANVAS_UPGRADE_PLAN.md, then continue the App Canvas work. Phase 3 is fully complete including the full canvas E2E test (test_40, 17/17 checks pass). Next: Phase 4 — canvas observability / run inspection, or as directed.
 ```
 
 ---
@@ -28,9 +28,10 @@ These stay separate. The application canvas is the governance shell — not a re
 ## Current HEAD and state
 
 Branch: `main`
-HEAD: `45206503  fix(hil): grant DB permissions, make temporal signal non-fatal, add E2E test`
+HEAD: (see `git log --oneline -1` — next commit is the A2A v1.0 fix + canvas E2E test)
 
 Recent work completed (this feature):
+- **Phase 3 full canvas E2E** (current) — A2A v1.0 wire format fix in dag-worker; `test_40_appflow_canvas_e2e.py` 17/17 pass; test indexes updated
 - **Phase 3 HIL E2E fix** (`45206503`) — GRANT SELECT/INSERT/UPDATE on hil_approvals to them_app/them_admin; temporal signal non-fatal; test_39 passes (4/4)
 - **Phase 3 agent invocation** (`4dc372d0`) — `InvokeAgentActivity` + `pgxAgentA2ACaller` (A2A JSON-RPC call by agent UUID); 6 unit tests
 - **Phase 3 HIL API** (`b3fe3841`) — `POST /runs/{id}/hil/{node}/approve|reject`; RBAC-gated; `SignalNamedWorkflow`; 5 unit tests
@@ -133,7 +134,7 @@ Full details in `docs/APP_CANVAS_UPGRADE_PLAN.md`.
 - Temporal signal made non-fatal: DB update runs first; signal failure is logged and ignored.
 - `scripts/tests/test_39_appflow_hil.py`: E2E test (4/4 pass).
 
-**Next task:** Full canvas E2E — create an app with Router→HIL→Agent flow, publish, start WS session, verify HIL pause at gate, approve, verify agent invoked, run completes. Or: Phase 4 (canvas observability / run inspection).
+**Next task:** Phase 4 (canvas observability / run inspection) — or as directed. Phase 3 is fully done.
 
 ---
 

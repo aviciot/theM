@@ -3448,6 +3448,22 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-112 | AppFlow compiler + workflow (AF-01..10, AF-C-01..04, AF-WF-01..06): compiler, ResolveAgentByInstanceID (server-stamped map), ParseLLMConfig (LLMOrchConfig), FinalizeRunActivity (success/fail/XAdd-error/nil-deps), JSON round-trip, InvokeAgentActivity (success/empty-id/nil-invoker) | 22 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
 | **S1 total** | | **1186** |
+
+### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
+
+Full live stack E2E for `cmd/dag-worker/` A2A v1.0 invocation path and `internal/appflow/` workflow.
+Run: `python3.12 scripts/tests/test_40_appflow_canvas_e2e.py` (requires `--profile temporal`).
+
+| Check | What it proves |
+|---|---|
+| create application + EP → 201 | Admin CRUD wired correctly |
+| create + publish definition | Compiler stamps `_resolved_agent_ids`; flow_control nodes skip registry |
+| WS connect + run_id in ready event | AppFlowWorkflow starts via temporal dispatch on WS message |
+| hil_approvals row created | HIL activity persists pending row; workflow waits for signal |
+| POST approve → 200 + status=approved | HIL API signals temporal, marks row approved |
+| run.status == completed | dag-worker A2A v1.0 `SendMessage` invocation succeeds; FinalizeRunActivity marks completed |
+
+**Trigger:** any change to `cmd/dag-worker/main.go`, `internal/appflow/`, `internal/admin/hil*.go`
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

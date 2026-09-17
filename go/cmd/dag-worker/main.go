@@ -719,8 +719,9 @@ type pgxAgentA2ACaller struct {
 	httpClient *http.Client
 }
 
-// InvokeByID calls the A2A agent identified by agentID via HTTP POST.
-// The message format follows the minimal A2A JSON-RPC request shape.
+// InvokeByID calls the A2A agent identified by agentID via A2A v1.0 SendMessage.
+// Uses protobuf-JSON wire format with "ROLE_USER" enum string and A2A-Version: 1.0
+// header required by the A2A SDK v1.1 version validator.
 func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (string, error) {
 	// Resolve agent endpoint + auth token from DB (scoped by tenant for security).
 	row := c.pool.QueryRow(ctx,
@@ -743,18 +744,20 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		}
 	}
 
-	// Build a minimal A2A JSON-RPC "message/send" request.
+	// Build A2A v1.0 JSON-RPC "SendMessage" request (protobuf-JSON wire format).
+	// Role must be the protobuf enum string "ROLE_USER"; parts use only "text" (no "kind").
+	msgID := fmt.Sprintf("%d", rand.Int63())
 	reqBody, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "message/send",
-		"id":      1,
+		"method":  "SendMessage",
+		"id":      msgID,
 		"params": map[string]any{
 			"message": map[string]any{
-				"role": "user",
-				"parts": []map[string]any{
-					{"kind": "text", "text": userMessage},
-				},
+				"messageId": msgID,
+				"role":      "ROLE_USER",
+				"parts":     []map[string]any{{"text": userMessage}},
 			},
+			"configuration": map[string]any{"returnImmediately": false},
 		},
 	})
 	if err != nil {
@@ -766,6 +769,7 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		return "", fmt.Errorf("agentA2ACaller: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("A2A-Version", "1.0")
 	if authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
@@ -782,15 +786,17 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		return "", fmt.Errorf("agentA2ACaller: agent returned HTTP %d", resp.StatusCode)
 	}
 
-	// Parse A2A JSON-RPC response — extract the text from the first part.
+	// Parse A2A v1.0 JSON-RPC response.
+	// Non-streaming SendMessage returns: result.task.artifacts[].parts[].text
 	var rpcResp struct {
-		Result struct {
-			Parts []struct {
-				Kind string `json:"kind"`
-				Text string `json:"text"`
-			} `json:"parts"`
-			// Alternative: flat text result from simpler agents.
-			Text string `json:"text"`
+		Result *struct {
+			Task *struct {
+				Artifacts []struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"artifacts"`
+			} `json:"task"`
 		} `json:"result"`
 		Error *struct {
 			Message string `json:"message"`
@@ -803,13 +809,17 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		return "", fmt.Errorf("agentA2ACaller: agent error: %s", rpcResp.Error.Message)
 	}
 
-	// Prefer parts[0].text, fall back to result.text for simpler agents.
-	for _, p := range rpcResp.Result.Parts {
-		if p.Kind == "text" && p.Text != "" {
-			return p.Text, nil
+	// Extract text from first artifact/part.
+	if rpcResp.Result != nil && rpcResp.Result.Task != nil {
+		for _, artifact := range rpcResp.Result.Task.Artifacts {
+			for _, p := range artifact.Parts {
+				if p.Text != "" {
+					return p.Text, nil
+				}
+			}
 		}
 	}
-	return rpcResp.Result.Text, nil
+	return "", nil
 }
 
 var _ appflow.AgentInvoker = (*pgxAgentA2ACaller)(nil)

@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-16 (App Canvas Upgrade Phase 3 — HIL API + agent invocation + E2E complete)
+# Last updated: 2026-09-17 (App Canvas Upgrade Phase 3 — FULLY COMPLETE: A2A v1.0 fix + full canvas E2E 17/17)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `45206503  fix(hil): grant DB permissions, make temporal signal non-fatal, add E2E test`
+HEAD: (see `git log --oneline -1` after the commit below is made)
 
 Recent commits (newest first):
 ```
+(pending)  fix(appflow): A2A v1.0 wire format in dag-worker InvokeByID; add test_40 canvas E2E (17/17 pass)
 45206503  fix(hil): grant DB permissions, make temporal signal non-fatal, add E2E test
 4dc372d0  feat(appflow): real agent invocation — InvokeAgentActivity + pgxAgentA2ACaller
 b3fe3841  feat(hil): HIL approval API — POST /runs/{id}/hil/{node}/approve|reject
 b7f4c83f  fix(appflow): centralize finalization, fix XAdd swallow, stamp resolved agent IDs, wire orchestrator LLM config
-ca6c5fe7  fix(appflow): shared agent resolution, LLM default, agent→flowControl edge (Phase 3 findings 3+4+6)
 ```
 
 ---
@@ -46,9 +46,9 @@ Key facts:
 
 ## Current migration slice
 
-**App Canvas Upgrade — Phase 3 (AppFlow DAG execution) — COMPLETE**
+**App Canvas Upgrade — Phase 3 (AppFlow DAG execution) — FULLY COMPLETE**
 
-All three Phase 3 items complete as of 2026-09-16.
+All Phase 3 items complete as of 2026-09-17. Full canvas E2E test passes (17/17).
 
 **What's done:**
 - `go/internal/appflow/compiler.go`: `Compile()` + `Validate()` — BFS, Router/HIL classification, edge labels from conn.Label, no DefinitionID fallback. `ResolveAgentByInstanceID` reads `_resolved_agent_ids` (server-stamped at publish). `ParseLLMConfig` takes `LLMOrchConfig`. ✅
@@ -66,9 +66,11 @@ All three Phase 3 items complete as of 2026-09-16.
 - Frontend: config round-trip, edge labels, NODE_PORTS flowControl with `'result'` in accepts. ✅
 - Tests: AF-C-01..04 (compiler), AF-WF-01..06 (finalize + agent invoke), AF-HIL-01..05 (HIL API); all Go tests pass. ✅
 - E2E: `scripts/tests/test_39_appflow_hil.py` — 4/4 cases pass. ✅
+- `go/cmd/dag-worker/main.go`: `InvokeByID` fixed to A2A v1.0 wire format (`SendMessage`, `ROLE_USER`, `A2A-Version: 1.0` header, no `kind` field in parts). Response parsed from `result.task.artifacts[].parts[].text`. ✅
+- E2E: `scripts/tests/test_40_appflow_canvas_e2e.py` — 17/17 checks pass (create app+EP+def, publish, WS session, HIL pause, approve, run completed). ✅
 - Both `them-go-bridge` and `them-dag-worker` rebuilt and running. ✅
 
-**Next recommended task:** Full canvas E2E — create an app with a Router→HIL→Agent flow, publish, start a WS session, verify the workflow pauses at HIL gate, approve, verify agent is invoked and run completes.
+**Next recommended task:** Phase 4 — canvas observability / run inspection, or next feature as directed.
 
 **App Canvas Upgrade — Phase 2 (Router + HIL flow control nodes) — COMPLETE**
 
