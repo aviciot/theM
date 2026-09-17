@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-17 (AppFlow Phase B — Temporal execution controls — FULLY COMPLETE: go test ./... zero failures, 1096 tests)
+# Last updated: 2026-09-17 (AppFlow Phase B — Temporal execution controls — FULLY COMPLETE: backend + frontend, HEAD 54db8231)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `67c2cd6b`
+HEAD: `54db8231`
 
 Recent commits (newest first):
 ```
@@ -46,9 +46,9 @@ Key facts:
 
 ## Current migration slice
 
-**AppFlow Phase B — Temporal Execution Controls — FULLY COMPLETE (backend)**
+**AppFlow Phase B — Temporal Execution Controls — FULLY COMPLETE (backend + frontend)**
 
-All Phase B backend items complete as of 2026-09-17. `go test ./...` — zero failures (1096 tests). Pending: frontend (platform admin Temporal settings page + app Runtime "Temporal" tab).
+All Phase B items complete as of 2026-09-17. `go test ./...` — zero failures (1096 tests). Frontend deployed (HEAD 54db8231).
 
 **What's done:**
 - `db/099_temporal_config.sql`: `them.app_temporal_config` table (per-app override, FK → applications, ON DELETE CASCADE). GRANT to them_app/them_admin. ✅
@@ -64,9 +64,10 @@ All Phase B backend items complete as of 2026-09-17. `go test ./...` — zero fa
 - Tests: S1-114 — 13 new tests (TC-SVC-1..9 service, TC-1..4 handler). ✅
 - `go/TEST_INDEX.md`: S1-114 entry added, S1 total 1206, `go test ./...` total 1096. ✅
 
-**Pending (Phase B frontend — next session):**
-- Platform admin "Temporal" settings page (super_admin, sidebar under System) — `GET|PUT /api/v1/admin/temporal-config`
-- App Runtime "Temporal" tab — `GET|PUT /api/v1/admin/applications/{id}/temporal-config` showing effective (merged) values + override inputs
+- `frontend/src/app/admin/temporal/page.tsx`: Platform admin Temporal settings page (super_admin, sidebar under Platform Admin). ✅
+- `frontend/src/app/admin/applications/components/RuntimeTemporalTab.tsx`: App Runtime Temporal tab — effective values stat tiles + per-app override inputs (empty = inherit platform default). ✅
+- `frontend/src/app/admin/applications/components/RuntimeView.tsx`: General / Temporal tab strip. ✅
+- `frontend/src/components/Sidebar.tsx`: "Temporal" entry added under Platform Admin. ✅
 
 **Migration notes:**
 - Apply `db/099_temporal_config.sql` before rebuilding containers.
@@ -87,7 +88,7 @@ All Phase A items complete as of 2026-09-17. E2E test passes (13/13). See `docs/
 
 **Critical lesson from this phase:** After rebuilding a Go binary in Docker, you MUST use `docker compose up -d --force-recreate <service>` — `docker compose build + restart` does NOT force the container to use the new image. See `docs/LESSONS.md`.
 
-**Next recommended task:** Phase B frontend — platform admin Temporal settings page + app Runtime "Temporal" tab. (Backend APIs are already live after rebuilding them-go-bridge.)
+**Next recommended task:** AppFlow Phase C — see below for candidates.
 
 ---
 
