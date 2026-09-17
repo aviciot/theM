@@ -850,3 +850,11 @@ docker compose ... up -d --force-recreate them-go-worker them-go-worker-2
 **Fix:** Use `slog.InfoContext(ctx, ...)` or any stdlib logger inside activities — these work with any context.
 
 **Watch for:** Any log call inside an `activity.*` function that uses `activity.GetLogger(ctx)`. Replace with `slog.InfoContext` for portability across test and production contexts.
+
+## `workflow.WaitGroup` Must Be Created With `workflow.NewWaitGroup(ctx)` (2026-09-17)
+
+`var wg workflow.WaitGroup` gives a zero-value struct. Calling `.Add(1)` on it panics with a nil pointer dereference inside the Temporal runtime.
+
+**Fix:** Always use `wg := workflow.NewWaitGroup(ctx)` to obtain a properly initialized WaitGroup.
+
+**Watch for:** Any parallel fork pattern in Temporal workflows. `sync.WaitGroup` (stdlib) is NOT usable in workflows — use `workflow.NewWaitGroup(ctx)` everywhere.
