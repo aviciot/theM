@@ -487,3 +487,374 @@ func TestFindEdgeByLabel(t *testing.T) {
 		t.Errorf("want empty, got %q", got)
 	}
 }
+
+// AF-15: Compile maps definition_ref.kind="inline"/name="llm" to Kind="llm", config preserved verbatim.
+func TestCompile_InlineLLMNode(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "inline_llm_1",
+				"definition_ref": {"kind":"inline","namespace":"builtin","name":"llm","version":1},
+				"config": {"node_type":"llm","display_name":"Summarize","system_prompt":"You are concise.","user_prompt":"{{.input}}","output_var":"summary"}
+			}
+		],
+		"entry_points": [
+			{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"inline_llm_1"}
+		],
+		"connections": []
+	}`)
+	spec, err := Compile(raw, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	ep := spec.EntryPoints[0]
+	if len(ep.Nodes) != 1 {
+		t.Fatalf("want 1 node, got %d", len(ep.Nodes))
+	}
+	n := ep.Nodes[0]
+	if n.Kind != "llm" {
+		t.Errorf("kind: want llm, got %q", n.Kind)
+	}
+	var cfg InlineLLMConfig
+	if err := json.Unmarshal(n.Config, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if cfg.SystemPrompt != "You are concise." {
+		t.Errorf("system_prompt: got %q", cfg.SystemPrompt)
+	}
+	if cfg.UserPrompt != "{{.input}}" {
+		t.Errorf("user_prompt: got %q", cfg.UserPrompt)
+	}
+	if cfg.OutputVar != "summary" {
+		t.Errorf("output_var: got %q", cfg.OutputVar)
+	}
+}
+
+// AF-16: Compile maps definition_ref.kind="inline"/name="condition" to Kind="condition".
+func TestCompile_InlineConditionNode(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "inline_condition_1",
+				"definition_ref": {"kind":"inline","namespace":"builtin","name":"condition","version":1},
+				"config": {"node_type":"condition","expression":"{{eq .summary \"APPROVED\"}}"}
+			}
+		],
+		"entry_points": [
+			{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"inline_condition_1"}
+		],
+		"connections": []
+	}`)
+	spec, err := Compile(raw, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	ep := spec.EntryPoints[0]
+	if len(ep.Nodes) != 1 {
+		t.Fatalf("want 1 node, got %d", len(ep.Nodes))
+	}
+	if ep.Nodes[0].Kind != "condition" {
+		t.Errorf("kind: want condition, got %q", ep.Nodes[0].Kind)
+	}
+}
+
+// AF-17: an unknown inline name (e.g. a typo like "lmm") compiles to Kind="inline",
+// not the raw name — so Validate can report unknown_inline_node instead of the
+// workflow dying on an UnknownNodeKind at run time.
+func TestCompile_InlineUnknownName(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "inline_bad_1",
+				"definition_ref": {"kind":"inline","namespace":"builtin","name":"lmm","version":1},
+				"config": {}
+			}
+		],
+		"entry_points": [
+			{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"inline_bad_1"}
+		],
+		"connections": []
+	}`)
+	spec, err := Compile(raw, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if got := spec.EntryPoints[0].Nodes[0].Kind; got != "inline" {
+		t.Errorf("kind: want inline, got %q", got)
+	}
+}
+
+// AF-18: true/false edge labels on a condition node's outgoing connections
+// survive compilation into AppFlowEdge.Label.
+func TestCompile_ConditionEdgeLabels(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{"instance_id":"cond_1","definition_ref":{"kind":"inline","namespace":"builtin","name":"condition","version":1},"config":{"expression":"{{.input}}"}},
+			{"instance_id":"agent_yes","definition_ref":{"kind":"agent","namespace":"default","name":"agent-yes","version":1}},
+			{"instance_id":"agent_no","definition_ref":{"kind":"agent","namespace":"default","name":"agent-no","version":1}}
+		],
+		"entry_points":[{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"cond_1"}],
+		"connections":[
+			{"source":"cond_1","target":"agent_yes","type":"flow_control","label":"true"},
+			{"source":"cond_1","target":"agent_no","type":"flow_control","label":"false"}
+		]
+	}`)
+	agents := map[string]string{"agent_yes": "uuid-yes", "agent_no": "uuid-no"}
+	spec, err := Compile(raw, agents)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	ep := spec.EntryPoints[0]
+	labelByTarget := make(map[string]string)
+	for _, e := range ep.Edges {
+		labelByTarget[e.Target] = e.Label
+	}
+	if labelByTarget["agent_yes"] != "true" {
+		t.Errorf("want edge to agent_yes label=true, got %q", labelByTarget["agent_yes"])
+	}
+	if labelByTarget["agent_no"] != "false" {
+		t.Errorf("want edge to agent_no label=false, got %q", labelByTarget["agent_no"])
+	}
+}
+
+// AF-19: Validate rejects a condition node with no expression configured.
+func TestValidate_ConditionNoExpression(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "cond_1",
+			Nodes: []AppFlowNode{
+				{ID: "cond_1", Kind: "condition", Config: json.RawMessage(`{"expression":""}`)},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+				{ID: "agent_b", Kind: "agent", AgentID: "uuid-b"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "cond_1", Target: "agent_a", Label: "true"},
+				{Source: "cond_1", Target: "agent_b", Label: "false"},
+			},
+		}},
+	}
+	errs := Validate(spec)
+	found := false
+	for _, e := range errs {
+		if e.Code == "condition_no_expression" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected condition_no_expression, got: %+v", errs)
+	}
+}
+
+// AF-20: Validate rejects a condition node whose outgoing edge count is not
+// exactly 2 — both the 1-edge and the 3-edge case must produce condition_edge_count.
+func TestValidate_ConditionEdgeCount(t *testing.T) {
+	hasCode := func(errs []ValidationError, code string) bool {
+		for _, e := range errs {
+			if e.Code == code {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 1 outgoing edge.
+	specOne := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "cond_1",
+			Nodes: []AppFlowNode{
+				{ID: "cond_1", Kind: "condition", Config: json.RawMessage(`{"expression":"{{.input}}"}`)},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "cond_1", Target: "agent_a", Label: "true"},
+			},
+		}},
+	}
+	errsOne := Validate(specOne)
+	if !hasCode(errsOne, "condition_edge_count") {
+		t.Errorf("1-edge case: expected condition_edge_count, got: %+v", errsOne)
+	}
+
+	// 3 outgoing edges.
+	specThree := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "cond_1",
+			Nodes: []AppFlowNode{
+				{ID: "cond_1", Kind: "condition", Config: json.RawMessage(`{"expression":"{{.input}}"}`)},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+				{ID: "agent_b", Kind: "agent", AgentID: "uuid-b"},
+				{ID: "agent_c", Kind: "agent", AgentID: "uuid-c"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "cond_1", Target: "agent_a", Label: "true"},
+				{Source: "cond_1", Target: "agent_b", Label: "false"},
+				{Source: "cond_1", Target: "agent_c", Label: "extra"},
+			},
+		}},
+	}
+	errsThree := Validate(specThree)
+	if !hasCode(errsThree, "condition_edge_count") {
+		t.Errorf("3-edge case: expected condition_edge_count, got: %+v", errsThree)
+	}
+}
+
+// AF-21: Validate rejects a condition node with exactly 2 outgoing edges when
+// they are not labelled true/false (here: yes/no).
+func TestValidate_ConditionMissingLabels(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "cond_1",
+			Nodes: []AppFlowNode{
+				{ID: "cond_1", Kind: "condition", Config: json.RawMessage(`{"expression":"{{.input}}"}`)},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+				{ID: "agent_b", Kind: "agent", AgentID: "uuid-b"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "cond_1", Target: "agent_a", Label: "yes"},
+				{Source: "cond_1", Target: "agent_b", Label: "no"},
+			},
+		}},
+	}
+	errs := Validate(spec)
+	found := false
+	for _, e := range errs {
+		if e.Code == "condition_missing_labels" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected condition_missing_labels, got: %+v", errs)
+	}
+}
+
+// AF-22: Validate rejects an llm node with neither system_prompt nor user_prompt
+// set, and passes when only system_prompt is set.
+func TestValidate_LLMNoPrompt(t *testing.T) {
+	hasCode := func(errs []ValidationError, code string) bool {
+		for _, e := range errs {
+			if e.Code == code {
+				return true
+			}
+		}
+		return false
+	}
+
+	specNoPrompt := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "llm_1",
+			Nodes: []AppFlowNode{
+				{ID: "llm_1", Kind: "llm", Config: json.RawMessage(`{}`)},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "llm_1", Target: "agent_a"},
+			},
+		}},
+	}
+	errs := Validate(specNoPrompt)
+	if !hasCode(errs, "llm_no_prompt") {
+		t.Errorf("expected llm_no_prompt, got: %+v", errs)
+	}
+
+	specSystemOnly := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "llm_1",
+			Nodes: []AppFlowNode{
+				{ID: "llm_1", Kind: "llm", Config: json.RawMessage(`{"system_prompt":"You are concise."}`)},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "llm_1", Target: "agent_a"},
+			},
+		}},
+	}
+	errsSystemOnly := Validate(specSystemOnly)
+	if hasCode(errsSystemOnly, "llm_no_prompt") {
+		t.Errorf("system_prompt alone should pass llm_no_prompt, got: %+v", errsSystemOnly)
+	}
+}
+
+// AF-23: Validate rejects an llm node with no incoming or outgoing edges (orphan).
+func TestValidate_LLMOrphan(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "llm_1",
+			Nodes: []AppFlowNode{
+				{ID: "llm_1", Kind: "llm", Config: json.RawMessage(`{"user_prompt":"{{.input}}"}`)},
+			},
+			Edges: nil,
+		}},
+	}
+	errs := Validate(spec)
+	found := false
+	for _, e := range errs {
+		if e.Code == "llm_orphan" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected llm_orphan, got: %+v", errs)
+	}
+}
+
+// AF-24: Validate reports unknown_inline_node for a node compiled with Kind="inline"
+// (an unrecognised inline name).
+func TestValidate_UnknownInlineNode(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "inline_bad_1",
+			Nodes: []AppFlowNode{
+				{ID: "inline_bad_1", Kind: "inline"},
+			},
+			Edges: nil,
+		}},
+	}
+	errs := Validate(spec)
+	found := false
+	for _, e := range errs {
+		if e.Code == "unknown_inline_node" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected unknown_inline_node, got: %+v", errs)
+	}
+}
+
+// AF-25: a well-formed LLM -> Condition -> 2 agents topology produces zero
+// validation errors.
+func TestValidate_InlineValidTopology(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "llm_1",
+			Nodes: []AppFlowNode{
+				{ID: "llm_1", Kind: "llm", Config: json.RawMessage(`{"user_prompt":"{{.input}}","output_var":"summary"}`)},
+				{ID: "cond_1", Kind: "condition", Config: json.RawMessage(`{"expression":"{{eq .summary \"APPROVED\"}}"}`)},
+				{ID: "agent_yes", Kind: "agent", AgentID: "uuid-yes"},
+				{ID: "agent_no", Kind: "agent", AgentID: "uuid-no"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "llm_1", Target: "cond_1"},
+				{Source: "cond_1", Target: "agent_yes", Label: "true"},
+				{Source: "cond_1", Target: "agent_no", Label: "false"},
+			},
+		}},
+	}
+	errs := Validate(spec)
+	if len(errs) != 0 {
+		t.Errorf("expected no validation errors, got: %+v", errs)
+	}
+}

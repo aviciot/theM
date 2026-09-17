@@ -3,8 +3,14 @@
 //
 // Where agentgen.Compile operates within a single agent (steps → AgentSpec),
 // appflow.Compile operates at the application level (agents → AppFlowSpec).
-// Agents are the units of execution; middleware, Router, and HIL nodes govern
-// how control flows between them.
+// Agents and inline nodes are the units of execution; middleware, Router,
+// Condition, HIL, and Fork/Join nodes govern how control flows between them.
+//
+// File layout:
+//   compiler.go — doc types + Compile (definition JSON → AppFlowSpec)
+//   validate.go — Validate (AppFlowSpec → []ValidationError)
+//   inline.go   — inline node config types + workflow-safe template helpers
+//   workflow.go — the Temporal workflow and its activities
 package appflow
 
 import (
@@ -13,7 +19,9 @@ import (
 )
 
 // AppFlowSpec is the compiled, reusable execution plan for an application canvas.
-// Serialised into application_definitions.definition for use by the workflow executor.
+// Compiled on demand at run start from application_definitions.definition — it is
+// not persisted anywhere; the spec is recompiled from the raw definition on every
+// connection.
 type AppFlowSpec struct {
 	// ExecutionBackend selects the runtime.
 	// "" or "local" → in-process goroutine loop.
@@ -34,7 +42,7 @@ type EPFlow struct {
 // AppFlowNode represents one node in the application flow graph.
 type AppFlowNode struct {
 	ID       string          `json:"id"`
-	Kind     string          `json:"kind"`      // "agent" | "middleware" | "router" | "hil" | "fork" | "join"
+	Kind     string          `json:"kind"`      // "agent" | "middleware" | "router" | "hil" | "fork" | "join" | "llm" | "condition" | "inline"
 	AgentID  string          `json:"agent_id,omitempty"`  // for kind=agent: resolved agents.id
 	Config   json.RawMessage `json:"config,omitempty"`
 }
@@ -226,7 +234,7 @@ func compileEP(ep epInst, compByID map[string]*compInst, outEdges map[string][]c
 	for _, conn := range ep.connsBetween(nodeIDs, outEdges) {
 		edge := AppFlowEdge{Source: conn.Source, Target: conn.Target}
 		// Attach label from router config if available.
-		if src, ok := compByID[conn.Source]; ok && src.DefinitionRef.Kind == "flow_control" && src.DefinitionRef.Name == "router" {
+		if src, ok := compByID[conn.Source]; ok && isLabelRoutingSource(src) {
 			edge.Label = conn.edgeLabel()
 		}
 		edges = append(edges, edge)
@@ -265,6 +273,19 @@ func (c connDef) edgeLabel() string {
 	return c.Label
 }
 
+// isLabelRoutingSource reports whether a component's outgoing edges carry
+// routing labels: flow_control/router (intent labels) or inline/condition
+// (true/false).
+func isLabelRoutingSource(c *compInst) bool {
+	switch c.DefinitionRef.Kind {
+	case "flow_control":
+		return c.DefinitionRef.Name == "router"
+	case "inline":
+		return c.DefinitionRef.Name == "condition"
+	}
+	return false
+}
+
 // compileNode converts a component instance to an AppFlowNode.
 func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode, error) {
 	node := AppFlowNode{
@@ -282,6 +303,17 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 		node.AgentID = agentByInstanceID[c.InstanceID]
 	case "middleware":
 		node.Kind = "middleware"
+	case "inline":
+		switch c.DefinitionRef.Name {
+		case "llm":
+			node.Kind = "llm"
+		case "condition":
+			node.Kind = "condition"
+		default:
+			// Unknown inline name: keep the kind so Validate reports it as
+			// unknown_inline_node rather than the workflow failing at run time.
+			node.Kind = "inline"
+		}
 	case "flow_control":
 		switch c.DefinitionRef.Name {
 		case "router":
@@ -358,84 +390,3 @@ func ParseLLMConfig(orch LLMOrchConfig) LLMConfig {
 	return LLMConfig{ProviderName: provider, Model: orch.Model}
 }
 
-// ── Validation ────────────────────────────────────────────────────────────────
-
-// ValidationError is a structured compilation/validation error.
-type ValidationError struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	InstanceID string `json:"instance_id,omitempty"`
-}
-
-func (e ValidationError) Error() string {
-	if e.InstanceID != "" {
-		return fmt.Sprintf("[%s] %s (node: %s)", e.Code, e.Message, e.InstanceID)
-	}
-	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
-}
-
-// Validate runs structural validation on an AppFlowSpec.
-// Returns a list of errors (blocking) and warnings (advisory).
-func Validate(spec *AppFlowSpec) []ValidationError {
-	if spec == nil {
-		return []ValidationError{{Code: "nil_spec", Message: "spec is nil"}}
-	}
-
-	var errs []ValidationError
-
-	for _, ep := range spec.EntryPoints {
-		if ep.StartID == "" && len(ep.Nodes) > 0 {
-			errs = append(errs, ValidationError{
-				Code:    "no_start_node",
-				Message: fmt.Sprintf("entry point %q has nodes but no start_id", ep.Slug),
-			})
-		}
-
-		// Index nodes.
-		nodeByID := make(map[string]*AppFlowNode, len(ep.Nodes))
-		for i := range ep.Nodes {
-			nodeByID[ep.Nodes[i].ID] = &ep.Nodes[i]
-		}
-
-		// Count outgoing and incoming edges per node.
-		outCount := make(map[string]int)
-		inCount := make(map[string]int)
-		for _, e := range ep.Edges {
-			outCount[e.Source]++
-			inCount[e.Target]++
-		}
-
-		for _, n := range ep.Nodes {
-			if n.Kind == "router" && outCount[n.ID] == 0 {
-				errs = append(errs, ValidationError{
-					Code:       "router_no_edges",
-					Message:    "router node has no outgoing edges",
-					InstanceID: n.ID,
-				})
-			}
-			if n.Kind == "fork" && outCount[n.ID] < 2 {
-				errs = append(errs, ValidationError{
-					Code:       "fork_insufficient_branches",
-					Message:    fmt.Sprintf("fork node has %d outgoing edge(s); need ≥2", outCount[n.ID]),
-					InstanceID: n.ID,
-				})
-			}
-			if n.Kind == "join" && inCount[n.ID] < 2 {
-				errs = append(errs, ValidationError{
-					Code:       "join_insufficient_branches",
-					Message:    fmt.Sprintf("join node has %d incoming edge(s); need ≥2", inCount[n.ID]),
-					InstanceID: n.ID,
-				})
-			}
-			if n.Kind == "agent" && n.AgentID == "" {
-				errs = append(errs, ValidationError{
-					Code:       "unresolved_agent",
-					Message:    "agent node has no resolved agent_id",
-					InstanceID: n.ID,
-				})
-			}
-		}
-	}
-
-	return errs
-}

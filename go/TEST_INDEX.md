@@ -2833,7 +2833,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ### S1-112 · AppFlow compiler + workflow — `internal/appflow/compiler_test.go`, `internal/appflow/workflow_test.go`
 
-**Purpose:** Verifies the AppFlow compiler (`appflow.Compile`) correctly parses `AppDefinitionDoc` JSON into an `AppFlowSpec`, resolves agent nodes using server-stamped `_resolved_agent_ids`, classifies Router/HIL flow control nodes, propagates `execution_backend`, and validates structural constraints. Also verifies FinalizeRunActivity lifecycle: success/error paths, XAdd error propagation, nil-dep safety. Workflow helpers (`findEdgeByLabel`, `defaultRouterPrompt`).
+**Purpose:** Verifies the AppFlow compiler (`appflow.Compile`) correctly parses `AppDefinitionDoc` JSON into an `AppFlowSpec`, resolves agent nodes using server-stamped `_resolved_agent_ids`, classifies Router/HIL/Fork/Join flow-control nodes and inline llm/condition nodes, propagates `execution_backend`, attaches routing labels for label-routing sources (router intent labels, condition true/false), and validates structural constraints (`appflow.Validate`, in `validate.go`). Also verifies FinalizeRunActivity lifecycle: success/error paths, XAdd error propagation, nil-dep safety. Workflow helpers (`findEdgeByLabel`, `defaultRouterPrompt`).
 
 | Test ID | Test | What it proves |
 |---|---|---|
@@ -2851,6 +2851,17 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-12 | `TestValidate_ForkInsufficientBranches` | Validate returns fork_insufficient_branches when fork has <2 outgoing edges |
 | AF-13 | `TestValidate_JoinInsufficientBranches` | Validate returns join_insufficient_branches when join has <2 incoming edges |
 | AF-14 | `TestValidate_ForkJoinValidTopology` | Validate passes for well-formed fork→2 agents→join topology |
+| AF-15 | `TestCompile_InlineLLMNode` | `kind:"inline"`/`name:"llm"` compiles to kind=llm with config preserved |
+| AF-16 | `TestCompile_InlineConditionNode` | `kind:"inline"`/`name:"condition"` compiles to kind=condition |
+| AF-17 | `TestCompile_InlineUnknownName` | unknown inline name compiles to kind=inline (not the raw name) so Validate can report it |
+| AF-18 | `TestCompile_ConditionEdgeLabels` | true/false conn labels survive compilation into AppFlowEdge.Label for condition sources |
+| AF-19 | `TestValidate_ConditionNoExpression` | empty expression → condition_no_expression |
+| AF-20 | `TestValidate_ConditionEdgeCount` | 1 outgoing edge AND 3 outgoing edges both → condition_edge_count |
+| AF-21 | `TestValidate_ConditionMissingLabels` | 2 edges labelled yes/no → condition_missing_labels |
+| AF-22 | `TestValidate_LLMNoPrompt` | both prompts empty → llm_no_prompt; passes when only system_prompt is set |
+| AF-23 | `TestValidate_LLMOrphan` | LLM node with no incoming and no outgoing edges → llm_orphan |
+| AF-24 | `TestValidate_UnknownInlineNode` | kind=inline → unknown_inline_node |
+| AF-25 | `TestValidate_InlineValidTopology` | LLM → Condition → 2 agents produces zero errors |
 | AF-C-01 | `TestResolveAgentByInstanceID_ReadsServerStampedMap` | reads `_resolved_agent_ids` from definition JSON; ignores client `definition_id` |
 | AF-C-02 | `TestResolveAgentByInstanceID_MissingMap_ReturnsEmpty` | old definitions without `_resolved_agent_ids` return empty map |
 | AF-C-03 | `TestParseLLMConfig_UsesOrchProvider` | ParseLLMConfig reads provider+model from LLMOrchConfig |
@@ -2872,7 +2883,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-HIL-04 | `TestHILApprove_InsufficientRole` | 403 when caller has viewer role; no Temporal signal |
 | AF-HIL-05 | `TestHILApprove_AlreadyDecided` | 409 when approval already decided; no Temporal signal |
 
-**Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, `internal/admin/hil_approvals.go`, `internal/admin/dal/hil_approvals.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
+**Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/validate.go`, `internal/appflow/workflow.go`, `internal/admin/hil_approvals.go`, `internal/admin/dal/hil_approvals.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
 
 ### S1-115 · AppFlow inline node config + template helpers — `internal/appflow/inline_test.go`
 
@@ -3475,11 +3486,11 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| S1-112 | AppFlow compiler + workflow (AF-01..14, AF-C-01..04, AF-WF-01..09): compiler, fork/join kinds + validation, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, findJoinNode, mergeBranchResults | 29 |
+| S1-112 | AppFlow compiler + workflow (AF-01..25, AF-C-01..04, AF-WF-01..09): compiler, fork/join kinds + validation, inline llm/condition kinds + validation, edge labels, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, findJoinNode, mergeBranchResults | 40 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
 | S1-114 | Temporal execution controls — service (TC-SVC-1..9): GetPlatformConfig_NoRow_Defaults, StoredRow_Merges, DALError_Propagates, PutPlatform_ValidInput, PutPlatform_InvalidRetry, PutPlatform_ZeroConcurrent, Merge_AppOverrides, Merge_NilAppFallsThrough, Merge_BothNilDefaults; handler (TC-1..4): GetPlatform_NoRow_200+defaults, PutPlatform_Valid_200, NegativeRetry_422, BadJSON_400 | 13 |
 | S1-115 | AppFlow inline node config + template helpers (AF-IN-01..06 + AF-IN-02b): render/substitution, missing-var zero-value, UI-advertised condition expression forms, parse error, isTruthy table, config JSON round trips | 7 |
-| **S1 total** | | **1213** |
+| **S1 total** | | **1224** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

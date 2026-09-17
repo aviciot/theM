@@ -374,7 +374,25 @@ per-execution state living in Temporal workflow history.
 
 ## 3. Compiler changes — `go/internal/appflow/compiler.go`
 
-Three surgical edits. No restructuring; the file is 441 lines and stays under the cap.
+Three surgical edits plus a stale-comment fix.
+
+> **Implemented (step 2) — file split was required after all.** This section originally claimed
+> "the file is 441 lines and stays under the cap". It did not: the three new `Validate` rule
+> blocks plus `hasTrueFalseLabels` pushed `compiler.go` to **540 lines**, past the 500 hard stop,
+> because each `ValidationError` literal in this codebase's style spans 4–5 lines. Rather than
+> leave it over the limit, validation was extracted to a new file along the natural seam
+> (`Compile`: doc JSON → spec, vs `Validate`: spec → errors — independent concerns, no shared
+> state):
+>
+> | File | Content | Lines |
+> |---|---|---|
+> | `internal/appflow/compiler.go` | doc types + `Compile` | 387 |
+> | `internal/appflow/validate.go` | `ValidationError`, `Validate`, `hasTrueFalseLabels` | 166 |
+>
+> This also gives Phase 2's Tool/Transform validation rules somewhere to land without
+> re-breaching the cap. `strings` moved with the validation code and was dropped from
+> `compiler.go`'s imports. A file-layout map was added to the package doc comment.
+> Note `workflow.go` is already 803 lines at baseline — step 3 must plan for its own split.
 
 ### 3.1 `compileNode` — new case
 
