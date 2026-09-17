@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/aviciot/them/internal/domain"
@@ -28,12 +31,16 @@ func (f *fakeStatusUpdater) UpdateRunStatus(_ context.Context, runID string, sta
 }
 
 type fakeStreamPub struct {
-	keys   []string
-	retErr error
+	keys     []string
+	payloads []string
+	retErr   error
 }
 
-func (f *fakeStreamPub) XAdd(_ context.Context, key string, _ map[string]interface{}) error {
+func (f *fakeStreamPub) XAdd(_ context.Context, key string, fields map[string]interface{}) error {
 	f.keys = append(f.keys, key)
+	if data, ok := fields["data"].(string); ok {
+		f.payloads = append(f.payloads, data)
+	}
 	return f.retErr
 }
 
@@ -237,6 +244,200 @@ func TestMergeBranchResults(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("mergeBranchResults(%v): want %q, got %q", tc.in, tc.want, got)
 		}
+	}
+}
+
+// ── AF-WF-10..16: InlineLLMActivity ───────────────────────────────────────────
+
+type fakeInlineLLMCaller struct {
+	response string
+	err      error
+	gotReq   InlineLLMRequest
+	called   bool
+}
+
+func (f *fakeInlineLLMCaller) Complete(_ context.Context, req InlineLLMRequest) (string, error) {
+	f.called = true
+	f.gotReq = req
+	return f.response, f.err
+}
+
+// AF-WF-10: InlineLLMActivity renders prompts, calls the caller, and returns
+// text + OutputVar.
+func TestInlineLLMActivity_Success(t *testing.T) {
+	caller := &fakeInlineLLMCaller{response: "the answer is 42"}
+	acts := &AppFlowActivities{InlineLLM: caller}
+
+	out, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		RunID:         "run-1",
+		TenantID:      "tenant-1",
+		ApplicationID: "app-1",
+		NodeID:        "llm-1",
+		SystemPrompt:  "You are a {{.role}} assistant.",
+		UserPrompt:    "Summarize: {{.input}}",
+		Vars:          FlowVars{"role": "helpful", "input": "the quick brown fox"},
+		Provider:      "anthropic",
+		Model:         "claude",
+		MaxTokens:     512,
+		OutputVar:     "summary",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ResponseText != "the answer is 42" {
+		t.Errorf("ResponseText: want %q, got %q", "the answer is 42", out.ResponseText)
+	}
+	if out.OutputVar != "summary" {
+		t.Errorf("OutputVar: want %q, got %q", "summary", out.OutputVar)
+	}
+	if !caller.called {
+		t.Fatal("expected InlineLLMCaller.Complete to be called")
+	}
+	if caller.gotReq.SystemPrompt != "You are a helpful assistant." {
+		t.Errorf("rendered SystemPrompt: got %q", caller.gotReq.SystemPrompt)
+	}
+	if caller.gotReq.UserPrompt != "Summarize: the quick brown fox" {
+		t.Errorf("rendered UserPrompt: got %q", caller.gotReq.UserPrompt)
+	}
+	if caller.gotReq.ProviderName != "anthropic" || caller.gotReq.Model != "claude" {
+		t.Errorf("provider/model not passed through: got %+v", caller.gotReq)
+	}
+	if caller.gotReq.MaxTokens != 512 {
+		t.Errorf("MaxTokens: want 512, got %d", caller.gotReq.MaxTokens)
+	}
+}
+
+// AF-WF-11: InlineLLMActivity returns a non-retryable NoInlineLLMCaller error
+// when no InlineLLM dependency is configured.
+func TestInlineLLMActivity_NilCaller(t *testing.T) {
+	acts := &AppFlowActivities{}
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		NodeID: "llm-1",
+	})
+	if err == nil {
+		t.Fatal("expected error when InlineLLM is nil")
+	}
+	if !strings.Contains(err.Error(), "NoInlineLLMCaller") {
+		t.Errorf("expected NoInlineLLMCaller error type, got: %v", err)
+	}
+}
+
+// AF-WF-12: a bad template is a non-retryable render error, and the caller is
+// never invoked.
+func TestInlineLLMActivity_RenderError(t *testing.T) {
+	caller := &fakeInlineLLMCaller{response: "should not be called"}
+	acts := &AppFlowActivities{InlineLLM: caller}
+
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		NodeID:       "llm-1",
+		SystemPrompt: "{{.unbalanced",
+		Vars:         FlowVars{},
+	})
+	if err == nil {
+		t.Fatal("expected render error")
+	}
+	if !strings.Contains(err.Error(), "InlineLLMRenderFailed") {
+		t.Errorf("expected InlineLLMRenderFailed error type, got: %v", err)
+	}
+	if caller.called {
+		t.Error("InlineLLMCaller.Complete must not be called when rendering fails")
+	}
+}
+
+// AF-WF-13: an empty rendered user prompt falls back to vars["input"].
+func TestInlineLLMActivity_UserPromptFallsBackToInput(t *testing.T) {
+	caller := &fakeInlineLLMCaller{response: "ok"}
+	acts := &AppFlowActivities{InlineLLM: caller}
+
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		NodeID:     "llm-1",
+		UserPrompt: "",
+		Vars:       FlowVars{"input": "fallback text"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if caller.gotReq.UserPrompt != "fallback text" {
+		t.Errorf("UserPrompt: want fallback %q, got %q", "fallback text", caller.gotReq.UserPrompt)
+	}
+}
+
+// AF-WF-14: InlineLLMActivityInput must never carry a field that looks like a
+// credential — activity inputs are persisted in Temporal workflow history.
+// Matches on word boundaries (splitting Go's CamelCase field names) so
+// "MaxTokens" does not false-positive on the "token" substring while
+// "AuthToken"/"APIKey"/"ApiKey" style names would still be caught.
+func TestInlineLLMActivity_NoKeyInInput(t *testing.T) {
+	wordRe := regexp.MustCompile(`[A-Z][a-z0-9]*|[a-z0-9]+`)
+	typ := reflect.TypeOf(InlineLLMActivityInput{})
+	for i := 0; i < typ.NumField(); i++ {
+		fieldName := typ.Field(i).Name
+		for _, word := range wordRe.FindAllString(fieldName, -1) {
+			w := strings.ToLower(word)
+			for _, bad := range []string{"key", "token", "secret"} {
+				if w == bad {
+					t.Errorf("InlineLLMActivityInput.%s looks like a credential field (word %q)", fieldName, bad)
+				}
+			}
+		}
+	}
+}
+
+// AF-WF-15: Stream:true publishes exactly one token event to the run's stream key.
+func TestInlineLLMActivity_StreamPublishesToken(t *testing.T) {
+	caller := &fakeInlineLLMCaller{response: "streamed response"}
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{InlineLLM: caller, StreamPub: streamPub}
+
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		RunID:  "run-9",
+		NodeID: "llm-1",
+		Vars:   FlowVars{"input": "hi"},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(streamPub.keys) != 1 {
+		t.Fatalf("want exactly 1 stream publish, got %d", len(streamPub.keys))
+	}
+	wantKey := "them:dash:run:run-9:stream"
+	if streamPub.keys[0] != wantKey {
+		t.Errorf("stream key: want %q, got %q", wantKey, streamPub.keys[0])
+	}
+	if len(streamPub.payloads) != 1 {
+		t.Fatalf("want exactly 1 payload, got %d", len(streamPub.payloads))
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(streamPub.payloads[0]), &payload); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+	if payload["type"] != "token" {
+		t.Errorf("payload type: want %q, got %v", "token", payload["type"])
+	}
+	if payload["content"] != "streamed response" {
+		t.Errorf("payload content: want %q, got %v", "streamed response", payload["content"])
+	}
+	if payload["run_id"] != "run-9" {
+		t.Errorf("payload run_id: want %q, got %v", "run-9", payload["run_id"])
+	}
+}
+
+// AF-WF-16: MaxTokens 0 defaults to 1024 before reaching the caller.
+func TestInlineLLMActivity_MaxTokensDefault(t *testing.T) {
+	caller := &fakeInlineLLMCaller{response: "ok"}
+	acts := &AppFlowActivities{InlineLLM: caller}
+
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		NodeID:    "llm-1",
+		Vars:      FlowVars{"input": "hi"},
+		MaxTokens: 0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if caller.gotReq.MaxTokens != 1024 {
+		t.Errorf("MaxTokens: want default 1024, got %d", caller.gotReq.MaxTokens)
 	}
 }
 

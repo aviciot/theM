@@ -91,6 +91,44 @@ type AgentInvokeActivityOutput struct {
 	ResponseText string `json:"response_text"`
 }
 
+// InlineLLMActivityInput is the input to AppFlowInlineLLMActivity.
+// No API key is ever present — the activity resolves it from the DB at
+// execution time so it never enters Temporal workflow history.
+type InlineLLMActivityInput struct {
+	RunID         string `json:"run_id"`
+	TenantID      string `json:"tenant_id"`
+	ApplicationID string `json:"application_id"`
+	NodeID        string `json:"node_id"`
+
+	// Rendered prompts. Templates are rendered in the ACTIVITY, not the
+	// workflow — text/template is not deterministic-safe for workflow code.
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	UserPrompt   string   `json:"user_prompt,omitempty"`
+	Vars         FlowVars `json:"vars,omitempty"`
+
+	Provider    string   `json:"provider,omitempty"`
+	Model       string   `json:"model,omitempty"`
+	MaxTokens   int      `json:"max_tokens,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
+
+	// OutputVar names the flow variable the workflow should set with the
+	// response text. Echoed back in the output so the workflow does not have
+	// to re-parse node config.
+	OutputVar string `json:"output_var,omitempty"`
+
+	// Stream, when true, publishes token events to the run's Redis stream.
+	Stream bool `json:"stream,omitempty"`
+}
+
+// InlineLLMActivityOutput is returned by AppFlowInlineLLMActivity.
+type InlineLLMActivityOutput struct {
+	// ResponseText is the model's reply.
+	ResponseText string `json:"response_text"`
+	// OutputVar is echoed back so the workflow knows which var to set without
+	// re-parsing node config.
+	OutputVar string `json:"output_var"`
+}
+
 // ── Activity dependencies and implementations ─────────────────────────────────
 
 // AppFlowActivities holds dependencies for AppFlow Temporal activities.
@@ -105,6 +143,9 @@ type AppFlowActivities struct {
 	StreamPub StreamPublisher
 	// AgentInvoker calls the agent identified by AgentID via A2A HTTP.
 	AgentInvoker AgentInvoker
+	// InlineLLM is used by the inline LLM node activity to call an LLM directly
+	// (as opposed to LLMCaller, which is shaped for Router label classification).
+	InlineLLM InlineLLMCaller
 }
 
 // AgentInvoker calls a specific agent by its DB UUID via A2A.
@@ -130,6 +171,26 @@ type StreamPublisher interface {
 // so the key is never stored in Temporal workflow history.
 type RouterLLMCaller interface {
 	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, providerName, model, tenantID, applicationID string) (string, error)
+}
+
+// InlineLLMCaller is the interface the inline LLM activity uses. Deliberately
+// separate from RouterLLMCaller, which is shaped specifically for label
+// classification. The implementation resolves the API key from the DB using
+// ProviderName + TenantID + ApplicationID, so keys never reach workflow history.
+type InlineLLMCaller interface {
+	Complete(ctx context.Context, req InlineLLMRequest) (string, error)
+}
+
+// InlineLLMRequest is the request passed to InlineLLMCaller.Complete.
+type InlineLLMRequest struct {
+	SystemPrompt  string
+	UserPrompt    string
+	ProviderName  string
+	Model         string
+	MaxTokens     int
+	Temperature   *float64
+	TenantID      string
+	ApplicationID string
 }
 
 // ExecuteRouterActivity calls an LLM to classify the user message and returns
@@ -216,6 +277,79 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
 	}
 	return AgentInvokeActivityOutput{ResponseText: text}, nil
+}
+
+// InlineLLMActivity renders an inline LLM node's prompts and calls the
+// configured LLM provider directly (as opposed to Router's label
+// classification). Templates are rendered here, not in the workflow, because
+// text/template execution is not deterministic-safe workflow code.
+func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineLLMActivityInput) (InlineLLMActivityOutput, error) {
+	if a.InlineLLM == nil {
+		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			"inline llm: no InlineLLM caller configured on this worker", "NoInlineLLMCaller", nil,
+		)
+	}
+
+	systemPrompt, err := renderFlowTemplate(input.SystemPrompt, input.Vars)
+	if err != nil {
+		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			fmt.Sprintf("inline llm %q: render system_prompt: %v", input.NodeID, err),
+			"InlineLLMRenderFailed", nil,
+		)
+	}
+	userPrompt, err := renderFlowTemplate(input.UserPrompt, input.Vars)
+	if err != nil {
+		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			fmt.Sprintf("inline llm %q: render user_prompt: %v", input.NodeID, err),
+			"InlineLLMRenderFailed", nil,
+		)
+	}
+
+	// Mirrors agentgen execLLM (internal/agentgen/interpreter.go:277-282): an
+	// empty rendered user prompt falls back to the accumulated upstream input.
+	if userPrompt == "" {
+		userPrompt = input.Vars["input"]
+	}
+
+	maxTokens := input.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
+
+	responseText, err := a.InlineLLM.Complete(ctx, InlineLLMRequest{
+		SystemPrompt:  systemPrompt,
+		UserPrompt:    userPrompt,
+		ProviderName:  input.Provider,
+		Model:         input.Model,
+		MaxTokens:     maxTokens,
+		Temperature:   input.Temperature,
+		TenantID:      input.TenantID,
+		ApplicationID: input.ApplicationID,
+	})
+	if err != nil {
+		return InlineLLMActivityOutput{}, fmt.Errorf("inline llm %q: %w", input.NodeID, err)
+	}
+
+	if input.Stream && a.StreamPub != nil && responseText != "" {
+		key := fmt.Sprintf("them:dash:run:%s:stream", input.RunID)
+		payload := map[string]interface{}{
+			"type":    "token",
+			"content": responseText,
+			"run_id":  input.RunID,
+		}
+		raw, _ := json.Marshal(payload)
+		// A stream-publish failure must NOT fail the activity: the LLM call
+		// already succeeded and is not idempotent, so retrying the whole
+		// activity to fix a Redis hiccup would re-call (and re-bill) the LLM.
+		// This differs from FinalizeRunActivity, which does return XAdd errors
+		// — that activity IS idempotent (safe to retry), this one is not.
+		_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
+	}
+
+	return InlineLLMActivityOutput{
+		ResponseText: responseText,
+		OutputVar:    input.OutputVar,
+	}, nil
 }
 
 // FinalizeRunActivity updates the run's DB status and publishes a terminal event

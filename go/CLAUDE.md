@@ -182,6 +182,8 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/temporal/temporal_executor.go` | `go test ./internal/temporal/...` |
 | `internal/appflow/` (any file) | `go test ./internal/appflow/...` |
 | `internal/appflow/validate.go` | `go test ./internal/appflow/...` — Validate must stay pure (no DB, no I/O); a new node kind needs its rules here plus AF-* tests |
+| `internal/appflow/workflow.go`, `nodes.go`, `graph.go` | `go test ./internal/appflow/...` — workflow code: must stay deterministic across replays (no I/O, no wall clock, no randomness) |
+| `internal/appflow/activities.go` | `go test ./internal/appflow/...` + **restart them-dag-worker** (activities register at startup) — and no credential may be added to an activity INPUT type (persisted in Temporal history; guarded by AF-WF-14) |
 | `internal/appflow/inline.go` | `go test ./internal/appflow/...` — and if a condition-expression example was added to the canvas properties panel, add a matching AF-IN-02b case |
 | `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |

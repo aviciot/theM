@@ -36,6 +36,9 @@ const (
 	// AppFlowInvokeAgentActivityName is the registered name for the agent invocation activity.
 	AppFlowInvokeAgentActivityName = "AppFlowInvokeAgentActivity"
 
+	// AppFlowInlineLLMActivityName is the registered name for the inline LLM node activity.
+	AppFlowInlineLLMActivityName = "AppFlowInlineLLMActivity"
+
 	// AppFlowSignalHILApproval is the signal name for HIL human approval.
 	AppFlowSignalHILApproval = "hil_approval"
 
@@ -223,6 +226,11 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 
 	currentID := epFlow.StartID
 	accumulated := input.UserMessage
+	// vars is the flow variables bus (§1.3/§2.4 of the inline nodes plan):
+	// threaded alongside accumulated so inline LLM/Condition nodes can read and
+	// write named values, not just the single accumulated string. Not
+	// persisted outside this workflow execution.
+	vars := FlowVars{}
 
 	for currentID != "" {
 		node, ok := nodeByID[currentID]
@@ -234,118 +242,26 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 
 		switch node.Kind {
 		case "router":
-			// Parse router config.
-			var cfg RouterConfig
-			if len(node.Config) > 0 {
-				_ = json.Unmarshal(node.Config, &cfg)
-			}
-
-			var routerOut RouterActivityOutput
-			err := workflow.ExecuteActivity(ctx, AppFlowExecuteRouterActivityName, RouterActivityInput{
-				RunID:            input.RunID,
-				TenantID:         input.TenantID,
-				ApplicationID:    input.ApplicationID,
-				NodeID:           node.ID,
-				UserMessage:      accumulated,
-				Labels:           cfg.OutputLabels,
-				ClassifierPrompt: cfg.ClassifierPrompt,
-				LLMProviderName:  input.LLMProviderName,
-				LLMProvider:      input.LLMProvider,
-				LLMModel:         input.LLMModel,
-			}).Get(ctx, &routerOut)
-			if err != nil {
+			nextID, rErr := execRouterNode(ctx, node, input, outEdgesBySource[node.ID], accumulated)
+			if rErr != nil {
 				out.Status = "failed"
-				retErr = fmt.Errorf("router %q: %w", node.ID, err)
+				retErr = rErr
 				return
-			}
-
-			// Find outgoing edge matching the chosen label.
-			nextID := findEdgeByLabel(outEdgesBySource[node.ID], routerOut.ChosenLabel)
-			if nextID == "" {
-				// No matching edge — also try taking any edge as fallback if there's exactly one.
-				edges := outEdgesBySource[node.ID]
-				if len(edges) == 1 {
-					nextID = edges[0].Target
-				} else {
-					out.Status = "failed"
-					retErr = temporalerr.NewNonRetryableApplicationError(
-						fmt.Sprintf("router %q: no outgoing edge matches label %q", node.ID, routerOut.ChosenLabel),
-						"RouterNoMatch", nil,
-					)
-					return
-				}
 			}
 			currentID = nextID
 			continue
 
 		case "hil":
-			// Parse HIL config.
-			var cfg HILConfig
-			if len(node.Config) > 0 {
-				_ = json.Unmarshal(node.Config, &cfg)
-			}
-			if cfg.FallbackAction == "" {
-				cfg.FallbackAction = "reject"
-			}
-			if cfg.ApproverRole == "" {
-				cfg.ApproverRole = "admin"
-			}
-
-			// HIL: pause workflow. The HIL activity persists the approval request
-			// and returns immediately. Then the workflow waits for the signal.
-			var hilOut HILActivityOutput
-
-			hilCtx := workflow.WithActivityOptions(ctx, shortAO)
-			err := workflow.ExecuteActivity(hilCtx, AppFlowExecuteHILActivityName, HILActivityInput{
-				RunID:          input.RunID,
-				TenantID:       input.TenantID,
-				ApplicationID:  input.ApplicationID,
-				NodeID:         node.ID,
-				ApproverRole:   cfg.ApproverRole,
-				Prompt:         cfg.Prompt,
-				TimeoutSecs:    cfg.TimeoutSeconds,
-				FallbackAction: cfg.FallbackAction,
-			}).Get(hilCtx, &hilOut)
-			if err != nil {
+			approved, comment, hErr := execHILNode(ctx, node, input, shortAO)
+			if hErr != nil {
 				out.Status = "failed"
-				retErr = fmt.Errorf("hil %q: persist: %w", node.ID, err)
+				retErr = hErr
 				return
 			}
-
-			// Wait for signal (approval or rejection).
-			var approval HILApprovalPayload
-			signalName := AppFlowSignalHILApproval + ":" + node.ID
-
-			if cfg.TimeoutSeconds > 0 {
-				timer := workflow.NewTimer(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
-				sigCh := workflow.GetSignalChannel(ctx, signalName)
-				workflow.NewSelector(ctx).
-					AddFuture(timer, func(f workflow.Future) {
-						// Timer fired — apply fallback.
-						switch cfg.FallbackAction {
-						case "approve":
-							approval.Approved = true
-							approval.Comment = "timeout-auto-approved"
-						default:
-							approval.Approved = false
-							approval.Comment = "timeout-rejected"
-						}
-					}).
-					AddReceive(sigCh, func(ch workflow.ReceiveChannel, more bool) {
-						ch.Receive(ctx, &approval)
-					}).
-					Select(ctx)
-			} else {
-				// Wait indefinitely.
-				workflow.GetSignalChannel(ctx, signalName).Receive(ctx, &approval)
-			}
-
-			if !approval.Approved {
-				rejMsg := "HIL gate rejected: " + approval.Comment
-				out = AppFlowWorkflowOutput{Status: "rejected", FinalText: rejMsg}
+			if !approved {
+				out = AppFlowWorkflowOutput{Status: "rejected", FinalText: "HIL gate rejected: " + comment}
 				return
 			}
-
 			// Approved — continue to next node.
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
@@ -371,6 +287,84 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				accumulated = agentOut.ResponseText
 			}
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
+		case "llm":
+			var cfg InlineLLMConfig
+			if len(node.Config) > 0 {
+				_ = json.Unmarshal(node.Config, &cfg)
+			}
+			// Provider/model inherit from the EP orchestrator binding when unset.
+			provider, model := cfg.Provider, cfg.Model
+			if provider == "" {
+				provider = input.LLMProviderName
+			}
+			if model == "" {
+				model = input.LLMModel
+			}
+			vars["input"] = accumulated
+
+			var llmOut InlineLLMActivityOutput
+			err := workflow.ExecuteActivity(ctx, AppFlowInlineLLMActivityName, InlineLLMActivityInput{
+				RunID:         input.RunID,
+				TenantID:      input.TenantID,
+				ApplicationID: input.ApplicationID,
+				NodeID:        node.ID,
+				SystemPrompt:  cfg.SystemPrompt,
+				UserPrompt:    cfg.UserPrompt,
+				Vars:          vars,
+				Provider:      provider,
+				Model:         model,
+				MaxTokens:     cfg.MaxTokens,
+				Temperature:   cfg.Temperature,
+				OutputVar:     cfg.OutputVar,
+				Stream:        true,
+			}).Get(ctx, &llmOut)
+			if err != nil {
+				out.Status = "failed"
+				retErr = fmt.Errorf("llm %q: %w", node.ID, err)
+				return
+			}
+			outVar := llmOut.OutputVar
+			if outVar == "" {
+				outVar = "output"
+			}
+			vars[outVar] = llmOut.ResponseText
+			if llmOut.ResponseText != "" {
+				accumulated = llmOut.ResponseText
+			}
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
+		case "condition":
+			var cfg InlineConditionConfig
+			if len(node.Config) > 0 {
+				_ = json.Unmarshal(node.Config, &cfg)
+			}
+			vars["input"] = accumulated
+			rendered, rErr := renderFlowTemplate(cfg.Expression, vars)
+			if rErr != nil {
+				out.Status = "failed"
+				retErr = temporalerr.NewNonRetryableApplicationError(
+					fmt.Sprintf("condition %q: render expression: %v", node.ID, rErr),
+					"ConditionRenderFailed", nil,
+				)
+				return
+			}
+			branch := "false"
+			if isTruthy(rendered) {
+				branch = "true"
+			}
+			nextID := findEdgeByLabel(outEdgesBySource[node.ID], branch)
+			if nextID == "" {
+				out.Status = "failed"
+				retErr = temporalerr.NewNonRetryableApplicationError(
+					fmt.Sprintf("condition %q: no outgoing edge labelled %q", node.ID, branch),
+					"ConditionNoMatch", nil,
+				)
+				return
+			}
+			currentID = nextID
 			continue
 
 		case "fork":

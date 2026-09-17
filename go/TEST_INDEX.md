@@ -2877,13 +2877,20 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-WF-04 | `TestInvokeAgentActivity_Success` | InvokeAgentActivity returns agent response text via AgentInvoker |
 | AF-WF-05 | `TestInvokeAgentActivity_EmptyAgentID` | InvokeAgentActivity returns non-retryable error when agent_id is empty |
 | AF-WF-06 | `TestInvokeAgentActivity_NilInvoker` | InvokeAgentActivity returns non-retryable error when AgentInvoker is nil |
+| AF-WF-10 | `TestInlineLLMActivity_Success` | renders both prompts over Vars, calls InlineLLMCaller, returns text + echoed OutputVar |
+| AF-WF-11 | `TestInlineLLMActivity_NilCaller` | non-retryable NoInlineLLMCaller when InlineLLM dep is nil |
+| AF-WF-12 | `TestInlineLLMActivity_RenderError` | bad template → non-retryable InlineLLMRenderFailed; the LLM caller is never invoked |
+| AF-WF-13 | `TestInlineLLMActivity_UserPromptFallsBackToInput` | empty rendered user_prompt falls back to Vars["input"] |
+| AF-WF-14 | `TestInlineLLMActivity_NoKeyInInput` | reflection over InlineLLMActivityInput field names (CamelCase word-split) asserts no key/token/secret field — guards "no secrets in Temporal history" |
+| AF-WF-15 | `TestInlineLLMActivity_StreamPublishesToken` | Stream:true publishes exactly one entry to `them:dash:run:{id}:stream` with type=token + content + run_id |
+| AF-WF-16 | `TestInlineLLMActivity_MaxTokensDefault` | MaxTokens 0 → caller receives 1024 |
 | AF-HIL-01 | `TestHILApprove_Success` | Approve: 200 + Temporal signaled with appflow workflow ID + status=approved |
 | AF-HIL-02 | `TestHILReject_Success` | Reject: 200 + Temporal signaled + status=rejected |
 | AF-HIL-03 | `TestHILApprove_NotFound` | 404 when hil_approvals row missing; no Temporal signal |
 | AF-HIL-04 | `TestHILApprove_InsufficientRole` | 403 when caller has viewer role; no Temporal signal |
 | AF-HIL-05 | `TestHILApprove_AlreadyDecided` | 409 when approval already decided; no Temporal signal |
 
-**Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/validate.go`, `internal/appflow/workflow.go`, `internal/admin/hil_approvals.go`, `internal/admin/dal/hil_approvals.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
+**Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/validate.go`, `internal/appflow/workflow.go`, `internal/appflow/activities.go`, `internal/appflow/nodes.go`, `internal/appflow/graph.go`, `internal/admin/hil_approvals.go`, `internal/admin/dal/hil_approvals.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
 
 ### S1-115 · AppFlow inline node config + template helpers — `internal/appflow/inline_test.go`
 
@@ -3486,11 +3493,11 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| S1-112 | AppFlow compiler + workflow (AF-01..25, AF-C-01..04, AF-WF-01..09): compiler, fork/join kinds + validation, inline llm/condition kinds + validation, edge labels, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, findJoinNode, mergeBranchResults | 40 |
+| S1-112 | AppFlow compiler + workflow (AF-01..25, AF-C-01..04, AF-WF-01..16): compiler, fork/join kinds + validation, inline llm/condition kinds + validation, edge labels, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, InlineLLMActivity (render/fallback/stream/secrets-guard), findJoinNode, mergeBranchResults | 47 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
 | S1-114 | Temporal execution controls — service (TC-SVC-1..9): GetPlatformConfig_NoRow_Defaults, StoredRow_Merges, DALError_Propagates, PutPlatform_ValidInput, PutPlatform_InvalidRetry, PutPlatform_ZeroConcurrent, Merge_AppOverrides, Merge_NilAppFallsThrough, Merge_BothNilDefaults; handler (TC-1..4): GetPlatform_NoRow_200+defaults, PutPlatform_Valid_200, NegativeRetry_422, BadJSON_400 | 13 |
 | S1-115 | AppFlow inline node config + template helpers (AF-IN-01..06 + AF-IN-02b): render/substitution, missing-var zero-value, UI-advertised condition expression forms, parse error, isTruthy table, config JSON round trips | 7 |
-| **S1 total** | | **1224** |
+| **S1 total** | | **1231** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

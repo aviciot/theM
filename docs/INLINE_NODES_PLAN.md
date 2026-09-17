@@ -736,6 +736,24 @@ Two new cases in the main loop. Both also go into `walkBranch` so inline nodes w
 fork branches (the brief notes `walkBranch` currently handles only agent/orchestrator/middleware,
 `workflow.go:731`).
 
+> **Implemented (step 3), with two file splits it forced.** Adding the two cases took
+> `workflow.go` from 441 → 526, over the cap again, so the two largest self-contained node
+> protocols moved out to a new `nodes.go` (`execRouterNode`, `execHILNode` — 142 lines),
+> leaving `workflow.go` at 434. Final package layout: `compiler.go` 392, `validate.go` 166,
+> `inline.go` 114, `workflow.go` 434, `nodes.go` 142, `activities.go` 419, `graph.go` 184.
+> Phase 2's Tool/Transform cases now have room in `nodes.go`.
+>
+> Two implementation decisions worth recording:
+> - **`walkBranch` uses a branch-local `FlowVars`** rather than threading vars through its
+>   signature. Safe because fork branches already have no cross-branch variable visibility:
+>   each starts from its own copy of `accumulated` and collapses to one string via
+>   `mergeBranchResults`. If a join-time condition ever needs branch vars, that is a real
+>   signature change deserving its own decision.
+> - **A stream-publish failure does not fail `InlineLLMActivity`.** This deliberately diverges
+>   from `FinalizeRunActivity`, which *does* return `XAdd` errors: Finalize is idempotent and
+>   safe to retry, whereas retrying the inline LLM activity to fix a Redis hiccup would
+>   re-call and re-bill the LLM. Commented at the call site.
+
 ```go
 case "llm":
     var cfg InlineLLMConfig
