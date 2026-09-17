@@ -7,6 +7,7 @@ import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeSh
 import { EPSections } from './RuntimeEPSections';
 import { CanvasAgentsSection } from './RuntimeAgentsSection';
 import type { VoiceDraft } from './RuntimeVoicePanel';
+import { RuntimeTemporalTab } from './RuntimeTemporalTab';
 
 type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string; base_url?: string };
 const LOCAL_PROVIDERS = new Set(['ollama', 'vllm', 'lmstudio']);
@@ -20,7 +21,10 @@ type EPLLMDraft  = { provider: string; model: string };
 type EPSumDraft  = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 type NodeLLMDraft = { provider: string; model: string };
 
+type RuntimeTab = 'general' | 'temporal';
+
 export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBack: () => void; onUpdate?: (patch: Partial<Application>) => void }) {
+  const [runtimeTab, setRuntimeTab] = useState<RuntimeTab>('general');
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
   const [cfg, setCfg]         = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
   const [saving, setSaving]   = useState(false);
@@ -251,7 +255,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '36px 40px 64px', background: C.bg }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
         <button onClick={onBack} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 17 }}>arrow_back</span>
           Applications
@@ -262,7 +266,25 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
         <span style={{ fontSize: 14, color: '#fb923c', fontWeight: 700 }}>Runtime</span>
       </div>
 
+      {/* Tab strip */}
+      <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid rgba(132,157,188,.12)', marginBottom: 24 }}>
+        {([
+          { id: 'general'  as RuntimeTab, label: 'General',  icon: 'tune' },
+          { id: 'temporal' as RuntimeTab, label: 'Temporal', icon: 'schedule_send' },
+        ]).map(tab => {
+          const active = runtimeTab === tab.id;
+          return (
+            <button key={tab.id} onClick={() => setRuntimeTab(tab.id)} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '8px 16px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: active ? 700 : 500, color: active ? '#fb923c' : C.textMuted, borderBottom: active ? '2px solid #fb923c' : '2px solid transparent', marginBottom: '-1px', transition: 'color 150ms' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{tab.icon}</span>
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div style={{ maxWidth: 720 }}>
+        {runtimeTab === 'temporal' && <RuntimeTemporalTab appId={app.id} />}
+        {runtimeTab === 'general' && (<>
         <EPSections
           entryPoints={entryPoints} orchMetas={orchMetas}
           voiceDrafts={voiceDrafts} setVoiceDrafts={setVoiceDrafts}
@@ -564,6 +586,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
             )}
           </Section>
         )}
+        </>)}
       </div>
     </div>
   );

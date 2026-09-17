@@ -105,6 +105,8 @@ export type {
   TenantRole,
   RoleGrant,
   RoleMapping,
+  TemporalConfig,
+  TemporalAppConfigPatch,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -181,6 +183,8 @@ import type {
   RoleGrant,
   RoleMapping,
   MiddlewareDef,
+  TemporalConfig,
+  TemporalAppConfigPatch,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -473,6 +477,10 @@ export const themApi = {
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
+  getTemporalPlatformConfig: () => api.get<TemporalConfig>('/admin/temporal-config'),
+  putTemporalPlatformConfig: (body: TemporalConfig) => api.put<TemporalConfig>('/admin/temporal-config', body),
+  getTemporalAppConfig: (appId: string) => api.get<TemporalConfig>(`/admin/applications/${appId}/temporal-config`),
+  putTemporalAppConfig: (appId: string, body: TemporalAppConfigPatch) => api.put<TemporalConfig>(`/admin/applications/${appId}/temporal-config`, body),
 
   // ── Role management ────────────────────────────────────────────────────────
   listRoles: () => api.get<TenantRole[]>('/admin/roles'),

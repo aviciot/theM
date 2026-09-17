@@ -1068,3 +1068,17 @@ export interface RoleMapping {
   role_id: string;
   created_at: string;
 }
+
+export interface TemporalConfig {
+  max_concurrent_workflows: number;
+  workflow_timeout_s: number;
+  activity_timeout_s: number;
+  retry_max_attempts: number;
+}
+
+export interface TemporalAppConfigPatch {
+  max_concurrent_workflows?: number | null;
+  workflow_timeout_s?: number | null;
+  activity_timeout_s?: number | null;
+  retry_max_attempts?: number | null;
+}
