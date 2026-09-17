@@ -914,7 +914,7 @@ approve before the code is written):
 | File | Content | Est. lines |
 |---|---|---|
 | `cbv/CanvasNodePropertiesPanel.tsx` | Shell: props, shared styles, `SectionHeader`, dispatch by `selectedNode.type` | ~120 |
-| `cbv/panels/panelShared.ts` | `fieldStyle`, `selectStyle`, `chipStyle`, `sectionHdrStyle`, `SectionHeader` | ~60 |
+| `cbv/panels/panelShared.tsx` | `fieldStyle`, `selectStyle`, `chipStyle`, `sectionHdrStyle`, `SectionHeader`, `isSectionOpen` | ~60 |
 | `cbv/panels/OrchestratorNodePanel.tsx` | orchestrator block + MCP server attachment UI | ~260 |
 | `cbv/panels/AgentNodePanel.tsx` | agent block | ~40 |
 | `cbv/panels/EntryPointNodePanel.tsx` | EP block incl. access scenarios | ~215 |
@@ -925,6 +925,15 @@ approve before the code is written):
 Every file lands under 400. The middleware wiring `useEffect`s move with their block into
 `MiddlewareNodePanel`, which also removes the current oddity of middleware-specific API calls
 running in the shell for every node selection.
+
+> **Implemented (step 6, commit follows this plan's structure).** Actual line counts: shell 131,
+> `panelShared.tsx` 50, Orchestrator 289, Agent 61, EntryPoint 245, Middleware 252,
+> FlowControl 172 — all under 400. Note the shared file is `.tsx`, not `.ts`: it exports the
+> `SectionHeader` component, and JSX requires the `.tsx` extension under this tsconfig.
+> Verified pure: every `cfg.*` key, `themApi.*` call, config setter, and all 73 user-visible
+> strings (labels/placeholders/option text) are byte-identical across the split, with nothing
+> added; `tsc --noEmit` 0 errors before and after. The shell keeps its exact export name and
+> `Props` signature, so its sole caller (`CanvasBuilderView.tsx`) needed no change.
 
 ### 6.2 Types — `frontend/src/app/admin/applications/types.ts`
 
