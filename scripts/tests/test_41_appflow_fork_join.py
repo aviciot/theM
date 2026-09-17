@@ -40,6 +40,7 @@ BASE_URL = "http://localhost:8088"
 WS_BASE = "ws://localhost:8088"
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin123"
+TENANT_SLUG = "default"
 
 A2A_ECHO_AGENT_ID = "84d60a87-ceae-460a-9ed2-506c30bc81d8"
 A2A_ECHO_NAMESPACE = "them.tenant.00000000-0000-0000-0000-000000000001"
@@ -137,25 +138,31 @@ async def open_ws_and_get_run_id(token: str, app_slug: str, ep_slug: str) -> str
         print("  websockets not installed — pip install websockets")
         return ""
 
-    uri = f"{WS_BASE}/apps/{app_slug}/ws/{ep_slug}?token={token}"
+    uri = f"{WS_BASE}/{TENANT_SLUG}/apps/{app_slug}/{ep_slug}/ws?token={token}"
     run_id = None
+    print(f"  WS connect: {WS_BASE}/{TENANT_SLUG}/apps/{app_slug}/{ep_slug}/ws (token=...)")
     try:
-        async with websockets.connect(uri, open_timeout=10) as ws:
+        async with websockets.connect(uri, open_timeout=15) as ws:
             await ws.send(json.dumps({"type": "message", "content": "Hello Fork/Join!"}))
-            deadline = asyncio.get_event_loop().time() + 15
-            while asyncio.get_event_loop().time() < deadline:
+            print("  WS message sent")
+            deadline = time.time() + 15
+            while time.time() < deadline:
                 try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=2)
+                    raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
                     evt = json.loads(raw)
-                    if evt.get("type") == "run_created" and evt.get("run_id"):
+                    evt_type = evt.get("type", "")
+                    print(f"  WS event: {evt_type} — {str(evt)[:100]}")
+                    if "run_id" in evt:
                         run_id = evt["run_id"]
                         break
-                    if "run_id" in evt and not run_id:
-                        run_id = evt["run_id"]
+                    if evt_type == "error":
+                        print(f"  WS error event: {evt.get('message')}")
+                        break
                 except asyncio.TimeoutError:
                     continue
                 except Exception:
                     break
+            await asyncio.sleep(1)
     except Exception as e:
         print(f"  WS error: {e}")
     return run_id or ""
@@ -335,7 +342,7 @@ def main():
                 f"SELECT id::text FROM them.runs "
                 f"WHERE tenant_id='{tenant_id}'::uuid "
                 f"AND application_id='{app_id}'::uuid "
-                f"ORDER BY created_at DESC LIMIT 1"
+                f"ORDER BY started_at DESC LIMIT 1"
             )
             run_id = rows.strip()
             ok("run_id from DB fallback", bool(run_id), f"got {run_id!r}")

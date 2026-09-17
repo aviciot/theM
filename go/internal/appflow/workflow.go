@@ -416,7 +416,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 		case "fork":
 			branches := outEdgesBySource[node.ID]
 			branchResults := make([]string, len(branches))
-			var wg workflow.WaitGroup
+			wg := workflow.NewWaitGroup(ctx)
 			// Find the join node that all branches converge on.
 			// Each branch walks until it hits a join node, then stops.
 			joinID := findJoinNode(branches, nodeByID, outEdgesBySource)
