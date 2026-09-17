@@ -235,9 +235,9 @@ export function TraceTab({ trace, traceBottom, runId, contextId }: { trace: Trac
         <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 2 }}>
           {runId && <span title={runId}><span style={{ opacity: 0.6 }}>run_id: </span>{runId}</span>}
           {contextId && <span title={contextId}><span style={{ opacity: 0.6 }}>ctx_id: </span>{contextId}</span>}
-          {contextId && (
+          {(runId || contextId) && (
             <a
-              href={`/temporal/namespaces/default/workflows/ctx-${contextId}`}
+              href={`/temporal/namespaces/default/workflows`}
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: 'var(--tm-accent, #6ee7b7)', textDecoration: 'none', opacity: 0.85 }}
