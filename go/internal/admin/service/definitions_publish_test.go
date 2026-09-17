@@ -216,6 +216,18 @@ func (f *publishFakeDal) UpdateToken(_ context.Context, _, _ string, _ dal.Token
 func (f *publishFakeDal) DeleteToken(_ context.Context, _, _ string) (string, error)   { return "", nil }
 func (f *publishFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) { return nil, nil }
 func (f *publishFakeDal) UpsertConfig(_ context.Context, _ string, _ []byte) error     { return nil }
+func (f *publishFakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
+	return nil
+}
+func (f *publishFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+	return nil
+}
 func (f *publishFakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error)   { return nil, nil }
 func (f *publishFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
 func (f *publishFakeDal) CreateProvider(_ context.Context, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }

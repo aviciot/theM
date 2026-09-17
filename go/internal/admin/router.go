@@ -183,6 +183,11 @@ func BuildRouter(
 				tenantScoped.Get("/middleware-defs", mwWirings.ListDefs)
 				apps.Routes(tenantScoped, bindings, mwWirings)
 
+				// Per-app Temporal config override (tenant-scoped).
+				temporalCfgApp := NewTemporalConfigHandler(dbq)
+				tenantScoped.Get("/applications/{id}/temporal-config", temporalCfgApp.GetApp)
+				tenantScoped.Put("/applications/{id}/temporal-config", temporalCfgApp.PutApp)
+
 				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)
 
@@ -208,6 +213,7 @@ func BuildRouter(
 				platformGlobal.Use(RequireSuperAdmin(logger))
 
 				monitoring.Routes(platformGlobal)
+				NewTemporalConfigHandler(dbq).PlatformRoutes(platformGlobal)
 				llmRouting.Routes(platformGlobal)
 				llmProviders.Routes(platformGlobal)
 				llmProviders.TenantProviderRoutes(platformGlobal)

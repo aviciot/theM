@@ -3454,7 +3454,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
 | S1-112 | AppFlow compiler + workflow (AF-01..14, AF-C-01..04, AF-WF-01..09): compiler, fork/join kinds + validation, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, findJoinNode, mergeBranchResults | 29 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
-| **S1 total** | | **1193** |
+| S1-114 | Temporal execution controls — service (TC-SVC-1..9): GetPlatformConfig_NoRow_Defaults, StoredRow_Merges, DALError_Propagates, PutPlatform_ValidInput, PutPlatform_InvalidRetry, PutPlatform_ZeroConcurrent, Merge_AppOverrides, Merge_NilAppFallsThrough, Merge_BothNilDefaults; handler (TC-1..4): GetPlatform_NoRow_200+defaults, PutPlatform_Valid_200, NegativeRetry_422, BadJSON_400 | 13 |
+| **S1 total** | | **1206** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
@@ -3497,4 +3498,4 @@ Run: `python3.12 scripts/tests/test_41_appflow_fork_join.py` (requires `--profil
 | **S2 total** | | **52** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1083** |
+| **`go test ./...` total** | | **1096** |

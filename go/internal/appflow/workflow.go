@@ -75,6 +75,21 @@ type AppFlowWorkflowInput struct {
 	UserID int64 `json:"user_id,omitempty"`
 	// ExternalUserID is the caller-supplied external user identifier.
 	ExternalUserID string `json:"external_user_id,omitempty"`
+	// TemporalCfg holds execution controls (timeouts, retry policy).
+	// Nil = use hardcoded defaults (fail-open: never blocks a workflow).
+	TemporalCfg *TemporalExecCfg `json:"temporal_cfg,omitempty"`
+}
+
+// TemporalExecCfg carries Temporal execution controls resolved at workflow submit time.
+// Nil fields fall back to hardcoded defaults inside AppFlowWorkflow (fail-open).
+type TemporalExecCfg struct {
+	// WorkflowTimeoutS is set via StartWorkflowOptions.WorkflowRunTimeout by the caller.
+	// Stored here for reference; not applied inside the workflow function.
+	WorkflowTimeoutS *int `json:"workflow_timeout_s,omitempty"`
+	// ActivityTimeoutS overrides the default StartToCloseTimeout for all activities.
+	ActivityTimeoutS *int `json:"activity_timeout_s,omitempty"`
+	// RetryMaxAttempts overrides the retry policy MaximumAttempts for all activities.
+	RetryMaxAttempts *int `json:"retry_max_attempts,omitempty"`
 }
 
 // AppFlowWorkflowOutput is returned by AppFlowWorkflow on completion.
@@ -251,12 +266,24 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 		outEdgesBySource[e.Source] = append(outEdgesBySource[e.Source], e)
 	}
 
+	// Resolve execution controls (fail-open: hardcoded defaults when TemporalCfg is nil).
+	actTimeout := appFlowActivityTimeout
+	retryMax := int32(2)
+	if input.TemporalCfg != nil {
+		if input.TemporalCfg.ActivityTimeoutS != nil && *input.TemporalCfg.ActivityTimeoutS > 0 {
+			actTimeout = time.Duration(*input.TemporalCfg.ActivityTimeoutS) * time.Second
+		}
+		if input.TemporalCfg.RetryMaxAttempts != nil && *input.TemporalCfg.RetryMaxAttempts >= 0 {
+			retryMax = int32(*input.TemporalCfg.RetryMaxAttempts)
+		}
+	}
+
 	// Walk nodes from start_id. Fork/Join enables parallel branches.
 	ao := workflow.ActivityOptions{
 		TaskQueue:           AppFlowTaskQueue,
-		StartToCloseTimeout: appFlowActivityTimeout,
+		StartToCloseTimeout: actTimeout,
 		RetryPolicy: &temporalerr.RetryPolicy{
-			MaximumAttempts: 2,
+			MaximumAttempts: retryMax,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/jwks"
 	"github.com/aviciot/them/internal/agentgen"
@@ -282,6 +283,10 @@ func run() error {
 	roleQuerier := roles.NewPgxQuerier(rlsPools.Admin)
 	execLifecycle.WithRoleChecker(roles.NewService(roleQuerier))
 	log.Info("role gate wired (tenant_role_grants per application)")
+
+	// Wire Temporal execution config loader — reads merged platform+app Temporal controls at workflow start.
+	execLifecycle.WithTemporalConfigLoader(appflow.NewPgxTemporalConfigLoader(rlsPools))
+	log.Info("temporal config loader wired")
 
 	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
 	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,

@@ -161,3 +161,72 @@ func TestPutLLMRouting_BadJSON_Returns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ── TemporalConfigHandler tests ────────────────────────────────────────────
+
+// TC-1: GET temporal-config with no stored row — returns 200 with hardcoded defaults.
+func TestGetTemporalPlatformConfig_NoRow_ReturnsDefaults(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	h := admin.NewTemporalConfigHandler(db)
+	r := chi.NewRouter()
+	h.PlatformRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/temporal-config", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, float64(10), body["max_concurrent_workflows"])
+	assert.Equal(t, float64(3600), body["workflow_timeout_s"])
+	assert.Equal(t, float64(600), body["activity_timeout_s"])
+	assert.Equal(t, float64(3), body["retry_max_attempts"])
+}
+
+// TC-2: PUT temporal-config with valid body — returns 200.
+func TestPutTemporalPlatformConfig_Valid_Returns200(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewTemporalConfigHandler(db)
+	r := chi.NewRouter()
+	h.PlatformRoutes(r)
+
+	body, _ := json.Marshal(map[string]any{"max_concurrent_workflows": 5})
+	req := httptest.NewRequest(http.MethodPut, "/temporal-config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+// TC-3: PUT temporal-config with negative retry — returns 422.
+func TestPutTemporalPlatformConfig_NegativeRetry_Returns422(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewTemporalConfigHandler(db)
+	r := chi.NewRouter()
+	h.PlatformRoutes(r)
+
+	body, _ := json.Marshal(map[string]any{"retry_max_attempts": -1})
+	req := httptest.NewRequest(http.MethodPut, "/temporal-config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+// TC-4: PUT temporal-config with bad JSON — returns 400.
+func TestPutTemporalPlatformConfig_BadJSON_Returns400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewTemporalConfigHandler(db)
+	r := chi.NewRouter()
+	h.PlatformRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPut, "/temporal-config", bytes.NewReader([]byte(`not json`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

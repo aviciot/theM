@@ -90,6 +90,10 @@ type fakeDal struct {
 	upsertConfigValue []byte
 	upsertConfigErr   error
 
+	// temporal config fields
+	temporalCfg    *dal.TemporalConfig
+	temporalCfgErr error
+
 	// LLM provider fields
 	providers              []dal.LLMProvider
 	provider               dal.LLMProvider
@@ -364,6 +368,20 @@ func (f *fakeDal) UpsertConfig(_ context.Context, key string, value []byte) erro
 	f.upsertConfigKey = key
 	f.upsertConfigValue = value
 	return f.upsertConfigErr
+}
+
+// Temporal config stubs.
+func (f *fakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.TemporalConfig, error) {
+	return f.temporalCfg, f.temporalCfgErr
+}
+func (f *fakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
+	return f.temporalCfgErr
+}
+func (f *fakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *fakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+	return f.temporalCfgErr
 }
 
 // Agent action stubs (platform-global, no tenant scope).

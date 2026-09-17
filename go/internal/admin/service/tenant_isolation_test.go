@@ -353,6 +353,18 @@ func (f *isolationFakeDal) DeleteToken(_ context.Context, tenantID, id string) (
 
 // ── Platform-global stubs ─────────────────────────────────────────────────────
 
+func (f *isolationFakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
+	return nil
+}
+func (f *isolationFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+	return nil
+}
 func (f *isolationFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
 	return nil, nil
 }

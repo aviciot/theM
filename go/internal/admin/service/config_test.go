@@ -186,3 +186,126 @@ func TestPutLLMRouting_ValidInput_Upserts(t *testing.T) {
 		t.Errorf("upserted JSON differs from input: %+v", stored)
 	}
 }
+
+// ── Temporal config — GetTemporalPlatformConfig ────────────────────────────
+
+// TC-SVC-1: No stored row → returns hardcoded defaults.
+func TestGetTemporalPlatformConfig_NoRow_ReturnsDefaults(t *testing.T) {
+	svc := service.NewConfigService(&fakeDal{temporalCfg: nil})
+	cfg, err := svc.GetTemporalPlatformConfig(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MaxConcurrentWorkflows == nil || *cfg.MaxConcurrentWorkflows != 10 {
+		t.Errorf("expected MaxConcurrentWorkflows=10, got %v", cfg.MaxConcurrentWorkflows)
+	}
+	if cfg.WorkflowTimeoutS == nil || *cfg.WorkflowTimeoutS != 3600 {
+		t.Errorf("expected WorkflowTimeoutS=3600, got %v", cfg.WorkflowTimeoutS)
+	}
+	if cfg.ActivityTimeoutS == nil || *cfg.ActivityTimeoutS != 600 {
+		t.Errorf("expected ActivityTimeoutS=600, got %v", cfg.ActivityTimeoutS)
+	}
+	if cfg.RetryMaxAttempts == nil || *cfg.RetryMaxAttempts != 3 {
+		t.Errorf("expected RetryMaxAttempts=3, got %v", cfg.RetryMaxAttempts)
+	}
+}
+
+// TC-SVC-2: Stored row with partial override → merged over defaults.
+func TestGetTemporalPlatformConfig_StoredRow_MergesOverDefaults(t *testing.T) {
+	wt := 7200
+	svc := service.NewConfigService(&fakeDal{temporalCfg: &dal.TemporalConfig{WorkflowTimeoutS: &wt}})
+	cfg, err := svc.GetTemporalPlatformConfig(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.WorkflowTimeoutS == nil || *cfg.WorkflowTimeoutS != 7200 {
+		t.Errorf("expected stored WorkflowTimeoutS=7200, got %v", cfg.WorkflowTimeoutS)
+	}
+	if cfg.ActivityTimeoutS == nil || *cfg.ActivityTimeoutS != 600 {
+		t.Errorf("expected ActivityTimeoutS default=600 unchanged, got %v", cfg.ActivityTimeoutS)
+	}
+}
+
+// TC-SVC-3: DAL error → propagates.
+func TestGetTemporalPlatformConfig_DALError_Propagates(t *testing.T) {
+	want := errors.New("db down")
+	svc := service.NewConfigService(&fakeDal{temporalCfgErr: want})
+	_, err := svc.GetTemporalPlatformConfig(context.Background())
+	if !errors.Is(err, want) {
+		t.Errorf("expected wrapped dal error, got %v", err)
+	}
+}
+
+// TC-SVC-4: PutTemporalPlatformConfig with valid input → upserts.
+func TestPutTemporalPlatformConfig_ValidInput_Upserts(t *testing.T) {
+	mc, wt, at, ra := 5, 1800, 300, 2
+	svc := service.NewConfigService(&fakeDal{})
+	in := dal.TemporalConfig{
+		MaxConcurrentWorkflows: &mc,
+		WorkflowTimeoutS:       &wt,
+		ActivityTimeoutS:       &at,
+		RetryMaxAttempts:       &ra,
+	}
+	out, err := svc.PutTemporalPlatformConfig(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.MaxConcurrentWorkflows == nil || *out.MaxConcurrentWorkflows != 5 {
+		t.Errorf("expected MaxConcurrentWorkflows=5, got %v", out.MaxConcurrentWorkflows)
+	}
+}
+
+// TC-SVC-5: PutTemporalPlatformConfig with negative retry → validation error.
+func TestPutTemporalPlatformConfig_InvalidRetry_ReturnsValidationError(t *testing.T) {
+	neg := -1
+	svc := service.NewConfigService(&fakeDal{})
+	_, err := svc.PutTemporalPlatformConfig(context.Background(), dal.TemporalConfig{RetryMaxAttempts: &neg})
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+}
+
+// TC-SVC-6: PutTemporalPlatformConfig with zero max_concurrent_workflows → validation error.
+func TestPutTemporalPlatformConfig_ZeroMaxConcurrent_ReturnsValidationError(t *testing.T) {
+	zero := 0
+	svc := service.NewConfigService(&fakeDal{})
+	_, err := svc.PutTemporalPlatformConfig(context.Background(), dal.TemporalConfig{MaxConcurrentWorkflows: &zero})
+	if err == nil {
+		t.Fatal("expected validation error for max_concurrent_workflows=0, got nil")
+	}
+}
+
+// ── MergeTemporalConfigs ───────────────────────────────────────────────────
+
+// TC-SVC-7: App override takes precedence over platform.
+func TestMergeTemporalConfigs_AppOverridesTakePrecedence(t *testing.T) {
+	appAt := 120
+	app := &dal.TemporalConfig{ActivityTimeoutS: &appAt}
+	platformAt := 600
+	platform := &dal.TemporalConfig{ActivityTimeoutS: &platformAt}
+	merged := dal.MergeTemporalConfigs(platform, app)
+	if merged.ActivityTimeoutS == nil || *merged.ActivityTimeoutS != 120 {
+		t.Errorf("expected app override 120, got %v", merged.ActivityTimeoutS)
+	}
+}
+
+// TC-SVC-8: Nil app falls through to platform.
+func TestMergeTemporalConfigs_NilAppFallsThroughToPlatform(t *testing.T) {
+	wt := 900
+	platform := &dal.TemporalConfig{WorkflowTimeoutS: &wt}
+	merged := dal.MergeTemporalConfigs(platform, nil)
+	if merged.WorkflowTimeoutS == nil || *merged.WorkflowTimeoutS != 900 {
+		t.Errorf("expected platform WorkflowTimeoutS=900, got %v", merged.WorkflowTimeoutS)
+	}
+}
+
+// TC-SVC-9: Both nil → hardcoded defaults.
+func TestMergeTemporalConfigs_BothNilReturnsHardcodedDefaults(t *testing.T) {
+	merged := dal.MergeTemporalConfigs(nil, nil)
+	if merged.MaxConcurrentWorkflows == nil || *merged.MaxConcurrentWorkflows != 10 {
+		t.Errorf("expected hardcoded default 10, got %v", merged.MaxConcurrentWorkflows)
+	}
+	if merged.RetryMaxAttempts == nil || *merged.RetryMaxAttempts != 3 {
+		t.Errorf("expected hardcoded RetryMaxAttempts=3, got %v", merged.RetryMaxAttempts)
+	}
+}

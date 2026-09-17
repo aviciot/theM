@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-17 (AppFlow Phase A — Fork/Join parallel branch execution — FULLY COMPLETE: E2E 13/13)
+# Last updated: 2026-09-17 (AppFlow Phase B — Temporal execution controls — FULLY COMPLETE: go test ./... zero failures, 1096 tests)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -46,6 +46,32 @@ Key facts:
 
 ## Current migration slice
 
+**AppFlow Phase B — Temporal Execution Controls — FULLY COMPLETE (backend)**
+
+All Phase B backend items complete as of 2026-09-17. `go test ./...` — zero failures (1096 tests). Pending: frontend (platform admin Temporal settings page + app Runtime "Temporal" tab).
+
+**What's done:**
+- `db/099_temporal_config.sql`: `them.app_temporal_config` table (per-app override, FK → applications, ON DELETE CASCADE). GRANT to them_app/them_admin. ✅
+- `go/internal/admin/dal/temporal_config.go`: `TemporalConfig` type + `GetTemporalPlatformConfig`, `UpsertTemporalPlatformConfig`, `GetTemporalAppConfig`, `UpsertTemporalAppConfig`, `MergeTemporalConfigs` (hardcoded defaults: max_concurrent=10, workflow_timeout=3600s, activity_timeout=600s, retry=3). ✅
+- `go/internal/admin/service/config.go`: `GetTemporalPlatformConfig`, `PutTemporalPlatformConfig`, `GetTemporalEffectiveConfig`, `PutTemporalAppConfig`, `validateTemporalConfig` appended. ✅
+- `go/internal/admin/service/service.go`: 4 methods added to `Dal` interface. ✅
+- `go/internal/admin/temporal_config.go`: `TemporalConfigHandler` — `GET|PUT /admin/temporal-config` (platform, RequireSuperAdmin) + `GET|PUT /admin/applications/{id}/temporal-config` (per-app, RequireTenantAdmin). ✅
+- `go/internal/admin/router.go`: `NewTemporalConfigHandler(dbq).PlatformRoutes(platformGlobal)` + per-app routes in tenantScoped group. ✅
+- `go/internal/appflow/workflow.go`: `TemporalExecCfg` type; `AppFlowWorkflowInput.TemporalCfg *TemporalExecCfg`; workflow resolves `actTimeout` and `retryMax` from cfg (fail-open: hardcoded defaults when nil). ✅
+- `go/internal/appflow/temporal_config_loader.go`: `PgxTemporalConfigLoader` — reads merged effective config at workflow start via `db.Pools`. ✅
+- `go/internal/execution/lifecycle.go`: `TemporalConfigLoader` interface; `WithTemporalConfigLoader`; `StartAppFlow` calls loader, sets `wfOpts.WorkflowRunTimeout`, passes `TemporalCfg` in input. ✅
+- `go/cmd/them/main.go`: `execLifecycle.WithTemporalConfigLoader(appflow.NewPgxTemporalConfigLoader(rlsPools))`. ✅
+- Tests: S1-114 — 13 new tests (TC-SVC-1..9 service, TC-1..4 handler). ✅
+- `go/TEST_INDEX.md`: S1-114 entry added, S1 total 1206, `go test ./...` total 1096. ✅
+
+**Pending (Phase B frontend — next session):**
+- Platform admin "Temporal" settings page (super_admin, sidebar under System) — `GET|PUT /api/v1/admin/temporal-config`
+- App Runtime "Temporal" tab — `GET|PUT /api/v1/admin/applications/{id}/temporal-config` showing effective (merged) values + override inputs
+
+**Migration notes:**
+- Apply `db/099_temporal_config.sql` before rebuilding containers.
+- Rebuild and restart `them-go-bridge` after applying (TemporalConfigLoader wired in main.go).
+
 **AppFlow Phase A — Fork/Join Parallel Branch Execution — FULLY COMPLETE**
 
 All Phase A items complete as of 2026-09-17. E2E test passes (13/13). See `docs/APPFLOW_FORK_JOIN_PLAN.md`.
@@ -61,7 +87,7 @@ All Phase A items complete as of 2026-09-17. E2E test passes (13/13). See `docs/
 
 **Critical lesson from this phase:** After rebuilding a Go binary in Docker, you MUST use `docker compose up -d --force-recreate <service>` — `docker compose build + restart` does NOT force the container to use the new image. See `docs/LESSONS.md`.
 
-**Next recommended task:** Phase B — Temporal execution controls (max concurrent workflows, timeouts, retries). Two levels: platform defaults in `config` table + per-app overrides in new `app_temporal_config` table. UI: platform admin settings + app Runtime "Temporal" tab.
+**Next recommended task:** Phase B frontend — platform admin Temporal settings page + app Runtime "Temporal" tab. (Backend APIs are already live after rebuilding them-go-bridge.)
 
 ---
 

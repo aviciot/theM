@@ -259,6 +259,18 @@ func (f *agentDefFakeDal) DeactivateStaleEntryPoints(_ context.Context, _, _, _ 
 func (f *agentDefFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return nil, nil
 }
+func (f *agentDefFakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
+	return nil
+}
+func (f *agentDefFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+	return nil
+}
 func (f *agentDefFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
 	return nil, nil
 }

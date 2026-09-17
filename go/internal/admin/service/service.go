@@ -157,6 +157,12 @@ type Dal interface {
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error
 
+	// Temporal execution controls — platform and per-app
+	GetTemporalPlatformConfig(ctx context.Context) (*dal.TemporalConfig, error)
+	UpsertTemporalPlatformConfig(ctx context.Context, cfg dal.TemporalConfig) error
+	GetTemporalAppConfig(ctx context.Context, appID string) (*dal.TemporalConfig, error)
+	UpsertTemporalAppConfig(ctx context.Context, appID string, cfg dal.TemporalConfig) error
+
 	// LLM providers — platform-global, no tenant
 	ListProviders(ctx context.Context) ([]dal.LLMProvider, error)
 	GetProvider(ctx context.Context, id int64) (dal.LLMProvider, error)

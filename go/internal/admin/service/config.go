@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/aviciot/them/internal/admin/dal"
 )
 
 // ── Monitoring config ──────────────────────────────────────────────────────
@@ -133,5 +135,67 @@ func (s *ConfigService) PutLLMRouting(ctx context.Context, cfg LLMRoutingConfig)
 		return LLMRoutingConfig{}, fmt.Errorf("upsert llm_routing config: %w", err)
 	}
 	return cfg, nil
+}
+
+// ── Temporal config ────────────────────────────────────────────────────────
+
+// GetTemporalPlatformConfig loads the platform Temporal config with hardcoded defaults merged in.
+func (s *ConfigService) GetTemporalPlatformConfig(ctx context.Context) (dal.TemporalConfig, error) {
+	cfg, err := s.dal.GetTemporalPlatformConfig(ctx)
+	if err != nil {
+		return dal.TemporalConfig{}, fmt.Errorf("get temporal platform config: %w", err)
+	}
+	return dal.MergeTemporalConfigs(cfg, nil), nil
+}
+
+// PutTemporalPlatformConfig validates and stores platform Temporal config.
+func (s *ConfigService) PutTemporalPlatformConfig(ctx context.Context, cfg dal.TemporalConfig) (dal.TemporalConfig, error) {
+	if err := validateTemporalConfig(cfg); err != nil {
+		return dal.TemporalConfig{}, err
+	}
+	if err := s.dal.UpsertTemporalPlatformConfig(ctx, cfg); err != nil {
+		return dal.TemporalConfig{}, fmt.Errorf("upsert temporal platform config: %w", err)
+	}
+	return dal.MergeTemporalConfigs(&cfg, nil), nil
+}
+
+// GetTemporalEffectiveConfig returns the merged config: app override → platform → hardcoded defaults.
+func (s *ConfigService) GetTemporalEffectiveConfig(ctx context.Context, appID string) (dal.TemporalConfig, error) {
+	platform, err := s.dal.GetTemporalPlatformConfig(ctx)
+	if err != nil {
+		return dal.TemporalConfig{}, fmt.Errorf("get temporal platform config: %w", err)
+	}
+	app, err := s.dal.GetTemporalAppConfig(ctx, appID)
+	if err != nil {
+		return dal.TemporalConfig{}, fmt.Errorf("get temporal app config: %w", err)
+	}
+	return dal.MergeTemporalConfigs(platform, app), nil
+}
+
+// PutTemporalAppConfig validates and stores per-app Temporal config override, returning the effective config.
+func (s *ConfigService) PutTemporalAppConfig(ctx context.Context, appID string, cfg dal.TemporalConfig) (dal.TemporalConfig, error) {
+	if err := validateTemporalConfig(cfg); err != nil {
+		return dal.TemporalConfig{}, err
+	}
+	if err := s.dal.UpsertTemporalAppConfig(ctx, appID, cfg); err != nil {
+		return dal.TemporalConfig{}, fmt.Errorf("upsert temporal app config: %w", err)
+	}
+	return s.GetTemporalEffectiveConfig(ctx, appID)
+}
+
+func validateTemporalConfig(cfg dal.TemporalConfig) error {
+	if cfg.MaxConcurrentWorkflows != nil && *cfg.MaxConcurrentWorkflows < 1 {
+		return unprocessable("max_concurrent_workflows must be >= 1")
+	}
+	if cfg.WorkflowTimeoutS != nil && *cfg.WorkflowTimeoutS < 1 {
+		return unprocessable("workflow_timeout_s must be >= 1")
+	}
+	if cfg.ActivityTimeoutS != nil && *cfg.ActivityTimeoutS < 1 {
+		return unprocessable("activity_timeout_s must be >= 1")
+	}
+	if cfg.RetryMaxAttempts != nil && *cfg.RetryMaxAttempts < 0 {
+		return unprocessable("retry_max_attempts must be >= 0")
+	}
+	return nil
 }
 

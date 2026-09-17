@@ -81,6 +81,7 @@ type Lifecycle struct {
 	ridpLoader       transport.RuntimeIDPLoader    // optional; loads per-tenant external JWT config
 	extJWTValidator  *auth.ExternalJWTValidator    // optional; validates external RS256 JWTs
 	roleChecker      RoleChecker   // optional; nil = role gate disabled
+	temporalCfgLoader TemporalConfigLoader // optional; nil = hardcoded defaults for AppFlow
 	logger           *slog.Logger
 }
 
@@ -153,6 +154,20 @@ type RoleChecker interface {
 // When nil (default), the role gate is disabled and all authenticated requests proceed.
 func (lc *Lifecycle) WithRoleChecker(rc RoleChecker) *Lifecycle {
 	lc.roleChecker = rc
+	return lc
+}
+
+// TemporalConfigLoader resolves the effective Temporal execution config for an application.
+// If nil or if Load returns an error, StartAppFlow falls back to hardcoded defaults (fail-open).
+type TemporalConfigLoader interface {
+	// Load returns the merged effective Temporal config for the given applicationID.
+	Load(ctx context.Context, applicationID string) (*appflow.TemporalExecCfg, error)
+}
+
+// WithTemporalConfigLoader attaches a TemporalConfigLoader.
+// When nil (default), AppFlowWorkflow uses its own hardcoded defaults.
+func (lc *Lifecycle) WithTemporalConfigLoader(l TemporalConfigLoader) *Lifecycle {
+	lc.temporalCfgLoader = l
 	return lc
 }
 
@@ -627,9 +642,20 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 	input.ApplicationID = h.EPConfig.AppID
 	input.EntryPointSlug = h.EPConfig.EPSlug
 
+	// Resolve Temporal execution controls (fail-open: hardcoded defaults on error or nil loader).
+	if lc.temporalCfgLoader != nil {
+		if cfg, err := lc.temporalCfgLoader.Load(ctx, h.EPConfig.AppID); err == nil {
+			input.TemporalCfg = cfg
+		}
+		// On error: leave TemporalCfg nil so the workflow uses its own hardcoded defaults.
+	}
+
 	wfOpts := temporalclient.StartWorkflowOptions{
 		ID:        appflow.WorkflowIDForRun(h.EPConfig.TenantID, h.RunID),
 		TaskQueue: appflow.AppFlowTaskQueue,
+	}
+	if input.TemporalCfg != nil && input.TemporalCfg.WorkflowTimeoutS != nil && *input.TemporalCfg.WorkflowTimeoutS > 0 {
+		wfOpts.WorkflowRunTimeout = time.Duration(*input.TemporalCfg.WorkflowTimeoutS) * time.Second
 	}
 
 	lc.logger.Info("execution: starting appflow workflow",
