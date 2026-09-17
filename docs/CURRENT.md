@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-17 (AppFlow Phase B — Temporal execution controls — FULLY COMPLETE: backend + frontend, HEAD 54db8231)
+# Last updated: 2026-09-17 (Inline Nodes Phase 1 — Go BACKEND COMPLETE, frontend pending, HEAD 03574b52)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,16 +7,96 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `54db8231`
+HEAD: `03574b52` (pushed)
 
 Recent commits (newest first):
 ```
-67c2cd6b  docs(lessons): workflow.NewWaitGroup required; zero-value panics
-f9885e74  fix(appflow): use workflow.NewWaitGroup; fix E2E test URL and DB column
-30597bc4  feat(appflow): Phase A — Fork/Join parallel branch execution
-b1887f3c  fix(playground): Temporal link searches by run_id; fix external JWT test user
-4b3c55c7  fix(appflow): A2A v1.0 wire format in dag-worker; add full canvas E2E test (17/17)
+03574b52  feat(admin): surface appflow topology errors at publish; exempt inline kind
+23add7c6  feat(dag-worker): register InlineLLMActivity; dbLLMCaller serves both interfaces
+b2fe07d0  feat(appflow): inline LLM activity + llm/condition workflow dispatch
+ea1fb862  refactor(appflow): split workflow.go 803 -> workflow/activities/graph
+3c3bb90e  feat(appflow): compile + validate inline llm/condition nodes
+08d5bfd4  refactor(canvas): split CanvasNodePropertiesPanel 1003 -> 7 files under 400
+1c2eda02  feat(appflow): inline node config types + workflow-safe template helpers
 ```
+
+---
+
+## Current migration slice
+
+**Inline Nodes Phase 1 (LLM + Condition) — Go BACKEND COMPLETE. Frontend NOT started.**
+
+Plan: `docs/INLINE_NODES_PLAN.md` (authoritative; kept in sync with reality as steps landed).
+Brief: `docs/INLINE_NODES_DESIGN_BRIEF.md`.
+Steps 1–6 of 11 done. `go test ./...` zero failures (S1 total 1236). Nothing deployed yet.
+
+### Done (steps 1–6)
+
+| Step | What | Commit |
+|---|---|---|
+| 1 | `internal/appflow/inline.go` — `InlineLLMConfig`, `InlineConditionConfig`, `FlowVars`, `renderFlowTemplate`, `isTruthy`, `flowFuncs` | `1c2eda02` |
+| 6 | `CanvasNodePropertiesPanel` split 1003 → 7 files (all <400) | `08d5bfd4` |
+| 2 | compiler `kind:"inline"` → llm/condition; condition edge labels; 6 new validation codes; `validate.go` extracted | `3c3bb90e` |
+| — | `workflow.go` split → `workflow.go` / `activities.go` / `graph.go` (prereq for 3) | `ea1fb862` |
+| 3 | `InlineLLMActivity` + `InlineLLMCaller`; llm/condition dispatch in main loop AND `walkBranch`; `nodes.go` extracted | `b2fe07d0` |
+| 4 | dag-worker: `dbLLMCaller.Complete`, activity registered, `InlineLLM` wired | `23add7c6` |
+| 5 | `isBuiltinKind` exemption + `appflow.Validate` wired into the validate/publish endpoint | `03574b52` |
+
+### NOT done — next session starts here (steps 7–11)
+
+7. Frontend types — `InlineNodeData` in `applications/types.ts`; add `'inline'` to
+   `ComponentDefinitionSummary.kind` in `lib/apiTypes.ts`. **Do NOT add an `'inline'`
+   ConnectionDef type** — reuse `'flow_control'` (plan §1.14 explains why).
+8. `CanvasNodes.tsx` — `INLINE_META`, `InlineNode` (solid border + emoji; LLM `#d0bcff`,
+   Condition `#f97316`), condition renders TWO labelled source handles (`true`/`false`),
+   register `inline` in `NODE_TYPES`.
+9. `CanvasHelpers.ts` — `genInstanceId('inline')`; `canvasToDoc` inline branch + widen the
+   flow_control edge branch to inline endpoints, mapping the condition `sourceHandle` to
+   `conn.label`; `docToCanvas` restore + re-attach `sourceHandle` from `conn.label`;
+   **include the label in the edge id** (`e_${src}_${tgt}_${label}`) or both branches to the
+   same target collide. Missing the sourceHandle round-trip is silent data loss.
+10. `CanvasBuilderView.tsx` palette section + drop handler (seed `user_prompt: '{{.input}}'`);
+    `constants.ts` `NODE_PORTS.inline` (copy `flowControl`'s ports, else all connections are
+    silently rejected); `CanvasInner.tsx` minimap colour.
+11. `cbv/panels/InlineNodePanel.tsx` (the split in step 6 left the slot open — add the
+    `inline` branch to the shell's dispatch); backend-mismatch warning banner (plan §6.8);
+    E2E `scripts/tests/test_42_appflow_inline_nodes.py`; docs.
+
+**Standing rule from step 1:** any condition-expression example added to the UI needs a
+matching case in test AF-IN-02b. Go `text/template` has no string predicates — `contains`
+et al. come from `flowFuncs` in `inline.go`.
+
+### Deployment state: NOTHING DEPLOYED for this slice
+
+No DB migration. Before manual testing:
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile temporal up -d --force-recreate them-dag-worker them-go-bridge
+docker logs them-dag-worker --tail 5   # confirm appflow-worker polling
+```
+`build` + `restart` does NOT pick up a new image — see LESSONS.md.
+
+### Hard constraints discovered this session
+
+- **Temporal-only.** "local" backend never executes the AppFlowSpec at all — it runs the
+  bound orchestrator's `OrchestrationWorkflow`. There is no local graph walker to extend, so
+  inline nodes work on the Temporal backend only. Step 11's warning banner is what makes that
+  legible instead of a silent no-op. (Plan §4.1/§4.2; local execution is Phase 2.)
+- **Publish behaviour changed.** Temporal-backend apps now fail publish on AppFlow topology
+  errors. Existing published apps are unaffected until their next re-publish. Recommend
+  re-publishing Temporal-backend apps deliberately after deploy to surface latent errors.
+- **`temperature` is stored but NOT applied**, and streaming emits ONE token event with the
+  full response, not per-token deltas. Both blocked on the same thing:
+  `agentgen.LLMProvider.Complete` takes no options and is shared with the agent builder.
+  The UI must label temperature accordingly. (Plan §11 items 2–3.)
+- **File sizes:** the plan under-estimated three times. `compiler.go`, `workflow.go` (twice)
+  each breached the 500-line stop. All split along real seams and verified as no-ops.
+  `publish.go` (698) and `cmd/dag-worker/main.go` (897) were already over before this slice.
+- **No local Go toolchain on this box.** Use Docker:
+  `docker run --rm -v /opt/docker/them/go:/src -w /src golang:1.25-alpine go test ./...`
+  (mount a module+build cache volume or every run re-downloads deps).
+- **gofmt:** `internal/appflow/compiler.go`, `cmd/dag-worker/main.go` and ~45 other files were
+  already gofmt-unclean at baseline. Don't mass-reformat; it buries real diffs.
 
 ---
 
