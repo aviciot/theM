@@ -151,7 +151,7 @@ func run() error {
 	)
 
 	// ── 10b. AppFlow worker — polls appflow-dag task queue ────────────────────
-	routerCaller := &dbRouterLLMCaller{
+	llmCaller := &dbLLMCaller{
 		pool:      rlsPools.Admin,
 		cryptoKey: cryptoKey,
 		factory:   &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
@@ -165,7 +165,8 @@ func run() error {
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}
 	appFlowActs := &appflow.AppFlowActivities{
-		LLMCaller:     routerCaller,
+		LLMCaller:     llmCaller,
+		InlineLLM:     llmCaller,
 		DB:            rlsPools.Admin,
 		StatusUpdater: statusUpdater,
 		StreamPub:     streamPub,
@@ -186,6 +187,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InvokeAgentActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowInvokeAgentActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InlineLLMActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowInlineLLMActivityName,
 	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)
@@ -608,19 +612,21 @@ func (q *pgxAgentEndpointQueryer) QueryAgentEndpoint(ctx context.Context, tenant
 
 var _ agentgen.AgentEndpointQueryer = (*pgxAgentEndpointQueryer)(nil)
 
-// ── dbRouterLLMCaller ─────────────────────────────────────────────────────────
+// ── dbLLMCaller ───────────────────────────────────────────────────────────────
 
-// dbRouterLLMCaller implements appflow.RouterLLMCaller. It resolves the API key
-// from the DB at activity execution time (app-level provider_keys first, then
-// tenant llm_providers) so the key never appears in Temporal workflow history.
-type dbRouterLLMCaller struct {
+// dbLLMCaller implements both appflow.RouterLLMCaller (label classification for
+// the Router node) and appflow.InlineLLMCaller (direct completion for the
+// inline LLM node). It resolves the API key from the DB at activity execution
+// time (app-level provider_keys first, then tenant llm_providers) so the key
+// never appears in Temporal workflow history.
+type dbLLMCaller struct {
 	pool      *pgxpool.Pool
 	cryptoKey []byte
 	factory   *multiLLMFactory
 	logger    *slog.Logger
 }
 
-func (c *dbRouterLLMCaller) ClassifyIntent(
+func (c *dbLLMCaller) ClassifyIntent(
 	ctx context.Context,
 	userMessage, systemPrompt string,
 	labels []string,
@@ -645,7 +651,7 @@ func (c *dbRouterLLMCaller) ClassifyIntent(
 
 // resolveKey looks up the API key for providerName, checking the app-level
 // provider_keys first (more specific) then the tenant llm_providers row.
-func (c *dbRouterLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, applicationID string) string {
+func (c *dbLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, applicationID string) string {
 	// 1. App-level provider_keys (JSONB column on them.applications).
 	row := c.pool.QueryRow(ctx,
 		`SELECT COALESCE(provider_keys, '{}') FROM them.applications
@@ -706,7 +712,46 @@ func (c *dbRouterLLMCaller) resolveKey(ctx context.Context, providerName, tenant
 	return ""
 }
 
-var _ appflow.RouterLLMCaller = (*dbRouterLLMCaller)(nil)
+// Complete implements appflow.InlineLLMCaller for the inline LLM node. It
+// reuses the same resolveKey chain and multiLLMFactory as ClassifyIntent —
+// no second key-resolution path.
+//
+// NOTE on Temperature: req.Temperature is accepted but NOT applied here.
+// agentgen.LLMProvider.Complete(ctx, systemPrompt, userPrompt) has no options
+// parameter, so there is nowhere to thread it through without changing the
+// shared LLMProvider interface (used by the agent builder's interpreter and
+// its whole test suite). That's out of scope for this slice — see plan
+// docs/INLINE_NODES_PLAN.md §11 item 3 for the Phase 2 deferral.
+func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest) (string, error) {
+	providerName := req.ProviderName
+	if providerName == "" {
+		providerName = "anthropic"
+	}
+	// apiKey may legitimately be "" here (e.g. ollama, mock) — multiLLMFactory.
+	// NewProvider is the single source of truth for which providers require a
+	// key, so the empty-key check is not duplicated here; NewProvider errors
+	// for any provider that needs one and didn't get one.
+	apiKey := c.resolveKey(ctx, providerName, req.TenantID, req.ApplicationID)
+
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
+
+	provider, err := c.factory.NewProvider(providerName, req.Model, maxTokens, apiKey)
+	if err != nil {
+		return "", fmt.Errorf("inline llm: create provider: %w", err)
+	}
+
+	responseText, err := provider.Complete(ctx, req.SystemPrompt, req.UserPrompt)
+	if err != nil {
+		return "", fmt.Errorf("inline llm: complete: %w", err)
+	}
+	return responseText, nil
+}
+
+var _ appflow.RouterLLMCaller = (*dbLLMCaller)(nil)
+var _ appflow.InlineLLMCaller = (*dbLLMCaller)(nil)
 
 // ── pgxAgentA2ACaller ─────────────────────────────────────────────────────────
 
