@@ -348,6 +348,129 @@ func TestParseLLMConfig_DefaultsToAnthropic(t *testing.T) {
 	}
 }
 
+// AF-11: Compile recognises fork and join node kinds.
+func TestCompile_ForkJoinNodes(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{"instance_id":"fork_1","definition_ref":{"kind":"flow_control","namespace":"builtin","name":"fork","version":1},"config":{}},
+			{"instance_id":"agent_a","definition_ref":{"kind":"agent","namespace":"default","name":"agent-a","version":1}},
+			{"instance_id":"agent_b","definition_ref":{"kind":"agent","namespace":"default","name":"agent-b","version":1}},
+			{"instance_id":"join_1","definition_ref":{"kind":"flow_control","namespace":"builtin","name":"join","version":1},"config":{}}
+		],
+		"entry_points":[{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"fork_1"}],
+		"connections":[
+			{"source":"ep1","target":"fork_1","type":"flow_control"},
+			{"source":"fork_1","target":"agent_a","type":"flow_control"},
+			{"source":"fork_1","target":"agent_b","type":"flow_control"},
+			{"source":"agent_a","target":"join_1","type":"flow_control"},
+			{"source":"agent_b","target":"join_1","type":"flow_control"}
+		]
+	}`)
+	agents := map[string]string{"agent_a": "uuid-a", "agent_b": "uuid-b"}
+	spec, err := Compile(raw, agents)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	ep := spec.EntryPoints[0]
+	kindByID := make(map[string]string)
+	for _, n := range ep.Nodes {
+		kindByID[n.ID] = n.Kind
+	}
+	if kindByID["fork_1"] != "fork" {
+		t.Errorf("fork node kind: got %q, want fork", kindByID["fork_1"])
+	}
+	if kindByID["join_1"] != "join" {
+		t.Errorf("join node kind: got %q, want join", kindByID["join_1"])
+	}
+	if kindByID["agent_a"] != "agent" {
+		t.Errorf("agent_a kind: got %q", kindByID["agent_a"])
+	}
+	if kindByID["agent_b"] != "agent" {
+		t.Errorf("agent_b kind: got %q", kindByID["agent_b"])
+	}
+}
+
+// AF-12: Validate rejects fork with <2 outgoing edges.
+func TestValidate_ForkInsufficientBranches(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "fork_1",
+			Nodes: []AppFlowNode{
+				{ID: "fork_1", Kind: "fork"},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "fork_1", Target: "agent_a"},
+			},
+		}},
+	}
+	errs := Validate(spec)
+	found := false
+	for _, e := range errs {
+		if e.Code == "fork_insufficient_branches" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected fork_insufficient_branches, got: %+v", errs)
+	}
+}
+
+// AF-13: Validate rejects join with <2 incoming edges.
+func TestValidate_JoinInsufficientBranches(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "agent_a",
+			Nodes: []AppFlowNode{
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+				{ID: "join_1", Kind: "join"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "agent_a", Target: "join_1"},
+			},
+		}},
+	}
+	errs := Validate(spec)
+	found := false
+	for _, e := range errs {
+		if e.Code == "join_insufficient_branches" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected join_insufficient_branches, got: %+v", errs)
+	}
+}
+
+// AF-14: Validate passes for a well-formed fork/join topology.
+func TestValidate_ForkJoinValidTopology(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug:    "main",
+			StartID: "fork_1",
+			Nodes: []AppFlowNode{
+				{ID: "fork_1", Kind: "fork"},
+				{ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+				{ID: "agent_b", Kind: "agent", AgentID: "uuid-b"},
+				{ID: "join_1", Kind: "join"},
+			},
+			Edges: []AppFlowEdge{
+				{Source: "fork_1", Target: "agent_a"},
+				{Source: "fork_1", Target: "agent_b"},
+				{Source: "agent_a", Target: "join_1"},
+				{Source: "agent_b", Target: "join_1"},
+			},
+		}},
+	}
+	errs := Validate(spec)
+	if len(errs) != 0 {
+		t.Errorf("expected no validation errors, got: %+v", errs)
+	}
+}
+
 // AF-08: findEdgeByLabel case-insensitive match.
 func TestFindEdgeByLabel(t *testing.T) {
 	edges := []AppFlowEdge{

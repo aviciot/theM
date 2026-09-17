@@ -2847,6 +2847,10 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-08 | `TestCompile_EdgeLabelPreserved` | conn.Label flows through compilation into AppFlowEdge.Label |
 | AF-09 | `TestCompile_UnresolvedAgent_CaughtByValidate` | missing agentByInstanceID entry → empty AgentID (no DefinitionID fallback) → Validate catches unresolved_agent |
 | AF-10 | `TestFindEdgeByLabel` | findEdgeByLabel case-insensitive match + no-match returns "" |
+| AF-11 | `TestCompile_ForkJoinNodes` | fork and join definition_ref.name compile to kind=fork and kind=join |
+| AF-12 | `TestValidate_ForkInsufficientBranches` | Validate returns fork_insufficient_branches when fork has <2 outgoing edges |
+| AF-13 | `TestValidate_JoinInsufficientBranches` | Validate returns join_insufficient_branches when join has <2 incoming edges |
+| AF-14 | `TestValidate_ForkJoinValidTopology` | Validate passes for well-formed fork→2 agents→join topology |
 | AF-C-01 | `TestResolveAgentByInstanceID_ReadsServerStampedMap` | reads `_resolved_agent_ids` from definition JSON; ignores client `definition_id` |
 | AF-C-02 | `TestResolveAgentByInstanceID_MissingMap_ReturnsEmpty` | old definitions without `_resolved_agent_ids` return empty map |
 | AF-C-03 | `TestParseLLMConfig_UsesOrchProvider` | ParseLLMConfig reads provider+model from LLMOrchConfig |
@@ -2856,6 +2860,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-WF-02 | `TestFinalizeRunActivity_XAddError_IsReturned` | XAdd error propagated (not swallowed) so Temporal retries activity |
 | AF-WF-02b | `TestFinalizeRunActivity_NilDeps_NoOp` | nil StatusUpdater + StreamPub returns nil (safe no-op) |
 | AF-WF-03 | `TestFinalizeRunActivityInput_JSONRoundTrip` | FinalizeRunActivityInput status/errMsg survive JSON serialization |
+| AF-WF-07 | `TestFindJoinNode_Basic` | findJoinNode locates join node by walking branches from fork outgoing edges |
+| AF-WF-08 | `TestFindJoinNode_NoJoin` | findJoinNode returns "" when no join node is reachable from branches |
+| AF-WF-09 | `TestMergeBranchResults` | mergeBranchResults joins non-empty results with newline; empty results ignored |
 | AF-WF-04 | `TestInvokeAgentActivity_Success` | InvokeAgentActivity returns agent response text via AgentInvoker |
 | AF-WF-05 | `TestInvokeAgentActivity_EmptyAgentID` | InvokeAgentActivity returns non-retryable error when agent_id is empty |
 | AF-WF-06 | `TestInvokeAgentActivity_NilInvoker` | InvokeAgentActivity returns non-retryable error when AgentInvoker is nil |
@@ -3445,9 +3452,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-109 | Lifecycle AccessModeExternal (LC-EXT-1..7): ValidJWT_Admitted, NoToken, NoValidator, NoRIDPConfig, InvalidJWT, PrincipalGuard_Blocked, HeaderIgnored_SubFromJWT | 7 |
 | S1-110 | Deploy-to-tenant handler (DA-01..03): Success_200+checklist, MissingTarget_400, DBError_500 | 3 |
 | S1-111 | Middleware defs visual fields (MW-DEF-1): ListDefs returns emoji/color/bg_color | 1 |
-| S1-112 | AppFlow compiler + workflow (AF-01..10, AF-C-01..04, AF-WF-01..06): compiler, ResolveAgentByInstanceID (server-stamped map), ParseLLMConfig (LLMOrchConfig), FinalizeRunActivity (success/fail/XAdd-error/nil-deps), JSON round-trip, InvokeAgentActivity (success/empty-id/nil-invoker) | 22 |
+| S1-112 | AppFlow compiler + workflow (AF-01..14, AF-C-01..04, AF-WF-01..09): compiler, fork/join kinds + validation, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, findJoinNode, mergeBranchResults | 29 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
-| **S1 total** | | **1186** |
+| **S1 total** | | **1193** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
@@ -3464,6 +3471,21 @@ Run: `python3.12 scripts/tests/test_40_appflow_canvas_e2e.py` (requires `--profi
 | run.status == completed | dag-worker A2A v1.0 `SendMessage` invocation succeeds; FinalizeRunActivity marks completed |
 
 **Trigger:** any change to `cmd/dag-worker/main.go`, `internal/appflow/`, `internal/admin/hil*.go`
+
+### E2E — AppFlow Fork/Join (`scripts/tests/test_41_appflow_fork_join.py`)
+
+Full live stack E2E for fork/join parallel branch execution in AppFlowWorkflow.
+Run: `python3.12 scripts/tests/test_41_appflow_fork_join.py` (requires `--profile temporal`).
+
+| Check | What it proves |
+|---|---|
+| create application + EP + definition → 201 | Fork/Join wire format accepted by compiler |
+| publish definition | `_resolved_agent_ids` stamped; fork/join nodes pass Validate |
+| WS connect + run_id | AppFlowWorkflow starts with Fork node as start_id |
+| run.status == completed | Both parallel branches execute and join; final agent called; run finishes |
+| run_steps count ≥ 3 | Agent A, Agent B, and Agent C all invoked (parallel branches + post-join) |
+
+**Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, `cmd/dag-worker/main.go`
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

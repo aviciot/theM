@@ -251,9 +251,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 		outEdgesBySource[e.Source] = append(outEdgesBySource[e.Source], e)
 	}
 
-	// Walk nodes sequentially from start_id.
-	// Fan-out (parallel agent calls) is future work; for now we follow the first
-	// outgoing edge for non-router nodes.
+	// Walk nodes from start_id. Fork/Join enables parallel branches.
 	ao := workflow.ActivityOptions{
 		TaskQueue:           AppFlowTaskQueue,
 		StartToCloseTimeout: appFlowActivityTimeout,
@@ -412,6 +410,47 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			if agentOut.ResponseText != "" {
 				accumulated = agentOut.ResponseText
 			}
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
+		case "fork":
+			branches := outEdgesBySource[node.ID]
+			branchResults := make([]string, len(branches))
+			var wg workflow.WaitGroup
+			// Find the join node that all branches converge on.
+			// Each branch walks until it hits a join node, then stops.
+			joinID := findJoinNode(branches, nodeByID, outEdgesBySource)
+			for i, branch := range branches {
+				i, startNodeID := i, branch.Target
+				wg.Add(1)
+				workflow.Go(ctx, func(gCtx workflow.Context) {
+					branchResult, branchErr := walkBranch(gCtx, startNodeID, joinID, nodeByID, outEdgesBySource, input, accumulated, ao, shortAO)
+					if branchErr != nil {
+						// Store error text as result; main goroutine will detect via out.Status.
+						branchResults[i] = ""
+					} else {
+						branchResults[i] = branchResult
+					}
+					wg.Done()
+				})
+			}
+			wg.Wait(ctx)
+			// Merge branch results: concatenate non-empty results.
+			merged := mergeBranchResults(branchResults)
+			if merged != "" {
+				accumulated = merged
+			}
+			// Continue from the join node's outgoing edge.
+			if joinID != "" {
+				currentID = firstEdgeTarget(outEdgesBySource[joinID])
+			} else {
+				currentID = ""
+			}
+			continue
+
+		case "join":
+			// Join nodes are consumed inside walkBranch; reaching one in the main
+			// loop means a bare join with no preceding fork — treat as pass-through.
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 
@@ -621,6 +660,88 @@ func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input Final
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// findJoinNode walks the outgoing branches of a fork to locate the first join node
+// reachable from any branch. All branches in a well-formed canvas converge on the same join.
+func findJoinNode(branches []AppFlowEdge, nodeByID map[string]*AppFlowNode, outEdges map[string][]AppFlowEdge) string {
+	for _, branch := range branches {
+		cur := branch.Target
+		visited := make(map[string]bool)
+		for cur != "" && !visited[cur] {
+			visited[cur] = true
+			n, ok := nodeByID[cur]
+			if !ok {
+				break
+			}
+			if n.Kind == "join" {
+				return cur
+			}
+			cur = firstEdgeTarget(outEdges[cur])
+		}
+	}
+	return ""
+}
+
+// walkBranch executes nodes along a single fork branch starting at startID,
+// stopping when it reaches stopID (the join node) or a dead end.
+// Returns the final accumulated text for this branch.
+func walkBranch(
+	ctx workflow.Context,
+	startID, stopID string,
+	nodeByID map[string]*AppFlowNode,
+	outEdges map[string][]AppFlowEdge,
+	input AppFlowWorkflowInput,
+	initialMsg string,
+	ao, shortAO workflow.ActivityOptions,
+) (string, error) {
+	accumulated := initialMsg
+	curID := startID
+	for curID != "" && curID != stopID {
+		node, ok := nodeByID[curID]
+		if !ok {
+			return accumulated, fmt.Errorf("branch: node %q not found", curID)
+		}
+		switch node.Kind {
+		case "agent":
+			var agentOut AgentInvokeActivityOutput
+			agentCtx := workflow.WithActivityOptions(ctx, ao)
+			err := workflow.ExecuteActivity(agentCtx, AppFlowInvokeAgentActivityName, AgentInvokeActivityInput{
+				RunID:         input.RunID,
+				TenantID:      input.TenantID,
+				ApplicationID: input.ApplicationID,
+				NodeID:        node.ID,
+				AgentID:       node.AgentID,
+				UserMessage:   accumulated,
+			}).Get(agentCtx, &agentOut)
+			if err != nil {
+				return accumulated, fmt.Errorf("branch agent %q: %w", node.ID, err)
+			}
+			if agentOut.ResponseText != "" {
+				accumulated = agentOut.ResponseText
+			}
+			curID = firstEdgeTarget(outEdges[node.ID])
+		case "orchestrator", "middleware":
+			curID = firstEdgeTarget(outEdges[node.ID])
+		case "join":
+			// Reached join — stop this branch.
+			return accumulated, nil
+		default:
+			return accumulated, fmt.Errorf("branch: unsupported node kind %q at %q", node.Kind, node.ID)
+		}
+	}
+	return accumulated, nil
+}
+
+// mergeBranchResults concatenates non-empty branch results with a newline separator.
+func mergeBranchResults(results []string) string {
+	var parts []string
+	for _, r := range results {
+		if r != "" {
+			parts = append(parts, r)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
 
 // findEdgeByLabel returns the Target of the first edge whose Label matches label
 // (case-insensitive). Returns "" if no match.

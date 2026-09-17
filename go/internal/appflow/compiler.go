@@ -34,7 +34,7 @@ type EPFlow struct {
 // AppFlowNode represents one node in the application flow graph.
 type AppFlowNode struct {
 	ID       string          `json:"id"`
-	Kind     string          `json:"kind"`      // "agent" | "middleware" | "router" | "hil"
+	Kind     string          `json:"kind"`      // "agent" | "middleware" | "router" | "hil" | "fork" | "join"
 	AgentID  string          `json:"agent_id,omitempty"`  // for kind=agent: resolved agents.id
 	Config   json.RawMessage `json:"config,omitempty"`
 }
@@ -288,6 +288,10 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 			node.Kind = "router"
 		case "hil":
 			node.Kind = "hil"
+		case "fork":
+			node.Kind = "fork"
+		case "join":
+			node.Kind = "join"
 		default:
 			node.Kind = "flow_control"
 		}
@@ -393,10 +397,12 @@ func Validate(spec *AppFlowSpec) []ValidationError {
 			nodeByID[ep.Nodes[i].ID] = &ep.Nodes[i]
 		}
 
-		// Check router nodes have at least one outgoing edge.
+		// Count outgoing and incoming edges per node.
 		outCount := make(map[string]int)
+		inCount := make(map[string]int)
 		for _, e := range ep.Edges {
 			outCount[e.Source]++
+			inCount[e.Target]++
 		}
 
 		for _, n := range ep.Nodes {
@@ -404,6 +410,20 @@ func Validate(spec *AppFlowSpec) []ValidationError {
 				errs = append(errs, ValidationError{
 					Code:       "router_no_edges",
 					Message:    "router node has no outgoing edges",
+					InstanceID: n.ID,
+				})
+			}
+			if n.Kind == "fork" && outCount[n.ID] < 2 {
+				errs = append(errs, ValidationError{
+					Code:       "fork_insufficient_branches",
+					Message:    fmt.Sprintf("fork node has %d outgoing edge(s); need ≥2", outCount[n.ID]),
+					InstanceID: n.ID,
+				})
+			}
+			if n.Kind == "join" && inCount[n.ID] < 2 {
+				errs = append(errs, ValidationError{
+					Code:       "join_insufficient_branches",
+					Message:    fmt.Sprintf("join node has %d incoming edge(s); need ≥2", inCount[n.ID]),
 					InstanceID: n.ID,
 				})
 			}

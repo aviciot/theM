@@ -187,6 +187,59 @@ func TestInvokeAgentActivity_NilInvoker(t *testing.T) {
 	}
 }
 
+// AF-WF-07: findJoinNode locates the join from a fork's branches.
+func TestFindJoinNode_Basic(t *testing.T) {
+	nodeByID := map[string]*AppFlowNode{
+		"agent_a": {ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+		"agent_b": {ID: "agent_b", Kind: "agent", AgentID: "uuid-b"},
+		"join_1":  {ID: "join_1", Kind: "join"},
+	}
+	outEdges := map[string][]AppFlowEdge{
+		"agent_a": {{Source: "agent_a", Target: "join_1"}},
+		"agent_b": {{Source: "agent_b", Target: "join_1"}},
+	}
+	branches := []AppFlowEdge{
+		{Source: "fork_1", Target: "agent_a"},
+		{Source: "fork_1", Target: "agent_b"},
+	}
+	got := findJoinNode(branches, nodeByID, outEdges)
+	if got != "join_1" {
+		t.Errorf("findJoinNode: want join_1, got %q", got)
+	}
+}
+
+// AF-WF-08: findJoinNode returns "" when no join node is reachable.
+func TestFindJoinNode_NoJoin(t *testing.T) {
+	nodeByID := map[string]*AppFlowNode{
+		"agent_a": {ID: "agent_a", Kind: "agent", AgentID: "uuid-a"},
+	}
+	outEdges := map[string][]AppFlowEdge{}
+	branches := []AppFlowEdge{{Source: "fork_1", Target: "agent_a"}}
+	got := findJoinNode(branches, nodeByID, outEdges)
+	if got != "" {
+		t.Errorf("findJoinNode: want empty, got %q", got)
+	}
+}
+
+// AF-WF-09: mergeBranchResults joins non-empty strings with newline.
+func TestMergeBranchResults(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"a", "b"}, "a\nb"},
+		{[]string{"a", "", "c"}, "a\nc"},
+		{[]string{"", ""}, ""},
+		{[]string{"only"}, "only"},
+	}
+	for _, tc := range cases {
+		got := mergeBranchResults(tc.in)
+		if got != tc.want {
+			t.Errorf("mergeBranchResults(%v): want %q, got %q", tc.in, tc.want, got)
+		}
+	}
+}
+
 func TestFinalizeRunActivityInput_JSONRoundTrip(t *testing.T) {
 	in := FinalizeRunActivityInput{
 		RunID:     "run-5",

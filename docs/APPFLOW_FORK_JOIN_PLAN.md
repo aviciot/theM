@@ -52,41 +52,41 @@ Temporal's `workflow.Go` + channels handle the parallel execution.
 
 | Task | Status | Notes |
 |---|---|---|
-| `compiler.go`: add `fork` and `join` node kinds to `compileNode` | ⬜ | |
-| `compiler.go`: validate fork has ≥2 outgoing edges | ⬜ | |
-| `compiler.go`: validate join has ≥2 incoming edges | ⬜ | |
-| `workflow.go`: fork handling — launch parallel `workflow.Go` per branch | ⬜ | |
-| `workflow.go`: join handling — wait for all branches, collect results | ⬜ | |
-| `workflow.go`: pass merged results as context to next node after join | ⬜ | |
-| Tests: compiler fork/join topology | ⬜ | |
-| Tests: workflow parallel branch execution | ⬜ | |
-| `go test ./internal/appflow/...` passes | ⬜ | |
-| `go test ./...` full suite passes | ⬜ | |
-| TEST_INDEX.md updated | ⬜ | |
+| `compiler.go`: add `fork` and `join` node kinds to `compileNode` | ✅ | |
+| `compiler.go`: validate fork has ≥2 outgoing edges | ✅ | |
+| `compiler.go`: validate join has ≥2 incoming edges | ✅ | |
+| `workflow.go`: fork handling — launch parallel `workflow.Go` per branch | ✅ | |
+| `workflow.go`: join handling — wait for all branches, collect results | ✅ | |
+| `workflow.go`: pass merged results as context to next node after join | ✅ | |
+| Tests: compiler fork/join topology | ✅ | AF-11..14 |
+| Tests: workflow parallel branch execution | ✅ | AF-WF-07..09 |
+| `go test ./internal/appflow/...` passes | ✅ | 29/29 |
+| `go test ./...` full suite passes | ✅ | zero failures |
+| TEST_INDEX.md updated | ✅ | S1 total: 1193 |
 
 ### Frontend
 
 | Task | Status | Notes |
 |---|---|---|
-| `apiTypes.ts`: add `'fork'` and `'join'` to flow_control connection type union | ⬜ | |
-| `types.ts`: extend `FlowControlNodeData` with fork/join variants | ⬜ | |
-| `CanvasNodes.tsx`: `FC_META` entries for fork (🔀) and join (🔗) | ⬜ | |
-| `CanvasNodes.tsx`: `ForkNode` / `JoinNode` visual components | ⬜ | |
-| `CanvasBuilderView.tsx`: Fork + Join in Flow Control palette | ⬜ | |
-| `CanvasHelpers.ts`: `canvasToDoc` handles fork/join serialization | ⬜ | |
-| `CanvasHelpers.ts`: `docToCanvas` restores fork/join nodes | ⬜ | |
-| `CanvasHelpers.ts`: `genInstanceId` handles `'fork'` and `'join'` | ⬜ | |
-| TypeScript compiles clean (`npx tsc --noEmit`) | ⬜ | |
-| Frontend rebuilt and running | ⬜ | |
+| `apiTypes.ts`: add `'fork'` and `'join'` to flow_control connection type union | ✅ | handled via `types.ts` union (no separate apiTypes.ts change needed) |
+| `types.ts`: extend `FlowControlNodeData` with fork/join variants | ✅ | |
+| `CanvasNodes.tsx`: `FC_META` entries for fork (⑂) and join (⊕) | ✅ | |
+| `CanvasNodes.tsx`: `ForkNode` / `JoinNode` visual components | ✅ | reuse `FlowControlNode` via FC_META |
+| `CanvasBuilderView.tsx`: Fork + Join in Flow Control palette | ✅ | |
+| `CanvasHelpers.ts`: `canvasToDoc` handles fork/join serialization | ✅ | existing flowControl branch handles all node_type values |
+| `CanvasHelpers.ts`: `docToCanvas` restores fork/join nodes | ✅ | display name lookup table added |
+| `CanvasHelpers.ts`: `genInstanceId` handles `'fork'` and `'join'` | ✅ | `fc_` prefix used for all flow_control kinds |
+| TypeScript compiles clean (`npx tsc --noEmit`) | ✅ | |
+| Frontend rebuilt and running | ✅ | container restarted |
 
 ### E2E Test
 
 | Task | Status | Notes |
 |---|---|---|
-| `scripts/tests/test_41_appflow_fork_join.py` written | ⬜ | |
-| Test: fork → 2 agents in parallel → join → run completes | ⬜ | |
-| Test: verify both agents were called (check run steps or artifacts) | ⬜ | |
-| All checks pass | ⬜ | |
+| `scripts/tests/test_41_appflow_fork_join.py` written | ✅ | |
+| Test: fork → 2 agents in parallel → join → run completes | ✅ | run.status==completed check |
+| Test: verify both agents were called (check run steps or artifacts) | ✅ | run_steps COUNT ≥ 3 check |
+| All checks pass | ⬜ | needs live stack run |
 
 ### Docs & Cleanup
 

@@ -267,6 +267,8 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
 const FC_META: Record<string, { emoji: string; color: string; label: string }> = {
   router: { emoji: '🔀', color: '#06b6d4', label: 'Router' },
   hil:    { emoji: '✋', color: '#a855f7', label: 'Human-in-Loop' },
+  fork:   { emoji: '⑂',  color: '#f59e0b', label: 'Fork' },
+  join:   { emoji: '⊕',  color: '#10b981', label: 'Join' },
 };
 
 export function FlowControlNode({ id, data, selected }: { id: string; data: FlowControlNodeData; selected?: boolean }) {

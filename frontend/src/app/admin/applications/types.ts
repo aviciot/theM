@@ -174,7 +174,7 @@ export interface EpNodeData {
 export interface FlowControlNodeData {
   _kind: 'flow_control';
   instance_id: string;
-  node_type: 'router' | 'hil';
+  node_type: 'router' | 'hil' | 'fork' | 'join';
   display_name: string;
   config: Record<string, unknown>;
   _error?: boolean;

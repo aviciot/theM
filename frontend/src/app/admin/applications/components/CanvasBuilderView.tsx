@@ -354,9 +354,10 @@ export function CanvasBuilderView({
       const newNode: Node = { id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: id, display_name: cd.display_name, definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {}, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'flow_control' && payload.node_type) {
-      const nt = payload.node_type as 'router' | 'hil';
+      const nt = payload.node_type as 'router' | 'hil' | 'fork' | 'join';
       const id = genInstanceId('flow_control', nt, existingIds);
-      const displayName = nt === 'router' ? 'Router' : 'Human-in-Loop';
+      const fcDisplayNames: Record<string, string> = { router: 'Router', hil: 'Human-in-Loop', fork: 'Fork', join: 'Join' };
+      const displayName = fcDisplayNames[nt] ?? nt;
       const newNode: Node = { id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: id, node_type: nt, display_name: displayName, config: {} } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'entryPoint' && payload.protocol) {
@@ -508,6 +509,8 @@ export function CanvasBuilderView({
             {([
               { node_type: 'router' as const, emoji: '🔀', label: 'Router', desc: 'Route to one of multiple agents based on message intent', color: '6,182,212' },
               { node_type: 'hil'    as const, emoji: '✋', label: 'Human-in-Loop', desc: 'Pause flow for human decision before continuing', color: '168,85,247' },
+              { node_type: 'fork'   as const, emoji: '⑂',  label: 'Fork', desc: 'Split into parallel branches, each running an agent concurrently', color: '245,158,11' },
+              { node_type: 'join'   as const, emoji: '⊕',  label: 'Join', desc: 'Wait for all parallel branches to complete and merge results', color: '16,185,129' },
             ]).map(fc => (
               <div
                 key={fc.node_type}

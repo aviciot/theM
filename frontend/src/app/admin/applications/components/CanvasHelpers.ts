@@ -184,7 +184,8 @@ export function docToCanvas(
       nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'flow_control') {
       const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
-      const displayName = (c.config.display_name as string) || (nodeType === 'router' ? 'Router' : 'Human-in-Loop');
+      const defaultDisplayName: Record<string, string> = { router: 'Router', hil: 'Human-in-Loop', fork: 'Fork', join: 'Join' };
+      const displayName = (c.config.display_name as string) || defaultDisplayName[nodeType] || nodeType;
       nodes.push({ id: c.instance_id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: c.instance_id, node_type: nodeType, display_name: displayName, config: c.config } as unknown as Record<string, unknown> });
     }
   });
