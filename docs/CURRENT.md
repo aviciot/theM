@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-17 (App Canvas Upgrade Phase 3 — FULLY COMPLETE: A2A v1.0 fix + full canvas E2E 17/17)
+# Last updated: 2026-09-17 (AppFlow Phase A — Fork/Join parallel branch execution — FULLY COMPLETE: E2E 13/13)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-HEAD: (see `git log --oneline -1` after the commit below is made)
+HEAD: `67c2cd6b`
 
 Recent commits (newest first):
 ```
-(pending)  fix(appflow): A2A v1.0 wire format in dag-worker InvokeByID; add test_40 canvas E2E (17/17 pass)
-45206503  fix(hil): grant DB permissions, make temporal signal non-fatal, add E2E test
-4dc372d0  feat(appflow): real agent invocation — InvokeAgentActivity + pgxAgentA2ACaller
-b3fe3841  feat(hil): HIL approval API — POST /runs/{id}/hil/{node}/approve|reject
-b7f4c83f  fix(appflow): centralize finalization, fix XAdd swallow, stamp resolved agent IDs, wire orchestrator LLM config
+67c2cd6b  docs(lessons): workflow.NewWaitGroup required; zero-value panics
+f9885e74  fix(appflow): use workflow.NewWaitGroup; fix E2E test URL and DB column
+30597bc4  feat(appflow): Phase A — Fork/Join parallel branch execution
+b1887f3c  fix(playground): Temporal link searches by run_id; fix external JWT test user
+4b3c55c7  fix(appflow): A2A v1.0 wire format in dag-worker; add full canvas E2E test (17/17)
 ```
 
 ---
@@ -46,6 +46,25 @@ Key facts:
 
 ## Current migration slice
 
+**AppFlow Phase A — Fork/Join Parallel Branch Execution — FULLY COMPLETE**
+
+All Phase A items complete as of 2026-09-17. E2E test passes (13/13). See `docs/APPFLOW_FORK_JOIN_PLAN.md`.
+
+**What's done:**
+- `go/internal/appflow/compiler.go`: `fork` and `join` added to `compileNode` switch; `Validate()` checks fork≥2 outgoing edges, join≥2 incoming edges. ✅
+- `go/internal/appflow/workflow.go`: Fork case — `workflow.NewWaitGroup(ctx)` + `workflow.Go` per branch + `walkBranch` helper. Join case — pass-through (branches stop at join node). `mergeBranchResults` joins non-empty branch results with `"\n"`. After join, main loop continues from first edge out of join node. ✅
+- Frontend: `FC_META` extended with fork (⑂ amber) and join (⊕ green); palette entries added; `docToCanvas` display name lookup updated. ✅
+- Tests: AF-11..14 (compiler), AF-WF-07..09 (workflow helpers); 29/29 appflow tests pass. `go test ./...` — zero failures. ✅
+- E2E: `scripts/tests/test_41_appflow_fork_join.py` — 13/13 checks pass. ✅
+- `docs/LESSONS.md`: entry added — `workflow.WaitGroup` must be created with `workflow.NewWaitGroup(ctx)` (zero-value panics at .Add(1)). ✅
+- Both `them-go-bridge` (51 MB, Sep 17 10:56) and `them-dag-worker` (43 MB, Sep 17 11:00) rebuilt and running with fork/join code. ✅
+
+**Critical lesson from this phase:** After rebuilding a Go binary in Docker, you MUST use `docker compose up -d --force-recreate <service>` — `docker compose build + restart` does NOT force the container to use the new image. See `docs/LESSONS.md`.
+
+**Next recommended task:** Phase B — Temporal execution controls (max concurrent workflows, timeouts, retries). Two levels: platform defaults in `config` table + per-app overrides in new `app_temporal_config` table. UI: platform admin settings + app Runtime "Temporal" tab.
+
+---
+
 **App Canvas Upgrade — Phase 3 (AppFlow DAG execution) — FULLY COMPLETE**
 
 All Phase 3 items complete as of 2026-09-17. Full canvas E2E test passes (17/17).
@@ -69,8 +88,6 @@ All Phase 3 items complete as of 2026-09-17. Full canvas E2E test passes (17/17)
 - `go/cmd/dag-worker/main.go`: `InvokeByID` fixed to A2A v1.0 wire format (`SendMessage`, `ROLE_USER`, `A2A-Version: 1.0` header, no `kind` field in parts). Response parsed from `result.task.artifacts[].parts[].text`. ✅
 - E2E: `scripts/tests/test_40_appflow_canvas_e2e.py` — 17/17 checks pass (create app+EP+def, publish, WS session, HIL pause, approve, run completed). ✅
 - Both `them-go-bridge` and `them-dag-worker` rebuilt and running. ✅
-
-**Next recommended task:** Phase 4 — canvas observability / run inspection, or next feature as directed.
 
 **App Canvas Upgrade — Phase 2 (Router + HIL flow control nodes) — COMPLETE**
 

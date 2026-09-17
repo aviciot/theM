@@ -1,6 +1,6 @@
 # AppFlow Phase A — Fork/Join Parallel Execution
 # Created: 2026-09-17
-# Status: IN PROGRESS
+# Status: COMPLETE (2026-09-17)
 
 ---
 
@@ -86,15 +86,15 @@ Temporal's `workflow.Go` + channels handle the parallel execution.
 | `scripts/tests/test_41_appflow_fork_join.py` written | ✅ | |
 | Test: fork → 2 agents in parallel → join → run completes | ✅ | run.status==completed check |
 | Test: verify both agents were called (check run steps or artifacts) | ✅ | run_steps COUNT ≥ 3 check |
-| All checks pass | ⬜ | needs live stack run |
+| All checks pass | ✅ | 13/13 pass |
 
 ### Docs & Cleanup
 
 | Task | Status | Notes |
 |---|---|---|
-| `docs/CURRENT.md` updated with Phase A complete | ⬜ | |
-| `docs/HANDOVER_APP_CANVAS.md` updated | ⬜ | |
-| Committed with clear message | ⬜ | |
+| `docs/CURRENT.md` updated with Phase A complete | ✅ | |
+| `docs/HANDOVER_APP_CANVAS.md` updated | ✅ | covered in CURRENT.md |
+| Committed with clear message | ✅ | HEAD 67c2cd6b |
 
 ---
 
