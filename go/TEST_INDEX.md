@@ -231,9 +231,16 @@ without touching the database.
 | `TestValidateDefinition_EmbeddedSecret_ReturnsError` | secret_value key → valid=false (structural_error) |
 | `TestValidateDefinition_DefinitionNotFound_ReturnsErrNotFound` | Missing defID → ErrNotFound (not a report) |
 | `TestValidateDefinition_WrongTenant_ReturnsErrNotFound` | DAL returns pgx.ErrNoRows → ErrNotFound |
+| PUB-IN-01 `TestValidateDefinition_InlineKindSkipsRegistry` | `kind:"inline"` needs no `component_definitions` row — no component_not_found (isBuiltinKind exemption) |
+| PUB-IN-02 `TestValidateDefinition_InlineMissingVersion` | `version:0` on an inline component still → missing_version; the builtin exemption does NOT bypass structural checks |
+| PUB-IN-03 `TestValidateDefinition_CompilerErrorsSurfaced` | temporal backend + condition with 1 outgoing edge → valid=false with code=condition_edge_count (appflow.Validate now runs at validate time) |
+| PUB-IN-04 `TestValidateDefinition_LocalBackendSkipsCompilerRules` | the SAME fixture with `execution_backend:"local"` → valid=true; proves the temporal gate protects local apps from graph rules |
+| PUB-IN-05 `TestValidateDefinition_UnresolvedAgentFiltered` | agent node on a draft does NOT report unresolved_agent (`_resolved_agent_ids` is stamped during publish, not before) |
 
 **Trigger:** any change to `internal/admin/service/publish.go`, `internal/admin/service/definitions.go`,
-`internal/admin/dal/publish.go`, or `internal/registry/`
+`internal/admin/dal/publish.go`, `internal/appflow/validate.go` (its codes now surface through this
+endpoint), or `internal/registry/`. A new `definition_ref.kind` implemented in code rather than the
+DB registry MUST be added to `isBuiltinKind` or every publish containing it fails.
 
 ---
 
@@ -3430,7 +3437,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping + Step 32 user management + Step 33 two-tenant regression) | 83 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
-| S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
+| S1-43 | admin definitions validate (Phase C: ValidateDefinition; PUB-IN-01..05: inline builtin-kind exemption, compiler rules surfaced at validate time, temporal gate, unresolved_agent filter) | 15 |
 | S1-44 | admin definitions publish (Phase C: PublishDefinition) | 12 |
 | S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
 | S1-46 | history (DB role mapping + round-trip) | 4 |
@@ -3497,7 +3504,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
 | S1-114 | Temporal execution controls — service (TC-SVC-1..9): GetPlatformConfig_NoRow_Defaults, StoredRow_Merges, DALError_Propagates, PutPlatform_ValidInput, PutPlatform_InvalidRetry, PutPlatform_ZeroConcurrent, Merge_AppOverrides, Merge_NilAppFallsThrough, Merge_BothNilDefaults; handler (TC-1..4): GetPlatform_NoRow_200+defaults, PutPlatform_Valid_200, NegativeRetry_422, BadJSON_400 | 13 |
 | S1-115 | AppFlow inline node config + template helpers (AF-IN-01..06 + AF-IN-02b): render/substitution, missing-var zero-value, UI-advertised condition expression forms, parse error, isTruthy table, config JSON round trips | 7 |
-| **S1 total** | | **1231** |
+| **S1 total** | | **1236** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

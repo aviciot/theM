@@ -7,8 +7,19 @@ import (
 	"fmt"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/registry"
 )
+
+// builtinKinds are definition_ref kinds implemented in code rather than
+// registered in them.component_definitions. They are exempt from registry
+// resolution at validate and publish time.
+//
+//	flow_control — router, hil, fork, join (graph topology)
+//	inline       — llm, condition (self-contained execution nodes)
+func isBuiltinKind(kind string) bool {
+	return kind == "flow_control" || kind == "inline"
+}
 
 // ── RegistryResolver interface ────────────────────────────────────────────────
 
@@ -43,6 +54,10 @@ type appDefinitionDoc struct {
 	Components  []componentInstance  `json:"components"`
 	EntryPoints []entryPointInstance `json:"entry_points"`
 	Connections []connectionDef      `json:"connections"`
+	// ExecutionBackend selects the runtime ("" / "local" / "temporal"). Only
+	// "temporal" canvases execute the compiled AppFlow graph — see the
+	// compiler-level validation block in validateDoc below.
+	ExecutionBackend string `json:"execution_backend,omitempty"`
 }
 
 type componentInstance struct {
@@ -172,9 +187,9 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 		}
 
 		// Registry resolution (skip if no registry wired — test mode).
-		// flow_control nodes (router, hil) are builtins — no DB registry entry.
+		// Builtin kinds (flow_control, inline) have no DB registry entry.
 		// definition_id is intentionally ignored — resolve by stable ref only.
-		if s.registry != nil && string(comp.DefinitionRef.Kind) != "flow_control" {
+		if s.registry != nil && !isBuiltinKind(string(comp.DefinitionRef.Kind)) {
 			_, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, "")
 			if resolveErr != nil {
 				code := "component_not_found"
@@ -245,6 +260,32 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 		}
 	}
 
+	// Compiler-level structural validation. Only meaningful for canvases that
+	// execute as an AppFlow graph; a local-backend app ignores the graph entirely
+	// (§4.1) so applying graph rules to it would block operators on rules that
+	// don't apply and could regress existing local apps.
+	if doc.ExecutionBackend == "temporal" {
+		// Agent resolution is not available pre-publish (_resolved_agent_ids is
+		// stamped DURING publish — see dal/publish.go), so compile with an empty
+		// agent map and drop unresolved_agent: every agent node would otherwise
+		// report unresolved on a draft, and agent identity is already covered by
+		// the registry resolution loop above. Compile errors (malformed JSON, bad
+		// schema_version) are ignored here — the existing checks above report
+		// those with better messages.
+		if spec, cErr := appflow.Compile(raw, map[string]string{}); cErr == nil {
+			for _, ve := range appflow.Validate(spec) {
+				if ve.Code == "unresolved_agent" {
+					continue
+				}
+				errs = append(errs, ValidationError{
+					InstanceID: ve.InstanceID,
+					Code:       ve.Code,
+					Message:    ve.Message,
+				})
+			}
+		}
+	}
+
 	return &ValidationReport{Valid: len(errs) == 0, Errors: errs}, nil
 }
 
@@ -290,10 +331,10 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	}
 
 	// 4. Resolve component definitions.
-	// flow_control (router, hil) are builtins — no registry entry, skip.
+	// Builtin kinds (flow_control, inline) have no registry entry, skip.
 	resolved := make(map[string]*registry.ComponentDefinition, len(doc.Components))
 	for _, comp := range doc.Components {
-		if s.registry == nil || string(comp.DefinitionRef.Kind) == "flow_control" {
+		if s.registry == nil || isBuiltinKind(string(comp.DefinitionRef.Kind)) {
 			continue
 		}
 		cd, resolveErr := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, "")

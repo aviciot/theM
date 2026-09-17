@@ -858,3 +858,47 @@ docker compose ... up -d --force-recreate them-go-worker them-go-worker-2
 **Fix:** Always use `wg := workflow.NewWaitGroup(ctx)` to obtain a properly initialized WaitGroup.
 
 **Watch for:** Any parallel fork pattern in Temporal workflows. `sync.WaitGroup` (stdlib) is NOT usable in workflows — use `workflow.NewWaitGroup(ctx)` everywhere.
+
+## Publish/validate skips the DB registry via a hardcoded kind check (2026-09-17)
+
+`ValidateDefinition` and `PublishDefinition` resolve every canvas component against
+`them.component_definitions`. Components implemented in code have no such row, and the
+exemption was a hardcoded string compare in **two** places in
+`go/internal/admin/service/publish.go` — `!= "flow_control"` in the validate loop and again in
+the publish projection loop.
+
+**Consequence:** adding a new `definition_ref.kind` (we added `"inline"` for LLM/Condition nodes)
+makes every publish containing that kind fail with `component_not_found`, even though the node
+is perfectly valid. The failure is confusing because it points at the registry, not at the
+missing exemption.
+
+**Fix:** both sites now call one helper, `isBuiltinKind(kind string) bool`
+(`flow_control` | `inline`), so the exemption list has a single home.
+
+**Watch for:** any new canvas node family implemented in Go rather than registered in the DB.
+Add its kind to `isBuiltinKind` in the same commit, and note that the exemption must NOT bypass
+structural checks — `version: 0` on a builtin still has to fail `missing_version` (test PUB-IN-02).
+
+## Canvas topology errors were invisible until the first connection (2026-09-17)
+
+`appflow.Compile` / `appflow.Validate` were called from exactly two places, both at request
+time (`internal/ws/handler.go`, `internal/sse/handler.go`). The admin validate and publish
+endpoints never ran them. `internal/admin/` imported `appflow` only in `hil_approvals.go`.
+
+**Consequence:** a canvas with a 1-branch fork, a router with no outgoing edges, or (now) a
+condition node missing its true/false edges would validate clean, publish clean, and then fail
+at the first user connection — surfacing to the end user as "failed to start appflow workflow"
+rather than to the builder who could fix it.
+
+**Fix:** `validateDoc` now runs `appflow.Compile` + `appflow.Validate` and merges the codes into
+the report, which the canvas already maps onto the offending node via `instance_id`
+(`_error` / `_errorMsg` → red ring + tooltip). Two deliberate constraints:
+- **Gated on `execution_backend == "temporal"`.** A local-backend app does not execute the graph
+  at all, so graph rules must not block it (test PUB-IN-04 pins this with the same fixture).
+- **`unresolved_agent` is filtered.** `_resolved_agent_ids` is stamped *during* publish
+  (`dal/publish.go`), so it is absent on a draft and every agent node would report unresolved.
+  Agent identity is already covered by the registry resolution loop.
+
+**Watch for:** adding a validation code to `appflow.Validate` now changes publish behaviour for
+existing Temporal-backend apps. That is usually what you want, but it can reject a canvas that
+published fine yesterday — call it out in the deploy notes.

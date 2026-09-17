@@ -69,8 +69,8 @@ func (r *fakeRegistry) ResolveForPublish(ctx context.Context, tenantID string, r
 // and supports returning controlled errors.
 type publishFakeDal struct {
 	// GetDefinition control
-	defByID       map[string]dal.AppDefinition
-	getDefErr     error
+	defByID   map[string]dal.AppDefinition
+	getDefErr error
 
 	// PublishDefinition control
 	publishResult dal.PublishResult
@@ -107,7 +107,7 @@ func newPublishFakeDal() *publishFakeDal {
 func (f *publishFakeDal) GetAppTenantID(_ context.Context, _ string) (string, error) {
 	return "00000000-0000-0000-0000-000000000001", nil
 }
-func (f *publishFakeDal) GetNextRevision(_ context.Context, _ string) (int, error)      { return 1, nil }
+func (f *publishFakeDal) GetNextRevision(_ context.Context, _ string) (int, error) { return 1, nil }
 func (f *publishFakeDal) CreateDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
 	return "def-id", nil
 }
@@ -151,71 +151,175 @@ func (f *publishFakeDal) DeactivateStaleEntryPoints(_ context.Context, _, _, _ s
 }
 
 // Remaining Dal interface methods — stubs only (not exercised in publish tests).
-func (f *publishFakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error)  { return nil, nil }
-func (f *publishFakeDal) GetAgent(_ context.Context, _, _ string) (dal.Agent, error)   { return dal.Agent{}, nil }
-func (f *publishFakeDal) CreateAgent(_ context.Context, _ string, _ dal.AgentInput, _ bool) (string, error) { return "", nil }
-func (f *publishFakeDal) UpdateAgent(_ context.Context, _, _ string, _ dal.AgentInput, _ bool) error { return nil }
-func (f *publishFakeDal) DeleteAgent(_ context.Context, _, _ string) error              { return nil }
+func (f *publishFakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetAgent(_ context.Context, _, _ string) (dal.Agent, error) {
+	return dal.Agent{}, nil
+}
+func (f *publishFakeDal) CreateAgent(_ context.Context, _ string, _ dal.AgentInput, _ bool) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) UpdateAgent(_ context.Context, _, _ string, _ dal.AgentInput, _ bool) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteAgent(_ context.Context, _, _ string) error      { return nil }
 func (f *publishFakeDal) AgentExists(_ context.Context, _ string) (bool, error) { return true, nil }
-func (f *publishFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) { return dal.Agent{}, nil }
-func (f *publishFakeDal) UpdateAgentScanResult(_ context.Context, _ string, _ []byte) error { return nil }
-func (f *publishFakeDal) GetAgentByID(_ context.Context, _ string) (dal.Agent, error)  { return dal.Agent{}, nil }
-func (f *publishFakeDal) GetAgentTokenEncrypted(_ context.Context, _ string) (string, error) { return "", nil }
-func (f *publishFakeDal) ListOrchestrators(_ context.Context, _ string) ([]dal.Orchestrator, error) { return nil, nil }
-func (f *publishFakeDal) GetOrchestrator(_ context.Context, _, _ string) (dal.Orchestrator, error) { return dal.Orchestrator{}, nil }
-func (f *publishFakeDal) CreateOrchestrator(_ context.Context, _ string, _ dal.OrchestratorInput, _ bool) (string, error) { return "", nil }
-func (f *publishFakeDal) UpdateOrchestrator(_ context.Context, _, _ string, _ dal.OrchestratorInput, _ bool) error { return nil }
-func (f *publishFakeDal) DeleteOrchestrator(_ context.Context, _, _ string) error      { return nil }
-func (f *publishFakeDal) ListApplications(_ context.Context, _ string) ([]dal.Application, error) { return nil, nil }
-func (f *publishFakeDal) GetApplication(_ context.Context, _, _ string) (dal.Application, error) { return dal.Application{}, nil }
-func (f *publishFakeDal) CreateApplication(_ context.Context, _, _, _ string, _ bool) (string, error) { return "", nil }
-func (f *publishFakeDal) UpdateApplication(_ context.Context, _, _, _, _ string, _ bool) error { return nil }
+func (f *publishFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
+	return dal.Agent{}, nil
+}
+func (f *publishFakeDal) UpdateAgentScanResult(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+func (f *publishFakeDal) GetAgentByID(_ context.Context, _ string) (dal.Agent, error) {
+	return dal.Agent{}, nil
+}
+func (f *publishFakeDal) GetAgentTokenEncrypted(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) ListOrchestrators(_ context.Context, _ string) ([]dal.Orchestrator, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetOrchestrator(_ context.Context, _, _ string) (dal.Orchestrator, error) {
+	return dal.Orchestrator{}, nil
+}
+func (f *publishFakeDal) CreateOrchestrator(_ context.Context, _ string, _ dal.OrchestratorInput, _ bool) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) UpdateOrchestrator(_ context.Context, _, _ string, _ dal.OrchestratorInput, _ bool) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteOrchestrator(_ context.Context, _, _ string) error { return nil }
+func (f *publishFakeDal) ListApplications(_ context.Context, _ string) ([]dal.Application, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
+	return dal.Application{}, nil
+}
+func (f *publishFakeDal) CreateApplication(_ context.Context, _, _, _ string, _ bool) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) UpdateApplication(_ context.Context, _, _, _, _ string, _ bool) error {
+	return nil
+}
 func (f *publishFakeDal) DeleteApplication(_ context.Context, _, _ string) error       { return nil }
 func (f *publishFakeDal) ListEntryPoints(_ context.Context, _ string) []dal.EntryPoint { return nil }
-func (f *publishFakeDal) CreateEntryPoint(_ context.Context, _, _, _ string, _ bool) (string, error) { return "", nil }
-func (f *publishFakeDal) GetEntryPointSlug(_ context.Context, _, _ string) (string, error) { return "", nil }
-func (f *publishFakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug { return dal.EPTenantSlug{} }
-func (f *publishFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool) error { return nil }
-func (f *publishFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error { return nil }
-func (f *publishFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error        { return nil }
-func (f *publishFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string       { return nil }
-func (f *publishFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug { return nil }
-func (f *publishFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error { return nil }
-func (f *publishFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) { return nil, nil }
-func (f *publishFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) { return 0, nil }
-func (f *publishFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error)        { return []byte(`{}`), nil }
-func (f *publishFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error      { return nil }
-func (f *publishFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error              { return nil }
-func (f *publishFakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error         { return nil }
-func (f *publishFakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) { return map[string]string{}, nil }
-func (f *publishFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error          { return nil }
-func (f *publishFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
-func (f *publishFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error { return nil }
-func (f *publishFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error      { return nil }
-func (f *publishFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }
-func (f *publishFakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) { return nil, nil }
-func (f *publishFakeDal) GetRun(_ context.Context, _, _ string) (dal.Run, error)       { return dal.Run{}, nil }
-func (f *publishFakeDal) GetRunContextID(_ context.Context, _, _ string) (string, error) { return "", nil }
-func (f *publishFakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats, error) { return dal.RunStats{ByStatus: make(map[string]int), TotalCostUSD: "0"}, nil }
-func (f *publishFakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) { return dal.RunDetail{Steps: []dal.RunStep{}, Usage: []dal.RunUsage{}, Children: []dal.Run{}}, nil }
-func (f *publishFakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Task, error)  { return nil, nil }
-func (f *publishFakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) { return nil, nil }
-func (f *publishFakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) { return []dal.GuardEvent{}, nil }
-func (f *publishFakeDal) GetAppGuardHealth(_ context.Context, _ string) (dal.AppGuardHealth, error) { return dal.AppGuardHealth{Agents: []dal.GuardAgentRow{}}, nil }
-func (f *publishFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) { return nil, nil }
-func (f *publishFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) { return nil, nil }
-func (f *publishFakeDal) GetContextMessages(_ context.Context, _, _ string, _ int) ([]dal.ContextMessage, error) { return nil, nil }
-func (f *publishFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error)    { return dal.Run{}, nil }
-func (f *publishFakeDal) DeleteRun(_ context.Context, _, _ string) error               { return nil }
-func (f *publishFakeDal) BulkDeleteRuns(_ context.Context, _ string, ids []string) (int64, error) { return int64(len(ids)), nil }
-func (f *publishFakeDal) ListTokens(_ context.Context, _ string, _ *int64) ([]dal.Token, error) { return nil, nil }
-func (f *publishFakeDal) GetToken(_ context.Context, _, _ string) (dal.Token, error)   { return dal.Token{}, nil }
-func (f *publishFakeDal) OrchestratorExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
-func (f *publishFakeDal) CreateToken(_ context.Context, _ string, _ dal.TokenCreateRow) (dal.Token, error) { return dal.Token{}, nil }
-func (f *publishFakeDal) UpdateToken(_ context.Context, _, _ string, _ dal.TokenPatchRow) (string, dal.Token, error) { return "", dal.Token{}, nil }
-func (f *publishFakeDal) DeleteToken(_ context.Context, _, _ string) (string, error)   { return "", nil }
-func (f *publishFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) { return nil, nil }
-func (f *publishFakeDal) UpsertConfig(_ context.Context, _ string, _ []byte) error     { return nil }
+func (f *publishFakeDal) CreateEntryPoint(_ context.Context, _, _, _ string, _ bool) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) GetEntryPointSlug(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug {
+	return dal.EPTenantSlug{}
+}
+func (f *publishFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool) error {
+	return nil
+}
+func (f *publishFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error  { return nil }
+func (f *publishFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return nil }
+func (f *publishFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug {
+	return nil
+}
+func (f *publishFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
+func (f *publishFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
+	return 0, nil
+}
+func (f *publishFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+func (f *publishFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error     { return nil }
+func (f *publishFakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error { return nil }
+func (f *publishFakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (f *publishFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error { return nil }
+func (f *publishFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error {
+	return nil
+}
+func (f *publishFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error {
+	return nil
+}
+func (f *publishFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error {
+	return nil
+}
+func (f *publishFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error {
+	return nil
+}
+func (f *publishFakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetRun(_ context.Context, _, _ string) (dal.Run, error) {
+	return dal.Run{}, nil
+}
+func (f *publishFakeDal) GetRunContextID(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats, error) {
+	return dal.RunStats{ByStatus: make(map[string]int), TotalCostUSD: "0"}, nil
+}
+func (f *publishFakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) {
+	return dal.RunDetail{Steps: []dal.RunStep{}, Usage: []dal.RunUsage{}, Children: []dal.Run{}}, nil
+}
+func (f *publishFakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Task, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetRunGuardEvents(_ context.Context, _, _ string) ([]dal.GuardEvent, error) {
+	return []dal.GuardEvent{}, nil
+}
+func (f *publishFakeDal) GetAppGuardHealth(_ context.Context, _ string) (dal.AppGuardHealth, error) {
+	return dal.AppGuardHealth{Agents: []dal.GuardAgentRow{}}, nil
+}
+func (f *publishFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetContextMessages(_ context.Context, _, _ string, _ int) ([]dal.ContextMessage, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
+	return dal.Run{}, nil
+}
+func (f *publishFakeDal) DeleteRun(_ context.Context, _, _ string) error { return nil }
+func (f *publishFakeDal) BulkDeleteRuns(_ context.Context, _ string, ids []string) (int64, error) {
+	return int64(len(ids)), nil
+}
+func (f *publishFakeDal) ListTokens(_ context.Context, _ string, _ *int64) ([]dal.Token, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetToken(_ context.Context, _, _ string) (dal.Token, error) {
+	return dal.Token{}, nil
+}
+func (f *publishFakeDal) OrchestratorExists(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+func (f *publishFakeDal) CreateToken(_ context.Context, _ string, _ dal.TokenCreateRow) (dal.Token, error) {
+	return dal.Token{}, nil
+}
+func (f *publishFakeDal) UpdateToken(_ context.Context, _, _ string, _ dal.TokenPatchRow) (string, dal.Token, error) {
+	return "", dal.Token{}, nil
+}
+func (f *publishFakeDal) DeleteToken(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (f *publishFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) UpsertConfig(_ context.Context, _ string, _ []byte) error { return nil }
 func (f *publishFakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.TemporalConfig, error) {
 	return nil, nil
 }
@@ -228,11 +332,17 @@ func (f *publishFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal
 func (f *publishFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
 	return nil
 }
-func (f *publishFakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error)   { return nil, nil }
-func (f *publishFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
-func (f *publishFakeDal) CreateProvider(_ context.Context, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
-func (f *publishFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
-func (f *publishFakeDal) DeleteProvider(_ context.Context, _ int64) error              { return nil }
+func (f *publishFakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error) { return nil, nil }
+func (f *publishFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *publishFakeDal) CreateProvider(_ context.Context, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *publishFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *publishFakeDal) DeleteProvider(_ context.Context, _ int64) error { return nil }
 func (f *publishFakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLMProvider, error) {
 	return nil, nil
 }
@@ -250,7 +360,9 @@ func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) (
 }
 
 // Agent definition stubs.
-func (f *publishFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
+func (f *publishFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) {
+	return 1, nil
+}
 func (f *publishFakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string, _ int) (string, error) {
 	return "", nil
 }
@@ -710,12 +822,12 @@ func TestPublishDefinition_Success_ReturnsPublishResult(t *testing.T) {
 func TestPublishDefinition_PublishedDefinition_ReturnsConflict(t *testing.T) {
 	d := newPublishFakeDal()
 	d.defByID["def-already-pub"] = dal.AppDefinition{
-		ID:            "def-already-pub",
-		ApplicationID: "app-1",
-		TenantID:      "tenant-1",
-		Revision:      1,
-		Status:        "published", // already published
-		Definition:    minimalDraftDef(),
+		ID:             "def-already-pub",
+		ApplicationID:  "app-1",
+		TenantID:       "tenant-1",
+		Revision:       1,
+		Status:         "published", // already published
+		Definition:     minimalDraftDef(),
 		DefinitionHash: "sha256:abc",
 	}
 
@@ -1100,5 +1212,236 @@ func TestPublishDefinition_EPDefaultAccessMode(t *testing.T) {
 	}
 	if policy["mode"] != "token" {
 		t.Errorf("default AccessPolicy mode: want token, got %q", policy["mode"])
+	}
+}
+
+// ── PUB-IN-01..05: inline nodes + compiler-backed validation ────────────────
+//
+// These tests cover the Step 5 changes to publish.go:
+//   - kind:"inline" is exempt from registry resolution (like flow_control)
+//   - ValidateDefinition now runs appflow.Compile + appflow.Validate when
+//     execution_backend=="temporal", surfacing compiler-level errors
+//     (e.g. condition_edge_count) at publish/validate time instead of only
+//     at run start.
+//   - unresolved_agent is filtered out of the compiler results, since
+//     _resolved_agent_ids is not stamped yet on a draft.
+
+// PUB-IN-01: a kind:"inline" component validates without a component_definitions
+// row — no component_not_found for it.
+func TestValidateDefinition_InlineKindSkipsRegistry(t *testing.T) {
+	d := newPublishFakeDal()
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "llm_1",
+				"name": "Summarize",
+				"definition_ref": {"kind": "inline", "namespace": "builtin", "name": "llm", "version": 1},
+				"config": {"system_prompt": "Summarize the input."}
+			}
+		],
+		"entry_points": [],
+		"connections": []
+	}`)
+	addDraft(d, "def-inline-1", raw)
+
+	// Empty registry — if the inline component were resolved, this would fail
+	// with component_not_found.
+	reg := &fakeRegistry{defs: map[string]*registry.ComponentDefinition{}}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-inline-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, ve := range report.Errors {
+		if ve.Code == "component_not_found" {
+			t.Errorf("inline component must not be registry-resolved, got component_not_found: %+v", ve)
+		}
+	}
+}
+
+// PUB-IN-02: version:0 on an inline component still yields missing_version —
+// the builtin exemption must not bypass structural checks.
+func TestValidateDefinition_InlineMissingVersion(t *testing.T) {
+	d := newPublishFakeDal()
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "llm_1",
+				"name": "Summarize",
+				"definition_ref": {"kind": "inline", "namespace": "builtin", "name": "llm", "version": 0},
+				"config": {"system_prompt": "Summarize the input."}
+			}
+		],
+		"entry_points": [],
+		"connections": []
+	}`)
+	addDraft(d, "def-inline-2", raw)
+
+	reg := &fakeRegistry{defs: map[string]*registry.ComponentDefinition{}}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-inline-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Valid {
+		t.Error("want valid=false for version:0 inline component")
+	}
+	found := false
+	for _, ve := range report.Errors {
+		if ve.Code == "missing_version" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want code=missing_version in errors: %+v", report.Errors)
+	}
+}
+
+// conditionOneEdgeDef builds a temporal-backend definition with a condition
+// node that has only ONE outgoing edge (needs exactly 2 for true/false).
+func conditionOneEdgeDef(executionBackend string) json.RawMessage {
+	backendField := ""
+	if executionBackend != "" {
+		backendField = `"execution_backend": "` + executionBackend + `",`
+	}
+	return json.RawMessage(`{
+		"schema_version": 2,
+		` + backendField + `
+		"components": [
+			{
+				"instance_id": "cond_1",
+				"name": "Check",
+				"definition_ref": {"kind": "inline", "namespace": "builtin", "name": "condition", "version": 1},
+				"config": {"expression": "{{.input}}"}
+			},
+			{
+				"instance_id": "agent_a",
+				"name": "Agent A",
+				"definition_ref": {"kind": "agent", "namespace": "builtin", "name": "echo-agent", "version": 1},
+				"config": {}
+			}
+		],
+		"entry_points": [
+			{
+				"instance_id": "ep_main",
+				"slug": "main",
+				"protocol": "websocket",
+				"root": "cond_1"
+			}
+		],
+		"connections": [
+			{"source": "cond_1", "target": "agent_a", "type": "flow_control", "label": "true"}
+		]
+	}`)
+}
+
+// PUB-IN-03: execution_backend "temporal" + a condition node with only one
+// outgoing edge yields condition_edge_count in the report.
+func TestValidateDefinition_CompilerErrorsSurfaced(t *testing.T) {
+	d := newPublishFakeDal()
+	addDraft(d, "def-cond-1", conditionOneEdgeDef("temporal"))
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/echo-agent": makeAgentDef("comp-agent-1"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-cond-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Valid {
+		t.Error("want valid=false for condition node with 1 outgoing edge under temporal backend")
+	}
+	found := false
+	for _, ve := range report.Errors {
+		if ve.Code == "condition_edge_count" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want code=condition_edge_count in errors: %+v", report.Errors)
+	}
+}
+
+// PUB-IN-04: the same doc with execution_backend "local" (or absent) has no
+// condition_edge_count — local-backend apps do not execute the graph.
+func TestValidateDefinition_LocalBackendSkipsCompilerRules(t *testing.T) {
+	d := newPublishFakeDal()
+	addDraft(d, "def-cond-2", conditionOneEdgeDef("local"))
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/echo-agent": makeAgentDef("comp-agent-1"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-cond-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, ve := range report.Errors {
+		if ve.Code == "condition_edge_count" {
+			t.Errorf("local-backend definition must skip compiler rules, got condition_edge_count: %+v", ve)
+		}
+	}
+	if !report.Valid {
+		t.Errorf("want valid=true for local-backend definition, got errors: %+v", report.Errors)
+	}
+}
+
+// PUB-IN-05: an agent node under temporal backend does not report
+// unresolved_agent pre-publish (agent identity is not resolvable until publish
+// stamps _resolved_agent_ids; the registry loop already covers agent identity).
+func TestValidateDefinition_UnresolvedAgentFiltered(t *testing.T) {
+	d := newPublishFakeDal()
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"execution_backend": "temporal",
+		"components": [
+			{
+				"instance_id": "agent_a",
+				"name": "Agent A",
+				"definition_ref": {"kind": "agent", "namespace": "builtin", "name": "echo-agent", "version": 1},
+				"config": {}
+			}
+		],
+		"entry_points": [
+			{
+				"instance_id": "ep_main",
+				"slug": "main",
+				"protocol": "websocket",
+				"root": "agent_a"
+			}
+		],
+		"connections": []
+	}`)
+	addDraft(d, "def-agent-1", raw)
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/echo-agent": makeAgentDef("comp-agent-1"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, ve := range report.Errors {
+		if ve.Code == "unresolved_agent" {
+			t.Errorf("unresolved_agent must be filtered from compiler results pre-publish, got: %+v", ve)
+		}
+	}
+	if !report.Valid {
+		t.Errorf("want valid=true (agent resolved via registry, compiler unresolved_agent filtered), got errors: %+v", report.Errors)
 	}
 }
