@@ -181,6 +181,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/a2a/server.go` | `go test ./internal/a2a/...` |
 | `internal/temporal/temporal_executor.go` | `go test ./internal/temporal/...` |
 | `internal/appflow/` (any file) | `go test ./internal/appflow/...` |
+| `internal/appflow/inline.go` | `go test ./internal/appflow/...` — and if a condition-expression example was added to the canvas properties panel, add a matching AF-IN-02b case |
 | `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |
 | `internal/admin/dal/` (any file) | `go test ./internal/admin/...` |

@@ -31,6 +31,9 @@ One line per doc. Read this first, then open only what you need.
 | `docs/A2A_REFERENCE.md` | A2A SDK v1.1.0 — Part types, AgentCard/Skill fields, wire format | A2A SDK version change |
 | `docs/A2A_AGENTS.md` | A2A test agents — start/stop, DB enable, cache bust, test commands | A2A agent changes |
 | `docs/LESSONS.md` | Past bugs and non-obvious fixes — append only | Any bug fix or unexpected behavior |
+| `docs/LLM_GATEWAY_DESIGN.md` | ⚠️ DESIGN (not implemented) — LLM Gateway for closed/internal agents: ingress, provider routing, per-agent policy profiles, scaling rules | LLM Gateway work |
+| `docs/INLINE_NODES_DESIGN_BRIEF.md` | Design brief — app canvas inline execution nodes (input to the plan below) | Inline node work |
+| `docs/INLINE_NODES_PLAN.md` | ⚠️ PLAN (not implemented) — Phase 1 inline nodes (LLM + Condition): data model, compiler, Temporal activity, frontend, validation, test plan | Inline node work |
 
 ---
 

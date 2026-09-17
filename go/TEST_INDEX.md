@@ -2874,6 +2874,29 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 **Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, `internal/admin/hil_approvals.go`, `internal/admin/dal/hil_approvals.go`, or `cmd/dag-worker/main.go` (appflow worker registration)
 
+### S1-115 · AppFlow inline node config + template helpers — `internal/appflow/inline_test.go`
+
+**Purpose:** Verifies the inline-node (LLM + Condition) config types and the workflow-safe
+template helpers that back them. `renderFlowTemplate` renders prompt and condition templates
+over `FlowVars`; `isTruthy` converts a rendered expression into a branch decision. AF-IN-02b
+is the guard that every condition expression form advertised in the canvas properties panel
+actually parses and evaluates — Go `text/template` has no string predicates built in, so
+these depend on the `flowFuncs` map.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| AF-IN-01 | `TestRenderFlowTemplate_Substitution` | `{{.input}}` / `{{.summary}}` interpolate from FlowVars |
+| AF-IN-02 | `TestRenderFlowTemplate_MissingVar` | missing key renders as `""` (not `<no value>`) with no error — `missingkey=zero` over `map[string]string` yields the value type's zero |
+| AF-IN-02b | `TestRenderFlowTemplate_ConditionExpressionForms` | every UI-advertised form evaluates: `eq`, `len`+`gt`, `contains`, `hasPrefix`, `lower`; and all three missing-variable forms take the false branch |
+| AF-IN-03 | `TestRenderFlowTemplate_ParseError` | unbalanced `{{` returns a parse error |
+| AF-IN-04 | `TestIsTruthy` | `"true"`/`"TRUE"`/`"1"`/`"x"` → true; `""`/`"false"`/`"0"`/`"<no value>"`/whitespace → false |
+| AF-IN-05 | `TestInlineLLMConfig_JSONRoundTrip` | all fields incl. `*float64` Temperature survive marshal/unmarshal |
+| AF-IN-06 | `TestInlineConditionConfig_JSONRoundTrip` | Expression survives marshal/unmarshal |
+
+**Trigger:** any change to `internal/appflow/inline.go` (config types, `flowFuncs`,
+`renderFlowTemplate`, `isTruthy`), or any new expression example added to the inline node
+properties panel — a new UI example REQUIRES a new AF-IN-02b case.
+
 ---
 
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
@@ -3455,7 +3478,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-112 | AppFlow compiler + workflow (AF-01..14, AF-C-01..04, AF-WF-01..09): compiler, fork/join kinds + validation, ResolveAgentByInstanceID, ParseLLMConfig, FinalizeRunActivity, InvokeAgentActivity, findJoinNode, mergeBranchResults | 29 |
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
 | S1-114 | Temporal execution controls — service (TC-SVC-1..9): GetPlatformConfig_NoRow_Defaults, StoredRow_Merges, DALError_Propagates, PutPlatform_ValidInput, PutPlatform_InvalidRetry, PutPlatform_ZeroConcurrent, Merge_AppOverrides, Merge_NilAppFallsThrough, Merge_BothNilDefaults; handler (TC-1..4): GetPlatform_NoRow_200+defaults, PutPlatform_Valid_200, NegativeRetry_422, BadJSON_400 | 13 |
-| **S1 total** | | **1206** |
+| S1-115 | AppFlow inline node config + template helpers (AF-IN-01..06 + AF-IN-02b): render/substitution, missing-var zero-value, UI-advertised condition expression forms, parse error, isTruthy table, config JSON round trips | 7 |
+| **S1 total** | | **1213** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
