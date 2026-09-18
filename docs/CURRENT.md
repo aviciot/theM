@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-17 (Inline Nodes Phase 1 — Go BACKEND COMPLETE, frontend pending, HEAD 03574b52)
+# Last updated: 2026-09-18 (Inline Nodes Phase 1 — Go BACKEND COMPLETE, frontend pending; + LLM Gateway design track added, HEAD 6853539c)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,12 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `03574b52` (pushed)
+HEAD: `6853539c` (NOT pushed — docs only)
+Last pushed: `03574b52`
 
 Recent commits (newest first):
 ```
+6853539c  docs(gateway): LLM Gateway design — govern closed/internal agents
 03574b52  feat(admin): surface appflow topology errors at publish; exempt inline kind
 23add7c6  feat(dag-worker): register InlineLLMActivity; dbLLMCaller serves both interfaces
 b2fe07d0  feat(appflow): inline LLM activity + llm/condition workflow dispatch
@@ -19,6 +21,56 @@ ea1fb862  refactor(appflow): split workflow.go 803 -> workflow/activities/graph
 08d5bfd4  refactor(canvas): split CanvasNodePropertiesPanel 1003 -> 7 files under 400
 1c2eda02  feat(appflow): inline node config types + workflow-safe template helpers
 ```
+
+---
+
+## Parallel design track — LLM Gateway (design only, nothing implemented)
+
+**`docs/LLM_GATEWAY_DESIGN.md`** — committed `6853539c`. Design for governing **closed agents**
+(cron jobs, scripts, internal services that expose no endpoint, so the-M cannot call them and
+cannot register them in `them.agents`). They all call an LLM, so the-M proxies that call and
+gains identity, tokens, cost, latency, audit and policy for agents it does not run.
+
+This is a separate track from Inline Nodes below. **Do not start it in the same session as
+Inline Nodes frontend work.**
+
+### Decisions already settled (do not re-litigate)
+
+- One ingress, OpenAI request shape, all providers behind it (`model` field selects the target)
+- Stateless — LLM APIs resend full history; scale horizontally, no sessions
+- New tables (5); `runs`/`run_usage` deliberately NOT reused — a closed agent has no
+  orchestrator/session/goal to put in them
+- Per-agent policy via components → profiles → assignment, reusing `middleware_defs`
+- Text capture IS in scope, opt-in per client, encrypted + retention job in the same phase
+- In-process pipeline, NOT Temporal (per-call latency)
+- Lives inside `them-go-bridge`; keep code in `internal/llmgateway` so it can be split out later
+
+### Next task on this track — Phase 0 (do this before any gateway code)
+
+Fix metering first, so the gateway reports correct numbers from its first request. All three
+verified against the live DB on 2026-09-17:
+
+1. **`SumMonthlyTokens` is broken** (`internal/admin/dal/runs.go:175`) — filters on
+   `runs.created_at`, which does not exist (the column is `started_at`). Query errors →
+   `checkMonthlyLLMTokens` returns nil (fail-open) → **`monthly_llm_tokens` quota currently
+   enforces nothing.** Verified: `ERROR: column "created_at" does not exist`.
+2. **Non-Anthropic providers report 0 tokens** — the OpenAI-compatible path never sends
+   `stream_options: {"include_usage": true}`, so OpenAI/Groq/Ollama/vLLM usage is always zero.
+3. **Cost is Claude-only** — `internal/orchestrator/pricing.go` uses a hardcoded map and
+   defaults every unknown model to Sonnet pricing. `them.llm_providers.model_pricing` is
+   already populated and ignored.
+
+Plus: extract **`internal/llmresolve`** from `internal/temporal/workerconfig/loader.go`
+(tenant → platform key precedence, currently duplicated across `cmd/worker`, `cmd/dag-worker`,
+`cmd/agent-runtime`), and make `decryptValue` fail loudly instead of returning ciphertext when
+no Fernet key is set (`loader.go:505`).
+
+Phase 0 is Sonnet-appropriate implementation work. Phases 1–6 are in
+`docs/LLM_GATEWAY_DESIGN.md` §14.
+
+**Open question for Phase 1:** does gateway spend count against the same tenant
+`monthly_llm_tokens` budget as runs? Design assumes yes (sum both tables) — confirm, because it
+means a busy cron job can exhaust the budget hosted apps rely on.
 
 ---
 
