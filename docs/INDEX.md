@@ -32,6 +32,7 @@ One line per doc. Read this first, then open only what you need.
 | `docs/A2A_AGENTS.md` | A2A test agents — start/stop, DB enable, cache bust, test commands | A2A agent changes |
 | `docs/LESSONS.md` | Past bugs and non-obvious fixes — append only | Any bug fix or unexpected behavior |
 | `docs/LLM_GATEWAY_DESIGN.md` | ⚠️ DESIGN (not implemented) — LLM Gateway for closed/internal agents: ingress, provider routing, roles-vs-policy (§9.0), per-agent policy profiles, scaling rules, availability/failure-modes/bypass (§16). §12's three metering bugs and Phase 0 (§14, `internal/llmresolve` extraction) are **✅ COMPLETE** (commit `ed3620dc`) — see `CURRENT.md` "Phase 0 — COMPLETE" | LLM Gateway work — start at Phase 1 (§14); also read §16 before any change that makes the-M a hard dependency for external callers |
+| `docs/NODE_REGISTRY_PLAN.md` | ⚠️ PLAN (not started) — unify node definitions across agent builder, app canvas and middleware. One node definition, every canvas reads it. 5 phases. **Contains a stop rule: no new app-canvas node types until Phase 3** | Any canvas node or middleware work — read BEFORE adding a node type |
 | `docs/INLINE_NODES_DESIGN_BRIEF.md` | Design brief — app canvas inline execution nodes (input to the plan below) | Inline node work |
 | `docs/INLINE_NODES_PLAN.md` | 🔨 IN PROGRESS — Phase 1 inline nodes (LLM + Condition). Go backend **complete** (compiler, validation, Temporal activity, dag-worker, publish); canvas UI in progress. Plan is kept in sync as steps land — see `CURRENT.md` for the step list | Inline node work |
 

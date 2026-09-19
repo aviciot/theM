@@ -168,6 +168,31 @@ Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see 
 
 ## Current migration slice
 
+**NEXT: Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. NOT STARTED.**
+
+Goal: a node is defined once; every canvas reads it. Today the same concept exists three ways —
+agent-builder nodes in a code registry, app-canvas nodes hardcoded in 6 places, middleware in the
+DB table `them.middleware_defs`. They will drift permanently unless unified.
+
+| Phase | What | Sessions |
+|---|---|---|
+| 1 | Runtime split — provider/model off the canvas into the Runtime screen | 1 |
+| 2 | Extract shared registry into `internal/nodedefs` | 1 |
+| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | 1 |
+| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | 1 |
+| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | 1 |
+
+**Start with Phase 1** — independent of the rest, and a real defect today (inline nodes are
+invisible in the Runtime screen; changing a model forces a re-publish).
+
+**STOP RULE: no new app-canvas node types (Tool, Transform) until Phase 3 lands.** Adding one
+today costs six hardcoded edits, then the same work again during migration.
+
+Suggested model: **Sonnet 5** — these phases are mechanical (move code, register definitions,
+copy an existing frontend pattern). Note managed settings pin Sonnet 4.6 on restart.
+
+---
+
 **Inline Nodes Phase 1 (LLM + Condition) — ✅ COMPLETE (backend + frontend + E2E).**
 
 Plan: `docs/INLINE_NODES_PLAN.md` (authoritative; kept in sync with reality as steps landed).
