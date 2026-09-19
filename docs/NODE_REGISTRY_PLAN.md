@@ -23,6 +23,87 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 
 ---
 
+## Progress
+
+| Phase | Status | Commit |
+|---|---|---|
+| 1 — Runtime config split | ⬜ NOT STARTED ← **next** | — |
+| 2 — Extract shared registry | ⬜ NOT STARTED | — |
+| 3 — Register app canvas nodes | ⬜ NOT STARTED | — |
+| 4 — App canvas renders from registry | ⬜ NOT STARTED | — |
+| 5 — Middleware adopts node contract | ⬜ NOT STARTED | — |
+
+**Update this table at the end of every session.** One phase per session.
+
+Baseline at plan creation: HEAD `dd8f3e0f`, `go test ./...` 0 failures (S1 1254, S2 59),
+`tsc --noEmit` 0 errors, `test_42_appflow_inline_nodes.py` 21/21.
+
+---
+
+## Rules (non-negotiable)
+
+1. **One phase per session.** Do not start the next phase — hand over instead.
+2. **STOP RULE: no new app-canvas node types** (Tool, Transform) until Phase 3 lands.
+   Adding one today costs six hardcoded edits, then the same work again during migration.
+3. **Gates must pass before every commit:**
+   - `go test ./...` — zero failures
+   - `go/TEST_INDEX.md` updated in the **same commit** as any new/changed Go test
+   - frontend: `tsc --noEmit` — zero errors
+   - `scripts/tests/test_42_appflow_inline_nodes.py` — still passing
+4. **Never delete a test to make the suite pass.**
+5. **Commit only files relevant to the phase** — no `git add .` / `git add -A`.
+6. **Update the Progress table + `docs/CURRENT.md`** before handing over.
+
+---
+
+## Environment (read before running anything)
+
+**There is no local Go toolchain on this box.** Run Go through Docker:
+
+```bash
+docker run --rm \
+  -v /opt/docker/them/go:/src \
+  -v /tmp/gocache/mod:/go/pkg/mod \
+  -v /tmp/gocache/build:/root/.cache/go-build \
+  -w /src golang:1.25-alpine go test ./...
+```
+Mount the two cache volumes or every run re-downloads all dependencies (~3 min vs ~10 s).
+
+**Frontend:** `cd frontend && ./node_modules/.bin/tsc --noEmit -p tsconfig.json`
+
+**After any Go change, rebuild AND force-recreate** — `build` + `restart` does NOT pick up a
+new image (see `docs/LESSONS.md`):
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile temporal up -d --build --force-recreate them-go-bridge them-dag-worker
+```
+Frontend changes need `them-frontend` rebuilt the same way — it was missed once already and the
+UI silently ran a stale image.
+
+**Known pre-existing conditions — do not "fix" these:**
+- `internal/appflow/compiler.go`, `cmd/dag-worker/main.go` and ~45 other files are gofmt-unclean
+  at baseline. Do not mass-reformat; it buries real diffs.
+- The repo has no eslint config — `npx eslint` fails by design.
+
+---
+
+## Recommendations
+
+- **Model: Sonnet 5.** These phases are mechanical — move code, register definitions, copy an
+  existing frontend pattern. Managed settings pin Sonnet 4.6 on restart, so run `/model sonnet`
+  at the start of each session.
+- **Phase 1 is independent of 2–4** and can run in parallel in a separate session.
+- **Phase 2's gate is the strongest in the plan:** capture the `GET /admin/node-types` JSON
+  before the extraction and diff it after. Identical payload = the refactor is provably
+  behaviour-neutral, in one command instead of a debugging session. Use the same technique for
+  any "pure refactor" step here.
+- **Verify refactors by executing, not by reading.** Three silent data-loss bugs in the
+  inline-nodes work all looked correct on inspection and only showed up in an executed
+  round-trip test.
+- **Do not trust a subagent's "done" report** — re-run its gate yourself.
+
+---
+
 ## Scope
 
 **In:** how a node is *described* (label, colour, handles, edge rules, config fields) and how the
