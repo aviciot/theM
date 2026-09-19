@@ -182,7 +182,18 @@ export interface FlowControlNodeData {
   _errorMsg?: string;
 }
 
-export type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData | FlowControlNodeData;
+export interface InlineNodeData {
+  _kind: 'inline';
+  instance_id: string;
+  node_type: 'llm' | 'condition';
+  display_name: string;
+  config: Record<string, unknown>;
+  _error?: boolean;
+  _shake?: boolean;
+  _errorMsg?: string;
+}
+
+export type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData | FlowControlNodeData | InlineNodeData;
 
 // ── Chain/validation types ───────────────────────────────────────────────────
 export interface ChainStatus {

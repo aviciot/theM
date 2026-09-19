@@ -1,6 +1,6 @@
 'use client';
 import { Handle, Position, useReactFlow, type NodeTypes } from '@xyflow/react';
-import type { EntryPointData, OrchestratorData, AgentData, MiddlewareData, FlowControlNodeData } from '../types';
+import type { EntryPointData, OrchestratorData, AgentData, MiddlewareData, FlowControlNodeData, InlineNodeData } from '../types';
 import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
 import { useAppLayoutDir } from '../AppLayoutContext';
@@ -325,6 +325,74 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
   );
 }
 
+// ── InlineNode ────────────────────────────────────────────────────────────────
+const INLINE_META: Record<string, { emoji: string; color: string; label: string }> = {
+  llm:       { emoji: '🧠', color: '#d0bcff', label: 'LLM' },
+  condition: { emoji: '⑂',  color: '#f97316', label: 'Condition' },
+};
+
+export function InlineNode({ id, data, selected }: { id: string; data: InlineNodeData; selected?: boolean }) {
+  const { deleteElements } = useReactFlow();
+  const dir = useAppLayoutDir();
+  const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
+  const meta = INLINE_META[data.node_type] ?? INLINE_META.llm;
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : meta.color;
+  const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${meta.color}59`;
+  const selBg   = hasError ? 'rgba(248,113,113,0.10)' : `${meta.color}1a`;
+  const handleStyle = { background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 };
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
+      <Handle type="target" position={targetPos} style={handleStyle} />
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : `2px solid ${accent}`,
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : 'none',
+          transition: 'all 0.18s ease',
+        }}>
+        <div style={{ fontSize: 26, lineHeight: 1 }}>{meta.emoji}</div>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.display_name || meta.label}
+        </div>
+        <div style={{ fontSize: 9, color: accent, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.8 }}>
+          {data.node_type}
+        </div>
+      </div>
+      {data.node_type === 'condition' ? (
+        <>
+          <Handle type="source" id="true"  position={sourcePos} style={{ ...handleStyle, background: '#4ade80', left: '35%' }} title="True branch" />
+          <Handle type="source" id="false" position={sourcePos} style={{ ...handleStyle, background: '#f87171', left: '65%' }} title="False branch" />
+        </>
+      ) : (
+        <Handle type="source" position={sourcePos} style={handleStyle} />
+      )}
+    </div>
+  );
+}
+
 // ── NODE_TYPES — must live here since it references the node components ────────
 export const NODE_TYPES: NodeTypes = {
   entryPoint: EntryPointNode as any,
@@ -332,4 +400,5 @@ export const NODE_TYPES: NodeTypes = {
   agent: AgentNode as any,
   middleware: MiddlewareNode as any,
   flowControl: FlowControlNode as any,
+  inline: InlineNode as any,
 };

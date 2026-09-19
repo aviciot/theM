@@ -487,7 +487,7 @@ export interface SessionInfo {
 
 export interface ComponentDefinitionSummary {
   id: string;
-  kind: 'orchestrator' | 'agent' | 'middleware' | 'entry_point' | 'tool';
+  kind: 'orchestrator' | 'agent' | 'middleware' | 'entry_point' | 'tool' | 'inline';
   namespace: string;
   name: string;
   version: number;
