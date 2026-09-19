@@ -107,6 +107,11 @@ export type {
   RoleMapping,
   TemporalConfig,
   TemporalAppConfigPatch,
+  GatewayClient,
+  GatewayProfile,
+  GatewayPolicy,
+  GatewayPolicyInput,
+  GatewayRequest,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -185,6 +190,11 @@ import type {
   MiddlewareDef,
   TemporalConfig,
   TemporalAppConfigPatch,
+  GatewayClient,
+  GatewayProfile,
+  GatewayPolicy,
+  GatewayPolicyInput,
+  GatewayRequest,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -704,4 +714,28 @@ export const themApi = {
   resetUserPassword: (id: number, password: string) =>
     authAdmin.post<{ message: string }>(`users/${id}/reset-password`, { password }),
   listTenantsForUsers: () => authAdmin.get<TenantSummary[]>('tenants'),
+
+  // LLM Gateway admin
+  listGatewayClients: () =>
+    api.get<GatewayClient[]>('/admin/gateway/clients'),
+  createGatewayClient: (body: { label: string }) =>
+    api.post<GatewayClient & { token: string }>('/admin/gateway/clients', body),
+  getGatewayClient: (id: string) =>
+    api.get<GatewayClient>(`/admin/gateway/clients/${id}`),
+  patchGatewayClient: (id: string, body: { profile_id: string | null }) =>
+    api.patch<GatewayClient>(`/admin/gateway/clients/${id}`, body),
+  deleteGatewayClient: (id: string) =>
+    api.delete<void>(`/admin/gateway/clients/${id}`),
+  listGatewayProfiles: () =>
+    api.get<GatewayProfile[]>('/admin/gateway/profiles'),
+  createGatewayProfile: (body: { name: string }) =>
+    api.post<GatewayProfile>('/admin/gateway/profiles', body),
+  deleteGatewayProfile: (id: string) =>
+    api.delete<void>(`/admin/gateway/profiles/${id}`),
+  getGatewayPolicy: () =>
+    api.get<GatewayPolicy>('/admin/gateway/policy'),
+  putGatewayPolicy: (body: GatewayPolicyInput) =>
+    api.put<GatewayPolicy>('/admin/gateway/policy', body),
+  listGatewayRequests: (limit = 100) =>
+    api.get<GatewayRequest[]>(`/admin/gateway/requests?limit=${limit}`),
 };

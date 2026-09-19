@@ -13,6 +13,7 @@ const WORKSPACE_NAV = [
 const BUILD_TEST_NAV = [
   { href: '/admin/applications',  icon: 'apps',                label: 'Applications' },
   { href: '/admin/agents',        icon: 'smart_toy',           label: 'Agents' },
+  { href: '/admin/gateway',       icon: 'hub',                 label: 'LLM Gateway' },
   { href: '/admin/mcp-servers',   icon: 'electrical_services', label: 'MCP Servers' },
   { href: '/admin/playground',    icon: 'science',             label: 'Playground' },
 ];

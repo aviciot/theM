@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-19 (LLM Gateway Phase 1 — observe + meter COMPLETE, HEAD 4a9402e7)
+# Last updated: 2026-09-19 (LLM Gateway Phase 3 backend + UI — COMPLETE, HEAD 52fcec69)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `936ae696` (not yet pushed)
+HEAD: `52fcec69` (not yet pushed)
 
 Recent commits (newest first):
 ```
+52fcec69  feat(llm-gateway): Phase 3 — admin CRUD backend (clients, profiles, policy, requests)
 936ae696  feat(llm-gateway): Phase 2 — governance (model allowlist, aliases, token ceiling, monthly budget)
 4a9402e7  feat(llm-gateway): Phase 1 — gateway observe + meter
 ed3620dc  fix(llm-gateway): Phase 0 metering fixes — monthly quota, token usage, DB pricing, key resolution dedup
@@ -45,10 +46,39 @@ Inline Nodes frontend work.**
 - In-process pipeline, NOT Temporal (per-call latency)
 - Lives inside `them-go-bridge`; keep code in `internal/llmgateway` so it can be split out later
 
+### Phase 3 — COMPLETE (2026-09-19)
+
+Admin CRUD backend + frontend UI. Commit: `52fcec69`. `go test ./...` — 1298 tests, 0 failures.
+
+**What was built:**
+
+- `go/internal/admin/dal/gateway.go` — DAL for all 5 gateway tables (clients, profiles, profile steps, policy, requests).
+- `go/internal/admin/gateway.go` — `GatewayHandler` with 15 routes mounted in tenantScoped group.
+  - `POST /admin/gateway/clients` — generates 32-byte random token, stores sha256 hash, returns token once.
+  - `GET /admin/gateway/policy` — returns allow-all zero row when no policy row exists (fail-open).
+  - `PUT /admin/gateway/policy` — upserts policy then returns current state.
+- `go/internal/admin/router.go` — `gatewayAdmin.Routes(tenantScoped)` wired.
+- `frontend/src/app/admin/gateway/page.tsx` — 4-tab UI (Clients, Profiles, Policy, Requests).
+  - Clients tab: create with token reveal (one-time), delete.
+  - Profiles tab: create, delete.
+  - Policy tab: allowed models textarea, aliases JSON editor, max_tokens + monthly_budget inputs.
+  - Requests tab: summary stats + request log table.
+- `frontend/src/components/Sidebar.tsx` — "LLM Gateway" entry added after Agents in BUILD_TEST_NAV.
+- `frontend/src/lib/api.ts` + `apiTypes.ts` — types + API methods for all gateway endpoints.
+- `go/internal/admin/gateway_test.go` — 11 handler tests GW-ADM-01..11.
+- `go/TEST_INDEX.md` — S1-121 added, S1 total 1298.
+
+**Not yet wired:** text capture (request body storage in `gateway_request_bodies`) — deferred.
+**Not yet wired:** File Guard pipeline steps (requires ApplicationID on gateway calls — deferred).
+
+**Next recommended task:** rebuild + redeploy `them-go-bridge` to pick up the new admin routes, then verify via the UI.
+
+---
+
 ### Phase 2 — COMPLETE (2026-09-19)
 
 Governance enforced inside `internal/llmgateway` (no new tables, no new containers).
-Commit: `(pending)`. `go test ./...` — 1287 tests, 0 failures.
+Commit: `936ae696`. `go test ./...` — 1287 tests, 0 failures.
 
 **Decision recorded:** gateway spend does NOT count against `monthly_llm_tokens` (the hosted-agent token budget). The two budgets are independent. Rationale: `monthly_llm_tokens` is denominated in tokens for hosted runs; a cron job's budget is denominated in USD and must not silently exhaust the budget hosted apps depend on. See §14 open question — resolved as "no".
 
@@ -80,7 +110,7 @@ Commit: `(pending)`. `go test ./...` — 1287 tests, 0 failures.
 
 **No DB migration needed** — `gateway_policies` table already exists from Phase 1 (`db/100_llm_gateway.sql`). A tenant with no row in `gateway_policies` gets allow-all behaviour.
 
-**Next recommended task: Phase 3 — profiles + UI.** `gateway_profiles`, `gateway_profile_steps`, admin UI (four tabs from §11). Start a new session.
+**Phase 3 COMPLETE.** See above. Next: rebuild + deploy `them-go-bridge`, then verify admin UI at `/admin/gateway`.
 
 ---
 

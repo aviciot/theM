@@ -1082,3 +1082,56 @@ export interface TemporalAppConfigPatch {
   activity_timeout_s?: number | null;
   retry_max_attempts?: number | null;
 }
+
+// ── LLM Gateway admin types ────────────────────────────────────────────────────
+
+export interface GatewayClient {
+  id: string;
+  tenant_id: string;
+  token_hash: string;
+  label: string;
+  profile_id?: string | null;
+  last_seen?: string | null;
+  created_at: string;
+}
+
+export interface GatewayProfile {
+  id: string;
+  tenant_id: string;
+  name: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface GatewayPolicy {
+  tenant_id: string;
+  allowed_models: string[];
+  model_aliases: Record<string, string>;
+  max_tokens_per_request?: number | null;
+  monthly_budget_usd?: number | null;
+  updated_at?: string;
+}
+
+export interface GatewayPolicyInput {
+  allowed_models: string[];
+  model_aliases: Record<string, string>;
+  max_tokens_per_request?: number | null;
+  monthly_budget_usd?: number | null;
+}
+
+export interface GatewayRequest {
+  id: string;
+  client_id?: string | null;
+  client_label?: string | null;
+  provider?: string | null;
+  model_requested?: string | null;
+  model_served?: string | null;
+  status: string;
+  http_status?: number | null;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms?: number | null;
+  streamed: boolean;
+  created_at: string;
+}
