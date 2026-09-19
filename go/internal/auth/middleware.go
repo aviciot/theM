@@ -47,6 +47,13 @@ func WithClaims(ctx context.Context, claims *Claims) context.Context {
 	return context.WithValue(ctx, claimsKey, claims)
 }
 
+// WithTokenInfo returns a new context with the given TokenInfo stored under the
+// same key used by BearerMiddleware. Use this in tests to inject token info
+// without a real bearer token lookup.
+func WithTokenInfo(ctx context.Context, info *TokenInfo) context.Context {
+	return context.WithValue(ctx, tokenInfoKey, info)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Middleware constructors
 // ──────────────────────────────────────────────────────────────────────────────

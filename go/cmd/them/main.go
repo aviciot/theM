@@ -21,6 +21,8 @@ import (
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/llmgateway"
+	"github.com/aviciot/them/internal/llmresolve"
 	"github.com/aviciot/them/internal/jwks"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/agentregistry"
@@ -456,6 +458,21 @@ func run() error {
 	srv.MountStatic("/static/tenants", logoDir)
 	log.Info("static tenant assets mounted", "prefix", "/static/tenants", "dir", logoDir)
 
+	// ── 19c. LLM Gateway ──────────────────────────────────────────────────────
+	// POST /{tenant_slug}/llm/v1/chat/completions — OpenAI-compatible proxy for
+	// closed agents (cron jobs, scripts, internal services) that call an LLM
+	// directly. Must be mounted BEFORE MountApps (catch-all "/*").
+	// §16.2: fail-open on quota (Redis), fail-closed on auth (§16.2 decision).
+	gwResolver := llmresolve.New(rlsPools.Admin, adminFernetKey, log)
+	gwFactory := llmgateway.NewResolverFactory(gwResolver)
+	gwDAL := llmgateway.NewDAL(rlsPools.Admin)
+	gwQC := &gatewayQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
+	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log)
+	gwHandler := llmgateway.NewHandler(gwSvc, gwDAL, slugResolver, log)
+	bearerTenantMW := auth.BearerTenantMiddleware(tokenCache)
+	srv.MountGateway(bearerTenantMW(gwHandler.ChatCompletionsHandler()))
+	log.Info("LLM gateway mounted", "path", "/{tenant_slug}/llm/v1/chat/completions")
+
 	// ── 19b. Mount /{tenant_slug}/apps/* (WS + SSE + voice) ─────────────────
 	// Voice handler needs AppService (for provider-key decryption), which requires
 	// adminDB and adminFernetKey — so it must be wired here, after section 19.
@@ -569,5 +586,25 @@ func getEnvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// gatewayQuotaAdapter implements llmgateway.QuotaChecker.
+// Checks api_requests_per_minute against the tenant quota row, fail-open
+// on DB error or missing row (§16.2: fail-open on policy, fail-closed on auth).
+type gatewayQuotaAdapter struct {
+	db       *dal.DB
+	enforcer *quota.Enforcer
+}
+
+func (a *gatewayQuotaAdapter) CheckAPIRPM(ctx context.Context, tenantID string) error {
+	q, err := a.db.GetQuota(ctx, tenantID)
+	if err != nil {
+		// No quota row → fail-open.
+		return nil
+	}
+	if q.APIRequestsPerMinute == nil {
+		return nil
+	}
+	return a.enforcer.Check(ctx, tenantID, quota.Quota{APIRequestsPerMinute: q.APIRequestsPerMinute})
 }
 

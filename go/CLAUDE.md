@@ -51,7 +51,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/domain/` | Canonical Message/Run types, status enums | `domain.go` |
 | `internal/runrecorder/` | Run persistence to them.runs / run_steps / run_usage | `recorder.go` |
 | `internal/llm/` | Provider interface, AnthropicProvider, MockProvider | `provider.go`, `anthropic.go`, `mock.go` |
-| `internal/llmresolve/` | Shared LLM provider key/base_url/pricing resolution (app → tenant → platform precedence); used by `workerconfig` and `cmd/dag-worker` | `llmresolve.go` |
+| `internal/llmresolve/` | Shared LLM provider key/base_url/pricing resolution (app → tenant → platform precedence); used by `workerconfig`, `cmd/dag-worker`, and `internal/llmgateway` | `llmresolve.go` |
+| `internal/llmgateway/` | LLM Gateway Phase 1 — OpenAI-compatible proxy for closed agents; observe + meter. POST /{tenant_slug}/llm/v1/chat/completions | `handler.go`, `service.go`, `dal.go` |
 | `internal/orchestrator/` | Agentic loop, DB-level history LIMIT, cost estimation (default rate card + optional DB-sourced `CostEstimator`) | `orchestrator.go`, `pricing.go` |
 | `internal/temporal/` | Workflow, activity, HITL signal, client | `workflow.go`, `activities.go`, `client.go`, `signaler.go` |
 | `internal/ws/` | WebSocket handler | `handler.go` |
@@ -174,6 +175,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/artifacts/handler.go` | `go test ./internal/artifacts/...` |
 | `internal/llm/` (any file) | `go test ./internal/llm/...` |
 | `internal/llmresolve/` (any file) | `go test ./internal/llmresolve/...` + `go test -tags=integration ./internal/llmresolve/...` (app→tenant→platform precedence needs a live DB) |
+| `internal/llmgateway/` (any file), `cmd/them/main.go` (gateway wiring) | `go test ./internal/llmgateway/...` |
 | `internal/agentregistry/registry.go` | `go test ./internal/agentregistry/...` |
 | `internal/orchestrator/orchestrator.go` or `internal/orchestrator/pricing.go` | `go test ./internal/orchestrator/...` |
 | `internal/ws/handler.go` | `go test ./internal/ws/... ./internal/execution/...` |

@@ -200,6 +200,19 @@ func (s *Server) MountArtifacts(artifactHandler http.Handler) {
 	s.router.Get("/api/v1/runs/{run_id}/artifacts/{artifact_id}", artifactHandler.ServeHTTP)
 }
 
+// MountGateway registers the LLM Gateway route pattern on the root router.
+// Must be called BEFORE MountApps — MountApps registers Handle("/*") which
+// catches all unmatched paths; a chi.Post registered here is resolved first
+// because chi matches exact patterns before catch-alls.
+//
+// Do NOT use router.Mount("/", h) — that pattern caused the A2A outage
+// (commit 7e9b7b1): chi's Handle("/*") registered last wins over Mount("/"),
+// so the catch-all silently swallowed all gateway traffic.
+func (s *Server) MountGateway(h http.Handler) {
+	// Register the exact gateway pattern. chi resolves this before Handle("/*").
+	s.router.Post("/{tenant_slug}/llm/v1/chat/completions", h.ServeHTTP)
+}
+
 // MountApps mounts the tenant-scoped apps handler as a catch-all.
 // The handler owns the full /{tenant_slug}/apps/{app_slug}/{ep_slug}/* path.
 // Call before ListenAndServe.
