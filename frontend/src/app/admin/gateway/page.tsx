@@ -28,17 +28,25 @@ function StatusBadge({ status }: { status: string }) {
 // ── Clients tab ───────────────────────────────────────────────────────────────
 
 function ClientsTab() {
-  const [clients, setClients] = useState<GatewayClient[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [clients, setClients]   = useState<GatewayClient[]>([]);
+  const [profiles, setProfiles] = useState<GatewayProfile[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [newLabel, setNewLabel] = useState('');
   const [creating, setCreating] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState<string | null>(null); // client id being patched
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setClients(await themApi.listGatewayClients()); }
-    catch { setError('Failed to load clients'); }
+    try {
+      const [c, p] = await Promise.all([
+        themApi.listGatewayClients(),
+        themApi.listGatewayProfiles(),
+      ]);
+      setClients(c);
+      setProfiles(p);
+    } catch { setError('Failed to load clients'); }
     finally { setLoading(false); }
   }, []);
 
@@ -55,6 +63,17 @@ function ClientsTab() {
       await load();
     } catch { setError('Failed to create client'); }
     finally { setCreating(false); }
+  }
+
+  async function handleProfileChange(clientId: string, profileId: string) {
+    setAssigning(clientId);
+    try {
+      await themApi.patchGatewayClient(clientId, { profile_id: profileId || null });
+      setClients(prev => prev.map(c =>
+        c.id === clientId ? { ...c, profile_id: profileId || null } : c
+      ));
+    } catch { setError('Failed to update profile'); }
+    finally { setAssigning(null); }
   }
 
   async function handleDelete(id: string) {
@@ -101,7 +120,7 @@ function ClientsTab() {
           <thead>
             <tr style={{ borderBottom: '1px solid #334155', color: '#94a3b8' }}>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Label</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>ID</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px' }}>Profile</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Last seen</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Created</th>
               <th />
@@ -113,8 +132,28 @@ function ClientsTab() {
             )}
             {clients.map(c => (
               <tr key={c.id} style={{ borderBottom: '1px solid #1e293b' }}>
-                <td style={{ padding: '10px 12px', fontWeight: 600 }}>{c.label}</td>
-                <td style={{ padding: '10px 12px', color: '#64748b', fontFamily: 'monospace', fontSize: 12 }}>{c.id.slice(0, 8)}…</td>
+                <td style={{ padding: '10px 12px' }}>
+                  <div style={{ fontWeight: 600 }}>{c.label}</div>
+                  <div style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>{c.id.slice(0, 8)}…</div>
+                </td>
+                <td style={{ padding: '10px 12px' }}>
+                  <select
+                    value={c.profile_id ?? ''}
+                    disabled={assigning === c.id}
+                    onChange={e => handleProfileChange(c.id, e.target.value)}
+                    style={{
+                      padding: '5px 8px', borderRadius: 6, border: '1px solid #334155',
+                      background: '#0f172a', color: '#f1f5f9', fontSize: 13,
+                      cursor: 'pointer', minWidth: 140,
+                      opacity: assigning === c.id ? 0.5 : 1,
+                    }}
+                  >
+                    <option value="">— none —</option>
+                    {profiles.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </td>
                 <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</td>
                 <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{new Date(c.created_at).toLocaleDateString()}</td>
                 <td style={{ padding: '10px 12px', textAlign: 'right' }}>
