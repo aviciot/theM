@@ -413,6 +413,42 @@ def main():
             return 1
         time.sleep(0.5)
 
+        # ── Step 7b: Node Registry Phase 1 — Runtime-screen LLM node override ──
+        print("\n[7b] Runtime-screen inline LLM node override")
+        status, nodes = api("GET", f"/admin/applications/{app_id}/flow-llm-nodes", token)
+        ok("GET flow-llm-nodes → 200", status == 200, f"{status} {nodes}")
+        llm_node = next((n for n in nodes if n.get("node_id") == LLM_INST), None)
+        ok("compiled inline llm node listed", llm_node is not None, str(nodes))
+        if llm_node is not None:
+            ok("compiled provider matches canvas config (mock)",
+               llm_node.get("compiled_provider") == "mock", str(llm_node))
+            ok("no override stored yet", not llm_node.get("override_provider"), str(llm_node))
+
+        status, put_body = api(
+            "PUT", f"/admin/applications/{app_id}/flow-llm-nodes/{LLM_INST}", token,
+            {"provider": "anthropic", "model": "claude-haiku-4-5-20251001"})
+        ok("PUT flow-llm-nodes override → 200", status == 200, f"{status} {put_body}")
+
+        status, nodes = api("GET", f"/admin/applications/{app_id}/flow-llm-nodes", token)
+        llm_node = next((n for n in nodes if n.get("node_id") == LLM_INST), None)
+        ok("override persisted and merged into GET response",
+           llm_node is not None
+           and llm_node.get("override_provider") == "anthropic"
+           and llm_node.get("override_model") == "claude-haiku-4-5-20251001",
+           str(llm_node))
+        ok("compiled value unchanged by override (canvas not touched)",
+           llm_node is not None and llm_node.get("compiled_provider") == "mock",
+           str(llm_node))
+
+        # Reset the override back to the canvas-compiled "mock" provider so the
+        # WS run below (steps 8-10) exercises the mock provider as before —
+        # an override to a real provider would need a live API key. There is no
+        # delete endpoint (Phase 1 scope): set it explicitly back to mock.
+        status, put_body = api(
+            "PUT", f"/admin/applications/{app_id}/flow-llm-nodes/{LLM_INST}", token,
+            {"provider": "mock", "model": "mock"})
+        ok("PUT flow-llm-nodes reset to mock → 200", status == 200, f"{status} {put_body}")
+
         # ── Step 8: Access token + WS session ─────────────────────────────────
         print("\n[8] Create access token and open WS session")
         status, tok_body = api("POST", "/admin/tokens", token, {

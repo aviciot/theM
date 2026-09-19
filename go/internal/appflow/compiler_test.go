@@ -858,3 +858,114 @@ func TestValidate_InlineValidTopology(t *testing.T) {
 		t.Errorf("expected no validation errors, got: %+v", errs)
 	}
 }
+
+// AF-26: Compile collects one AppFlowLLMNodeSpec per inline LLM node across all
+// entry points, recording its canvas-compiled provider/model. Node Registry
+// Phase 1 — this is what the Runtime screen reads to show/override the node.
+func TestCompile_CollectsLLMNodes(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "inline_llm_1",
+				"definition_ref": {"kind":"inline","namespace":"builtin","name":"llm","version":1},
+				"config": {"node_type":"llm","provider":"anthropic","model":"claude-haiku-4-5-20251001"}
+			}
+		],
+		"entry_points": [
+			{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"inline_llm_1"}
+		],
+		"connections": []
+	}`)
+	spec, err := Compile(raw, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(spec.LLMNodes) != 1 {
+		t.Fatalf("want 1 llm node, got %d", len(spec.LLMNodes))
+	}
+	n := spec.LLMNodes[0]
+	if n.NodeID != "inline_llm_1" || n.CompiledProvider != "anthropic" || n.CompiledModel != "claude-haiku-4-5-20251001" {
+		t.Errorf("unexpected llm node spec: %+v", n)
+	}
+}
+
+// AF-27: a component with no LLM nodes produces an empty (nil) LLMNodes list —
+// GET /flow-llm-nodes should return [] not error for such an app.
+func TestCompile_NoLLMNodes_EmptyList(t *testing.T) {
+	raw := json.RawMessage(`{
+		"schema_version": 2,
+		"components": [
+			{
+				"instance_id": "inline_condition_1",
+				"definition_ref": {"kind":"inline","namespace":"builtin","name":"condition","version":1},
+				"config": {"node_type":"condition","expression":"{{eq .output \"x\"}}"}
+			}
+		],
+		"entry_points": [
+			{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"inline_condition_1"}
+		],
+		"connections": []
+	}`)
+	spec, err := Compile(raw, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(spec.LLMNodes) != 0 {
+		t.Errorf("want 0 llm nodes, got %d", len(spec.LLMNodes))
+	}
+}
+
+// AF-28: ApplyLLMOverrides rewrites Provider/Model inside the matching llm
+// node's Config, leaving other fields (prompts, output_var) untouched — the
+// Runtime-screen override must win over the canvas-compiled value.
+func TestApplyLLMOverrides_RewritesMatchingNode(t *testing.T) {
+	spec := &AppFlowSpec{
+		EntryPoints: []EPFlow{{
+			Slug: "main",
+			Nodes: []AppFlowNode{
+				{ID: "llm_1", Kind: "llm", Config: json.RawMessage(`{"provider":"anthropic","model":"claude-haiku-4-5-20251001","user_prompt":"hi","output_var":"summary"}`)},
+				{ID: "llm_2", Kind: "llm", Config: json.RawMessage(`{"provider":"openai","model":"gpt-4o-mini"}`)},
+				{ID: "cond_1", Kind: "condition", Config: json.RawMessage(`{"expression":"true"}`)},
+			},
+		}},
+	}
+	ApplyLLMOverrides(spec, map[string]LLMOverride{
+		"llm_1": {Provider: "groq", Model: "llama-3.3-70b"},
+	})
+
+	var cfg1 InlineLLMConfig
+	if err := json.Unmarshal(spec.EntryPoints[0].Nodes[0].Config, &cfg1); err != nil {
+		t.Fatalf("unmarshal llm_1 config: %v", err)
+	}
+	if cfg1.Provider != "groq" || cfg1.Model != "llama-3.3-70b" {
+		t.Errorf("llm_1 override not applied: %+v", cfg1)
+	}
+	if cfg1.UserPrompt != "hi" || cfg1.OutputVar != "summary" {
+		t.Errorf("llm_1 non-override fields lost: %+v", cfg1)
+	}
+
+	var cfg2 InlineLLMConfig
+	if err := json.Unmarshal(spec.EntryPoints[0].Nodes[1].Config, &cfg2); err != nil {
+		t.Fatalf("unmarshal llm_2 config: %v", err)
+	}
+	if cfg2.Provider != "openai" || cfg2.Model != "gpt-4o-mini" {
+		t.Errorf("llm_2 should be untouched (no override), got: %+v", cfg2)
+	}
+}
+
+// AF-29: nil spec and empty overrides map are no-ops (defensive — fail-open
+// callers may pass either).
+func TestApplyLLMOverrides_NilAndEmptyAreNoop(t *testing.T) {
+	ApplyLLMOverrides(nil, map[string]LLMOverride{"x": {Provider: "a", Model: "b"}}) // must not panic
+
+	spec := &AppFlowSpec{EntryPoints: []EPFlow{{Nodes: []AppFlowNode{
+		{ID: "llm_1", Kind: "llm", Config: json.RawMessage(`{"provider":"anthropic","model":"claude-haiku-4-5-20251001"}`)},
+	}}}}
+	ApplyLLMOverrides(spec, nil)
+	var cfg InlineLLMConfig
+	_ = json.Unmarshal(spec.EntryPoints[0].Nodes[0].Config, &cfg)
+	if cfg.Provider != "anthropic" || cfg.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("empty overrides map must not change config, got: %+v", cfg)
+	}
+}

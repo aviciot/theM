@@ -93,6 +93,8 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Patch("/", h.Update) // Python frontend sends PATCH; accept both
 		app.Delete("/", h.Delete)
 		app.Put("/runtime", h.PutRuntime)
+		app.Get("/flow-llm-nodes", h.GetAppFlowLLMNodes)
+		app.Put("/flow-llm-nodes/{node_id}", h.PutAppFlowLLMOverride)
 		app.Get("/provider-keys", h.GetProviderKeys)
 		app.Put("/provider-keys/{provider}", h.SetProviderKey)
 		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
@@ -468,6 +470,74 @@ func (h *ApplicationsHandler) PutRuntime(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+// GetAppFlowLLMNodes handles GET /api/v1/admin/applications/{id}/flow-llm-nodes.
+// Returns inline LLM nodes from the app's active definition with current overrides.
+func (h *ApplicationsHandler) GetAppFlowLLMNodes(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	nodes, err := svc.GetAppFlowLLMNodes(r.Context(), id)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get app flow llm nodes")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, nodes)
+}
+
+// PutAppFlowLLMOverride handles PUT /api/v1/admin/applications/{id}/flow-llm-nodes/{node_id}.
+// Body: {"provider": "anthropic", "model": "claude-haiku-4-5-20251001"}
+func (h *ApplicationsHandler) PutAppFlowLLMOverride(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	nodeID := chi.URLParam(r, "node_id")
+	if id == "" || nodeID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or node id")
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.PutAppFlowLLMOverride(r.Context(), id, nodeID, body.Provider, body.Model); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "put app flow llm override")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"node_id": nodeID, "updated": true})
 }
 
 // GetProviderKeys handles GET /api/v1/admin/applications/{id}/provider-keys.

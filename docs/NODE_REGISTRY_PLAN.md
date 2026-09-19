@@ -1,5 +1,5 @@
 # Node Registry — Unify App Canvas, Agent Builder and Middleware
-# Status: PLAN — not started
+# Status: Phase 1 COMPLETE. Phases 2-5 not started.
 # Date: 2026-09-19
 
 ---
@@ -27,8 +27,8 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 
 | Phase | Status | Commit |
 |---|---|---|
-| 1 — Runtime config split | ⬜ NOT STARTED ← **next** | — |
-| 2 — Extract shared registry | ⬜ NOT STARTED | — |
+| 1 — Runtime config split | ✅ COMPLETE | (pending commit) |
+| 2 — Extract shared registry | ⬜ NOT STARTED ← **next** | — |
 | 3 — Register app canvas nodes | ⬜ NOT STARTED | — |
 | 4 — App canvas renders from registry | ⬜ NOT STARTED | — |
 | 5 — Middleware adopts node contract | ⬜ NOT STARTED | — |
@@ -166,6 +166,51 @@ the agent builder's existing pattern (`GET|PUT /admin/applications/{id}/agents/{
 a model forces a canvas edit + re-publish. Independent of the registry work.
 
 **Gate:** `test_42` updated (it currently sets `provider:"mock"` in canvas config) and passing.
+
+**STATUS: COMPLETE (2026-09-19).** `go test ./...` 1310 tests 0 failures (S1-122, 12 new tests);
+`tsc --noEmit` 0 errors; `test_42_appflow_inline_nodes.py` 29/29 (6 new checks) — verified against
+the live stack after rebuild + force-recreate of `them-go-bridge` and `them-dag-worker`.
+
+What was built:
+- `db/101_app_flow_llm_overrides.sql` — new table `them.app_flow_llm_overrides
+  (application_id, node_id, provider, model, updated_at)`, PK `(application_id, node_id)`, FK
+  cascade, no RLS (same precedent as `app_temporal_config`). Applied to the live DB.
+- `internal/appflow/compiler.go` — `AppFlowSpec.LLMNodes []AppFlowLLMNodeSpec`, populated by
+  `collectLLMNodes` (mirrors `agentgen.collectLLMNodes`). `ApplyLLMOverrides(spec, overrides)` —
+  pure function, rewrites `Provider`/`Model` inside a matching `kind:"llm"` node's `Config`,
+  preserving every other field (prompts, `output_var`, etc).
+- `internal/appflow/llm_override_loader.go` — `PgxAppFlowLLMOverrideLoader` (DB-backed, mirrors
+  `PgxTemporalConfigLoader`; no unit test, consistent with that sibling — DB-loader tests in this
+  codebase are integration-only).
+- `internal/admin/dal/appflow_llm_nodes.go` — `GetActiveDefinitionJSON`, `ListAppFlowLLMOverrides`,
+  `UpsertAppFlowLLMOverride`.
+- `internal/admin/service/appflow_llm_nodes.go` — `AppService.GetAppFlowLLMNodes` (compiles active
+  definition, merges stored overrides) + `PutAppFlowLLMOverride` (validates non-empty provider+model).
+- `internal/admin/applications.go` — `GET|PUT /admin/applications/{id}/flow-llm-nodes[/{node_id}]`,
+  TenantTx-scoped, same pattern as `PutRuntime`.
+- `internal/execution/lifecycle.go` — `AppFlowLLMOverrideLoader` interface +
+  `WithAppFlowLLMOverrideLoader`; `StartAppFlow` applies overrides to `input.Spec` before
+  `ExecuteWorkflow` (fail-open: DB error or nil loader → no overrides, canvas-compiled value used).
+  Wired in `cmd/them/main.go`.
+- Frontend: `InlineNodePanel.tsx` LLM section — provider/model are now a read-only display with a
+  "configured in Runtime" hint; prompt/`output_var`/temperature stay canvas-editable (design-time).
+  New `RuntimeAppFlowLLMSection.tsx` (copies `CanvasAgentsSection`'s per-node override UI, flat —
+  no per-agent grouping since these nodes sit directly on the app canvas) wired into
+  `RuntimeView.tsx`'s General tab.
+- `scripts/tests/test_42_appflow_inline_nodes.py` — new step [7b]: GET lists the compiled node with
+  no override, PUT sets an override, GET confirms it merged without touching the compiled value,
+  then resets to `mock` so the existing WS run (steps 8-10) is unaffected.
+
+**Known pre-existing issues found, not fixed (out of scope for this phase):**
+- `RuntimeView.tsx` was already over the 400-line file-size guideline (594 lines) before this
+  change; now 618 after wiring in the new section. A split was not attempted — flagged, not fixed.
+- `go/TEST_INDEX.md`'s bottom-line `go test ./...` total was already stale/out of sync with the S1
+  subtotal before this change (1254 vs S1's 1298). Bumped to 1310 with a note rather than doing a
+  full reconciliation, which is a separate cleanup.
+- A stray uncommitted, non-compiling `internal/admin/dal/gateway.go` was found mid-session (from a
+  parallel session's in-progress work on the same repo) — it was not touched; the parallel session
+  later committed a fix (`8e2082c7`) that also patched the shared `service.Dal` test fakes this
+  phase's interface change required.
 
 ---
 

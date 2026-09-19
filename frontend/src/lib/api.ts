@@ -69,6 +69,7 @@ export type {
   AgentParamMeta,
   AgentParamsResponse,
   AgentLLMNodeStatus,
+  AppFlowLLMNodeStatus,
   MCPTool,
   MCPServer,
   MCPServerPatch,
@@ -156,6 +157,7 @@ import type {
   AgentBindingUpsertBody,
   AgentParamsResponse,
   AgentLLMNodeStatus,
+  AppFlowLLMNodeStatus,
   MCPServer,
   MCPServerPatch,
   MCPServerCreate,
@@ -608,6 +610,12 @@ export const themApi = {
     api.get<AgentLLMNodeStatus[]>(`/admin/applications/${appId}/agents/${agentId}/llm-nodes`),
   putNodeLLMOverride: (appId: string, agentId: string, nodeId: string, provider: string, model: string) =>
     api.put<{ node_id: string; updated: boolean }>(`/admin/applications/${appId}/agents/${agentId}/llm-nodes/${nodeId}`, { provider, model }),
+
+  // App-canvas inline LLM node overrides (Node Registry Phase 1)
+  getAppFlowLLMNodes: (appId: string) =>
+    api.get<AppFlowLLMNodeStatus[]>(`/admin/applications/${appId}/flow-llm-nodes`),
+  putAppFlowLLMOverride: (appId: string, nodeId: string, provider: string, model: string) =>
+    api.put<{ node_id: string; updated: boolean }>(`/admin/applications/${appId}/flow-llm-nodes/${nodeId}`, { provider, model }),
 
   // MCP Store — server registry + app credentials
   listMCPServers: () =>

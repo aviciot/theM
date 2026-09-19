@@ -77,31 +77,15 @@ export function InlineNodePanel({
         {displayNameField}
 
         <div>
-          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider</label>
-          <select
-            style={{ ...fieldStyle, padding: '7px 10px', cursor: 'pointer' }}
-            value={provider}
-            onChange={e => updateNodeConfig({ provider: e.target.value })}
-          >
-            <option value="">Inherit from entry point</option>
-            <option value="anthropic">anthropic</option>
-            <option value="openai">openai</option>
-            <option value="groq">groq</option>
-            <option value="ollama">ollama</option>
-            <option value="vllm">vllm</option>
-            <option value="lmstudio">lmstudio</option>
-            <option value="mock">mock</option>
-          </select>
-        </div>
-
-        <div>
-          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Model</label>
-          <input
-            style={fieldStyle}
-            placeholder="inherit from entry point"
-            value={model}
-            onChange={e => updateNodeConfig({ model: e.target.value })}
-          />
+          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider / Model</label>
+          <div style={{ ...fieldStyle, display: 'flex', alignItems: 'center', gap: 8, color: C.textMuted, cursor: 'default' }}>
+            <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+              {provider || model ? `${provider || 'inherit'} / ${model || 'inherit'}` : 'inherit from entry point'}
+            </span>
+          </div>
+          <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
+            Configured in Runtime → this application's Runtime tab, not on the canvas. Changing it there takes effect immediately — no re-publish needed.
+          </div>
         </div>
 
         <div>

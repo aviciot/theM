@@ -28,6 +28,17 @@ type AppFlowSpec struct {
 	// "temporal" → AppFlowWorkflow via Temporal.
 	ExecutionBackend string    `json:"execution_backend,omitempty"`
 	EntryPoints      []EPFlow  `json:"entry_points"`
+	// LLMNodes lists every inline LLM node across all entry points, with its
+	// canvas-compiled provider/model. Mirrors agentgen's AgentLLMNodeSpec so the
+	// Runtime screen can show/override provider+model without a re-publish.
+	LLMNodes []AppFlowLLMNodeSpec `json:"llm_nodes,omitempty"`
+}
+
+// AppFlowLLMNodeSpec describes one inline LLM node in a compiled app flow.
+type AppFlowLLMNodeSpec struct {
+	NodeID           string `json:"node_id"`
+	CompiledProvider string `json:"compiled_provider"`
+	CompiledModel    string `json:"compiled_model"`
 }
 
 // EPFlow is the compiled flow for one entry point.
@@ -165,7 +176,70 @@ func Compile(raw json.RawMessage, agentByInstanceID map[string]string) (*AppFlow
 	return &AppFlowSpec{
 		ExecutionBackend: doc.ExecutionBackend,
 		EntryPoints:      epFlows,
+		LLMNodes:         collectLLMNodes(epFlows),
 	}, nil
+}
+
+// LLMOverride is a stored provider+model override for one inline LLM node.
+type LLMOverride struct {
+	Provider string
+	Model    string
+}
+
+// ApplyLLMOverrides rewrites the Provider/Model fields inside each inline LLM
+// node's Config for every node ID present in overrides. The workflow always
+// reads Config, so this is the single choke point where a stored runtime
+// override takes precedence over the canvas-compiled value — no workflow code
+// needs to know overrides exist.
+func ApplyLLMOverrides(spec *AppFlowSpec, overrides map[string]LLMOverride) {
+	if spec == nil || len(overrides) == 0 {
+		return
+	}
+	for i := range spec.EntryPoints {
+		nodes := spec.EntryPoints[i].Nodes
+		for j := range nodes {
+			if nodes[j].Kind != "llm" {
+				continue
+			}
+			ov, ok := overrides[nodes[j].ID]
+			if !ok {
+				continue
+			}
+			var cfg InlineLLMConfig
+			if len(nodes[j].Config) > 0 {
+				_ = json.Unmarshal(nodes[j].Config, &cfg)
+			}
+			cfg.Provider = ov.Provider
+			cfg.Model = ov.Model
+			if b, err := json.Marshal(cfg); err == nil {
+				nodes[j].Config = b
+			}
+		}
+	}
+}
+
+// collectLLMNodes walks all entry points and returns one AppFlowLLMNodeSpec per
+// inline LLM node, recording its node ID and compiled provider/model.
+// Mirrors agentgen.collectLLMNodes for the app canvas.
+func collectLLMNodes(epFlows []EPFlow) []AppFlowLLMNodeSpec {
+	var nodes []AppFlowLLMNodeSpec
+	for _, epf := range epFlows {
+		for _, n := range epf.Nodes {
+			if n.Kind != "llm" {
+				continue
+			}
+			var cfg InlineLLMConfig
+			if len(n.Config) > 0 {
+				_ = json.Unmarshal(n.Config, &cfg)
+			}
+			nodes = append(nodes, AppFlowLLMNodeSpec{
+				NodeID:           n.ID,
+				CompiledProvider: cfg.Provider,
+				CompiledModel:    cfg.Model,
+			})
+		}
+	}
+	return nodes
 }
 
 // compileEP compiles one entry point into an EPFlow.

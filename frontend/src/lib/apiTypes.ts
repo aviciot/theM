@@ -733,6 +733,15 @@ export interface AgentLLMNodeStatus {
   override_model?: string;
 }
 
+export interface AppFlowLLMNodeStatus {
+  application_id: string;
+  node_id: string;
+  compiled_provider: string;
+  compiled_model: string;
+  override_provider?: string;
+  override_model?: string;
+}
+
 // ── MCP Store ──────────────────────────────────────────────────────────────
 
 export interface MCPTool {

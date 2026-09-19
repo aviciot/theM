@@ -1,11 +1,12 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type AppGuardHealth } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type AppFlowLLMNodeStatus, type AppGuardHealth } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
 import { EPSections } from './RuntimeEPSections';
 import { CanvasAgentsSection } from './RuntimeAgentsSection';
+import { RuntimeAppFlowLLMSection } from './RuntimeAppFlowLLMSection';
 import type { VoiceDraft } from './RuntimeVoicePanel';
 import { RuntimeTemporalTab } from './RuntimeTemporalTab';
 
@@ -76,6 +77,11 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   const [nodeLLMSaving,    setNodeLLMSaving]    = useState<string | null>(null);
   const [nodeLLMMsg,       setNodeLLMMsg]       = useState<Record<string, string>>({});
 
+  const [flowLLMNodes,     setFlowLLMNodes]     = useState<AppFlowLLMNodeStatus[]>([]);
+  const [flowLLMDrafts,    setFlowLLMDrafts]    = useState<Record<string, NodeLLMDraft>>({});
+  const [flowLLMSaving,    setFlowLLMSaving]    = useState<string | null>(null);
+  const [flowLLMMsg,       setFlowLLMMsg]       = useState<Record<string, string>>({});
+
   const [appParams,       setAppParams]       = useState<AppGlobalParam[]>([]);
   const [newParamName,    setNewParamName]    = useState('');
   const [newParamType,    setNewParamType]    = useState('string');
@@ -136,6 +142,14 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
         .then(r => setAgentParamsList(r.filter((x): x is AgentParamsResponse => x !== null && x.required_params.length > 0)));
       Promise.all(bindings.map(b => themApi.getAgentLLMNodes(app.id, b.agent_id).catch(() => null)))
         .then(r => { const nodes = r.flatMap(x => x ?? []); setAgentLLMNodes(nodes); const d: Record<string, NodeLLMDraft> = {}; nodes.forEach(n => { d[n.node_id] = { provider: n.override_provider ?? n.compiled_provider ?? '', model: n.override_model ?? n.compiled_model ?? '' }; }); setNodeLLMDrafts(d); });
+    }).catch(() => {});
+  }, [app.id]);
+  useEffect(() => {
+    themApi.getAppFlowLLMNodes(app.id).then(nodes => {
+      setFlowLLMNodes(nodes ?? []);
+      const d: Record<string, NodeLLMDraft> = {};
+      (nodes ?? []).forEach(n => { d[n.node_id] = { provider: n.override_provider ?? n.compiled_provider ?? '', model: n.override_model ?? n.compiled_model ?? '' }; });
+      setFlowLLMDrafts(d);
     }).catch(() => {});
   }, [app.id]);
 
@@ -215,6 +229,11 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     const d = nodeLLMDrafts[nodeId]; if (!d?.provider || !d?.model) return; const key = `${agentId}::${nodeId}`; setNodeLLMSaving(key);
     try { await themApi.putNodeLLMOverride(app.id, agentId, nodeId, d.provider, d.model); setAgentLLMNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, override_provider: d.provider, override_model: d.model } : n)); setNodeLLMMsg(m => ({ ...m, [nodeId]: 'Saved' })); setTimeout(() => setNodeLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500); }
     catch (e: unknown) { setNodeLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' })); } finally { setNodeLLMSaving(null); }
+  }
+  async function handleSaveFlowLLM(nodeId: string) {
+    const d = flowLLMDrafts[nodeId]; if (!d?.provider || !d?.model) return; setFlowLLMSaving(nodeId);
+    try { await themApi.putAppFlowLLMOverride(app.id, nodeId, d.provider, d.model); setFlowLLMNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, override_provider: d.provider, override_model: d.model } : n)); setFlowLLMMsg(m => ({ ...m, [nodeId]: 'Saved' })); setTimeout(() => setFlowLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500); }
+    catch (e: unknown) { setFlowLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' })); } finally { setFlowLLMSaving(null); }
   }
   async function handleSaveAgentParams(agentId: string) {
     const inputs = agentParamInputs[agentId] ?? {}; const nonEmpty = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== '')); if (!Object.keys(nonEmpty).length) return; setAgentParamSaving(agentId);
@@ -307,6 +326,12 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
           agentParamSaving={agentParamSaving} agentParamMsg={agentParamMsg}
           setProviders={setProviders} saveBtn={saveBtn}
           onSaveNodeLLM={handleSaveNodeLLM} onSaveAgentParams={handleSaveAgentParams}
+        />
+
+        <RuntimeAppFlowLLMSection
+          nodes={flowLLMNodes} drafts={flowLLMDrafts} setDrafts={setFlowLLMDrafts}
+          saving={flowLLMSaving} msg={flowLLMMsg} setProviders={setProviders} saveBtn={saveBtn}
+          onSave={handleSaveFlowLLM}
         />
 
         <Section title="Session Limits" icon="timer" accent="#f59e0b" defaultOpen={false}>

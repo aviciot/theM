@@ -83,6 +83,14 @@ type fakeDal struct {
 	setAppParamValue     []byte // last raw JSON written by SetAppParam
 	deleteAppParamCalled bool
 
+	// app-canvas inline LLM node override fields
+	activeDefJSON        []byte
+	getActiveDefErr      error
+	appFlowLLMOverrides  []dal.AppFlowLLMOverride
+	listOverridesErr     error
+	upsertOverrideErr    error
+	lastUpsertOverride   dal.AppFlowLLMOverride
+
 	// config fields
 	configRow         *dal.ConfigRow
 	configErr         error
@@ -551,13 +559,14 @@ func (f *fakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppRe
 	return f.readinessInfo, f.readinessErr
 }
 func (f *fakeDal) GetActiveDefinitionJSON(_ context.Context, _ string) ([]byte, error) {
-	return nil, nil
+	return f.activeDefJSON, f.getActiveDefErr
 }
 func (f *fakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) ([]dal.AppFlowLLMOverride, error) {
-	return nil, nil
+	return f.appFlowLLMOverrides, f.listOverridesErr
 }
-func (f *fakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
-	return nil
+func (f *fakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, nodeID, provider, model string) error {
+	f.lastUpsertOverride = dal.AppFlowLLMOverride{NodeID: nodeID, Provider: provider, Model: model}
+	return f.upsertOverrideErr
 }
 
 // fakeCache implements service.Cache.
@@ -1151,5 +1160,92 @@ func TestAgentService_Create_QuotaExceeded_ReturnsError(t *testing.T) {
 	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "a", DisplayName: "A"})
 	if !errors.Is(err, service.ErrQuotaExceeded) {
 		t.Fatalf("want ErrQuotaExceeded, got %v", err)
+	}
+}
+
+// ── AppFlow inline LLM node overrides (Node Registry Phase 1) ──────────────────
+
+const appFlowLLMTestDefJSON = `{
+	"schema_version": 2,
+	"components": [
+		{
+			"instance_id": "inline_llm_1",
+			"definition_ref": {"kind":"inline","namespace":"builtin","name":"llm","version":1},
+			"config": {"node_type":"llm","provider":"anthropic","model":"claude-haiku-4-5-20251001"}
+		}
+	],
+	"entry_points": [
+		{"instance_id":"ep1","slug":"main","protocol":"websocket","root":"inline_llm_1"}
+	],
+	"connections": []
+}`
+
+func TestAppService_GetAppFlowLLMNodes_NoActiveDefinition_NotFound(t *testing.T) {
+	d := &fakeDal{getActiveDefErr: pgx.ErrNoRows}
+	svc := service.NewAppService(d, nil, nil)
+	_, err := svc.GetAppFlowLLMNodes(context.Background(), "app-1")
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestAppService_GetAppFlowLLMNodes_NoOverride_ReturnsCompiledValues(t *testing.T) {
+	d := &fakeDal{activeDefJSON: []byte(appFlowLLMTestDefJSON)}
+	svc := service.NewAppService(d, nil, nil)
+	nodes, err := svc.GetAppFlowLLMNodes(context.Background(), "app-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("want 1 node, got %d", len(nodes))
+	}
+	n := nodes[0]
+	if n.NodeID != "inline_llm_1" || n.CompiledProvider != "anthropic" || n.CompiledModel != "claude-haiku-4-5-20251001" {
+		t.Errorf("unexpected node: %+v", n)
+	}
+	if n.OverrideProvider != "" || n.OverrideModel != "" {
+		t.Errorf("no override stored — override fields must be empty, got: %+v", n)
+	}
+}
+
+func TestAppService_GetAppFlowLLMNodes_WithOverride_MergesIntoStatus(t *testing.T) {
+	d := &fakeDal{
+		activeDefJSON: []byte(appFlowLLMTestDefJSON),
+		appFlowLLMOverrides: []dal.AppFlowLLMOverride{
+			{NodeID: "inline_llm_1", Provider: "groq", Model: "llama-3.3-70b"},
+		},
+	}
+	svc := service.NewAppService(d, nil, nil)
+	nodes, err := svc.GetAppFlowLLMNodes(context.Background(), "app-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	n := nodes[0]
+	if n.OverrideProvider != "groq" || n.OverrideModel != "llama-3.3-70b" {
+		t.Errorf("override not merged: %+v", n)
+	}
+	// Compiled value must be preserved alongside the override.
+	if n.CompiledProvider != "anthropic" || n.CompiledModel != "claude-haiku-4-5-20251001" {
+		t.Errorf("compiled value lost: %+v", n)
+	}
+}
+
+func TestAppService_PutAppFlowLLMOverride_EmptyProvider_Validation(t *testing.T) {
+	svc := service.NewAppService(&fakeDal{}, nil, nil)
+	err := svc.PutAppFlowLLMOverride(context.Background(), "app-1", "node-1", "", "claude-haiku-4-5-20251001")
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestAppService_PutAppFlowLLMOverride_Valid_UpsertsRow(t *testing.T) {
+	d := &fakeDal{}
+	svc := service.NewAppService(d, nil, nil)
+	err := svc.PutAppFlowLLMOverride(context.Background(), "app-1", "node-1", "groq", "llama-3.3-70b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.lastUpsertOverride.NodeID != "node-1" || d.lastUpsertOverride.Provider != "groq" || d.lastUpsertOverride.Model != "llama-3.3-70b" {
+		t.Errorf("upsert not called with expected values: %+v", d.lastUpsertOverride)
 	}
 }

@@ -198,22 +198,37 @@ Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see 
 
 ## Current migration slice
 
-**NEXT: Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. NOT STARTED.**
+**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phase 1 COMPLETE, Phase 2 NEXT.**
 
 Goal: a node is defined once; every canvas reads it. Today the same concept exists three ways —
 agent-builder nodes in a code registry, app-canvas nodes hardcoded in 6 places, middleware in the
 DB table `them.middleware_defs`. They will drift permanently unless unified.
 
-| Phase | What | Sessions |
+| Phase | What | Status |
 |---|---|---|
-| 1 | Runtime split — provider/model off the canvas into the Runtime screen | 1 |
-| 2 | Extract shared registry into `internal/nodedefs` | 1 |
-| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | 1 |
-| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | 1 |
-| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | 1 |
+| 1 | Runtime split — provider/model off the canvas into the Runtime screen | ✅ COMPLETE (2026-09-19) |
+| 2 | Extract shared registry into `internal/nodedefs` | ⬜ NEXT |
+| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ⬜ NOT STARTED |
+| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ⬜ NOT STARTED |
+| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ⬜ NOT STARTED |
 
-**Start with Phase 1** — independent of the rest, and a real defect today (inline nodes are
-invisible in the Runtime screen; changing a model forces a re-publish).
+**Phase 1 — COMPLETE (2026-09-19).** New table `them.app_flow_llm_overrides` (migration 101,
+applied to live DB). `appflow.Compile` now emits `AppFlowSpec.LLMNodes`; new
+`GET|PUT /admin/applications/{id}/flow-llm-nodes[/{node_id}]`; `Lifecycle.StartAppFlow` applies
+stored overrides to the compiled spec before the workflow starts (fail-open). Frontend:
+`InlineNodePanel.tsx`'s LLM provider/model is now read-only with a "configured in Runtime" hint;
+new `RuntimeAppFlowLLMSection.tsx` in the Runtime screen's General tab. `go test ./...` 1310 tests
+0 failures (S1-122); `tsc --noEmit` 0 errors; `test_42_appflow_inline_nodes.py` 29/29 (new step
+[7b]) verified live after rebuild + force-recreate of `them-go-bridge` + `them-dag-worker`. Full
+detail in `docs/NODE_REGISTRY_PLAN.md`.
+
+**Known gaps flagged, not fixed (out of scope for Phase 1):** `RuntimeView.tsx` was already over
+the 400-line guideline (594 lines) before this change, now 618 — a split was not attempted.
+`go/TEST_INDEX.md`'s bottom-line total was already stale before this change; bumped with a note,
+full reconciliation deferred.
+
+**Next: Phase 2** — extract the shared registry into `internal/nodedefs`. Independent of 3-4.
+Gate: `/admin/node-types` JSON byte-identical before/after (pure refactor).
 
 **STOP RULE: no new app-canvas node types (Tool, Transform) until Phase 3 lands.** Adding one
 today costs six hardcoded edits, then the same work again during migration.

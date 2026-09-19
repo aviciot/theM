@@ -143,6 +143,12 @@ type Dal interface {
 	GetAgentLLMNodes(ctx context.Context, applicationID, agentID string) ([]byte, []byte, string, error)
 	UpsertNodeLLMOverride(ctx context.Context, applicationID, agentID, nodeID, provider, model string) error
 
+	// App-canvas inline LLM node overrides — provider+model per node, own table
+	// (no agent_id: these nodes live directly on the app canvas, not inside an agent).
+	GetActiveDefinitionJSON(ctx context.Context, applicationID string) ([]byte, error)
+	ListAppFlowLLMOverrides(ctx context.Context, applicationID string) ([]dal.AppFlowLLMOverride, error)
+	UpsertAppFlowLLMOverride(ctx context.Context, applicationID, nodeID, provider, model string) error
+
 	// Publish pipeline — Phase C
 	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string, resolvedAgentIDs map[string]string) (dal.PublishResult, error)
 	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)

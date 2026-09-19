@@ -82,6 +82,7 @@ type Lifecycle struct {
 	extJWTValidator  *auth.ExternalJWTValidator    // optional; validates external RS256 JWTs
 	roleChecker      RoleChecker   // optional; nil = role gate disabled
 	temporalCfgLoader TemporalConfigLoader // optional; nil = hardcoded defaults for AppFlow
+	llmOverrideLoader AppFlowLLMOverrideLoader // optional; nil = no inline LLM node overrides applied
 	logger           *slog.Logger
 }
 
@@ -168,6 +169,21 @@ type TemporalConfigLoader interface {
 // When nil (default), AppFlowWorkflow uses its own hardcoded defaults.
 func (lc *Lifecycle) WithTemporalConfigLoader(l TemporalConfigLoader) *Lifecycle {
 	lc.temporalCfgLoader = l
+	return lc
+}
+
+// AppFlowLLMOverrideLoader resolves stored inline-LLM-node runtime overrides
+// for an application. If nil or if Load returns an error, StartAppFlow skips
+// overrides (fail-open) and the canvas-compiled provider/model is used.
+type AppFlowLLMOverrideLoader interface {
+	// Load returns node_id -> override for the given applicationID.
+	Load(ctx context.Context, applicationID string) (map[string]appflow.LLMOverride, error)
+}
+
+// WithAppFlowLLMOverrideLoader attaches an AppFlowLLMOverrideLoader.
+// When nil (default), StartAppFlow applies no overrides.
+func (lc *Lifecycle) WithAppFlowLLMOverrideLoader(l AppFlowLLMOverrideLoader) *Lifecycle {
+	lc.llmOverrideLoader = l
 	return lc
 }
 
@@ -648,6 +664,15 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 			input.TemporalCfg = cfg
 		}
 		// On error: leave TemporalCfg nil so the workflow uses its own hardcoded defaults.
+	}
+
+	// Apply inline LLM node runtime overrides (fail-open: no overrides on error or nil loader).
+	// The Runtime screen writes these outside the published definition, so a model
+	// change never needs a re-publish.
+	if lc.llmOverrideLoader != nil {
+		if overrides, err := lc.llmOverrideLoader.Load(ctx, h.EPConfig.AppID); err == nil {
+			appflow.ApplyLLMOverrides(input.Spec, overrides)
+		}
 	}
 
 	wfOpts := temporalclient.StartWorkflowOptions{

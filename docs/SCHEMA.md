@@ -487,6 +487,27 @@ Stores binary file artifacts produced by the Go orchestrator/worker. Source of t
 
 ---
 
+## them.app_flow_llm_overrides (migration 101 — Node Registry Phase 1)
+Runtime-screen provider+model override for one inline LLM node on an app canvas.
+Mirrors `app_agent_bindings.config_overrides.llm_nodes` for the agent builder, but stored in its
+own table because these nodes live directly on the app canvas (no `agent_id`). Stored outside the
+published definition so changing a model needs no re-publish. `Lifecycle.StartAppFlow` applies
+these via `appflow.ApplyLLMOverrides` before the workflow starts (fail-open: DB error → no
+overrides applied, canvas-compiled value used).
+
+| Column | Type | Purpose |
+|---|---|---|
+| application_id | UUID NOT NULL, FK → applications(id) ON DELETE CASCADE | |
+| node_id | TEXT NOT NULL | canvas instance_id of the inline LLM node |
+| provider | TEXT NOT NULL | override provider slug |
+| model | TEXT NOT NULL | override model identifier |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+PRIMARY KEY (application_id, node_id). No RLS (same as `app_temporal_config`) — isolation is via
+the `application_id` FK and TenantTx-scoped admin routes, not a row policy on this table.
+
+---
+
 ## them.middleware_defs
 
 Registry of middleware component types (builtin and tenant-scoped). Migration: `db/001_schema.sql`; visual columns added by `db/097_middleware_defs_visual.sql`.
@@ -666,6 +687,7 @@ Key relationships:
 | `db/087_end_user_role.sql` | Seed `auth_service.roles` with `end_user` role (`dashboard_access='none'`, rate_limit=1000, cost_limit_daily=$10, token_expiry=3600s). Runtime-only access — no dashboard permissions. |
 | `db/088_allowed_principals.sql` | Phase 3 principal guard: `them.entry_points.allowed_principals TEXT NOT NULL DEFAULT 'internal' CHECK (IN ('internal','external','both'))`. Controls which principal types (internal token/user_jwt, external backend+X-External-User, or both) may call each EP. Default 'internal' is safe for all existing EPs. |
 | `db/097_middleware_defs_visual.sql` | Phase 1 middleware node registry: adds `emoji TEXT`, `color TEXT`, `bg_color TEXT` to `them.middleware_defs`. Seeds File Guard with `🛡️` / `#f59e0b` / `rgba(245,158,11,0.08)`. |
+| `db/101_app_flow_llm_overrides.sql` | Node Registry Phase 1: `them.app_flow_llm_overrides` table — per-app, per-node provider+model override for app-canvas inline LLM nodes, applied at workflow start ahead of the canvas-compiled value. |
 
 ---
 

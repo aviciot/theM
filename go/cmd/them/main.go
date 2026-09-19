@@ -290,6 +290,11 @@ func run() error {
 	execLifecycle.WithTemporalConfigLoader(appflow.NewPgxTemporalConfigLoader(rlsPools))
 	log.Info("temporal config loader wired")
 
+	// Wire inline LLM node override loader — Runtime-screen provider/model overrides
+	// applied at workflow start, ahead of the canvas-compiled value.
+	execLifecycle.WithAppFlowLLMOverrideLoader(appflow.NewPgxAppFlowLLMOverrideLoader(rlsPools))
+	log.Info("appflow llm override loader wired")
+
 	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
 	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,
 	// session events to browser clients. No Temporal, no recording.

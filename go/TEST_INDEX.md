@@ -3559,7 +3559,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-119 | LLM Gateway Phase 1 unit tests (GW-M-01..05, GW-S-01..03, GW-C-01..03, GW-H-01..03, GW-MSG-01..02, GW-HND-01..09): modelToProvider prefix mapping (claude/gpt/llama/o1/unknown), sanitizeErrorMsg (enc:/sk- redaction, clean passthrough), estimateCost (known model, unknown model+known provider, unknown provider→0), gatewayHTTPStatus (429/422/502), toInternalMessages (system→user promotion, assistant preserved), handler HTTP layer (non-stream 200 + record written, stream 200 + [DONE], tenant mismatch 403, no token 401, no model 400, quota 429, unknown slug 404, provider error 502, key redacted) | 25 |
 | S1-120 | LLM Gateway Phase 2 policy tests (GW-POL-01..08): AllowedModel_Passes, BlockedModel_Returns403 (status=blocked in record), AliasResolvesBeforeCheck (ModelServed=resolved), MaxTokensCeiling_Applied (Build called with capped value), NilPolicy_AllowsAll, BudgetExceeded_Returns429, BudgetOK_Passes, SpendDBError_FailOpen | 8 |
 | S1-121 | LLM Gateway Phase 3 admin handler tests (GW-ADM-01..11): ListClients_Empty, CreateClient_MissingLabel, CreateClient_Success (token in response), GetClient_NotFound, DeleteClient (Exec+204), ListProfiles_Empty, CreateProfile_MissingName, GetPolicy_NoRow (allow-all zero row), PutPolicy_InvalidBody, ListRequests_Empty, ListRequests_LimitParam | 11 |
-| **S1 total** | | **1298** |
+| S1-122 | Node Registry Phase 1 — app-canvas inline LLM node overrides (AF-26..29): Compile.CollectsLLMNodes, Compile.NoLLMNodes_EmptyList, ApplyLLMOverrides.RewritesMatchingNode (non-override fields preserved), ApplyLLMOverrides.NilAndEmptyAreNoop; AppService.GetAppFlowLLMNodes (NotFound on missing active def, no-override returns compiled values, override merges into status); AppService.PutAppFlowLLMOverride (empty provider → ErrValidation, valid upserts row); handler (GET 200 no-override, PUT 400 empty provider, PUT 200) | 12 |
+| **S1 total** | | **1310** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
@@ -3637,4 +3638,4 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | **S2 total** | | **59** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1254** |
+| **`go test ./...` total** | | **1310** (S1 total; this line is out of sync with S1/S2 subtotals above pre-dating this entry — full reconciliation not in scope for this change) |
