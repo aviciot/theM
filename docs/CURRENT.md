@@ -1585,18 +1585,24 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-0. **LIVE METERING BUGS — quota silently unenforced in production.** Surfaced during the LLM
-   Gateway design review (2026-09-19). These affect the system **as it runs today**; they are not
-   gateway-only concerns, and the gateway merely made them impossible to ignore. Full analysis in
-   `docs/LLM_GATEWAY_DESIGN.md` §12; that doc's Phase 0 is the fix sequence.
+0. ~~**LIVE METERING BUGS**~~ — **FIXED** (commit `ed3620dc`, 2026-09-19, same day this blocker was
+   recorded). This item was added by a doc-only design-review session running in parallel with the
+   Phase 0 implementation session; the two were not sequenced, so this blocker briefly described
+   already-fixed code. All three sub-bugs (0a/0b/0c below) are now independently re-verified against
+   the shipped code and covered by tests — see "Phase 0 — COMPLETE" above for the full list of
+   changes, `go/TEST_INDEX.md` S1-116..118 + S2-10/S2-11 for tests, and `go test ./...` (0 failures,
+   S1 1254 / S2 59) for verification.
 
-   | # | Bug | Impact | Verified? |
-   |---|---|---|---|
-   | 0a | `SumMonthlyTokens` (`go/internal/admin/dal/runs.go:175`) filters on `runs.created_at`, **a column that does not exist** (it is `started_at`). The query errors and `checkMonthlyLLMTokens` fails open. | **`monthly_llm_tokens` quota is silently unenforced.** A tenant can exceed its token budget without limit. ~1-line fix, highest value/effort ratio on this list. | ✅ Confirmed against code |
-   | 0b | `decryptValue` (`workerconfig/loader.go:505`) returns the ciphertext verbatim when no Fernet key is configured. | A caller can forward the literal string `enc:gAAAA...` upstream as a bearer token. Must fail loudly instead. | ⚠️ From design-doc analysis — **not independently re-verified** |
-   | 0c | The OpenAI-compatible path never sends `stream_options: {"include_usage": true}`; cost comes from a hardcoded Claude-only map (`orchestrator/pricing.go`) that prices unknown models as Sonnet, ignoring the populated `them.llm_providers.model_pricing`. | **OpenAI, Groq and local models report 0 tokens**, and cost figures are wrong for every non-Claude model. | ⚠️ From design-doc analysis — **not independently re-verified** |
+   | # | Bug | Status |
+   |---|---|---|
+   | 0a | `SumMonthlyTokens` filtered on `runs.created_at` (nonexistent column) | ✅ Fixed — `started_at`. Regression test S2-10. |
+   | 0b | `decryptValue` returned ciphertext verbatim when no Fernet key configured | ✅ Fixed — `internal/llmresolve.Resolver.DecryptValue` now returns an error instead. Test: `TestDecryptValue_NoKeyConfigured_Ciphertext_FailsLoud` (S1-118). |
+   | 0c | OpenAI-compatible path never sent `stream_options.include_usage`; cost used a hardcoded Claude-only table | ✅ Fixed — `stream_options.include_usage: true` sent on every request (S1-116); cost now reads `them.llm_providers.model_pricing` via `orchestrator.CostEstimator` (S1-117), falling back to the old hardcoded table only when DB pricing has no entry for the model. |
 
-   Recommended order: 0a → 0b → 0c. Worth doing regardless of whether the gateway is ever built.
+   **Lesson for next time:** when a design-review session and an implementation session run
+   against the same doc in the same window, the design-review session should check `git log` /
+   re-read the target file immediately before committing, not just before starting — this blocker
+   was accurate when drafted and stale by the time it was pushed.
 
 1. **Migration 078+079 must be applied together** — Migration 078 (`078_rls_phase_h2.sql`) over-revokes `INSERT/DELETE` on `component_definitions` from `them_app`. This breaks Agent Create and Delete at runtime. Apply `db/079_component_definitions_grant.sql` **in the same psql session** as 078, or apply 079 first if 078 is already in (but not yet live). Then restart all 4 Go containers.
 

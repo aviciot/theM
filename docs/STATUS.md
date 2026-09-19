@@ -102,13 +102,13 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 ## Known issues / blockers
 
-0. **LIVE METERING BUGS (added 2026-09-19)** — `monthly_llm_tokens` quota is **silently unenforced
-   in production** (`SumMonthlyTokens` queries a non-existent column and fails open); non-Anthropic
-   providers report 0 tokens; cost prices unknown models as Sonnet. Surfaced by the LLM Gateway
-   design review but they affect the system as it runs today. **Full detail and fix order:
-   `docs/CURRENT.md` → Known blockers item 0**, analysis in `docs/LLM_GATEWAY_DESIGN.md` §12.
-   (Recorded here because this file is where "what is broken" is looked for — but note the header:
-   this file is HISTORICAL, and `docs/CURRENT.md` is authoritative.)
+0. ~~**LIVE METERING BUGS (added 2026-09-19)**~~ — **FIXED same day**, commit `ed3620dc`.
+   `SumMonthlyTokens` now filters on `started_at`; non-Anthropic providers now report real token
+   counts (`stream_options.include_usage`); cost now reads `them.llm_providers.model_pricing`
+   instead of a hardcoded Claude-only table. This entry and `docs/CURRENT.md`'s "Known blockers
+   item 0" were written by a parallel design-review session that hadn't picked up the
+   implementation session's commit yet — see `docs/CURRENT.md` → "Phase 0 — COMPLETE" for the
+   authoritative record and tests.
 
 1. **E2E canvas agent run not verified** — infrastructure complete but no confirmed end-to-end run through a canvas agent on the live stack.
 

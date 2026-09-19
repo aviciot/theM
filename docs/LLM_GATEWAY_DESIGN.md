@@ -408,11 +408,13 @@ Two constraints: restrict the palette to **guard nodes only** with fixed Request
 
 ## 12. Known gaps and risks
 
-**Pre-existing metering bugs.** The gateway's whole value is trustworthy numbers, and three bugs would make them wrong on day one:
+**Pre-existing metering bugs — FIXED in Phase 0 (commit `ed3620dc`, 2026-09-19).** The gateway's whole value is trustworthy numbers, and these three bugs would have made them wrong on day one:
 
-1. `SumMonthlyTokens` (`admin/dal/runs.go:175`) filters on `runs.created_at` — **that column does not exist** (the column is `started_at`). The query errors, and `checkMonthlyLLMTokens` fails open, so **the monthly token quota is silently unenforced today.**
-2. The OpenAI-compatible path never sends `stream_options: {"include_usage": true}`, so **OpenAI, Groq and local models report 0 tokens.** Only Anthropic reports usage correctly.
-3. Cost comes from a hardcoded Claude-only map (`orchestrator/pricing.go`) that defaults every unknown model to Sonnet pricing. `them.llm_providers.model_pricing` (already populated) is ignored.
+1. ~~`SumMonthlyTokens` (`admin/dal/runs.go:175`) filters on `runs.created_at` — that column does not exist (the column is `started_at`).~~ Fixed: now filters on `started_at`. Regression test `go/TEST_INDEX.md` S2-10.
+2. ~~The OpenAI-compatible path never sends `stream_options: {"include_usage": true}`.~~ Fixed: sent on every streamed request. Test S1-116.
+3. ~~Cost comes from a hardcoded Claude-only map that defaults every unknown model to Sonnet pricing.~~ Fixed: cost now reads `them.llm_providers.model_pricing` via `internal/llmresolve.PricingTable` + `orchestrator.CostEstimator`, loaded once per run alongside the existing API-key lookup; falls back to the old hardcoded table only when DB pricing has no entry for the model. Tests S1-117, S1-118, S2-11.
+
+`internal/llmresolve` was also extracted from `workerconfig/loader.go` in the same commit, per Phase 0 below — see `docs/CURRENT.md` "Phase 0 — COMPLETE" for the full change list, including two bugs found and fixed while unifying the duplicated key-resolution code (a missing tenant_id filter, and a missing "plain:" test-mode prefix case), and the deliberately-deferred `cmd/agent-runtime` gap.
 
 **Where usage is stored — DECIDED: new gateway tables.** `run_usage.run_id` is `NOT NULL` → `runs.orchestrator_id` is `NOT NULL` → `orchestrators`. A cron job has no orchestrator and no run, so gateway usage cannot be written to the existing tables as-is.
 
@@ -531,19 +533,9 @@ Strongest first two: **cache** (saves money on day one, demos well) and **failov
 
 Ship the choke point first, then policy. Each phase is independently useful.
 
-**Phase 0 — foundation (no new surface).** Extract `internal/llmresolve` from `workerconfig/loader.go`; fix the three metering bugs in §12; fix `decryptValue` fail-loud. Now every existing LLM path meters correctly, before any new traffic arrives.
+**Phase 0 — foundation (no new surface). ✅ COMPLETE (commit `ed3620dc`, 2026-09-19).** Extracted `internal/llmresolve` from `workerconfig/loader.go` (and unified `cmd/dag-worker`'s duplicate `resolveKey` behind it); fixed the three metering bugs in §12; fixed `decryptValue`/`DecryptValue` fail-loud. Every existing LLM path now meters correctly. `go test ./...` — 0 failures (S1 1254, S2 59; see `go/TEST_INDEX.md` S1-116..118, S2-10, S2-11). Full change list and two additional bugs found during the unification (missing tenant_id filter on app-level key lookup; missing `"plain:"` test-mode prefix handling) are in `docs/CURRENT.md` → "Phase 0 — COMPLETE". One gap deliberately deferred: `cmd/agent-runtime` keeps its own narrower, un-unified key-resolution path — see the same section for why and what breaks (tenant-level-only keys aren't found by agent-runtime).
 
-> **Phase 0 is a prerequisite, not cleanup — and it is worth doing even if the gateway never ships.**
-> The gateway's entire value proposition is trustworthy numbers. Ship it on top of broken metering
-> and day one produces a confident dashboard of wrong figures, which is worse than no dashboard
-> because people act on it. Note also that `SumMonthlyTokens` means the monthly token quota is
-> **silently unenforced in production today** — that is a live gap in the current system, not a
-> future gateway concern, and it is tracked in `docs/STATUS.md` for that reason.
-> Suggested order within Phase 0: `SumMonthlyTokens` (one-line, live security/billing impact) →
-> `decryptValue` fail-loud (prevents forwarding ciphertext upstream as a bearer token) → token
-> counts + real pricing (correctness of every number the gateway reports).
-
-**Phase 1 — gateway, observe + meter.** Migration `db/099`. New `internal/llmgateway` (handler → service → DAL). `POST /{tenant}/llm/v1/chat/completions`, streaming and non-streaming. Bearer auth, tenant match, quota via the existing `Enforcer`, usage recorded in a `defer`, audit on rejections. Traefik router `PathRegexp(^/[^/]+/llm(/|$))` at priority 120, and a Go route mounted **before** `MountApps` — its `Handle("/*")` catch-all already caused the A2A outage in commit `7e9b7b1`.
+**Phase 1 — gateway, observe + meter.** Next task on this track. Migration `db/099`. New `internal/llmgateway` (handler → service → DAL). `POST /{tenant}/llm/v1/chat/completions`, streaming and non-streaming. Bearer auth, tenant match, quota via the existing `Enforcer`, usage recorded in a `defer`, audit on rejections. Traefik router `PathRegexp(^/[^/]+/llm(/|$))` at priority 120, and a Go route mounted **before** `MountApps` — its `Handle("/*")` catch-all already caused the A2A outage in commit `7e9b7b1`.
 
 Phase 1 must ship as an **ordered pipeline with zero steps configured**, not as a straight-through proxy — so later phases add components instead of restructuring. Obey the four scaling rules in §10 from the first commit, especially rule 1 (no DB connection held across the LLM call).
 
