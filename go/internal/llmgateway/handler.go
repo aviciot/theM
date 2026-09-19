@@ -136,9 +136,9 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 
 	text, cr, callErr := h.svc.Call(r.Context(), rec.TenantID, req)
 	if callErr != nil {
-		rec.Status = "error"
+		rec.Status = callStatus(callErr)
 		rec.HTTPStatus = gatewayHTTPStatus(callErr)
-		writeGatewayError(w, rec.HTTPStatus, "provider_error", callErr.Error())
+		writeGatewayError(w, rec.HTTPStatus, gatewayErrType(callErr), callErr.Error())
 		return
 	}
 
@@ -183,9 +183,9 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start tim
 
 	sr, _, streamErr := h.svc.Stream(r.Context(), rec.TenantID, req)
 	if streamErr != nil {
-		rec.Status = "error"
+		rec.Status = callStatus(streamErr)
 		rec.HTTPStatus = gatewayHTTPStatus(streamErr)
-		writeGatewayError(w, rec.HTTPStatus, "provider_error", streamErr.Error())
+		writeGatewayError(w, rec.HTTPStatus, gatewayErrType(streamErr), streamErr.Error())
 		return
 	}
 
@@ -257,10 +257,40 @@ func sanitizeErrorMsg(msg string) string {
 	return msg
 }
 
+// callStatus maps a service error to the status string stored in gateway_requests.
+func callStatus(err error) string {
+	switch {
+	case errors.Is(err, ErrModelBlocked):
+		return "blocked"
+	case errors.Is(err, ErrQuotaExceeded), errors.Is(err, ErrBudgetExceeded):
+		return "rate_limited"
+	default:
+		return "error"
+	}
+}
+
+// gatewayErrType returns the JSON error.type string for the client response.
+func gatewayErrType(err error) string {
+	switch {
+	case errors.Is(err, ErrModelBlocked):
+		return "model_not_permitted"
+	case errors.Is(err, ErrBudgetExceeded):
+		return "budget_exceeded"
+	case errors.Is(err, ErrQuotaExceeded):
+		return "rate_limit_exceeded"
+	case errors.Is(err, ErrNoProvider):
+		return "provider_not_configured"
+	default:
+		return "provider_error"
+	}
+}
+
 func gatewayHTTPStatus(err error) int {
 	switch {
-	case errors.Is(err, ErrQuotaExceeded):
+	case errors.Is(err, ErrQuotaExceeded), errors.Is(err, ErrBudgetExceeded):
 		return http.StatusTooManyRequests
+	case errors.Is(err, ErrModelBlocked):
+		return http.StatusForbidden
 	case errors.Is(err, ErrNoProvider):
 		return http.StatusUnprocessableEntity
 	default:

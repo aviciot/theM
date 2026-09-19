@@ -94,26 +94,41 @@ type ProviderFactory interface {
 	Build(ctx context.Context, tenantID, model string, maxTokens int) (providerName string, p llm.Provider, err error)
 }
 
+// PolicyEnforcer loads gateway_policies for a tenant and sums monthly spend.
+// Nil interface = no policy enforcement (tests and when not wired).
+type PolicyEnforcer interface {
+	LoadPolicy(ctx context.Context, tenantID string) (*Policy, error)
+	SumMonthlySpend(ctx context.Context, tenantID string) (float64, error)
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 // Service orchestrates a single LLM gateway call:
-//  1. Check api_requests_per_minute quota (fail-open on Redis error — §16.2).
-//  2. Resolve provider and key via ProviderFactory.
-//  3. Build the llm.Provider and stream/drain.
-//  4. Return tokens and cost to the handler for deferred WriteRequest.
+//  1. Check gateway_policies: model allowlist, monthly budget (Phase 2).
+//  2. Check api_requests_per_minute quota (fail-open on Redis error — §16.2).
+//  3. Resolve provider and key via ProviderFactory.
+//  4. Build the llm.Provider and stream/drain.
+//  5. Return tokens and cost to the handler for deferred WriteRequest.
 type Service struct {
 	factory ProviderFactory
 	dal     *DAL
 	quota   QuotaChecker
+	policy  PolicyEnforcer
 	log     *slog.Logger
 }
 
-// NewService creates a Service. quotaChecker may be nil (no quota enforcement).
+// NewService creates a Service. quotaChecker and policyEnforcer may be nil.
 func NewService(factory ProviderFactory, dal *DAL, qc QuotaChecker, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Service{factory: factory, dal: dal, quota: qc, log: log}
+}
+
+// WithPolicyEnforcer attaches a PolicyEnforcer to enable Phase 2 governance.
+func (s *Service) WithPolicyEnforcer(pe PolicyEnforcer) *Service {
+	s.policy = pe
+	return s
 }
 
 // CallResult carries the usage and cost from a completed (or cancelled) call.
@@ -132,20 +147,36 @@ var ErrQuotaExceeded = errors.New("llmgateway: quota exceeded")
 // ErrNoProvider is returned when no provider/key can be resolved for the model.
 var ErrNoProvider = errors.New("llmgateway: no provider configured for model")
 
-// Call resolves the provider, checks quota, calls the LLM (non-streaming), and
-// returns the assembled text response along with usage/cost.
+// ErrModelBlocked is returned when the resolved model is not in the tenant's
+// allowed_models list. The caller returns HTTP 403.
+var ErrModelBlocked = errors.New("llmgateway: model not permitted by policy")
+
+// ErrBudgetExceeded is returned when the tenant's monthly_budget_usd is
+// exhausted. The caller returns HTTP 429.
+var ErrBudgetExceeded = errors.New("llmgateway: monthly budget exceeded")
+
+// Call resolves the provider, checks policy and quota, calls the LLM
+// (non-streaming), and returns the assembled text response along with
+// usage/cost. The CallResult.ModelServed is the resolved (post-alias) model.
 func (s *Service) Call(ctx context.Context, tenantID string, req ChatRequest) (string, CallResult, error) {
+	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, req.Model)
+	if perr != nil {
+		return "", CallResult{}, perr
+	}
+
 	if err := s.checkQuota(ctx, tenantID); err != nil {
 		return "", CallResult{}, ErrQuotaExceeded
 	}
 
-	provName, prov, err := s.factory.Build(ctx, tenantID, req.Model, req.MaxTokens)
+	effectiveMaxTokens := applyTokenCap(req.MaxTokens, tokenCap)
+
+	provName, prov, err := s.factory.Build(ctx, tenantID, resolvedModel, effectiveMaxTokens)
 	if err != nil {
 		return "", CallResult{}, err
 	}
 
 	domainMsgs := toInternalMessages(req.Messages)
-	opts := llm.Options{Model: req.Model, MaxTokens: req.MaxTokens}
+	opts := llm.Options{Model: resolvedModel, MaxTokens: effectiveMaxTokens}
 	if req.Temperature != nil {
 		opts.Temperature = *req.Temperature
 	}
@@ -172,10 +203,10 @@ func (s *Service) Call(ctx context.Context, tenantID string, req ChatRequest) (s
 
 	cr := CallResult{
 		Provider:    provName,
-		ModelServed: req.Model,
+		ModelServed: resolvedModel,
 		TokensIn:    usage.InputTokens,
 		TokensOut:   usage.OutputTokens,
-		CostUSD:     estimateCost(provName, req.Model, usage.InputTokens, usage.OutputTokens),
+		CostUSD:     estimateCost(provName, resolvedModel, usage.InputTokens, usage.OutputTokens),
 	}
 	return sb.String(), cr, nil
 }
@@ -204,20 +235,27 @@ type GatewayEvent struct {
 	TTFB int
 }
 
-// Stream resolves the provider, checks quota, and returns a StreamResult whose
-// Events channel the handler reads and re-emits as SSE.
+// Stream resolves the provider, checks policy and quota, and returns a
+// StreamResult whose Events channel the handler reads and re-emits as SSE.
 func (s *Service) Stream(ctx context.Context, tenantID string, req ChatRequest) (StreamResult, CallResult, error) {
+	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, req.Model)
+	if perr != nil {
+		return StreamResult{}, CallResult{}, perr
+	}
+
 	if err := s.checkQuota(ctx, tenantID); err != nil {
 		return StreamResult{}, CallResult{}, ErrQuotaExceeded
 	}
 
-	provName, prov, err := s.factory.Build(ctx, tenantID, req.Model, req.MaxTokens)
+	effectiveMaxTokens := applyTokenCap(req.MaxTokens, tokenCap)
+
+	provName, prov, err := s.factory.Build(ctx, tenantID, resolvedModel, effectiveMaxTokens)
 	if err != nil {
 		return StreamResult{}, CallResult{}, err
 	}
 
 	domainMsgs := toInternalMessages(req.Messages)
-	opts := llm.Options{Model: req.Model, MaxTokens: req.MaxTokens}
+	opts := llm.Options{Model: resolvedModel, MaxTokens: effectiveMaxTokens}
 	if req.Temperature != nil {
 		opts.Temperature = *req.Temperature
 	}
@@ -228,7 +266,7 @@ func (s *Service) Stream(ctx context.Context, tenantID string, req ChatRequest) 
 	}
 
 	out := make(chan GatewayEvent, 64)
-	callRes := CallResult{Provider: provName, ModelServed: req.Model}
+	callRes := CallResult{Provider: provName, ModelServed: resolvedModel}
 
 	go func() {
 		defer close(out)
@@ -269,7 +307,7 @@ func (s *Service) Stream(ctx context.Context, tenantID string, req ChatRequest) 
 					u = *ev.Usage
 					callRes.TokensIn = u.InputTokens
 					callRes.TokensOut = u.OutputTokens
-					callRes.CostUSD = estimateCost(provName, req.Model, u.InputTokens, u.OutputTokens)
+					callRes.CostUSD = estimateCost(provName, resolvedModel, u.InputTokens, u.OutputTokens)
 				}
 				finReason := "stop"
 				if ev.StopReason != "" {
@@ -299,10 +337,71 @@ func (s *Service) Stream(ctx context.Context, tenantID string, req ChatRequest) 
 		out <- GatewayEvent{Done: true}
 	}()
 
-	return StreamResult{Provider: provName, ModelServed: req.Model, Events: out}, callRes, nil
+	return StreamResult{Provider: provName, ModelServed: resolvedModel, Events: out}, callRes, nil
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+// checkPolicy enforces gateway_policies for the tenant:
+//  1. Applies model aliases (alias → concrete model).
+//  2. Checks the resolved model against allowed_models (if non-empty).
+//  3. Checks monthly spend against monthly_budget_usd (if > 0, fail-open on error).
+//
+// Returns the resolved model string (possibly aliased), the per-request token
+// ceiling (0 = no cap), and any blocking error.
+// Returns the original model unchanged when no policy is configured.
+func (s *Service) checkPolicy(ctx context.Context, tenantID, requestedModel string) (resolvedModel string, tokenCap int, err error) {
+	if s.policy == nil {
+		return requestedModel, 0, nil
+	}
+
+	pol, lerr := s.policy.LoadPolicy(ctx, tenantID)
+	if lerr != nil {
+		// Fail-open on DB error — same principle as quota (§16.2).
+		if s.log != nil {
+			s.log.Warn("llmgateway: policy load error — fail-open", "err", lerr)
+		}
+		return requestedModel, 0, nil
+	}
+	if pol == nil {
+		// No policy row → allow everything.
+		return requestedModel, 0, nil
+	}
+
+	// Step 1: alias resolution (before allowlist check — §14 Phase 2).
+	resolved := requestedModel
+	if alias, ok := pol.ModelAliases[requestedModel]; ok && alias != "" {
+		resolved = alias
+	}
+
+	// Step 2: allowlist check.
+	if len(pol.AllowedModels) > 0 {
+		allowed := false
+		for _, m := range pol.AllowedModels {
+			if m == resolved {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return "", 0, ErrModelBlocked
+		}
+	}
+
+	// Step 3: monthly budget check (fail-open on DB error).
+	if pol.MonthlyBudgetUSD > 0 {
+		spent, serr := s.policy.SumMonthlySpend(ctx, tenantID)
+		if serr != nil {
+			if s.log != nil {
+				s.log.Warn("llmgateway: monthly spend check error — fail-open", "err", serr)
+			}
+		} else if spent >= pol.MonthlyBudgetUSD {
+			return "", 0, ErrBudgetExceeded
+		}
+	}
+
+	return resolved, pol.MaxTokensPerRequest, nil
+}
 
 func (s *Service) checkQuota(ctx context.Context, tenantID string) error {
 	if s.quota == nil {
@@ -317,6 +416,19 @@ func (s *Service) checkQuota(ctx context.Context, tenantID string) error {
 		s.log.Warn("llmgateway: quota check error — fail-open", "err", err)
 	}
 	return nil
+}
+
+// applyTokenCap clamps requested max_tokens to the policy ceiling.
+// If either value is 0 (meaning "no limit / not set"), the other is used.
+// If both are 0 the caller's default (4096) will be applied in Build.
+func applyTokenCap(requested, cap int) int {
+	if cap <= 0 {
+		return requested // no policy ceiling
+	}
+	if requested <= 0 || requested > cap {
+		return cap
+	}
+	return requested
 }
 
 // toInternalMessages converts the OpenAI ChatMessage list to domain.Message slice.

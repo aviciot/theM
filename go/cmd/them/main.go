@@ -467,7 +467,8 @@ func run() error {
 	gwFactory := llmgateway.NewResolverFactory(gwResolver)
 	gwDAL := llmgateway.NewDAL(rlsPools.Admin)
 	gwQC := &gatewayQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
-	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log)
+	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log).
+		WithPolicyEnforcer(gwDAL)
 	gwHandler := llmgateway.NewHandler(gwSvc, gwDAL, slugResolver, log)
 	bearerTenantMW := auth.BearerTenantMiddleware(tokenCache)
 	srv.MountGateway(bearerTenantMW(gwHandler.ChatCompletionsHandler()))

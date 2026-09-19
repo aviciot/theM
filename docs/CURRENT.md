@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `4a9402e7` (not yet pushed)
+HEAD: `(pending commit — Phase 2)` (not yet pushed)
 
 Recent commits (newest first):
 ```
+(pending)  feat(llm-gateway): Phase 2 — governance (model allowlist, aliases, token ceiling, monthly budget)
 4a9402e7  feat(llm-gateway): Phase 1 — gateway observe + meter
 ed3620dc  fix(llm-gateway): Phase 0 metering fixes — monthly quota, token usage, DB pricing, key resolution dedup
 ad4477cc  docs(current): mark HEAD as pushed
@@ -44,6 +45,45 @@ Inline Nodes frontend work.**
 - In-process pipeline, NOT Temporal (per-call latency)
 - Lives inside `them-go-bridge`; keep code in `internal/llmgateway` so it can be split out later
 
+### Phase 2 — COMPLETE (2026-09-19)
+
+Governance enforced inside `internal/llmgateway` (no new tables, no new containers).
+Commit: `(pending)`. `go test ./...` — 1287 tests, 0 failures.
+
+**Decision recorded:** gateway spend does NOT count against `monthly_llm_tokens` (the hosted-agent token budget). The two budgets are independent. Rationale: `monthly_llm_tokens` is denominated in tokens for hosted runs; a cron job's budget is denominated in USD and must not silently exhaust the budget hosted apps depend on. See §14 open question — resolved as "no".
+
+**What was built:**
+
+- `go/internal/llmgateway/dal.go`:
+  - `Policy` struct (`AllowedModels`, `ModelAliases`, `MaxTokensPerRequest`, `MonthlyBudgetUSD`).
+  - `DAL.LoadPolicy(ctx, tenantID) (*Policy, error)` — reads `gateway_policies`; returns `nil, nil` on no row (allow-all).
+  - `DAL.SumMonthlySpend(ctx, tenantID) (float64, error)` — `SUM(cost_usd)` from `gateway_requests` current calendar month.
+
+- `go/internal/llmgateway/service.go`:
+  - `PolicyEnforcer` interface (`LoadPolicy`, `SumMonthlySpend`).
+  - `ErrModelBlocked` (→ HTTP 403), `ErrBudgetExceeded` (→ HTTP 429).
+  - `Service.WithPolicyEnforcer(pe PolicyEnforcer) *Service` — fluent wiring.
+  - `checkPolicy(ctx, tenantID, requestedModel) (resolvedModel, tokenCap, err)` — one DB call; applies aliases before allowlist check; budget fail-open on DB error (§16.2).
+  - `applyTokenCap(requested, cap int) int` — clamps `max_tokens` to policy ceiling.
+  - `Call` and `Stream` both run `checkPolicy` as step 0 (before quota check, before LLM call). `ModelServed` in `CallResult` is the post-alias model.
+
+- `go/internal/llmgateway/handler.go`:
+  - `callStatus(err)` maps errors to gateway_requests.status strings (`"blocked"`, `"rate_limited"`, `"error"`).
+  - `gatewayErrType(err)` maps errors to JSON `error.type` strings for clients.
+  - `gatewayHTTPStatus` extended: `ErrModelBlocked` → 403, `ErrBudgetExceeded` → 429.
+
+- `go/cmd/them/main.go`: `gwSvc.WithPolicyEnforcer(gwDAL)` — production wiring.
+
+- `go/internal/llmgateway/gateway_test.go`: 8 new tests GW-POL-01..08.
+
+- `go/TEST_INDEX.md`: S1-120 added, S1 total 1287.
+
+**No DB migration needed** — `gateway_policies` table already exists from Phase 1 (`db/100_llm_gateway.sql`). A tenant with no row in `gateway_policies` gets allow-all behaviour.
+
+**Next recommended task: Phase 3 — profiles + UI.** `gateway_profiles`, `gateway_profile_steps`, admin UI (four tabs from §11). Start a new session.
+
+---
+
 ### Phase 1 — COMPLETE (2026-09-19)
 
 Migration `db/100_llm_gateway.sql` applied to live DB (6 tables: gateway_clients,
@@ -62,13 +102,7 @@ service → DAL). Route `POST /{tenant_slug}/llm/v1/chat/completions` mounted vi
   any other error from Redis/quota = allow through)
 - `WriteRequest` uses Admin pool (BYPASSRLS) — tenant_id enforces isolation in the table
 
-**Open question for Phase 2 (confirm before implementing):** does gateway spend count against
-the same tenant `monthly_llm_tokens` budget as runs? Current Phase 1: only `api_requests_per_minute`
-is checked; `monthly_llm_tokens` is NOT checked against `gateway_requests`. Extending it requires
-`SumMonthlyTokens` to query both `run_usage` and `gateway_requests`.
-
-**Next recommended task: Phase 2 — governance** (`gateway_policies` allowlist, per-request token
-ceiling, monthly USD budget, 403 on blocked model, aliases). Start a new Claude session.
+**Open question RESOLVED (Phase 2):** gateway spend does NOT count against `monthly_llm_tokens`. The two budgets are separate: `monthly_llm_tokens` is runs-only; `gateway_policies.monthly_budget_usd` is the sole spend cap for gateway traffic. `SumMonthlyTokens` was not changed.
 
 ---
 
@@ -128,9 +162,7 @@ level (not per-app), agents run via `agent-runtime` will not find it today.
 Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see above).
 **Next recommended task: Phase 2 — governance** (new session).
 
-**Open question (still unresolved):** does gateway spend count against the same tenant
-`monthly_llm_tokens` budget as runs? Design assumes yes (sum both tables) — confirm before
-Phase 2, because it means a busy cron job can exhaust the budget hosted apps rely on.
+**Open question RESOLVED (Phase 2):** gateway spend does NOT count against `monthly_llm_tokens`. Budgets are separate.
 
 ---
 

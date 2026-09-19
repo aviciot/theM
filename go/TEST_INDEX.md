@@ -3329,7 +3329,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/llm/` (any file) | S1-10 |
 | `internal/llm/openai.go` | S1-10 + S1-116 |
 | `internal/llmresolve/` (any file) | S1-118 + S2-11 (integration) |
-| `internal/llmgateway/` (any file), `cmd/them/main.go` (gateway wiring), `db/100_llm_gateway.sql` | S1-119 |
+| `internal/llmgateway/` (any file), `cmd/them/main.go` (gateway wiring), `db/100_llm_gateway.sql` | S1-119 + S1-120 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
@@ -3556,7 +3556,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-117 | Orchestrator cost estimation (COST-1..5): estimateCost default-rate-card known model, unknown-model-falls-back-to-Sonnet, attached-estimator-preferred, attached-estimator-falls-back-when-no-rate, no-estimator-attached-uses-default | 5 |
 | S1-118 | internal/llmresolve pure-function unit tests (LLMR-1..12): PricingTable.EstimateCost known/unknown model, parseModelPricing per-million→per-token conversion + malformed/empty input, ParseAppProviderKey structured/plain-prefix/legacy-flat/no-key, DecryptValue fail-loud with no Fernet key configured (regression), legacy-plaintext passthrough, round-trip with key, HMAC-mismatch error | 12 |
 | S1-119 | LLM Gateway Phase 1 unit tests (GW-M-01..05, GW-S-01..03, GW-C-01..03, GW-H-01..03, GW-MSG-01..02, GW-HND-01..09): modelToProvider prefix mapping (claude/gpt/llama/o1/unknown), sanitizeErrorMsg (enc:/sk- redaction, clean passthrough), estimateCost (known model, unknown model+known provider, unknown provider→0), gatewayHTTPStatus (429/422/502), toInternalMessages (system→user promotion, assistant preserved), handler HTTP layer (non-stream 200 + record written, stream 200 + [DONE], tenant mismatch 403, no token 401, no model 400, quota 429, unknown slug 404, provider error 502, key redacted) | 25 |
-| **S1 total** | | **1279** |
+| S1-120 | LLM Gateway Phase 2 policy tests (GW-POL-01..08): AllowedModel_Passes, BlockedModel_Returns403 (status=blocked in record), AliasResolvesBeforeCheck (ModelServed=resolved), MaxTokensCeiling_Applied (Build called with capped value), NilPolicy_AllowsAll, BudgetExceeded_Returns429, BudgetOK_Passes, SpendDBError_FailOpen | 8 |
+| **S1 total** | | **1287** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

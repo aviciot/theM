@@ -430,3 +430,195 @@ func TestHandler_ProviderKeyRedacted(t *testing.T) {
 		t.Fatalf("provider key must not appear in response: %s", rr.Body.String())
 	}
 }
+
+// ── Policy enforcement (Phase 2) ───────────────────────────────────────────────
+
+// fakePolicyEnforcer satisfies PolicyEnforcer.
+type fakePolicyEnforcer struct {
+	pol      *Policy
+	loadErr  error
+	spend    float64
+	spendErr error
+}
+
+func (f *fakePolicyEnforcer) LoadPolicy(_ context.Context, _ string) (*Policy, error) {
+	return f.pol, f.loadErr
+}
+func (f *fakePolicyEnforcer) SumMonthlySpend(_ context.Context, _ string) (float64, error) {
+	return f.spend, f.spendErr
+}
+
+// fakeProviderFactoryCapture records the maxTokens argument passed to Build.
+type fakeProviderFactoryCapture struct {
+	fakeProviderFactory
+	capturedMaxTokens int
+}
+
+func (f *fakeProviderFactoryCapture) Build(ctx context.Context, tenantID, model string, maxTokens int) (string, llm.Provider, error) {
+	f.capturedMaxTokens = maxTokens
+	return f.fakeProviderFactory.Build(ctx, tenantID, model, maxTokens)
+}
+
+// GW-POL-01: allowed model passes through
+func TestPolicy_AllowedModel_Passes(t *testing.T) {
+	pe := &fakePolicyEnforcer{pol: &Policy{
+		AllowedModels: []string{"claude-sonnet-4-6"},
+	}}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+
+	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+		Model:    "claude-sonnet-4-6",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("want nil error for allowed model, got %v", err)
+	}
+}
+
+// GW-POL-02: blocked model returns ErrModelBlocked → handler returns 403
+func TestPolicy_BlockedModel_Returns403(t *testing.T) {
+	pe := &fakePolicyEnforcer{pol: &Policy{
+		AllowedModels: []string{"claude-haiku-4-5-20251001"},
+	}}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	dal := &fakeDAL{}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+	h := newHandler(testTenantID, testSlug, svc, dal)
+
+	rr := doRequest(h, http.MethodPost, "/"+testSlug+"/llm/v1/chat/completions",
+		chatBody("claude-sonnet-4-6", false), testTenantID, 1)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("want 403 for blocked model, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(dal.written) != 1 || dal.written[0].Status != "blocked" {
+		t.Fatalf("want record with status=blocked, got %+v", dal.written)
+	}
+}
+
+// GW-POL-03: alias resolves before allowlist check — "fast" → allowed concrete model
+func TestPolicy_AliasResolvesBeforeCheck(t *testing.T) {
+	pe := &fakePolicyEnforcer{pol: &Policy{
+		AllowedModels: []string{"claude-haiku-4-5-20251001"},
+		ModelAliases:  map[string]string{"fast": "claude-haiku-4-5-20251001"},
+	}}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+
+	_, cr, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+		Model:    "fast",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("want nil error for aliased model, got %v", err)
+	}
+	if cr.ModelServed != "claude-haiku-4-5-20251001" {
+		t.Fatalf("want ModelServed=claude-haiku-4-5-20251001, got %q", cr.ModelServed)
+	}
+}
+
+// GW-POL-04: MaxTokensPerRequest ceiling is applied — request asks for more
+func TestPolicy_MaxTokensCeiling_Applied(t *testing.T) {
+	pe := &fakePolicyEnforcer{pol: &Policy{MaxTokensPerRequest: 100}}
+	cap := &fakeProviderFactoryCapture{
+		fakeProviderFactory: fakeProviderFactory{
+			provName: "anthropic",
+			p:        &fakeLLMProvider{text: "ok"},
+		},
+	}
+	svc := newService(cap, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+
+	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+		Model:     "claude-sonnet-4-6",
+		Messages:  []ChatMessage{{Role: "user", Content: "hi"}},
+		MaxTokens: 8000,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cap.capturedMaxTokens != 100 {
+		t.Fatalf("want maxTokens clamped to 100, got %d", cap.capturedMaxTokens)
+	}
+}
+
+// GW-POL-05: nil policy (no row) allows all models
+func TestPolicy_NilPolicy_AllowsAll(t *testing.T) {
+	pe := &fakePolicyEnforcer{pol: nil}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+
+	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+		Model:    "any-model-xyz",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	// ErrNoProvider because factory returns no error but modelToProvider returns ""
+	// for "any-model-xyz" — that is the expected flow when model is unknown.
+	// The policy itself should NOT block it (no policy row).
+	if errors.Is(err, ErrModelBlocked) {
+		t.Fatalf("nil policy must not block any model")
+	}
+}
+
+// GW-POL-06: monthly budget exhausted returns ErrBudgetExceeded → 429
+func TestPolicy_BudgetExceeded_Returns429(t *testing.T) {
+	pe := &fakePolicyEnforcer{
+		pol:   &Policy{MonthlyBudgetUSD: 100.0},
+		spend: 100.0, // exactly at limit
+	}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	dal := &fakeDAL{}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+	h := newHandler(testTenantID, testSlug, svc, dal)
+
+	rr := doRequest(h, http.MethodPost, "/"+testSlug+"/llm/v1/chat/completions",
+		chatBody("claude-sonnet-4-6", false), testTenantID, 1)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("want 429 for budget exceeded, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// GW-POL-07: spend below budget passes through
+func TestPolicy_BudgetOK_Passes(t *testing.T) {
+	pe := &fakePolicyEnforcer{
+		pol:   &Policy{MonthlyBudgetUSD: 100.0},
+		spend: 50.0,
+	}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+
+	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+		Model:    "claude-sonnet-4-6",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("want nil error when under budget, got %v", err)
+	}
+}
+
+// GW-POL-08: SumMonthlySpend DB error → fail-open (call proceeds)
+func TestPolicy_SpendDBError_FailOpen(t *testing.T) {
+	pe := &fakePolicyEnforcer{
+		pol:      &Policy{MonthlyBudgetUSD: 1.0},
+		spendErr: errors.New("connection refused"),
+	}
+	factory := &fakeProviderFactory{provName: "anthropic", p: &fakeLLMProvider{text: "ok"}}
+	svc := newService(factory, nil)
+	svc = svc.WithPolicyEnforcer(pe)
+
+	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+		Model:    "claude-sonnet-4-6",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("spend DB error must fail-open, not return ErrBudgetExceeded")
+	}
+}
