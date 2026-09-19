@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-19 (LLM Gateway Phase 3 backend + UI — COMPLETE, HEAD 52fcec69)
+# Last updated: 2026-09-19 (Node Registry Phase 3 — COMPLETE, pushed, HEAD 00415c1f)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
