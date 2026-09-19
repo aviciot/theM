@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-19 (LLM Gateway Phase 0 — metering fixes + internal/llmresolve COMPLETE, HEAD ed3620dc)
+# Last updated: 2026-09-19 (LLM Gateway Phase 1 — observe + meter COMPLETE, HEAD 4a9402e7)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `ed3620dc` (not yet pushed)
+HEAD: `4a9402e7` (not yet pushed)
 
 Recent commits (newest first):
 ```
+4a9402e7  feat(llm-gateway): Phase 1 — gateway observe + meter
 ed3620dc  fix(llm-gateway): Phase 0 metering fixes — monthly quota, token usage, DB pricing, key resolution dedup
 ad4477cc  docs(current): mark HEAD as pushed
 5bd57105  docs(current): add LLM Gateway design track + Phase 0 as next task
@@ -18,7 +19,6 @@ ad4477cc  docs(current): mark HEAD as pushed
 03574b52  feat(admin): surface appflow topology errors at publish; exempt inline kind
 23add7c6  feat(dag-worker): register InlineLLMActivity; dbLLMCaller serves both interfaces
 b2fe07d0  feat(appflow): inline LLM activity + llm/condition workflow dispatch
-ea1fb862  refactor(appflow): split workflow.go 803 -> workflow/activities/graph
 ```
 
 ---
@@ -43,6 +43,34 @@ Inline Nodes frontend work.**
 - Text capture IS in scope, opt-in per client, encrypted + retention job in the same phase
 - In-process pipeline, NOT Temporal (per-call latency)
 - Lives inside `them-go-bridge`; keep code in `internal/llmgateway` so it can be split out later
+
+### Phase 1 — COMPLETE (2026-09-19)
+
+Migration `db/100_llm_gateway.sql` applied to live DB (6 tables: gateway_clients,
+gateway_requests, gateway_profiles, gateway_profile_steps, gateway_policies,
+gateway_request_bodies; RLS + GRANTs). New package `internal/llmgateway` (handler →
+service → DAL). Route `POST /{tenant_slug}/llm/v1/chat/completions` mounted via
+`server.MountGateway` (exact Post() — not Mount("/"), per A2A outage lesson). 25 tests
+(all pass). Container redeployed; logs confirm: `"LLM gateway mounted"`. Commit: `4a9402e7`.
+
+**Hard constraints fixed in Phase 1 (do not re-litigate):**
+- `token_hash TEXT` (sha256-hex) used as identity link in gateway_clients — NOT FK to
+  access_tokens.id because access_tokens.id is UUID but TokenInfo.TokenID is int64 (user_id)
+- `server.MountGateway` uses `router.Post("/{tenant_slug}/llm/v1/chat/completions", h.ServeHTTP)`
+  — Mount("/") causes chi catch-all conflict (commit 7e9b7b1 A2A outage)
+- `checkQuota` translates only `quota.ErrAPIRateLimited` → `ErrQuotaExceeded` (§16.2 fail-open:
+  any other error from Redis/quota = allow through)
+- `WriteRequest` uses Admin pool (BYPASSRLS) — tenant_id enforces isolation in the table
+
+**Open question for Phase 2 (confirm before implementing):** does gateway spend count against
+the same tenant `monthly_llm_tokens` budget as runs? Current Phase 1: only `api_requests_per_minute`
+is checked; `monthly_llm_tokens` is NOT checked against `gateway_requests`. Extending it requires
+`SumMonthlyTokens` to query both `run_usage` and `gateway_requests`.
+
+**Next recommended task: Phase 2 — governance** (`gateway_policies` allowlist, per-request token
+ceiling, monthly USD budget, 403 on blocked model, aliases). Start a new Claude session.
+
+---
 
 ### Phase 0 — COMPLETE (2026-09-19)
 
@@ -97,13 +125,12 @@ paths only; upgrading agent-runtime's precedence chain is a behavior change to a
 and needs its own explicit decision. If a tenant sets an OpenAI/etc. key only at the tenant
 level (not per-app), agents run via `agent-runtime` will not find it today.
 
-Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. **Next recommended task: Phase 1 — gateway
-observe + meter** (migration `db/099`, new `internal/llmgateway`), or decide on the
-`agent-runtime` gap above first if that's higher priority.
+Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see above).
+**Next recommended task: Phase 2 — governance** (new session).
 
-**Open question for Phase 1 (still unresolved):** does gateway spend count against the same
-tenant `monthly_llm_tokens` budget as runs? Design assumes yes (sum both tables) — confirm,
-because it means a busy cron job can exhaust the budget hosted apps rely on.
+**Open question (still unresolved):** does gateway spend count against the same tenant
+`monthly_llm_tokens` budget as runs? Design assumes yes (sum both tables) — confirm before
+Phase 2, because it means a busy cron job can exhaust the budget hosted apps rely on.
 
 ---
 
