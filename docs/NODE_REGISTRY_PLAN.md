@@ -1,5 +1,5 @@
 # Node Registry — Unify App Canvas, Agent Builder and Middleware
-# Status: Phase 1 COMPLETE. Phases 2-5 not started.
+# Status: Phases 1-2 COMPLETE. Phases 3-5 not started.
 # Date: 2026-09-19
 
 ---
@@ -28,8 +28,8 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 | Phase | Status | Commit |
 |---|---|---|
 | 1 — Runtime config split | ✅ COMPLETE | (pending commit) |
-| 2 — Extract shared registry | ⬜ NOT STARTED ← **next** | — |
-| 3 — Register app canvas nodes | ⬜ NOT STARTED | — |
+| 2 — Extract shared registry | ✅ COMPLETE | (pending commit) |
+| 3 — Register app canvas nodes | ⬜ NOT STARTED ← **next** | — |
 | 4 — App canvas renders from registry | ⬜ NOT STARTED | — |
 | 5 — Middleware adopts node contract | ⬜ NOT STARTED | — |
 
@@ -216,17 +216,40 @@ What was built:
 
 ### Phase 2 — Extract the shared registry
 
-New package `internal/nodedefs`. Move the portable half of `NodeDef` into it: `Label`,
-`Description`, `Emoji`, `Color`, `BgColor`, `Edges`, `InputPorts`, `OutputPorts`,
-`ControlOutputPorts`, `ConfigFields`, `Examples`, `UsageNotes`.
+**STATUS: COMPLETE (2026-09-19).** `go test ./...` 0 failures (all packages, cached+fresh run);
+`go vet ./...` clean except pre-existing unrelated `internal/llm` context-leak warnings (not
+touched this phase); `tsc --noEmit` 0 errors (no frontend files changed — backend-only phase).
 
-`Execute`, `DeriveInputs`, `DeriveOutputs`, `DefaultPolicy` stay in `agentgen` — they are typed to
-its interpreter.
+What was built:
+- New package `go/internal/nodedefs/nodedefs.go` — `ConfigFieldDoc`, `NodeExample`, `PortDef`,
+  `EdgeRules`, and `Meta` (the portable node metadata struct: `Label`, `Description`, `Emoji`,
+  `Color`, `BgColor`, `Edges`, `InputPorts`, `OutputPorts`, `ControlOutputPorts`, `ConfigFields`,
+  `UsageNotes`, `Examples`). No dependency on `agentgen` or its interpreter.
+- `go/internal/agentgen/noderegistry.go` — `ConfigFieldDoc`/`NodeExample`/`PortDef`/`EdgeRules`/`Meta`
+  are now Go type aliases (`type X = nodedefs.X`) so every existing reference in `agentgen`
+  compiles unchanged. `NodeDef` and `NodeTypeInfo` both embed `nodedefs.Meta` (anonymous field) —
+  its JSON fields serialise inline, same shape as before. `Execute`, `DeriveInputs`,
+  `DeriveOutputs`, `DefaultPolicy`, `MaxPolicy` stayed on `NodeDef` (typed to the agentgen
+  interpreter/compiler, per the plan).
+- `go/internal/agentgen/nodes.go` — all 12 `RegisterNode(NodeDef{...})` literals updated: the
+  fields now owned by `Meta` (`Label`, `Description`, `Emoji`, `Color`, `BgColor`, `Edges`,
+  `InputPorts`, `OutputPorts`, `ControlOutputPorts`, `ConfigFields`, `UsageNotes`, `Examples`) are
+  nested under a `Meta: nodedefs.Meta{...}` field; every value is unchanged, only the literal
+  shape changed (struct-literal field promotion doesn't apply to embedded structs in Go, unlike
+  method/field access on values).
+- Test files updated to match (literal shape only, no behavior change):
+  `go/internal/agentgen/local_executor_test.go` (49 `NodeDef{}` literals), `go/internal/temporal/canvas_workflow_test.go` (8 literals).
 
-`agentgen` imports `nodedefs` and keeps working exactly as before.
+**Gate result:** `/admin/node-types` payload verified **semantically identical** before/after via
+a throwaway `cmd/dumpnodetypes` helper (built, run, diffed, then deleted — not part of the
+shippable change). Byte-for-byte the JSON key order changed (Go serialises embedded-struct fields
+before the outer struct's own fields), but parsed-JSON equality holds: same 12 node types, same
+keys, same values, verified with a Python dict-equality check. No frontend code depends on JSON
+key order (nothing does; `JSON.parse` results are consumed as objects), so this is behaviour-neutral.
 
-**Gate:** agent builder behaviour byte-identical. Verify the way the step-6 split was verified —
-compare the served `/admin/node-types` payload before and after; it must be unchanged.
+**Known deviation from the plan's stated gate:** the plan says "byte-identical" — the actual result
+is "semantically identical, key order differs." Flagged here rather than silently reinterpreting
+the gate.
 
 ---
 

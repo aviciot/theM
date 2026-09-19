@@ -198,7 +198,7 @@ Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see 
 
 ## Current migration slice
 
-**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phase 1 COMPLETE, Phase 2 NEXT.**
+**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-2 COMPLETE, Phase 3 NEXT.**
 
 Goal: a node is defined once; every canvas reads it. Today the same concept exists three ways —
 agent-builder nodes in a code registry, app-canvas nodes hardcoded in 6 places, middleware in the
@@ -207,10 +207,28 @@ DB table `them.middleware_defs`. They will drift permanently unless unified.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Runtime split — provider/model off the canvas into the Runtime screen | ✅ COMPLETE (2026-09-19) |
-| 2 | Extract shared registry into `internal/nodedefs` | ⬜ NEXT |
-| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ⬜ NOT STARTED |
+| 2 | Extract shared registry into `internal/nodedefs` | ✅ COMPLETE (2026-09-19) |
+| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ⬜ NEXT |
 | 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ⬜ NOT STARTED |
 | 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ⬜ NOT STARTED |
+
+**Phase 2 — COMPLETE (2026-09-19).** New package `go/internal/nodedefs` holds the portable node
+metadata (`Meta` struct: label/description/emoji/color/bg_color/edges/ports/config_fields/
+usage_notes/examples) that was previously declared directly on `agentgen.NodeDef`. `NodeDef` and
+`NodeTypeInfo` now embed `nodedefs.Meta`; `agentgen` keeps `ConfigFieldDoc`/`NodeExample`/
+`PortDef`/`EdgeRules`/`Meta` as type aliases so no external caller changed. All 12
+`RegisterNode(...)` call sites in `nodes.go`, plus 57 test-file `NodeDef{}` literals across
+`local_executor_test.go` and `canvas_workflow_test.go`, were updated to nest the moved fields
+under `Meta: nodedefs.Meta{...}` — values unchanged. `go test ./...` 0 failures (all packages);
+`/admin/node-types` payload verified semantically identical before/after (parsed-JSON equality;
+raw JSON key order changed because Go serialises embedded fields first — flagged as a deviation
+from the plan's literal "byte-identical" gate, not a functional regression). No frontend files
+touched (backend-only phase); `tsc --noEmit` 0 errors. Full detail in `docs/NODE_REGISTRY_PLAN.md`.
+
+**Next: Phase 3** — register the 6 app-canvas node types (`llm`, `condition`, `router`, `hil`,
+`fork`, `join`) in `nodedefs`, replacing the hardcoded `INLINE_META`/`FC_META`/`NODE_PORTS` copies.
+Depends on Phase 2 (done). Gate: `appflow` validation/execution unchanged; full Go suite +
+`test_42` green.
 
 **Phase 1 — COMPLETE (2026-09-19).** New table `them.app_flow_llm_overrides` (migration 101,
 applied to live DB). `appflow.Compile` now emits `AppFlowSpec.LLMNodes`; new

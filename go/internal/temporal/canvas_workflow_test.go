@@ -564,7 +564,8 @@ func TestExecuteStepActivity_Loop_BasicIteration(t *testing.T) {
 	var callCount int32
 
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_loop_body_L1", Label: "CT Loop Body L1", Version: 1,
+		Meta: agentgen.Meta{Label: "CT Loop Body L1", Edges: agentgen.EdgeRules{}},
+		Type: "ct_loop_body_L1", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			atomic.AddInt32(&callCount, 1)
@@ -573,7 +574,6 @@ func TestExecuteStepActivity_Loop_BasicIteration(t *testing.T) {
 			}
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
@@ -699,7 +699,8 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable1_BasicIteration() {
 	var callCount int32
 
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_body", Label: "CT LD Body", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Body", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_body", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			atomic.AddInt32(&callCount, 1)
@@ -708,7 +709,6 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable1_BasicIteration() {
 			}
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
@@ -816,13 +816,13 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable3_MaxIterationsCap() {
 	var callCount int32
 
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_cap_body", Label: "CT LD Cap Body", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Cap Body", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_cap_body", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			atomic.AddInt32(&callCount, 1)
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	// 10-item list but max_iterations=3
@@ -879,7 +879,8 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable3_MaxIterationsCap() {
 
 func (s *CanvasWorkflowTestSuite) TestCTLoopDurable4_AccumVarScopedToOutputs() {
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_accum_body", Label: "CT LD Accum Body", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Accum Body", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_accum_body", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			if item, ok := vars["item"]; ok {
@@ -888,7 +889,6 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable4_AccumVarScopedToOutputs() {
 			}
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
@@ -952,24 +952,24 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable5_BranchInsideBody() {
 	var trueCount, falseCount int32
 
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_branch_true", Label: "CT LD Branch True", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Branch True", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_branch_true", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			atomic.AddInt32(&trueCount, 1)
 			vars["arm"] = "true"
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_branch_false", Label: "CT LD Branch False", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Branch False", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_branch_false", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			atomic.AddInt32(&falseCount, 1)
 			vars["arm"] = "false"
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	// Body: branch("{{.item}}") → true_arm | false_arm
@@ -1037,7 +1037,8 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable6_IterationIsolation() {
 	var iter0SawSentinel, iter1SawSentinel bool
 
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_iso_body", Label: "CT LD Iso Body", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Iso Body", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_iso_body", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			item, _ := vars["item"]
@@ -1051,7 +1052,6 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable6_IterationIsolation() {
 			}
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
@@ -1103,14 +1103,14 @@ func (s *CanvasWorkflowTestSuite) TestCTLoopDurable6_IterationIsolation() {
 
 func (s *CanvasWorkflowTestSuite) TestCTLoopDurable7_ScopedAccumVar() {
 	agentgen.RegisterNode(agentgen.NodeDef{
-		Type: "ct_ld_accum_body", Label: "CT LD Accum Body", Version: 1,
+		Meta: agentgen.Meta{Label: "CT LD Accum Body", Edges: agentgen.EdgeRules{}},
+		Type: "ct_ld_accum_body", Version: 1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
 			vars["proc"] = fmt.Sprintf("done:%v", vars["item"])
 			vars["should_not_appear"] = "leaked"
 			return nil
 		},
-		Edges: agentgen.EdgeRules{},
 	})
 
 	loopCfg, _ := json.Marshal(agentgen.LoopConfig{

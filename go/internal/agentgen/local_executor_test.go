@@ -28,12 +28,11 @@ func registerTestNode(t *testing.T, def NodeDef) {
 func registerEchoNode(t *testing.T, typ StepType, sourceKey, destKey string) {
 	t.Helper()
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: string(typ), Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0}},
 		Type:        typ,
-		Label:       string(typ),
 		Version:     1,
 		OutputArity: "single",
 		Execute:     makeEchoExecute(sourceKey, destKey),
-		Edges:       EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
 	})
 }
 
@@ -51,8 +50,8 @@ func makeEchoExecute(sourceKey, destKey string) func(context.Context, *Interpret
 func registerCounterNode(t *testing.T, typ StepType, counter *atomic.Int32, destKey string) {
 	t.Helper()
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: string(typ), Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0}},
 		Type:        typ,
-		Label:       string(typ),
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
@@ -60,7 +59,6 @@ func registerCounterNode(t *testing.T, typ StepType, counter *atomic.Int32, dest
 			vars[destKey] = fmt.Sprintf("%s-%d", typ, idx)
 			return nil
 		},
-		Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
 	})
 }
 
@@ -68,14 +66,13 @@ func registerCounterNode(t *testing.T, typ StepType, counter *atomic.Int32, dest
 func registerErrorNode(t *testing.T, typ StepType, msg string) {
 	t.Helper()
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: string(typ), Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0}},
 		Type:        typ,
-		Label:       string(typ),
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			return errors.New(msg)
 		},
-		Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
 	})
 }
 
@@ -83,8 +80,8 @@ func registerErrorNode(t *testing.T, typ StepType, msg string) {
 func registerResponseNode(t *testing.T, typ StepType, fromKey string) {
 	t.Helper()
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: string(typ), Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0}},
 		Type:        typ,
-		Label:       string(typ),
 		Version:     1,
 		OutputArity: "none",
 		IsSink:      true,
@@ -95,7 +92,6 @@ func registerResponseNode(t *testing.T, typ StepType, fromKey string) {
 			}
 			return nil
 		},
-		Edges: EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
 	})
 }
 
@@ -184,38 +180,35 @@ func TestLocalExecutor_Join_WaitAll(t *testing.T) {
 	// s2b writes vars["from_b"] = "value_b"
 	// s3 (join) reads both; s4 response captures "from_a".
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_write_a", Edges: EdgeRules{}},
 		Type:        "test_write_a",
-		Label:       "test_write_a",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["from_a"] = "value_a"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_write_b", Edges: EdgeRules{}},
 		Type:        "test_write_b",
-		Label:       "test_write_b",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["from_b"] = "value_b"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_passthrough", Edges: EdgeRules{}},
 		Type:        "test_passthrough",
-		Label:       "test_passthrough",
 		Version:     1,
 		OutputArity: "single",
 		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error { return nil },
-		Edges:       EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_resp_join", Edges: EdgeRules{}},
 		Type:        "test_resp_join",
-		Label:       "test_resp_join",
 		Version:     1,
 		OutputArity: "none",
 		IsSink:      true,
@@ -226,7 +219,6 @@ func TestLocalExecutor_Join_WaitAll(t *testing.T) {
 			result.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	plan := &ExecutionPlan{
@@ -256,16 +248,15 @@ func TestLocalExecutor_Join_WaitAll(t *testing.T) {
 func TestLocalExecutor_JoinFailure_CancelsOtherBranch(t *testing.T) {
 	registerErrorNode(t, "test_fail_node", "branch failed")
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_passthrough", Edges: EdgeRules{}},
 		Type:        "test_passthrough",
-		Label:       "test_passthrough",
 		Version:     1,
 		OutputArity: "single",
 		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
-		Edges:       EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_slow_node", Edges: EdgeRules{}},
 		Type:        "test_slow_node",
-		Label:       "test_slow_node",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
@@ -274,7 +265,6 @@ func TestLocalExecutor_JoinFailure_CancelsOtherBranch(t *testing.T) {
 				return ctx.Err()
 			}
 		},
-		Edges: EdgeRules{},
 	})
 
 	plan := &ExecutionPlan{
@@ -398,8 +388,8 @@ func setupBranchNodes(t *testing.T) {
 	t.Helper()
 	// router: reads vars["route"]; overrides next to "s_true" or "s_false"
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_branch_router", Edges: EdgeRules{}},
 		Type:        "test_branch_router",
-		Label:       "test_branch_router",
 		Version:     1,
 		OutputArity: "multi",
 		Execute: func(_ context.Context, interp *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
@@ -410,33 +400,30 @@ func setupBranchNodes(t *testing.T) {
 			}
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_write_true", Edges: EdgeRules{}},
 		Type:        "test_write_true",
-		Label:       "test_write_true",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["from"] = "true_arm"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_write_false", Edges: EdgeRules{}},
 		Type:        "test_write_false",
-		Label:       "test_write_false",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["from"] = "false_arm"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_read_from", Edges: EdgeRules{}},
 		Type:        "test_read_from",
-		Label:       "test_read_from",
 		Version:     1,
 		OutputArity: "none",
 		IsSink:      true,
@@ -445,15 +432,13 @@ func setupBranchNodes(t *testing.T) {
 			result.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_passthrough", Edges: EdgeRules{}},
 		Type:        "test_passthrough",
-		Label:       "test_passthrough",
 		Version:     1,
 		OutputArity: "single",
 		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
-		Edges:       EdgeRules{},
 	})
 }
 
@@ -488,38 +473,35 @@ func branchPlan(t *testing.T, skillID, _ string) *ExecutionPlan {
 // Expected: "from_b" wins because s2b is last in JoinOf.
 func TestLocalExecutor_DeterministicMerge(t *testing.T) {
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_write_shared_a", Edges: EdgeRules{}},
 		Type:        "test_write_shared_a",
-		Label:       "test_write_shared_a",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["shared"] = "from_a"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_write_shared_b", Edges: EdgeRules{}},
 		Type:        "test_write_shared_b",
-		Label:       "test_write_shared_b",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["shared"] = "from_b"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_passthrough", Edges: EdgeRules{}},
 		Type:        "test_passthrough",
-		Label:       "test_passthrough",
 		Version:     1,
 		OutputArity: "single",
 		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
-		Edges:       EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_resp_shared", Edges: EdgeRules{}},
 		Type:        "test_resp_shared",
-		Label:       "test_resp_shared",
 		Version:     1,
 		OutputArity: "none",
 		IsSink:      true,
@@ -528,7 +510,6 @@ func TestLocalExecutor_DeterministicMerge(t *testing.T) {
 			result.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	// Run the plan many times to catch non-determinism from goroutine scheduling.
@@ -565,33 +546,30 @@ func TestLocalExecutor_CausalErrorPreserved(t *testing.T) {
 	const causalMsg = "deliberate branch failure"
 
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_causal_fail", Edges: EdgeRules{}},
 		Type:        "test_causal_fail",
-		Label:       "test_causal_fail",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
 			return errors.New(causalMsg)
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_slow_waiter", Edges: EdgeRules{}},
 		Type:        "test_slow_waiter",
-		Label:       "test_slow_waiter",
 		Version:     1,
 		OutputArity: "single",
 		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Label: "test_passthrough", Edges: EdgeRules{}},
 		Type:        "test_passthrough",
-		Label:       "test_passthrough",
 		Version:     1,
 		OutputArity: "single",
 		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
-		Edges:       EdgeRules{},
 	})
 
 	plan := &ExecutionPlan{
@@ -1413,13 +1391,13 @@ func buildLoopPlanNoResponse(t *testing.T, loopCfg LoopConfig, bodyNodes []*Plan
 	// Minimal sink so LocalExecutor.Execute doesn't return "no result".
 	sinkType := StepType("test_loop_sink_" + loopCfg.ItemsVar)
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: sinkType, Version: 1, OutputArity: "none", IsSink: true,
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
 			res.Text = "done"
 			res.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	return &ExecutionPlan{
 		SkillID: "loop_test",
@@ -1447,6 +1425,7 @@ func buildLoopPlanNoResponse(t *testing.T, loopCfg LoopConfig, bodyNodes []*Plan
 func TestLocalExecutor_Loop_BasicIteration(t *testing.T) {
 	var callCount atomic.Int32
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_loop_body_L1", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			callCount.Add(1)
@@ -1455,7 +1434,6 @@ func TestLocalExecutor_Loop_BasicIteration(t *testing.T) {
 			}
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	bodyNodes := []*PlanNode{
@@ -1488,12 +1466,12 @@ func TestLocalExecutor_Loop_BasicIteration(t *testing.T) {
 func TestLocalExecutor_Loop_MaxIterations(t *testing.T) {
 	var callCount atomic.Int32
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_loop_body_L2", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
 			callCount.Add(1)
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	bodyNodes := []*PlanNode{
@@ -1525,12 +1503,12 @@ func TestLocalExecutor_Loop_MaxIterations(t *testing.T) {
 func TestLocalExecutor_Loop_MissingItemsVar(t *testing.T) {
 	var callCount atomic.Int32
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_loop_body_L3", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
 			callCount.Add(1)
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	bodyNodes := []*PlanNode{
@@ -1551,11 +1529,11 @@ func TestLocalExecutor_Loop_MissingItemsVar(t *testing.T) {
 // EP-LOOP-4: items_var is not a list → execution error.
 func TestLocalExecutor_Loop_NonListItemsVar(t *testing.T) {
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_loop_body_L4", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	bodyNodes := []*PlanNode{
@@ -1573,13 +1551,13 @@ func TestLocalExecutor_Loop_NonListItemsVar(t *testing.T) {
 // EP-LOOP-5: nil sub-plan → no-op, no error.
 func TestLocalExecutor_Loop_NilSubPlan(t *testing.T) {
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_loop_sink_nil", Version: 1, OutputArity: "none", IsSink: true,
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
 			res.Text = "done"
 			res.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	plan := &ExecutionPlan{
 		SkillID: "loop_nil_body",
@@ -1614,22 +1592,22 @@ func TestLocalExecutor_Loop_BranchInsideBody(t *testing.T) {
 	var trueCount, falseCount atomic.Int32
 
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb6_branch_true", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			trueCount.Add(1)
 			vars["arm_result"] = "true"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb6_branch_false", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			falseCount.Add(1)
 			vars["arm_result"] = "false"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	// Body: branch(item=="true") → true_arm | false_arm
@@ -1660,13 +1638,13 @@ func TestLocalExecutor_Loop_BranchInsideBody(t *testing.T) {
 		ItemVar:   "item",
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb6_sink", Version: 1, OutputArity: "none", IsSink: true,
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
 			res.Text = "done"
 			res.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	plan := &ExecutionPlan{
 		SkillID: "lb6_test",
@@ -1694,6 +1672,7 @@ func TestLocalExecutor_Loop_BranchInsideBody(t *testing.T) {
 // EP-LOOP-7: iteration isolation — vars written in iteration N do not persist to N+1.
 func TestLocalExecutor_Loop_IterationIsolation(t *testing.T) {
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb7_body", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			// Write a sentinel value; the next iteration should NOT see it via a previous-iteration leak.
@@ -1703,7 +1682,6 @@ func TestLocalExecutor_Loop_IterationIsolation(t *testing.T) {
 			vars["prev_sentinel"] = "was_set"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	subPlan := &ExecutionPlan{
@@ -1723,13 +1701,13 @@ func TestLocalExecutor_Loop_IterationIsolation(t *testing.T) {
 		AccumVar:  "results",
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb7_resp", Version: 1, OutputArity: "none", IsSink: true,
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
 			res.Text = "done"
 			res.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	plan := &ExecutionPlan{
 		SkillID: "lb7_test",
@@ -1751,12 +1729,12 @@ func TestLocalExecutor_Loop_IterationIsolation(t *testing.T) {
 // EP-LOOP-8: scoped accumulation — accum_var contains only declared Outputs, not itemVar or outer vars.
 func TestLocalExecutor_Loop_ScopedAccumulation(t *testing.T) {
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb8_body", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 			vars["body_out"] = fmt.Sprintf("processed:%v", vars["current_item"])
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 
 	subPlan := &ExecutionPlan{
@@ -1776,6 +1754,7 @@ func TestLocalExecutor_Loop_ScopedAccumulation(t *testing.T) {
 		AccumVar:  "all_results",
 	})
 	registerTestNode(t, NodeDef{
+		Meta: Meta{Edges: EdgeRules{}},
 		Type: "test_lb8_resp", Version: 1, OutputArity: "single",
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, res *ExecutionResult) error {
 			if results, ok := vars["all_results"]; ok {
@@ -1786,7 +1765,6 @@ func TestLocalExecutor_Loop_ScopedAccumulation(t *testing.T) {
 			res.MediaType = "text/plain"
 			return nil
 		},
-		Edges: EdgeRules{},
 	})
 	plan := &ExecutionPlan{
 		SkillID: "lb8_test",

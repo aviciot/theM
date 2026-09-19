@@ -4,69 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/aviciot/them/internal/nodedefs"
 )
 
-// ConfigFieldDoc documents one config JSON key for a node type.
-// Used by the LLM prompt builder to explain what each field does.
-type ConfigFieldDoc struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"`         // "string" | "int" | "bool" | "object" | "array"
-	Required    bool   `json:"required"`
-	Description string `json:"description"`
-	Example     string `json:"example,omitempty"`
-}
-
-// NodeExample is a short worked example for a node type, used in the LLM system prompt.
-type NodeExample struct {
-	Description string         `json:"description"`
-	Config      map[string]any `json:"config"`
-}
-
-// PortDef declares one named data port on a node type.
-// Port IDs are permanent stable identifiers — never rename after registration.
-// InputPorts/OutputPorts on NodeDef are static (same for every instance).
-// Dynamic ports (e.g. transform outputs from functions[].output_var) are derived
-// per-instance via DeriveInputs/DeriveOutputs instead.
-type PortDef struct {
-	ID             string `json:"id"`                      // stable identifier used in canvas binding references
-	Label          string `json:"label"`                   // human-readable name shown in the canvas UX
-	Required       bool   `json:"required"`                // for inputs: must be wired; for outputs: always produced
-	Multi          bool   `json:"multi,omitempty"`         // for inputs: accepts multiple bindings (fan-in)
-	TypeHint       string `json:"type_hint,omitempty"`     // loose tag: "text" | "json" | "any" — informational only
-	// Color overrides the node accent color for this specific port's handle.
-	// Used for semantically distinct ports (e.g. branch true=green, false=red).
-	// Empty means use the node's Color.
-	Color          string `json:"color,omitempty"`
-	// MaxConnections caps how many edges may attach to this port. 0 = unlimited.
-	MaxConnections int    `json:"max_connections,omitempty"`
-}
-
-// EdgeRules declares the allowed incoming/outgoing edge counts for a node type.
-// Zero means "no constraint". These are the single source of truth for both
-// the backend graph validator and the frontend connection guard.
-type EdgeRules struct {
-	MinIn  int `json:"min_in"`  // minimum incoming edges required (0 = none required)
-	MaxIn  int `json:"max_in"`  // maximum incoming edges allowed  (0 = unlimited)
-	MinOut int `json:"min_out"` // minimum outgoing edges required (0 = none required)
-	MaxOut int `json:"max_out"` // maximum outgoing edges allowed  (0 = unlimited)
-}
+// ConfigFieldDoc, NodeExample, PortDef, EdgeRules and Meta are the portable
+// node metadata types, now defined once in internal/nodedefs. Aliased here so
+// existing agentgen code and callers keep compiling unchanged.
+type ConfigFieldDoc = nodedefs.ConfigFieldDoc
+type NodeExample = nodedefs.NodeExample
+type PortDef = nodedefs.PortDef
+type EdgeRules = nodedefs.EdgeRules
+type Meta = nodedefs.Meta
 
 // NodeDef is the central declaration for one canvas node type.
 // It is the single source of truth for both runtime behaviour and
 // the public canvas metadata exposed to the frontend via GET /api/v1/admin/node-types.
 type NodeDef struct {
+	// Meta is the portable node metadata (label, colors, ports, config field docs)
+	// shared with any other canvas that adopts the node contract — see internal/nodedefs
+	// and docs/NODE_REGISTRY_PLAN.md. Embedded so its JSON fields serialise inline,
+	// exactly as if they were declared directly on NodeDef.
+	nodedefs.Meta
+
 	// ── Canvas-public fields (serialised and sent to the frontend) ────────────
-	Type        StepType       `json:"type"`
-	Version     int            `json:"version"`      // schema version, default 1
-	Label       string         `json:"label"`        // human-readable name shown in the builder
-	Description string         `json:"description"`  // short tooltip shown on palette hover
-	Emoji       string         `json:"emoji"`        // icon character shown on the node card
-	OutputArity string         `json:"output_arity"` // "single" | "multi" | "none"
-	IsSource    bool           `json:"is_source"`    // valid pipeline start
-	IsSink      bool           `json:"is_sink"`      // terminates the pipeline
-	SingleInput bool           `json:"single_input"` // only one incoming edge allowed
-	Edges       EdgeRules      `json:"edges"`        // data-driven in/out degree constraints
-	InputField  string         `json:"input_field,omitempty"` // config key used for auto-fill on connect
+	Type        StepType `json:"type"`
+	Version     int      `json:"version"`      // schema version, default 1
+	OutputArity string   `json:"output_arity"` // "single" | "multi" | "none"
+	IsSource    bool     `json:"is_source"`    // valid pipeline start
+	IsSink      bool     `json:"is_sink"`       // terminates the pipeline
+	SingleInput bool     `json:"single_input"` // only one incoming edge allowed
+	InputField  string   `json:"input_field,omitempty"` // config key used for auto-fill on connect
 	// AcceptsDynamicInputs controls whether the user can drag a data-out port from
 	// another node onto this node to create a named input port. False for routing-only
 	// nodes (input, branch) that don't consume data vars directly.
@@ -75,29 +43,11 @@ type NodeDef struct {
 	// its config at canvas-edit time rather than statically declared in OutputPorts.
 	// True only for transform (functions[].output_var drives port names).
 	DynamicOutputs bool `json:"dynamic_outputs"`
-	// Color is the primary accent CSS hex color for this node type.
-	// Used for the node border, handle background, and subtitle text.
-	Color string `json:"color"`
-	// BgColor is the card background CSS hex color for this node type.
-	BgColor string `json:"bg_color"`
 
 	// AppParams declares the runtime parameters this node type can consume.
 	// Populated for HTTP, LLM, and A2A Call nodes; empty for all others.
 	// The compiler aggregates these across all nodes into AgentSpec.RequiredParams.
 	AppParams []AppParamDecl `json:"app_params,omitempty"`
-	// InputPorts declares the named data input ports for this node type.
-	// Nil for types with dynamic inputs (transform) or no data inputs (input step).
-	// Used by the frontend to render port sockets and by the compiler to resolve explicit bindings.
-	InputPorts []PortDef `json:"input_ports,omitempty"`
-	// OutputPorts declares the named data output ports for this node type.
-	// Nil for types with dynamic outputs (transform, http extractions) or no data outputs (response, branch).
-	OutputPorts []PortDef `json:"output_ports,omitempty"`
-	// ControlOutputPorts declares named control-flow output ports for nodes that have
-	// multiple named control exits (e.g. branch: true/false paths).
-	// Empty means a single anonymous control output — the common case.
-	// The frontend renders one handle per entry, using PortDef.Color and PortDef.Label.
-	// Handle ID format: "ctrl-out-{portID}" (e.g. "ctrl-out-true", "ctrl-out-false").
-	ControlOutputPorts []PortDef `json:"control_output_ports,omitempty"`
 	// DynamicOutputSource is a JSONPath-like expression that tells the frontend which
 	// config field path drives dynamic output port names. Only meaningful when
 	// DynamicOutputs=true. Format: "functions[].output_var" means iterate cfg.functions,
@@ -106,14 +56,6 @@ type NodeDef struct {
 	DynamicOutputSource string `json:"dynamic_output_source,omitempty"`
 	// Executable is NOT stored — computed from Execute != nil at serialisation time.
 
-	// ── LLM knowledge fields (serialised, used by AI copilot) ────────────────
-	// ConfigFields documents each config JSON key, used to build LLM system prompts.
-	ConfigFields []ConfigFieldDoc `json:"config_fields,omitempty"`
-	// UsageNotes is a paragraph of guidance for the LLM: when to choose this node,
-	// common pitfalls, and relationship to other node types.
-	UsageNotes string `json:"usage_notes,omitempty"`
-	// Examples shows 1-2 worked config examples the LLM can use as templates.
-	Examples []NodeExample `json:"examples,omitempty"`
 	// AllowedSuccessors lists step types that are valid next-hops from this node.
 	// Empty means all types are allowed (no constraint beyond edge rules).
 	AllowedSuccessors []StepType `json:"allowed_successors,omitempty"`
@@ -144,33 +86,23 @@ type NodeDef struct {
 // NodeTypeInfo is the JSON-serialisable view of a NodeDef sent to the frontend.
 // Executable is derived here so NodeDef itself never stores duplicated state.
 type NodeTypeInfo struct {
+	nodedefs.Meta
+
 	Type                 StepType       `json:"type"`
 	Version              int            `json:"version"`
-	Label                string         `json:"label"`
-	Description          string         `json:"description"`
-	Emoji                string         `json:"emoji"`
 	OutputArity          string         `json:"output_arity"`
 	IsSource             bool           `json:"is_source"`
 	IsSink               bool           `json:"is_sink"`
 	SingleInput          bool           `json:"single_input"`
-	Edges                EdgeRules      `json:"edges"`
 	AcceptsDynamicInputs bool           `json:"accepts_dynamic_inputs"`
 	DynamicOutputs       bool           `json:"dynamic_outputs"`
-	Color                string         `json:"color"`
-	BgColor              string         `json:"bg_color"`
 	InputField           string         `json:"input_field,omitempty"`
 	AppParams            []AppParamDecl `json:"app_params,omitempty"`
-	InputPorts           []PortDef      `json:"input_ports,omitempty"`
-	OutputPorts          []PortDef      `json:"output_ports,omitempty"`
-	ControlOutputPorts   []PortDef      `json:"control_output_ports,omitempty"`
 	DynamicOutputSource  string         `json:"dynamic_output_source,omitempty"`
 	Executable           bool           `json:"executable"`
 
-	// LLM knowledge fields — same as NodeDef, passed through for AI copilot use.
-	ConfigFields      []ConfigFieldDoc `json:"config_fields,omitempty"`
-	UsageNotes        string           `json:"usage_notes,omitempty"`
-	Examples          []NodeExample    `json:"examples,omitempty"`
-	AllowedSuccessors []StepType       `json:"allowed_successors,omitempty"`
+	// AllowedSuccessors — same as NodeDef, passed through for AI copilot use.
+	AllowedSuccessors []StepType `json:"allowed_successors,omitempty"`
 
 	// Execution policy metadata — exposed to the frontend for the Properties panel.
 	DefaultPolicy ExecutionPolicy `json:"default_policy"`
@@ -180,30 +112,19 @@ type NodeTypeInfo struct {
 // ToInfo converts a NodeDef to its public API representation.
 func (d *NodeDef) ToInfo() NodeTypeInfo {
 	return NodeTypeInfo{
+		Meta:                 d.Meta,
 		Type:                 d.Type,
 		Version:              d.Version,
-		Label:                d.Label,
-		Description:          d.Description,
-		Emoji:                d.Emoji,
 		OutputArity:          d.OutputArity,
 		IsSource:             d.IsSource,
 		IsSink:               d.IsSink,
 		SingleInput:          d.SingleInput,
-		Edges:                d.Edges,
 		AcceptsDynamicInputs: d.AcceptsDynamicInputs,
 		DynamicOutputs:       d.DynamicOutputs,
-		Color:                d.Color,
-		BgColor:              d.BgColor,
 		InputField:           d.InputField,
 		AppParams:            d.AppParams,
-		InputPorts:           d.InputPorts,
-		OutputPorts:          d.OutputPorts,
-		ControlOutputPorts:   d.ControlOutputPorts,
 		DynamicOutputSource:  d.DynamicOutputSource,
 		Executable:           d.Execute != nil,
-		ConfigFields:         d.ConfigFields,
-		UsageNotes:           d.UsageNotes,
-		Examples:             d.Examples,
 		AllowedSuccessors:    d.AllowedSuccessors,
 		DefaultPolicy:        d.DefaultPolicy,
 		MaxPolicy:            d.MaxPolicy,
