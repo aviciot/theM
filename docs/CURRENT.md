@@ -116,7 +116,22 @@ Brief: `docs/INLINE_NODES_DESIGN_BRIEF.md`.
 All 11 steps done. `go test ./...` zero failures (S1 total 1236); `tsc --noEmit` 0 errors;
 E2E `test_42_appflow_inline_nodes.py` **21/21, rerun-clean** against the live stack.
 
-**Deployed:** `them-dag-worker` and `them-go-bridge` rebuilt and force-recreated 2026-09-19.
+**Deployed 2026-09-19** — all three containers rebuilt and **force-recreated** (`build` + `restart`
+does not pick up a new image; see LESSONS.md):
+
+| Container | Why it needed rebuilding |
+|---|---|
+| `them-dag-worker` | registers `InlineLLMActivity` at startup |
+| `them-go-bridge` | publish-time `appflow.Validate` wiring (step 5) |
+| `them-frontend` | all of steps 7–11 — it was still running a Sept 17 image, so none of the canvas UI was actually visible before this |
+
+Verified after redeploy: `/admin/applications` serves HTTP 200, the "Inline / Logic" palette and
+`InlineNodePanel.tsx` are present inside the running container, all three containers healthy, and
+E2E `test_42` passed a third consecutive time against the fully redeployed stack.
+
+**Still not done: a human click-through of the canvas.** Rendering is verified by typecheck, the
+Next.js production build, and the served bundle; the data path is verified by E2E. Nobody has
+dragged an inline node onto the canvas in a browser. Worth doing before calling this closed.
 
 ### Done (steps 1–11)
 
