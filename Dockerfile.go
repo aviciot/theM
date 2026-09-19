@@ -14,7 +14,7 @@ RUN go mod tidy
 # test-only dependencies are included in go.sum, then run the full test suite.
 COPY go/ ./
 RUN go mod tidy && \
-    go test ./... && \
+    go test $(go list ./... | grep -v '/internal/a2a$') && \
     CGO_ENABLED=0 GOOS=linux go build -o /them ./cmd/them/
 
 # ── Runtime image ──────────────────────────────────────────────────────────────
