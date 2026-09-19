@@ -198,7 +198,7 @@ Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see 
 
 ## Current migration slice
 
-**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-2 COMPLETE, Phase 3 NEXT.**
+**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-3 COMPLETE, Phase 4 NEXT.**
 
 Goal: a node is defined once; every canvas reads it. Today the same concept exists three ways —
 agent-builder nodes in a code registry, app-canvas nodes hardcoded in 6 places, middleware in the
@@ -208,8 +208,8 @@ DB table `them.middleware_defs`. They will drift permanently unless unified.
 |---|---|---|
 | 1 | Runtime split — provider/model off the canvas into the Runtime screen | ✅ COMPLETE (2026-09-19) |
 | 2 | Extract shared registry into `internal/nodedefs` | ✅ COMPLETE (2026-09-19) |
-| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ⬜ NEXT |
-| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ⬜ NOT STARTED |
+| 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ✅ COMPLETE (2026-09-19) |
+| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ⬜ NEXT |
 | 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ⬜ NOT STARTED |
 
 **Phase 2 — COMPLETE (2026-09-19).** New package `go/internal/nodedefs` holds the portable node
@@ -225,10 +225,27 @@ raw JSON key order changed because Go serialises embedded fields first — flagg
 from the plan's literal "byte-identical" gate, not a functional regression). No frontend files
 touched (backend-only phase); `tsc --noEmit` 0 errors. Full detail in `docs/NODE_REGISTRY_PLAN.md`.
 
-**Next: Phase 3** — register the 6 app-canvas node types (`llm`, `condition`, `router`, `hil`,
-`fork`, `join`) in `nodedefs`, replacing the hardcoded `INLINE_META`/`FC_META`/`NODE_PORTS` copies.
-Depends on Phase 2 (done). Gate: `appflow` validation/execution unchanged; full Go suite +
-`test_42` green.
+**Phase 3 — COMPLETE (2026-09-19).** New file `go/internal/appflow/noderegistry.go` —
+`AppCanvasNodeInfo` (field-shape match with `agentgen.NodeTypeInfo`) + static registry for the 6
+app-canvas kinds (`llm`, `condition`, `router`, `hil`, `fork`, `join`), sourced from
+`CanvasNodes.tsx`'s existing `INLINE_META`/`FC_META` values, `validate.go`'s structural edge
+rules, and `RouterConfig`/`HILConfig`/`InlineLLMConfig`/`InlineConditionConfig`'s real fields.
+`go/internal/admin/node_types.go`'s `NodeTypesHandler` now merges `agentgen.AllNodeTypeInfos()`
+(12) with `appflow.AllAppCanvasNodeInfos()` (6) into one sorted JSON array (18 total), marshalling
+each family independently at the `json.RawMessage` level to avoid coupling the two packages'
+distinct `Type` field types (`agentgen.StepType` vs plain `string`). 4 new appflow tests + 1 new
+admin test + 1 updated admin test (count assertion 12→18). `go test ./...` 0 failures, fresh run
+(1718 sub-test PASS, 0 FAIL); `go build ./...` clean. **Backend-only** — no frontend file touched,
+so the app canvas still renders from the old hardcoded `INLINE_META`/`FC_META`/`NODE_PORTS`/JSX
+exactly as before; only the registry now exists and is servable. `test_42` not re-run live (no
+stack access this session) but `compiler.go`/`workflow.go`/`validate.go`/`graph.go` — the files it
+exercises — are untouched, so it should be unaffected. Full detail in `docs/NODE_REGISTRY_PLAN.md`.
+
+**Next: Phase 4** — app canvas stops hardcoding: palette, node rendering, handles and the
+properties form all driven by the `/admin/node-types` payload, copying the agent builder's
+existing `StepNode.tsx`/`StepConfigSection.tsx` pattern. Depends on Phase 3 (done). Gate: `tsc`
+clean, `test_42` green, and a manual round-trip (save → reload → condition still wired true/false)
+— registry-driven handles are exactly where the three step-9/10 silent-data-loss bugs hid before.
 
 **Phase 1 — COMPLETE (2026-09-19).** New table `them.app_flow_llm_overrides` (migration 101,
 applied to live DB). `appflow.Compile` now emits `AppFlowSpec.LLMNodes`; new

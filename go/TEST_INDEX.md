@@ -3560,7 +3560,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-120 | LLM Gateway Phase 2 policy tests (GW-POL-01..08): AllowedModel_Passes, BlockedModel_Returns403 (status=blocked in record), AliasResolvesBeforeCheck (ModelServed=resolved), MaxTokensCeiling_Applied (Build called with capped value), NilPolicy_AllowsAll, BudgetExceeded_Returns429, BudgetOK_Passes, SpendDBError_FailOpen | 8 |
 | S1-121 | LLM Gateway Phase 3 admin handler tests (GW-ADM-01..11): ListClients_Empty, CreateClient_MissingLabel, CreateClient_Success (token in response), GetClient_NotFound, DeleteClient (Exec+204), ListProfiles_Empty, CreateProfile_MissingName, GetPolicy_NoRow (allow-all zero row), PutPolicy_InvalidBody, ListRequests_Empty, ListRequests_LimitParam | 11 |
 | S1-122 | Node Registry Phase 1 — app-canvas inline LLM node overrides (AF-26..29): Compile.CollectsLLMNodes, Compile.NoLLMNodes_EmptyList, ApplyLLMOverrides.RewritesMatchingNode (non-override fields preserved), ApplyLLMOverrides.NilAndEmptyAreNoop; AppService.GetAppFlowLLMNodes (NotFound on missing active def, no-override returns compiled values, override merges into status); AppService.PutAppFlowLLMOverride (empty provider → ErrValidation, valid upserts row); handler (GET 200 no-override, PUT 400 empty provider, PUT 200) | 12 |
-| **S1 total** | | **1310** |
+| S1-123 | Node Registry Phase 2 — `internal/appflow` static node metadata registry (`noderegistry_test.go`): AllAppCanvasNodeInfos_ReturnsSixKinds (llm/condition/router/hil/fork/join all present, non-empty label+color, executable=true), AllAppCanvasNodeInfos_ConditionHasTrueFalsePorts (2 control_output_ports true/false, exactly-2 outgoing edge rule), AllAppCanvasNodeInfos_ForkJoinDegreeRules (fork min_out>=2, join min_in>=2, matches validate.go structural rules), AllAppCanvasNodeInfos_ReturnsCopyNotSharedSlice (defensive copy) | 4 |
+| S1-124 | Node Registry Phase 3 — `/admin/node-types` merges agentgen + appflow families (`node_types_test.go`): ReturnsAllTypes updated to assert `len(agentgen)+len(appflow)` total (12+6=18); new IncludesAppCanvasKinds (router/hil/fork/join/condition present with label+executable, exactly 2 entries typed "llm" — one per family, condition's 2 control_output_ports survive the merge) | 1 |
+| **S1 total** | | **1315** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
@@ -3638,4 +3640,4 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | **S2 total** | | **59** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1310** (S1 total; this line is out of sync with S1/S2 subtotals above pre-dating this entry — full reconciliation not in scope for this change) |
+| **`go test ./...` total** | | **1315** (S1 total; this line is out of sync with S1/S2 subtotals above pre-dating this entry — full reconciliation not in scope for this change) |

@@ -1,5 +1,5 @@
 # Node Registry — Unify App Canvas, Agent Builder and Middleware
-# Status: Phases 1-2 COMPLETE. Phases 3-5 not started.
+# Status: Phases 1-3 COMPLETE. Phases 4-5 not started.
 # Date: 2026-09-19
 
 ---
@@ -29,8 +29,8 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 |---|---|---|
 | 1 — Runtime config split | ✅ COMPLETE | (pending commit) |
 | 2 — Extract shared registry | ✅ COMPLETE | (pending commit) |
-| 3 — Register app canvas nodes | ⬜ NOT STARTED ← **next** | — |
-| 4 — App canvas renders from registry | ⬜ NOT STARTED | — |
+| 3 — Register app canvas nodes | ✅ COMPLETE | (pending commit) |
+| 4 — App canvas renders from registry | ⬜ NOT STARTED ← **next** | — |
 | 5 — Middleware adopts node contract | ⬜ NOT STARTED | — |
 
 **Update this table at the end of every session.** One phase per session.
@@ -255,19 +255,60 @@ the gate.
 
 ### Phase 3 — Register app canvas nodes
 
-Register the 6 app-canvas node types in `nodedefs`: `llm`, `condition`, `router`, `hil`, `fork`,
-`join`. Real definitions replace the hardcoded copies:
+**STATUS: COMPLETE (2026-09-19).** `go test ./...` 0 failures (full suite, `-count=1` fresh run,
+1718 sub-test `--- PASS`, 0 `--- FAIL`); `go build ./...` clean. No frontend files touched this
+phase (frontend consumption is Phase 4) — `tsc --noEmit` therefore unaffected, not re-run.
 
-| Hardcoded today | Comes from the registry after |
-|---|---|
-| `INLINE_META` / `FC_META` (`CanvasNodes.tsx`) | `label`, `emoji`, `color` |
-| `NODE_PORTS` (`constants.ts`) | `edges`, ports |
-| condition's two handles (hand-written JSX) | `control_output_ports` |
-| `InlineNodePanel` form fields | `config_fields` |
+What was built:
+- New file `go/internal/appflow/noderegistry.go` — `AppCanvasNodeInfo` struct (field-for-field
+  shape match with `agentgen.NodeTypeInfo`: embeds `nodedefs.Meta` plus `type`, `version`,
+  `output_arity`, `is_source`, `is_sink`, `single_input`, `accepts_dynamic_inputs`,
+  `dynamic_outputs`, `executable`) and a static `appCanvasNodeRegistry` with all 6 kinds:
+  `llm`, `condition`, `router`, `hil`, `fork`, `join`. Metadata (label/emoji/color) matches
+  `CanvasNodes.tsx`'s `INLINE_META`/`FC_META` values exactly; `config_fields` sourced from
+  `RouterConfig`/`HILConfig`/`InlineLLMConfig`/`InlineConditionConfig` (compiler.go/inline.go);
+  `edges` degree rules sourced from `validate.go`'s structural checks (condition: exactly 2 out;
+  router: ≥1 out; fork: ≥2 out; join: ≥2 in). `condition`'s `control_output_ports` carries the
+  true/false handles that were previously hand-written JSX only
+  (`CanvasNodes.tsx:384-391`). `AllAppCanvasNodeInfos()` returns a defensive copy.
+- `go/internal/appflow/noderegistry_test.go` — 4 new tests: all 6 kinds present with non-empty
+  label/color/executable, condition's true/false ports + exactly-2-edge rule, fork/join degree
+  rules matching `validate.go`, and a copy-not-shared-slice mutation guard.
+- `go/internal/admin/node_types.go` — `NodeTypesHandler.ServeHTTP` now merges
+  `agentgen.AllNodeTypeInfos()` (12 entries) with `appflow.AllAppCanvasNodeInfos()` (6 entries)
+  into one JSON array, marshalling each family separately (preserving their exact independent
+  byte shape) then sorting the merged raw JSON by `type` for deterministic output. No new Go type
+  wraps both families — `agentgen.NodeTypeInfo.Type` is `agentgen.StepType`, `appflow`'s is a bare
+  `string`; merging at the `json.RawMessage` level avoids a shared-type coupling neither package
+  needs.
+- `go/internal/admin/node_types_test.go` — `TestNodeTypesHandler_ReturnsAllTypes` updated: the
+  expected count is now `len(agentgen.KnownStepTypes()) + len(appflow.AllAppCanvasNodeInfos())`
+  (12+6=18) instead of 12. New `TestNodeTypesHandler_IncludesAppCanvasKinds` asserts the 5
+  appflow-only kinds are present with a label and `executable=true`, that exactly 2 entries are
+  typed `"llm"` (agentgen's own StepLLM step + appflow's app-canvas llm node — same name,
+  different family, both legitimately present), and that condition's 2 `control_output_ports`
+  survive the merge.
+- `go/TEST_INDEX.md`: S1-123, S1-124 added; S1 total 1310 → 1315.
 
-`/admin/node-types` returns both families.
+**Deliberately NOT done this phase (Phase 4's job):** `CanvasNodes.tsx`'s `INLINE_META`/`FC_META`,
+`constants.ts`'s `NODE_PORTS`, condition's hand-written true/false `Handle` JSX, and
+`InlineNodePanel.tsx`/`FlowControlNodePanel.tsx`'s hardcoded config fields are all still in place
+and still what the frontend actually renders from — nothing on the frontend reads
+`/admin/node-types` for these 6 kinds yet. This phase only makes the backend registry exist and
+be servable; Phase 4 is the frontend cutover.
 
-**Gate:** `appflow` validation and execution unchanged; full Go suite + `test_42` green.
+**Correction found during this phase, not yet acted on:** `fork` and `join` have **zero config
+fields today** — `FlowControlNodePanel.tsx` has no `isFork`/`isJoin` branch, only `isRouter`/
+`isHIL` (falls through to a generic "Flow control node: {type}" placeholder text for both). The
+new registry entries for `fork`/`join` correctly have an empty `config_fields` list (there is
+nothing to configure — merge behaviour is fixed, not user-configurable), so this is not a
+registry bug, just worth knowing before Phase 4 assumes every kind needs a form.
+
+**Gate result:** `appflow` validation and execution code (`compiler.go`, `workflow.go`,
+`validate.go`, `graph.go`) — completely untouched this phase; only new metadata files plus the
+`/admin/node-types` merge changed. Full Go suite green. `test_42_appflow_inline_nodes.py` was
+**not re-run live** (no live stack access in this session) — safe to infer unaffected given zero
+changes to the files it exercises, but flagging rather than claiming verified-live.
 
 ---
 

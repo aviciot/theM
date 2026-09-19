@@ -8,6 +8,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/appflow"
 )
 
 func TestNodeTypesHandler_ReturnsAllTypes(t *testing.T) {
@@ -24,9 +25,11 @@ func TestNodeTypesHandler_ReturnsAllTypes(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	known := agentgen.KnownStepTypes()
-	if len(infos) != len(known) {
-		t.Errorf("expected %d node types, got %d", len(known), len(infos))
+	// The endpoint merges the agentgen (agent builder) family with the appflow
+	// (app canvas) family — see docs/NODE_REGISTRY_PLAN.md Phase 3.
+	wantTotal := len(agentgen.KnownStepTypes()) + len(appflow.AllAppCanvasNodeInfos())
+	if len(infos) != wantTotal {
+		t.Errorf("expected %d node types (agentgen + appflow), got %d", wantTotal, len(infos))
 	}
 
 	for _, info := range infos {
@@ -42,6 +45,59 @@ func TestNodeTypesHandler_ReturnsAllTypes(t *testing.T) {
 		if info.OutputArity != "single" && info.OutputArity != "multi" && info.OutputArity != "none" {
 			t.Errorf("node type %q has invalid OutputArity %q", info.Type, info.OutputArity)
 		}
+	}
+}
+
+// TestNodeTypesHandler_IncludesAppCanvasKinds verifies the 6 appflow node
+// kinds (llm, condition, router, hil, fork, join) are present in the merged
+// /admin/node-types response, in the same JSON shape as agentgen entries.
+func TestNodeTypesHandler_IncludesAppCanvasKinds(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
+	admin.NodeTypesHandler{}.ServeHTTP(w, r)
+
+	var infos []agentgen.NodeTypeInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &infos); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	byType := make(map[string]agentgen.NodeTypeInfo, len(infos))
+	for _, info := range infos {
+		byType[string(info.Type)] = info
+	}
+
+	wantKinds := []string{"router", "hil", "fork", "join", "condition"}
+	for _, kind := range wantKinds {
+		info, ok := byType[kind]
+		if !ok {
+			t.Errorf("expected app-canvas kind %q in merged response, not found", kind)
+			continue
+		}
+		if info.Label == "" {
+			t.Errorf("app-canvas kind %q has empty Label", kind)
+		}
+		if !info.Executable {
+			t.Errorf("app-canvas kind %q should report executable=true", kind)
+		}
+	}
+
+	// "llm" is shared by name with agentgen's own StepLLM — both must be present
+	// (agentgen's agent-builder llm step, and appflow's app-canvas llm node),
+	// so there must be at least 2 entries typed "llm" in the merged array.
+	llmCount := 0
+	for _, info := range infos {
+		if string(info.Type) == "llm" {
+			llmCount++
+		}
+	}
+	if llmCount != 2 {
+		t.Errorf("expected exactly 2 entries typed %q (agentgen + appflow), got %d", "llm", llmCount)
+	}
+
+	// condition's true/false control ports must survive the merge.
+	cond := byType["condition"]
+	if len(cond.ControlOutputPorts) != 2 {
+		t.Errorf("condition: expected 2 control_output_ports, got %d", len(cond.ControlOutputPorts))
 	}
 }
 

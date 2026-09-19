@@ -6,19 +6,57 @@ import (
 	"sort"
 
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/appflow"
 )
 
 // NodeTypesHandler serves GET /admin/node-types.
-// Returns the public NodeTypeInfo for every registered canvas node type,
-// sorted by type name for deterministic output.
+// Returns the public node metadata for every registered canvas node type —
+// both the agentgen (agent builder) family and the appflow (app canvas)
+// family — merged into one array with one shape, sorted by type name for
+// deterministic output. See docs/NODE_REGISTRY_PLAN.md Phase 3.
 // It is stateless and can be instantiated with NodeTypesHandler{}.
 type NodeTypesHandler struct{}
 
 func (h NodeTypesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	infos := agentgen.AllNodeTypeInfos()
-	sort.Slice(infos, func(i, j int) bool {
-		return string(infos[i].Type) < string(infos[j].Type)
+	agentInfos := agentgen.AllNodeTypeInfos()
+	appInfos := appflow.AllAppCanvasNodeInfos()
+
+	out := make([]json.RawMessage, 0, len(agentInfos)+len(appInfos))
+	for _, info := range agentInfos {
+		b, err := json.Marshal(info)
+		if err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	for _, info := range appInfos {
+		b, err := json.Marshal(info)
+		if err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return nodeTypeKey(out[i]) < nodeTypeKey(out[j])
 	})
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(infos)
+	_, _ = w.Write([]byte("["))
+	for i, b := range out {
+		if i > 0 {
+			_, _ = w.Write([]byte(","))
+		}
+		_, _ = w.Write(b)
+	}
+	_, _ = w.Write([]byte("]"))
+}
+
+// nodeTypeKey extracts the "type" field from a marshalled node info for sort
+// comparison, without re-parsing the full struct.
+func nodeTypeKey(raw json.RawMessage) string {
+	var v struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	return v.Type
 }
