@@ -456,6 +456,15 @@ func (f *publishFakeDal) CountMCPServers(_ context.Context, _ string) (int, erro
 func (f *publishFakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
 	return dal.AppReadinessRow{}, nil
 }
+func (f *publishFakeDal) GetActiveDefinitionJSON(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) ([]dal.AppFlowLLMOverride, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

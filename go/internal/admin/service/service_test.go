@@ -550,6 +550,15 @@ func (f *fakeDal) CountMCPServers(_ context.Context, _ string) (int, error) {
 func (f *fakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
 	return f.readinessInfo, f.readinessErr
 }
+func (f *fakeDal) GetActiveDefinitionJSON(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
+func (f *fakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) ([]dal.AppFlowLLMOverride, error) {
+	return nil, nil
+}
+func (f *fakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 
 // fakeCache implements service.Cache.
 type fakeCache struct {

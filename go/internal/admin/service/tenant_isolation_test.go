@@ -575,6 +575,15 @@ func (f *isolationFakeDal) CountMCPServers(_ context.Context, _ string) (int, er
 func (f *isolationFakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
 	return dal.AppReadinessRow{}, nil
 }
+func (f *isolationFakeDal) GetActiveDefinitionJSON(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) ([]dal.AppFlowLLMOverride, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //

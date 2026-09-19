@@ -381,6 +381,15 @@ func (f *agentDefFakeDal) CountMCPServers(_ context.Context, _ string) (int, err
 func (f *agentDefFakeDal) GetAppReadinessInfo(_ context.Context, _, _ string) (dal.AppReadinessRow, error) {
 	return dal.AppReadinessRow{}, nil
 }
+func (f *agentDefFakeDal) GetActiveDefinitionJSON(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) ([]dal.AppFlowLLMOverride, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 
