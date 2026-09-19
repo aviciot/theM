@@ -204,6 +204,9 @@ func BuildRouter(
 
 				rolesH := NewRolesHandler(dal.NewDB(dbq))
 				rolesH.Routes(tenantScoped)
+
+				gatewayAdmin := NewGatewayHandler(dbq)
+				gatewayAdmin.Routes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
