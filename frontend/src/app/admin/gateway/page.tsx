@@ -455,9 +455,9 @@ export default function GatewayPage() {
 
   return (
     <AuthGuard>
-      <div style={{ display: 'flex', minHeight: '100vh', background: '#0f172a', color: '#f1f5f9' }}>
+      <div style={{ minHeight: '100vh', background: '#0f172a', color: '#f1f5f9' }}>
         <Sidebar />
-        <main style={{ flex: 1, padding: 32, overflowY: 'auto' }}>
+        <main style={{ marginLeft: '260px', padding: 32, overflowY: 'auto' }}>
           <div style={{ marginBottom: 24 }}>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>LLM Gateway</h1>
             <p style={{ color: '#94a3b8', marginTop: 6, fontSize: 14 }}>
