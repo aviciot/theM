@@ -175,6 +175,34 @@ func TestOpenAIProvider_systemPromptSentFirst(t *testing.T) {
 	assert.Equal(t, "system", req.Messages[0].Role)
 }
 
+// TestOpenAIProvider_streamOptionsIncludeUsage verifies that every streamed request asks
+// for usage accounting via stream_options.include_usage. Without this, OpenAI-compatible
+// endpoints (OpenAI, Groq, vLLM, etc.) never emit a usage block and token counts are
+// always zero — see docs/CURRENT.md "LLM Gateway" Phase 0 item 2.
+func TestOpenAIProvider_streamOptionsIncludeUsage(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		capturedBody = buf[:n]
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n")) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	p := newTestOpenAIProvider(t, srv.URL)
+	_, err := p.Stream(context.Background(), []domain.Message{
+		{Role: "user", Parts: []domain.ContentPart{{Type: "text", Text: "hi"}}},
+	}, nil, Options{})
+	require.NoError(t, err)
+
+	var req openAIRequest
+	require.NoError(t, json.Unmarshal(capturedBody, &req))
+	require.NotNil(t, req.StreamOptions, "stream_options must be sent on every request")
+	assert.True(t, req.StreamOptions.IncludeUsage, "stream_options.include_usage must be true")
+}
+
 // TestOpenAIProvider_noAuthHeaderForOllama verifies Authorization header is skipped for "ollama" key.
 func TestOpenAIProvider_noAuthHeaderForOllama(t *testing.T) {
 	var authHeader string

@@ -54,11 +54,11 @@ func NewOpenAIProvider(apiKey, model, baseURL string, maxTokens int) *OpenAIProv
 
 // openAIMessage is one entry in the messages array.
 type openAIMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Name       string           `json:"name,omitempty"`
 }
 
 type openAIFunction struct {
@@ -82,11 +82,19 @@ type openAIToolCall struct {
 }
 
 type openAIRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	Messages  []openAIMessage `json:"messages"`
-	Tools     []openAITool    `json:"tools,omitempty"`
-	Stream    bool            `json:"stream"`
+	Model         string               `json:"model"`
+	MaxTokens     int                  `json:"max_tokens"`
+	Messages      []openAIMessage      `json:"messages"`
+	Tools         []openAITool         `json:"tools,omitempty"`
+	Stream        bool                 `json:"stream"`
+	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+}
+
+// openAIStreamOptions requests usage accounting in the streamed response.
+// Without include_usage, OpenAI-compatible endpoints (OpenAI, Groq, vLLM, etc.)
+// never emit a usage block, so token counts are always zero for these providers.
+type openAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // Stream sends messages to an OpenAI-compatible endpoint and returns a channel
@@ -137,11 +145,12 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []domain.Message, 
 	}
 
 	reqBody := openAIRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		Messages:  apiMsgs,
-		Tools:     apiTools,
-		Stream:    true,
+		Model:         model,
+		MaxTokens:     maxTokens,
+		Messages:      apiMsgs,
+		Tools:         apiTools,
+		Stream:        true,
+		StreamOptions: &openAIStreamOptions{IncludeUsage: true},
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -211,7 +220,7 @@ func (p *OpenAIProvider) parseSSE(ctx context.Context, r io.Reader, out chan<- S
 			Choices []struct {
 				Delta struct {
 					Content   *string          `json:"content"`
-					ToolCalls []openAIToolCall  `json:"tool_calls"`
+					ToolCalls []openAIToolCall `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`

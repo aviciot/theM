@@ -44,32 +44,66 @@ Inline Nodes frontend work.**
 - In-process pipeline, NOT Temporal (per-call latency)
 - Lives inside `them-go-bridge`; keep code in `internal/llmgateway` so it can be split out later
 
-### Next task on this track — Phase 0 (do this before any gateway code)
+### Phase 0 — COMPLETE (2026-09-19)
 
-Fix metering first, so the gateway reports correct numbers from its first request. All three
-verified against the live DB on 2026-09-17:
+Fixed metering so the gateway will report correct numbers from its first request. All items
+verified against the live DB. `go test ./...` — 0 failures (S1 total 1254, S2 total 59, see
+`go/TEST_INDEX.md` S1-116..118, S2-10, S2-11).
 
-1. **`SumMonthlyTokens` is broken** (`internal/admin/dal/runs.go:175`) — filters on
-   `runs.created_at`, which does not exist (the column is `started_at`). Query errors →
-   `checkMonthlyLLMTokens` returns nil (fail-open) → **`monthly_llm_tokens` quota currently
-   enforces nothing.** Verified: `ERROR: column "created_at" does not exist`.
-2. **Non-Anthropic providers report 0 tokens** — the OpenAI-compatible path never sends
-   `stream_options: {"include_usage": true}`, so OpenAI/Groq/Ollama/vLLM usage is always zero.
-3. **Cost is Claude-only** — `internal/orchestrator/pricing.go` uses a hardcoded map and
-   defaults every unknown model to Sonnet pricing. `them.llm_providers.model_pricing` is
-   already populated and ignored.
+1. **`SumMonthlyTokens` column bug fixed** (`internal/admin/dal/runs.go`) — `runs.created_at` →
+   `runs.started_at`. The `monthly_llm_tokens` quota now actually enforces. Regression test:
+   S2-10 (`internal/admin/dal/runs_integration_test.go`).
+2. **OpenAI-compatible `stream_options.include_usage` added** (`internal/llm/openai.go`) — every
+   streamed request now asks for usage accounting, so OpenAI/Groq/Ollama/vLLM report real token
+   counts instead of always 0. Test: S1-116.
+3. **Cost now sourced from `them.llm_providers.model_pricing`** — new `orchestrator.CostEstimator`
+   interface + `Orchestrator.WithCostEstimator()` (`internal/orchestrator/orchestrator.go`);
+   `internal/llmresolve.PricingTable` implements it and is loaded once per run in
+   `workerconfig.RunConfig.LLMPricing` (same DB row already fetched for the API key/base_url —
+   no extra query). Falls back to the old hardcoded Claude-only rate card
+   (`internal/orchestrator/pricing.go`) when DB pricing has no entry for the model. Wired in
+   `cmd/worker/main.go`'s `runOrchestratorFactory.Build`. Tests: S1-117, S1-118, S2-11.
+4. **`internal/llmresolve` extracted** — new package holding the app → tenant → platform provider
+   key/base_url/pricing precedence chain, previously duplicated (and drifted) between
+   `internal/temporal/workerconfig/loader.go` and `cmd/dag-worker/main.go`'s `dbLLMCaller.resolveKey`.
+   Both now call `llmresolve.Resolver.ResolveProvider`. `DecryptValue` fails loudly (returns an
+   error) instead of silently returning ciphertext when no Fernet key is configured — the
+   original bug in `loader.go:505`. Tests: S1-118, S2-11.
 
-Plus: extract **`internal/llmresolve`** from `internal/temporal/workerconfig/loader.go`
-(tenant → platform key precedence, currently duplicated across `cmd/worker`, `cmd/dag-worker`,
-`cmd/agent-runtime`), and make `decryptValue` fail loudly instead of returning ciphertext when
-no Fernet key is set (`loader.go:505`).
+**Behavior changes made while unifying the two duplicate implementations (confirmed with the
+user, not silent):**
+- **Precedence order is now app-key → tenant-key → platform-key everywhere.** Before this
+  change, `workerconfig` (Temporal worker, `cmd/worker`) checked tenant-key → app-key with
+  **no platform fallback**, while `cmd/dag-worker` checked app-key → tenant-key → platform-key.
+  The user chose dag-worker's order as the standard. Net effect: `cmd/worker` gained a platform
+  fallback it didn't have, and an app-level key now beats a tenant-level key there (previously
+  the reverse).
+- **Security fix:** the app-level `provider_keys` lookup in `workerconfig/loader.go` was
+  missing the `tenant_id` filter (`WHERE id = $1::uuid`, no tenant check) — `dag-worker` and
+  `cmd/agent-runtime` already had it. `llmresolve.AppProviderKey` now requires `tenant_id` on
+  every app-level lookup. Regression test: S2-11 (`TestAppProviderKey_CrossTenantAppID_ReturnsEmpty`).
+- **`"plain:"` test-mode prefix bug found and fixed in the merge:** `workerconfig/loader.go`'s
+  original `loadProviderKey` never handled the `"plain:"` prefix (written by
+  `internal/admin/service/applications.go` `encryptKey` when no crypto key is configured) —
+  `dag-worker` and `agent-runtime` did. Unnoticed until now because `workerconfig` always had a
+  real Fernet key in practice. `llmresolve.ParseAppProviderKey` now handles it uniformly.
 
-Phase 0 is Sonnet-appropriate implementation work. Phases 1–6 are in
-`docs/LLM_GATEWAY_DESIGN.md` §14.
+**Known gap — NOT fixed, deliberately deferred (confirm before touching):**
+`cmd/agent-runtime` (`spec.go` `loadAppAPIKey`, `llm.go` `multiLLMFactory`) still has its own
+**third, narrower** key-resolution path: app-level `provider_keys` → a single hardcoded platform
+key (no tenant-scoped `them.llm_providers` fallback at all). It was **not** rewired to
+`internal/llmresolve` in this phase — the user asked to scope Phase 0 to unifying the two worker
+paths only; upgrading agent-runtime's precedence chain is a behavior change to a third subsystem
+and needs its own explicit decision. If a tenant sets an OpenAI/etc. key only at the tenant
+level (not per-app), agents run via `agent-runtime` will not find it today.
 
-**Open question for Phase 1:** does gateway spend count against the same tenant
-`monthly_llm_tokens` budget as runs? Design assumes yes (sum both tables) — confirm, because it
-means a busy cron job can exhaust the budget hosted apps rely on.
+Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. **Next recommended task: Phase 1 — gateway
+observe + meter** (migration `db/099`, new `internal/llmgateway`), or decide on the
+`agent-runtime` gap above first if that's higher priority.
+
+**Open question for Phase 1 (still unresolved):** does gateway spend count against the same
+tenant `monthly_llm_tokens` budget as runs? Design assumes yes (sum both tables) — confirm,
+because it means a busy cron job can exhaust the budget hosted apps rely on.
 
 ---
 

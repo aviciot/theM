@@ -3221,6 +3221,49 @@ go test -tags=integration -v ./internal/admin/... -run TestAuditLogs_CrossTenant
 
 ---
 
+### S2-10 · SumMonthlyTokens regression — `internal/admin/dal/runs_integration_test.go`
+
+**Purpose:** Regression test for the Phase 0 LLM Gateway bug where `SumMonthlyTokens` filtered on `runs.created_at` (a column that does not exist — the column is `started_at`). The query errored on every call, so `checkMonthlyLLMTokens` failed open and the `monthly_llm_tokens` quota silently enforced nothing. See `docs/CURRENT.md` "LLM Gateway" Phase 0 item 1.
+
+Build tag: `//go:build integration`. Package: `dal_test`. Uses `TEST_POSTGRES_DSN` (falls back to the local dev DSN).
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| SMT-1 | `TestDAL_SumMonthlyTokens_ColumnExists` | Query does not error; sums `total_tokens_in + total_tokens_out` correctly across multiple runs this month |
+| SMT-2 | `TestDAL_SumMonthlyTokens_NoRuns` | Zero-runs case returns 0, not an error |
+
+```bash
+TEST_POSTGRES_DSN="host=them-postgres port=5432 dbname=them user=them password=<pw> sslmode=disable" \
+go test -tags=integration -v ./internal/admin/dal/... -run TestDAL_SumMonthlyTokens
+```
+
+**Trigger:** any change to `internal/admin/dal/runs.go` `SumMonthlyTokens`
+
+---
+
+### S2-11 · internal/llmresolve DB-backed precedence — `internal/llmresolve/llmresolve_integration_test.go`
+
+**Purpose:** Prove the shared app → tenant → platform provider-key/pricing precedence chain (extracted from `workerconfig/loader.go` and `cmd/dag-worker/main.go`'s duplicate `resolveKey`) against real PostgreSQL, including the tenant-scoping fix on the app-level key lookup.
+
+Build tag: `//go:build integration`. Package: `llmresolve`. Uses `TEST_POSTGRES_DSN` (falls back to the local dev DSN).
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| LLMR-I1 | `TestResolveProvider_AppKeyWinsOverTenantAndPlatform` | App-level `provider_keys` wins when all three levels have a key (the precedence direction picked when unifying the two workers) |
+| LLMR-I2 | `TestResolveProvider_FallsBackToTenantWhenNoAppKey` | Falls through to the tenant-scoped `llm_providers` row when the app has no key |
+| LLMR-I3 | `TestResolveProvider_FallsBackToPlatformWhenNoAppOrTenantKey` | Falls through to the platform-default `llm_providers` row (`tenant_id IS NULL`) as the last resort |
+| LLMR-I4 | `TestAppProviderKey_CrossTenantAppID_ReturnsEmpty` | Regression: reading an app-level key by application ID alone (without the caller's own tenant_id) returns empty instead of leaking another tenant's key |
+| LLMR-I5 | `TestResolveProvider_PricingComesFromMatchedProviderRow` | `model_pricing` from the matched `llm_providers` row is surfaced through `Resolved.Pricing`, converted from per-million to per-token |
+
+```bash
+TEST_POSTGRES_DSN="host=them-postgres port=5432 dbname=them user=them password=<pw> sslmode=disable" \
+go test -tags=integration -v ./internal/llmresolve/...
+```
+
+**Trigger:** any change to `internal/llmresolve/llmresolve.go`, `internal/temporal/workerconfig/loader.go`, or `cmd/dag-worker/main.go`'s `dbLLMCaller`
+
+---
+
 ## Suite 3 — Live deploy verification (`DEPLOY_AND_TEST.md`)
 
 Manual checklist of 23 tests against a running Docker stack.
@@ -3275,14 +3318,17 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/event/bus.go` | S1-07 |
 | `internal/domain/domain.go` | S1-08 |
 | `internal/runrecorder/recorder.go` | S1-09 |
-| `internal/orchestrator/orchestrator.go` | S1-28 |
+| `internal/orchestrator/orchestrator.go` | S1-28 + S1-117 |
+| `internal/orchestrator/pricing.go` | S1-117 |
 | `internal/orchestrator/summary.go` | S1-28 |
 | `internal/history/pgx.go` | S1-46 |
 | `internal/summarizer/summarizer.go` | S1-47 |
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
 | `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go` | S1-76 |
-| `internal/temporal/workerconfig/loader.go` | S1-61 + S1-93 |
+| `internal/temporal/workerconfig/loader.go` | S1-61 + S1-93 + S2-11 (integration) |
 | `internal/llm/` (any file) | S1-10 |
+| `internal/llm/openai.go` | S1-10 + S1-116 |
+| `internal/llmresolve/` (any file) | S1-118 + S2-11 (integration) |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
@@ -3314,6 +3360,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/agent_definition_schema.go` | S1-71 |
 | `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-50 + S1-51 + S1-71 + S1-92 |
 | `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-51 + S1-92 + S2-05 (integration) |
+| `internal/admin/dal/runs.go` | S2-10 (integration) + S1-quota (`internal/quota/enforcer_test.go`) |
 | `internal/admin/dal/agent_definitions_publish.go` | S1-51 |
 | `internal/admin/dal/agent_bindings.go` | S1-51 |
 | `internal/admin/dal/definitions.go` | S1-42 |
@@ -3504,7 +3551,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-113 | HIL approval API (AF-HIL-01..05): Approve/Reject success + Temporal signaled, 404 not-found, 403 insufficient-role, 409 already-decided | 5 |
 | S1-114 | Temporal execution controls — service (TC-SVC-1..9): GetPlatformConfig_NoRow_Defaults, StoredRow_Merges, DALError_Propagates, PutPlatform_ValidInput, PutPlatform_InvalidRetry, PutPlatform_ZeroConcurrent, Merge_AppOverrides, Merge_NilAppFallsThrough, Merge_BothNilDefaults; handler (TC-1..4): GetPlatform_NoRow_200+defaults, PutPlatform_Valid_200, NegativeRetry_422, BadJSON_400 | 13 |
 | S1-115 | AppFlow inline node config + template helpers (AF-IN-01..06 + AF-IN-02b): render/substitution, missing-var zero-value, UI-advertised condition expression forms, parse error, isTruthy table, config JSON round trips | 7 |
-| **S1 total** | | **1236** |
+| S1-116 | OpenAI-compatible provider stream_options (LLM-SO-1): streamOptionsIncludeUsage — every streamed request sends `stream_options.include_usage=true` so OpenAI/Groq/vLLM/etc. report real token usage instead of always 0 | 1 |
+| S1-117 | Orchestrator cost estimation (COST-1..5): estimateCost default-rate-card known model, unknown-model-falls-back-to-Sonnet, attached-estimator-preferred, attached-estimator-falls-back-when-no-rate, no-estimator-attached-uses-default | 5 |
+| S1-118 | internal/llmresolve pure-function unit tests (LLMR-1..12): PricingTable.EstimateCost known/unknown model, parseModelPricing per-million→per-token conversion + malformed/empty input, ParseAppProviderKey structured/plain-prefix/legacy-flat/no-key, DecryptValue fail-loud with no Fernet key configured (regression), legacy-plaintext passthrough, round-trip with key, HMAC-mismatch error | 12 |
+| **S1 total** | | **1254** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
@@ -3544,7 +3594,9 @@ Run: `python3.12 scripts/tests/test_41_appflow_fork_join.py` (requires `--profil
 | S2-05 | admin/dal llm_providers integration | 11 |
 | S2-08 | RLS integration (role attrs + GUC isolation + full two-tenant isolation + catalog): RLS-30, RLS-31, RLS-31b, RLS-32, RLS-33, RLS-08, RLS-10, RLS-11, PoolsInterface, TwoTenantFullIsolation, CatalogVerification | 11 |
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
-| **S2 total** | | **52** |
+| S2-10 | SumMonthlyTokens regression (SMT-1..2): ColumnExists, NoRuns | 2 |
+| S2-11 | internal/llmresolve DB-backed precedence (LLMR-I1..5): AppKeyWins, FallsBackToTenant, FallsBackToPlatform, CrossTenantAppID_ReturnsEmpty, PricingComesFromMatchedProviderRow | 5 |
+| **S2 total** | | **59** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1096** |
+| **`go test ./...` total** | | **1254** |

@@ -19,11 +19,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/llm"
+	"github.com/aviciot/them/internal/llmresolve"
 	"github.com/aviciot/them/internal/orchestrator"
 )
 
@@ -45,6 +44,11 @@ type RunConfig struct {
 	// them.llm_providers.base_url. Empty = use the provider's public default.
 	// Set this for local/self-hosted models (Ollama, vLLM, LMStudio, etc.).
 	LLMBaseURL string
+	// LLMPricing is the model->per-token USD rate table for LLMProvider, read
+	// from the same them.llm_providers row as LLMBaseURL (tenant row wins over
+	// platform row). Empty map means no DB pricing was found for this
+	// provider — callers fall back to a built-in default rate card.
+	LLMPricing llmresolve.PricingTable
 
 	// Summarizer fields — populated when memory_enabled=true on the entry_point row.
 	// Memory config is per-EP so each entry point can have independent history settings.
@@ -56,7 +60,6 @@ type RunConfig struct {
 	// MCPServiceURL is the internal base URL of them-mcp-service, injected by the
 	// worker at build time (not stored in DB). Empty → MCP tool dispatch disabled.
 	MCPServiceURL string
-
 }
 
 // Loader resolves per-run orchestrator config from persistent storage.
@@ -71,15 +74,15 @@ type Loader interface {
 
 // PgxLoader implements Loader against a live PostgreSQL pool.
 type PgxLoader struct {
-	pool      *pgxpool.Pool
-	fernetKey []byte
+	pool     *pgxpool.Pool
+	resolver *llmresolve.Resolver
 }
 
 // NewPgxLoader creates a PgxLoader backed by the given connection pool.
 // fernetKey is the 32-byte key used to decrypt provider_keys values; derive it
 // with crypto.DeriveKey(cfg.SecretKey).
 func NewPgxLoader(pool *pgxpool.Pool, fernetKey []byte) *PgxLoader {
-	return &PgxLoader{pool: pool, fernetKey: fernetKey}
+	return &PgxLoader{pool: pool, resolver: llmresolve.New(pool, fernetKey, nil)}
 }
 
 // LoadRunConfig resolves orchestrator config + provider key for one run.
@@ -131,12 +134,12 @@ WHERE ao.id = $1::uuid
 
 	// Load per-EP memory config (only when entryPointID is provided).
 	var (
-		memoryEnabled        bool
-		historyWindow        = 20
-		summarizeEveryN      int
-		rawFallbackN         = 3
-		summarizerProvider   *string
-		summarizerModel      *string
+		memoryEnabled      bool
+		historyWindow      = 20
+		summarizeEveryN    int
+		rawFallbackN       = 3
+		summarizerProvider *string
+		summarizerModel    *string
 	)
 	var epLLMProvider *string
 	var epLLMModel *string
@@ -228,24 +231,21 @@ WHERE ep.id = $1::uuid`
 		return RunConfig{}, fmt.Errorf("workerconfig: no LLM provider configured on orchestrator %s or its entry point — set provider and model in Runtime settings: %w", appOrchestratorID, ErrNoProviderKey)
 	}
 
-	// Resolve API key + base_url: tenant-scoped llm_providers row takes precedence
-	// over per-app key in applications.provider_keys. Platform-default rows
-	// (tenant_id IS NULL) are never used for tenant workloads.
-	tenantRow := l.loadTenantProviderKey(ctx, tenantID, providerName)
-	apiKey := tenantRow.key
-	llmBaseURL := tenantRow.baseURL
-	if apiKey == "" {
-		var keyErr error
-		apiKey, keyErr = l.loadProviderKey(ctx, applicationID, providerName)
-		if keyErr != nil {
-			return RunConfig{}, fmt.Errorf("workerconfig: decrypt provider key for %s: %w", providerName, keyErr)
-		}
+	// Resolve API key + base_url + pricing via the shared precedence chain:
+	// app-level provider_keys (most specific) -> tenant llm_providers row ->
+	// platform-default llm_providers row.
+	resolved, err := l.resolver.ResolveProvider(ctx, applicationID, tenantID, providerName)
+	if err != nil {
+		return RunConfig{}, fmt.Errorf("workerconfig: resolve provider key for %s: %w", providerName, err)
 	}
+	apiKey := resolved.Key
+	llmBaseURL := resolved.BaseURL
+	llmPricing := resolved.Pricing
 	if apiKey == "" && providerName != "mock" && providerName != "ollama" {
 		return RunConfig{}, fmt.Errorf("workerconfig: no API key found for provider %q — add one in Runtime → Provider Keys: %w", providerName, ErrNoProviderKey)
 	}
 
-	// Summarizer key comes from app provider_keys using the EP-configured provider.
+	// Summarizer key comes from the same precedence chain, for the EP-configured provider.
 	sumProvider := ""
 	if summarizerProvider != nil {
 		sumProvider = *summarizerProvider
@@ -257,17 +257,13 @@ WHERE ep.id = $1::uuid`
 	sumAPIKey := ""
 	sumBaseURL := ""
 	if memoryEnabled && sumProvider != "" {
-		// Prefer tenant override for summarizer key.
-		sumRow := l.loadTenantProviderKey(ctx, tenantID, sumProvider)
-		sumAPIKey = sumRow.key
-		sumBaseURL = sumRow.baseURL
-		if sumAPIKey == "" {
-			var sumKeyErr error
-			sumAPIKey, sumKeyErr = l.loadProviderKey(ctx, applicationID, sumProvider)
-			if sumKeyErr != nil {
-				slog.Warn("workerconfig: failed to decrypt summarizer key — memory disabled for run",
-					"app_id", applicationID, "provider", sumProvider, "error", sumKeyErr)
-			}
+		sumResolved, sumErr := l.resolver.ResolveProvider(ctx, applicationID, tenantID, sumProvider)
+		if sumErr != nil {
+			slog.Warn("workerconfig: failed to resolve summarizer key — memory disabled for run",
+				"app_id", applicationID, "provider", sumProvider, "error", sumErr)
+		} else {
+			sumAPIKey = sumResolved.Key
+			sumBaseURL = sumResolved.BaseURL
 		}
 	}
 
@@ -276,13 +272,13 @@ WHERE ep.id = $1::uuid`
 		LLMProvider:        providerName,
 		LLMAPIKey:          apiKey,
 		LLMBaseURL:         llmBaseURL,
+		LLMPricing:         llmPricing,
 		SummarizerProvider: sumProvider,
 		SummarizerModel:    sumModel,
 		SummarizerAPIKey:   sumAPIKey,
 		SummarizerBaseURL:  sumBaseURL,
 	}, nil
 }
-
 
 // mcpServerEntry is one item in the app_orchestrators.mcp_servers JSONB array.
 type mcpServerEntry struct {
@@ -401,111 +397,4 @@ func (l *PgxLoader) resolveAgentSlugs(ctx context.Context, ids []string) ([]stri
 		slugs = append(slugs, slug)
 	}
 	return slugs, nil
-}
-
-// providerRow holds the resolved key and optional custom base URL for a provider.
-type providerRow struct {
-	key     string
-	baseURL string
-}
-
-// loadTenantProviderKey looks up a decrypted API key and base_url from
-// them.llm_providers for the given tenant. Platform-default rows (tenant_id IS NULL)
-// are intentionally NOT used here — they are for internal platform operations only.
-// Returns zero value when no tenant-scoped row exists or on any error.
-func (l *PgxLoader) loadTenantProviderKey(ctx context.Context, tenantID, provider string) providerRow {
-	if tenantID == "" || provider == "" {
-		return providerRow{}
-	}
-	return l.lookupLLMProviderKey(ctx, provider, &tenantID)
-}
-
-// lookupLLMProviderKey fetches and decrypts a single llm_providers row.
-// tenantID nil = platform default (tenant_id IS NULL); non-nil = tenant override.
-// Returns zero value on miss or error.
-func (l *PgxLoader) lookupLLMProviderKey(ctx context.Context, provider string, tenantID *string) providerRow {
-	var encPtr *string
-	var baseURLPtr *string
-	var err error
-	if tenantID == nil {
-		const q = `SELECT api_key_encrypted, base_url FROM them.llm_providers WHERE name=$1 AND tenant_id IS NULL AND enabled=true LIMIT 1`
-		err = l.pool.QueryRow(ctx, q, provider).Scan(&encPtr, &baseURLPtr)
-	} else {
-		const q = `SELECT api_key_encrypted, base_url FROM them.llm_providers WHERE name=$1 AND tenant_id=$2::uuid AND enabled=true LIMIT 1`
-		err = l.pool.QueryRow(ctx, q, provider, *tenantID).Scan(&encPtr, &baseURLPtr)
-	}
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			slog.Warn("workerconfig: llm_providers key lookup error — skipping",
-				"provider", provider, "has_tenant", tenantID != nil)
-		}
-		return providerRow{}
-	}
-	var baseURL string
-	if baseURLPtr != nil {
-		baseURL = *baseURLPtr
-	}
-	if encPtr == nil || *encPtr == "" {
-		return providerRow{baseURL: baseURL}
-	}
-	plain, decErr := l.decryptValue(*encPtr)
-	if decErr != nil {
-		slog.Warn("workerconfig: llm_providers key decrypt failed — skipping",
-			"provider", provider, "has_tenant", tenantID != nil)
-		return providerRow{}
-	}
-	return providerRow{key: plain, baseURL: baseURL}
-}
-
-// loadProviderKey reads and decrypts the key for one provider from applications.provider_keys.
-// Returns empty string when the application is not found or no key is stored.
-//
-// provider_keys JSONB stores two formats:
-//   - New (encrypted): {"anthropic": {"ct": "enc:...", "hint": "XXXX"}}
-//   - Legacy (plaintext): {"anthropic": "sk-ant-..."}
-//
-// Both are handled transparently.
-func (l *PgxLoader) loadProviderKey(ctx context.Context, applicationID, provider string) (string, error) {
-	const q = `SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id = $1::uuid`
-	var raw []byte
-	if err := l.pool.QueryRow(ctx, q, applicationID).Scan(&raw); err != nil {
-		return "", err
-	}
-
-	// Try new structured format: {"provider": {"ct": "enc:...", "hint": "XXXX"}}.
-	type entry struct {
-		CT string `json:"ct"`
-	}
-	var structured map[string]entry
-	if err := json.Unmarshal(raw, &structured); err == nil {
-		if e, ok := structured[provider]; ok && e.CT != "" {
-			return l.decryptValue(e.CT)
-		}
-		// Check if any entry has a structured shape (not a flat string map).
-		for _, e := range structured {
-			if e.CT != "" {
-				// Structured format confirmed; this provider has no key.
-				return "", nil
-			}
-		}
-	}
-
-	// Legacy flat format: {"provider": "plaintext"}.
-	var flat map[string]string
-	if err := json.Unmarshal(raw, &flat); err == nil {
-		if v, ok := flat[provider]; ok && v != "" {
-			return v, nil
-		}
-	}
-	return "", nil
-}
-
-// decryptValue decrypts a stored value encrypted by crypto.EncryptStored.
-// Returns the value as-is when no fernetKey is configured (graceful degradation / tests).
-func (l *PgxLoader) decryptValue(stored string) (string, error) {
-	if len(l.fernetKey) == 0 {
-		// No key configured — return as-is (graceful degradation).
-		return stored, nil
-	}
-	return crypto.DecryptStored(l.fernetKey, stored)
 }

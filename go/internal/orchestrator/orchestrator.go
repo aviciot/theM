@@ -154,6 +154,15 @@ type UsageRecorder interface {
 	RecordUsage(ctx context.Context, runID, provider, model string, inputTokens, outputTokens int, costUSD float64) error
 }
 
+// CostEstimator computes the USD cost of one LLM call for a given model.
+// Implementations are expected to source pricing from them.llm_providers.model_pricing;
+// when a CostEstimator has no rate for the requested model it should return
+// (0, false) so the orchestrator falls back to the built-in default rate card
+// rather than silently reporting zero cost.
+type CostEstimator interface {
+	EstimateCost(model string, inputTokens, outputTokens int) (costUSD float64, ok bool)
+}
+
 // StepRecorder persists individual agent invocation steps and the final run output.
 type StepRecorder interface {
 	RecordAgentStep(ctx context.Context, runID, agentSlug string, iteration int, inputJSON []byte, output string, latencyMS int64, status, stepErr string) error
@@ -218,6 +227,7 @@ type Orchestrator struct {
 	checkpointer     CheckpointWriter
 	cardDiscoverer   CardDiscoverer
 	usageRecorder    UsageRecorder
+	costEstimator    CostEstimator
 	stepRecorder     StepRecorder
 	taskRecorder     TaskRecorder
 	budgetStore      BudgetStore
@@ -270,6 +280,15 @@ func (o *Orchestrator) WithUsageRecorder(ur UsageRecorder) *Orchestrator {
 	return o
 }
 
+// WithCostEstimator attaches a cost estimator sourced from DB pricing
+// (them.llm_providers.model_pricing). When absent, or when it has no rate for
+// the run's model, cost falls back to the built-in default rate card in
+// pricing.go.
+func (o *Orchestrator) WithCostEstimator(ce CostEstimator) *Orchestrator {
+	o.costEstimator = ce
+	return o
+}
+
 // WithStepRecorder attaches a step recorder for agent invocation and final output persistence.
 func (o *Orchestrator) WithStepRecorder(sr StepRecorder) *Orchestrator {
 	o.stepRecorder = sr
@@ -286,6 +305,19 @@ func (o *Orchestrator) WithTaskRecorder(tr TaskRecorder) *Orchestrator {
 func (o *Orchestrator) WithBudgetStore(bs BudgetStore) *Orchestrator {
 	o.budgetStore = bs
 	return o
+}
+
+// estimateCost returns the USD cost for one LLM call, preferring the
+// attached CostEstimator (DB-sourced pricing) and falling back to the
+// built-in default rate card when no estimator is attached or it has no
+// rate for the current model.
+func (o *Orchestrator) estimateCost(inputTokens, outputTokens int) float64 {
+	if o.costEstimator != nil {
+		if cost, ok := o.costEstimator.EstimateCost(o.cfg.Model, inputTokens, outputTokens); ok {
+			return cost
+		}
+	}
+	return estimateCost(o.cfg.Model, inputTokens, outputTokens)
 }
 
 // WithArtifactRecorder attaches an artifact recorder for file artifact persistence.
@@ -451,7 +483,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 		// Non-fatal: record token usage.
 		if o.usageRecorder != nil && iterTokens > 0 {
-			costUSD := estimateCost(o.cfg.Model, inputTokens, outputTokens)
+			costUSD := o.estimateCost(inputTokens, outputTokens)
 			if recErr := o.usageRecorder.RecordUsage(ctx, runID, o.cfg.LLMProvider, o.cfg.Model, inputTokens, outputTokens, costUSD); recErr != nil {
 				o.logger.Warn("orchestrator: usage record failed", "run_id", runID, "error", recErr)
 			}

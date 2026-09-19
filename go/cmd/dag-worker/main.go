@@ -41,6 +41,7 @@ import (
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/llm"
+	"github.com/aviciot/them/internal/llmresolve"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
 )
@@ -152,10 +153,9 @@ func run() error {
 
 	// ── 10b. AppFlow worker — polls appflow-dag task queue ────────────────────
 	llmCaller := &dbLLMCaller{
-		pool:      rlsPools.Admin,
-		cryptoKey: cryptoKey,
-		factory:   &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
-		logger:    log,
+		resolver: llmresolve.New(rlsPools.Admin, cryptoKey, log),
+		factory:  &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
+		logger:   log,
 	}
 	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
 	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
@@ -617,13 +617,13 @@ var _ agentgen.AgentEndpointQueryer = (*pgxAgentEndpointQueryer)(nil)
 // dbLLMCaller implements both appflow.RouterLLMCaller (label classification for
 // the Router node) and appflow.InlineLLMCaller (direct completion for the
 // inline LLM node). It resolves the API key from the DB at activity execution
-// time (app-level provider_keys first, then tenant llm_providers) so the key
+// time via the shared internal/llmresolve precedence chain (app-level
+// provider_keys -> tenant llm_providers -> platform llm_providers) so the key
 // never appears in Temporal workflow history.
 type dbLLMCaller struct {
-	pool      *pgxpool.Pool
-	cryptoKey []byte
-	factory   *multiLLMFactory
-	logger    *slog.Logger
+	resolver *llmresolve.Resolver
+	factory  *multiLLMFactory
+	logger   *slog.Logger
 }
 
 func (c *dbLLMCaller) ClassifyIntent(
@@ -649,67 +649,18 @@ func (c *dbLLMCaller) ClassifyIntent(
 	return provider.Complete(ctx, systemPrompt, userPrompt)
 }
 
-// resolveKey looks up the API key for providerName, checking the app-level
-// provider_keys first (more specific) then the tenant llm_providers row.
+// resolveKey looks up the API key for providerName via the shared
+// internal/llmresolve precedence chain (app-level provider_keys -> tenant
+// llm_providers -> platform llm_providers). Errors are logged and treated as
+// "no key found" — the caller (multiLLMFactory.NewProvider) already errors
+// clearly for any provider that needs a key and didn't get one.
 func (c *dbLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, applicationID string) string {
-	// 1. App-level provider_keys (JSONB column on them.applications).
-	row := c.pool.QueryRow(ctx,
-		`SELECT COALESCE(provider_keys, '{}') FROM them.applications
-		  WHERE id = $1::uuid AND tenant_id = $2::uuid`,
-		applicationID, tenantID)
-	var raw []byte
-	if err := row.Scan(&raw); err == nil {
-		type entry struct {
-			CT string `json:"ct"`
-		}
-		var m map[string]entry
-		if json.Unmarshal(raw, &m) == nil {
-			if e, ok := m[providerName]; ok && e.CT != "" {
-				if len(e.CT) > 6 && e.CT[:6] == "plain:" {
-					return e.CT[6:]
-				}
-				if plain, err := crypto.DecryptStored(c.cryptoKey, e.CT); err == nil {
-					return plain
-				}
-				c.logger.Warn("router: app-level key decryption failed", "provider", providerName, "app_id", applicationID)
-			}
-		}
-		// Flat map fallback.
-		var flat map[string]string
-		if json.Unmarshal(raw, &flat) == nil {
-			if v := flat[providerName]; v != "" {
-				return v
-			}
-		}
+	resolved, err := c.resolver.ResolveProvider(ctx, applicationID, tenantID, providerName)
+	if err != nil {
+		c.logger.Warn("router: provider key resolution failed", "provider", providerName, "tenant_id", tenantID, "app_id", applicationID, "error", err)
+		return ""
 	}
-
-	// 2. Tenant-scoped llm_providers row.
-	var encKey *string
-	c.pool.QueryRow(ctx,
-		`SELECT api_key_encrypted FROM them.llm_providers
-		  WHERE name = $1 AND tenant_id = $2::uuid AND enabled = true
-		  LIMIT 1`,
-		providerName, tenantID).Scan(&encKey) //nolint:errcheck
-	if encKey != nil && *encKey != "" {
-		if plain, err := crypto.DecryptStored(c.cryptoKey, *encKey); err == nil {
-			return plain
-		}
-		c.logger.Warn("router: tenant provider key decryption failed", "provider", providerName, "tenant_id", tenantID)
-	}
-
-	// 3. Platform-default llm_providers row (tenant_id IS NULL).
-	c.pool.QueryRow(ctx,
-		`SELECT api_key_encrypted FROM them.llm_providers
-		  WHERE name = $1 AND tenant_id IS NULL AND enabled = true
-		  LIMIT 1`,
-		providerName).Scan(&encKey) //nolint:errcheck
-	if encKey != nil && *encKey != "" {
-		if plain, err := crypto.DecryptStored(c.cryptoKey, *encKey); err == nil {
-			return plain
-		}
-		c.logger.Warn("router: platform provider key decryption failed", "provider", providerName)
-	}
-	return ""
+	return resolved.Key
 }
 
 // Complete implements appflow.InlineLLMCaller for the inline LLM node. It

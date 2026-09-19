@@ -176,7 +176,7 @@ func (d *DB) SumMonthlyTokens(ctx context.Context, tenantID string) (int64, erro
 	const q = `SELECT COALESCE(SUM(total_tokens_in + total_tokens_out), 0)::bigint
 	           FROM them.runs
 	           WHERE tenant_id = $1::uuid
-	             AND date_trunc('month', created_at AT TIME ZONE 'UTC') = date_trunc('month', now() AT TIME ZONE 'UTC')`
+	             AND date_trunc('month', started_at AT TIME ZONE 'UTC') = date_trunc('month', now() AT TIME ZONE 'UTC')`
 	var n int64
 	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
 	return n, err

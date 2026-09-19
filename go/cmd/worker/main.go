@@ -279,6 +279,13 @@ func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) (temporal.Orc
 		WithFileGateInliner(&workerFileGateAdapter{gate: f.fileGate}).
 		WithScanSubscriber(f.scanSubscriber)
 
+	// DB-sourced pricing (them.llm_providers.model_pricing) takes priority over
+	// the hardcoded Claude-only default rate card; orchestrator falls back to
+	// the default when this table has no entry for the run's model.
+	if len(cfg.LLMPricing) > 0 {
+		orch = orch.WithCostEstimator(cfg.LLMPricing)
+	}
+
 	// Wire summarizer if memory is enabled and a provider is configured.
 	if cfg.OrchestratorConfig.MemoryEnabled && cfg.SummarizerProvider != "" {
 		sumProvider, sumErr := f.resolveSummarizerProvider(cfg)
