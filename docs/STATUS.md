@@ -102,6 +102,14 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 ## Known issues / blockers
 
+0. **LIVE METERING BUGS (added 2026-09-19)** — `monthly_llm_tokens` quota is **silently unenforced
+   in production** (`SumMonthlyTokens` queries a non-existent column and fails open); non-Anthropic
+   providers report 0 tokens; cost prices unknown models as Sonnet. Surfaced by the LLM Gateway
+   design review but they affect the system as it runs today. **Full detail and fix order:
+   `docs/CURRENT.md` → Known blockers item 0**, analysis in `docs/LLM_GATEWAY_DESIGN.md` §12.
+   (Recorded here because this file is where "what is broken" is looked for — but note the header:
+   this file is HISTORICAL, and `docs/CURRENT.md` is authoritative.)
+
 1. **E2E canvas agent run not verified** — infrastructure complete but no confirmed end-to-end run through a canvas agent on the live stack.
 
 2. **Auth admin CRUD** — `them-auth-service` (Python, 8701) still serves users/roles/teams for the frontend. No Go implementation yet.

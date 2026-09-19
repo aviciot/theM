@@ -225,7 +225,41 @@ Rules that must hold:
 
 ## 9. Per-agent policy — components, profiles, assignment
 
-Different agents need different treatment: one logs everything, one scans files, one strips PII. Policy is therefore **per agent**, not per tenant. It is not tied to roles — roles govern who may administer, not what runs on traffic.
+Different agents need different treatment: one logs everything, one scans files, one strips PII. Policy is therefore **per agent**, not per tenant.
+
+### 9.0 Roles vs policy — not the same axis
+
+These are routinely conflated, so state it plainly:
+
+> **Roles govern who may administer. Policy governs what runs on traffic.**
+
+|  | **Roles (RBAC)** | **Policy (profiles)** |
+|---|---|---|
+| Subject | a **human** in the dashboard | an **agent's traffic** |
+| Question answered | "may Sarah change this budget?" | "should this request be PII-scanned?" |
+| Enforced at | the admin API, per dashboard request | the gateway hot path, per LLM call |
+| Carried by | user JWT (`tenant_id` + role) | the client's assigned profile |
+| Status | ✅ exists today | ❌ new build |
+
+The clearest test: **a PII filter is not a permission.** No role grants "may send card numbers to
+Anthropic" — that is a property of the traffic, decided per agent. Conversely no profile decides
+whether Sarah may edit it — that is her role. They intersect at exactly one point: **a role decides
+who may assign a profile.**
+
+A third axis is commonly folded into these two and should not be:
+
+- **Role** — who may *configure* (human, dashboard, user JWT)
+- **Policy** — what runs on *traffic* (agent, hot path, profile)
+- **Token** — which *agent* is calling (identity, quota attribution, revocation)
+
+The token is the agent's identity, which is why revoking one agent means revoking its token rather
+than rotating a provider key shared by forty teams (§8) — and why the revocation window in §16.2
+matters more here than it does for dashboard sessions.
+
+**Existing tenant roles are reused unchanged.** The gateway adds no new auth system and needs no new
+role tier: `super_admin` → platform settings and cross-tenant observability; `admin` → create
+clients, issue tokens, assign profiles, set budgets, view spend; `member` → view own clients and
+request log; `viewer` → read-only. Tenant isolation is §7.
 
 Three pieces:
 
@@ -499,6 +533,16 @@ Ship the choke point first, then policy. Each phase is independently useful.
 
 **Phase 0 — foundation (no new surface).** Extract `internal/llmresolve` from `workerconfig/loader.go`; fix the three metering bugs in §12; fix `decryptValue` fail-loud. Now every existing LLM path meters correctly, before any new traffic arrives.
 
+> **Phase 0 is a prerequisite, not cleanup — and it is worth doing even if the gateway never ships.**
+> The gateway's entire value proposition is trustworthy numbers. Ship it on top of broken metering
+> and day one produces a confident dashboard of wrong figures, which is worse than no dashboard
+> because people act on it. Note also that `SumMonthlyTokens` means the monthly token quota is
+> **silently unenforced in production today** — that is a live gap in the current system, not a
+> future gateway concern, and it is tracked in `docs/STATUS.md` for that reason.
+> Suggested order within Phase 0: `SumMonthlyTokens` (one-line, live security/billing impact) →
+> `decryptValue` fail-loud (prevents forwarding ciphertext upstream as a bearer token) → token
+> counts + real pricing (correctness of every number the gateway reports).
+
 **Phase 1 — gateway, observe + meter.** Migration `db/099`. New `internal/llmgateway` (handler → service → DAL). `POST /{tenant}/llm/v1/chat/completions`, streaming and non-streaming. Bearer auth, tenant match, quota via the existing `Enforcer`, usage recorded in a `defer`, audit on rejections. Traefik router `PathRegexp(^/[^/]+/llm(/|$))` at priority 120, and a Go route mounted **before** `MountApps` — its `Handle("/*")` catch-all already caused the A2A outage in commit `7e9b7b1`.
 
 Phase 1 must ship as an **ordered pipeline with zero steps configured**, not as a straight-through proxy — so later phases add components instead of restructuring. Obey the four scaling rules in §10 from the first commit, especially rule 1 (no DB connection held across the LLM call).
@@ -527,3 +571,148 @@ Per `CLAUDE.md`, one focused subsystem per session: **each phase is its own sess
 - Live E2E (`scripts/tests/test_41_llm_gateway.py`): point the real `openai` Python SDK at the gateway and assert, for **Anthropic, Groq and Ollama** targets, that a non-streaming call returns a valid body, a streaming call yields ordered chunks ending in `[DONE]`, and that **non-zero** tokens and cost land in `gateway_requests` for each.
 - Negative: revoked token → 401; blocked model → 403; exceeded RPM → 429; provider 429 → `Retry-After` preserved.
 - Confirm the provider key never appears in logs, in any admin API response, or in `gateway_requests`.
+
+---
+
+## 16. Availability, failure modes and bypass
+
+**Why this section exists.** §10 answers "how does this scale". It does not answer "what happens
+when it breaks". Those are different questions, and the second one becomes existential the moment
+the gateway carries real traffic: routing 200 closed agents through the-M converts it from a tool
+some teams use into **org-critical infrastructure**. Every agent's ability to function now depends
+on the-M being up. That is an obligation this design must discharge explicitly, not discover in
+the first incident.
+
+Two questions drive the whole section:
+
+1. What happens to the organization when the-M is restarted or fails?
+2. Can a team keep working if the-M is unavailable — deliberately, not by accident?
+
+### 16.1 Restart and rolling deploys
+
+The gateway is **stateless** (§10): no sessions, nothing held between requests, because LLM APIs
+are stateless and the agent resends full history each turn. That property is what makes restarts
+survivable.
+
+With Traefik in front and ≥2 replicas, deploy one replica at a time and in-flight requests drain
+on the replica being replaced while the other serves traffic. **A normal deploy is therefore
+zero-downtime and requires no agent-side change.** This is already achievable with the existing
+`them-go-bridge` / `them-go-bridge-2` setup — it has simply never been stated as a requirement.
+
+Two constraints make it real rather than theoretical:
+
+- **Minimum 2 replicas is a production requirement for the gateway, not a tuning option.**
+  Single-replica is acceptable for `them-go-bridge` serving dashboard traffic; it is not
+  acceptable once closed agents depend on it.
+- **Graceful shutdown must drain, not cut.** A streaming LLM response can be 30s+. `internal/server`
+  already implements graceful shutdown; verify its timeout exceeds the longest expected stream, or
+  deploys will sever live responses and surface to agent owners as random failures.
+
+### 16.2 Redis — what actually depends on it
+
+Redis is commonly assumed to be "just cache / UI data". For the gateway path that is wrong, but it
+is also not uniformly fatal. It splits three ways, and each needs a different answer.
+
+| Concern | Redis role | On Redis failure | Verdict |
+|---|---|---|---|
+| **Token auth** | L2 cache between L1 and Postgres | Falls through to DB | ✅ Already correct |
+| **Quotas / rate limits** | Sole store (INCR counters) | No fallback exists | ⚠️ Needs a decision |
+| **Token revocation** | Pub/sub L1 eviction | Best-effort; missed | 🔴 Real exposure |
+
+**Auth already degrades correctly.** `Cache.Validate` walks `L1 (in-process) → L2 (Redis) → DB`,
+and the L2 read is guarded by `err == nil && found` (`internal/auth/token_cache.go:154`), so a
+Redis error simply falls through to Postgres. Authentication keeps working, slower. No change
+needed — but do not "optimize" this into a hard dependency later.
+
+**Quotas are Redis-only.** `runs_per_minute`, `api_requests_per_minute` and `monthly_runs` are
+Redis INCR counters (`internal/quota/enforcer.go`) with no DB fallback. `Enforcer.Check`
+deliberately returns the error as-is so the **caller** decides. The gateway must therefore choose,
+and the choice is:
+
+> **Fail open on policy, fail closed on auth.**
+
+Cannot read a quota counter → allow the call, emit a metric and an audit entry. Cannot verify a
+token → reject. Rationale: a Redis hiccup must never take down 200 production agents, and must
+never become an authentication bypass. The asymmetry is the point.
+
+Fail-open must be **observable**: a counter (`gateway_quota_failopen_total`) and an audit entry per
+occurrence, otherwise a silent Redis outage becomes a silent unmetered-spend window.
+
+**Token revocation is the sharp edge.** `Cache.Revoke` deletes the L2 key and publishes the hash on
+`them:token:revoked` so every pod evicts its L1 entry. Both steps are best-effort and only log a
+warning on failure (`token_cache.go:196-215`). With `l1TTL = 300s`, **a revoked token can remain
+valid for up to 5 minutes on any pod that missed the message.**
+
+This is tolerable for dashboard sessions. It is more significant here, because in the gateway a
+token *is* an agent's identity — revocation is how you cut off a compromised or runaway agent. The
+window is bounded and small, but it must be a known, accepted property rather than a surprise.
+Options, in increasing cost: document and accept; shorten `l1TTL` for gateway tokens specifically;
+or check a revocation generation counter on the hot path. **Decide before Phase 1 ships**, and
+record the decision here.
+
+### 16.3 Postgres — the problem is connections, not uptime
+
+The database risk for the gateway is not availability. It is **connection exhaustion**, and it is
+caused by a coding pattern rather than by load:
+
+```
+WRONG: open tx → call LLM (2–30s, connection idle) → write usage → commit
+RIGHT: read policy (Redis) → call LLM (no connection held) → open tx → write usage → commit (~2ms)
+```
+
+This is rule 1 of §10, restated here because it is an *availability* property, not only a
+throughput one. Held across the call, each replica saturates at roughly pool-size concurrent
+streams (~25) and adding replicas barely helps; released, the same pool serves thousands, because
+the work is network wait.
+
+**PgBouncer does not fix this.** It multiplexes many client connections onto fewer server
+connections; it does not stop application code from pinning a connection for 30 seconds. Used
+against the wrong pattern it relocates the queue rather than removing it. Fix the pattern first;
+adopt PgBouncer afterwards for headroom. If adopted: use **transaction pooling** mode, and note
+that pgx prepared-statement caching needs a compatible statement-cache mode.
+
+**Open gap (from §10):** `MaxConns` is not configurable — the pgx default applies. Make it an env
+setting before any load test, or the test measures the default rather than the design.
+
+### 16.4 Bypass — deliberate, not accidental
+
+Because the-M becomes a hard dependency for agents it does not own, there must be a defined way to
+take it out of the path. The alternative is not "no bypass" — it is an undocumented, panicked
+bypass invented during an incident.
+
+**Layer 1 — per-client BYO key.** §8 already defines BYO-key mode as an onboarding on-ramp. It is
+equally the per-agent escape hatch: an agent configured with its own provider key and the upstream
+URL is one config change away from running without the-M. Same two values that onboarded it.
+
+**Layer 2 — break-glass redirect.** Point the gateway hostname at the provider (DNS or proxy rule)
+so every agent recovers at once without touching 200 individual configs. Governance is lost for the
+duration; the business keeps running.
+
+**The governing principle: make bypass loud, not hard.**
+
+A bypass easy enough to save you in an outage is, by construction, easy enough to evade governance
+with. Do not resolve that by making it difficult — that only guarantees it gets done badly under
+pressure. Resolve it by making it **visible**: break-glass raises an alert, is written to the audit
+log, and appears in the Clients tab as a per-client state (e.g. `bypassed since <time>`). An
+operator can always tell how much traffic is currently ungoverned.
+
+**Tell teams the escape hatch exists during onboarding.** It is not a weakness to hide; it is a
+large part of why 200 teams agree to route through you in the first place. "You can always flip it
+back" is what makes the config change feel safe.
+
+### 16.5 Consequences for phasing
+
+**HA belongs in Phase 1, not a later hardening pass.** Retrofitting availability onto a component
+that 200 agents already depend on is materially harder than designing it in: the fail-open/closed
+split, the no-connection-held rule and the bypass path all shape the code from the first commit.
+
+Concretely, Phase 1 must ship with: ≥2 replicas, the fail-open-on-policy decision implemented and
+instrumented, the revocation-window decision recorded, drain-aware shutdown verified against a long
+stream, and Layer 1 bypass documented in the onboarding snippet.
+
+### 16.6 Status of this section
+
+Derived from a design review, not from a built system. Verified against code at the time of
+writing: the `L1 → L2 → DB` auth fallback and its `err == nil` guard, the Redis-only quota
+counters, the best-effort revocation publish, and `l1TTL = 300s`. The rest is design intent and
+must be re-checked when Phase 1 is implemented.
