@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `(pending commit — Phase 2)` (not yet pushed)
+HEAD: `936ae696` (not yet pushed)
 
 Recent commits (newest first):
 ```
-(pending)  feat(llm-gateway): Phase 2 — governance (model allowlist, aliases, token ceiling, monthly budget)
+936ae696  feat(llm-gateway): Phase 2 — governance (model allowlist, aliases, token ceiling, monthly budget)
 4a9402e7  feat(llm-gateway): Phase 1 — gateway observe + meter
 ed3620dc  fix(llm-gateway): Phase 0 metering fixes — monthly quota, token usage, DB pricing, key resolution dedup
 ad4477cc  docs(current): mark HEAD as pushed
