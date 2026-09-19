@@ -501,6 +501,9 @@ export const NODE_PORTS: Record<string, { accepts: string[]; emits: string[]; ma
   // flowControl (Router + HIL): can connect to/from orchestrators and agents.
   // 'result' is accepted so agents can connect their output into a Router or HIL node.
   flowControl:  { accepts: ['request', 'task', 'signal', 'fc_in', 'fc_out', 'result'], emits: ['fc_out', 'fc_in', 'request', 'task'] },
+  // inline (LLM + Condition): same graph positions as flowControl, same port vocabulary.
+  inline: { accepts: ['request', 'task', 'signal', 'fc_in', 'fc_out', 'result'],
+            emits:   ['fc_out', 'fc_in', 'request', 'task'] },
 };
 
 // ── Canvas rules ──────────────────────────────────────────────────────────────

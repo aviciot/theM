@@ -1133,6 +1133,24 @@ all connections to inline nodes.
 
 Minimap color — `CanvasInner.tsx:358`: add `n.type === 'inline' ? '#d0bcff' :` to the chain.
 
+> **Blocker found during step 8 (must be fixed in step 10).** `validateConnection`
+> (`CanvasInner.tsx:42`) rejects any second edge between the same source/target pair:
+> ```ts
+> if (edges.some(e => e.source === sourceId && e.target === targetId)) {
+>     return `These nodes are already connected`;
+> }
+> ```
+> It does not consider `sourceHandle`. A condition node whose **true and false branches both
+> route to the same node** — a legitimate and common shape, e.g. "log either way, then continue" —
+> would have its second branch silently refused, and the user gets "already connected" with no
+> explanation.
+>
+> Fix: make the duplicate check handle-aware, comparing `(source, sourceHandle, target)` rather
+> than `(source, target)`. That preserves the existing guard for every other node type (their
+> `sourceHandle` is undefined on both sides, so the comparison is unchanged) while allowing a
+> condition's two distinct handles to reach one target. Note the existing check is also what stops
+> accidental duplicate edges, so do not simply delete it.
+
 ### 6.7 Properties panel — `cbv/panels/InlineNodePanel.tsx`
 
 **LLM node fields:** Display Name; Provider (`select`: inherit from entry point / anthropic /

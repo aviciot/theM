@@ -319,7 +319,7 @@ export function CanvasBuilderView({
     const srcNode = nodes.find(n => n.id === conn.source);
     const tgtNode = nodes.find(n => n.id === conn.target);
     if (!srcNode || !tgtNode) return;
-    const err = validateConnection(srcNode.type ?? '', tgtNode.type ?? '', conn.source ?? '', conn.target ?? '', edges);
+    const err = validateConnection(srcNode.type ?? '', tgtNode.type ?? '', conn.source ?? '', conn.target ?? '', edges, conn.sourceHandle);
     if (err) return;
     setEdges(es => addEdge({ ...conn, type: 'default' }, es));
     setIsDirty(true);
@@ -360,6 +360,16 @@ export function CanvasBuilderView({
       const displayName = fcDisplayNames[nt] ?? nt;
       const newNode: Node = { id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: id, node_type: nt, display_name: displayName, config: {} } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
+    } else if (nodeType === 'inline' && payload.node_type) {
+      const nt = payload.node_type as 'llm' | 'condition';
+      const id = genInstanceId('inline', nt, existingIds);
+      const names: Record<string, string> = { llm: 'LLM', condition: 'Condition' };
+      const defaults: Record<string, Record<string, unknown>> = {
+        llm:       { user_prompt: '{{.input}}', output_var: 'output', max_tokens: 1024 },
+        condition: { expression: '' },
+      };
+      setNodes(ns => [...ns, { id, type: 'inline', position: pos,
+        data: { _kind: 'inline', instance_id: id, node_type: nt, display_name: names[nt], config: defaults[nt] } as unknown as Record<string, unknown> }]);
     } else if (nodeType === 'entryPoint' && payload.protocol) {
       const protocol = payload.protocol as EpNodeData['protocol'];
       const id = genInstanceId('ep', protocol, existingIds);
@@ -516,6 +526,28 @@ export function CanvasBuilderView({
                 key={fc.node_type}
                 draggable
                 onDragStart={e => { e.dataTransfer.setData('nodeType', 'flow_control'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.node_type })); e.dataTransfer.effectAllowed = 'move'; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${fc.color},0.04)`, border: `1px solid rgba(${fc.color},0.12)` }}
+              >
+                <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{fc.emoji}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{fc.label}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Inline / Logic nodes */}
+          <div style={{ padding: '0 8px 12px' }}>
+            <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Inline / Logic</div>
+            {([
+              { node_type: 'llm'       as const, emoji: '🧠', label: 'LLM',       desc: 'Call a model with a prompt template; output feeds the next node', color: '208,188,255' },
+              { node_type: 'condition' as const, emoji: '⑂',  label: 'Condition', desc: 'Branch true/false on an expression over flow variables',          color: '249,115,22' },
+            ]).map(fc => (
+              <div
+                key={fc.node_type}
+                draggable
+                onDragStart={e => { e.dataTransfer.setData('nodeType', 'inline'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.node_type })); e.dataTransfer.effectAllowed = 'move'; }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${fc.color},0.04)`, border: `1px solid rgba(${fc.color},0.12)` }}
               >
                 <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{fc.emoji}</div>

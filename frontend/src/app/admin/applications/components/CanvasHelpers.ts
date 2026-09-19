@@ -16,6 +16,7 @@ import type {
   MwNodeData,
   EpNodeData,
   FlowControlNodeData,
+  InlineNodeData,
   EntryPointData,
   EntryPointType,
   OrchestratorData,
@@ -100,12 +101,13 @@ function sanitize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
 }
 
-export function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'ep' | 'flow_control', defName: string | undefined, existing: Set<string>): string {
+export function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'ep' | 'flow_control' | 'inline', defName: string | undefined, existing: Set<string>): string {
   let base: string;
   if (kind === 'orchestrator') base = 'orch';
   else if (kind === 'ep') base = 'ep_' + sanitize(defName ?? 'ep');
   else if (kind === 'agent') base = 'agent_' + sanitize(defName ?? 'agent');
   else if (kind === 'flow_control') base = 'fc_' + sanitize(defName ?? 'fc');
+  else if (kind === 'inline') base = 'inline_' + sanitize(defName ?? 'node');
   else base = 'mw_' + sanitize(defName ?? 'mw');
   let n = 1;
   while (existing.has(`${base}_${n}`)) n++;
@@ -138,6 +140,9 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     } else if (n.type === 'flowControl') {
       const d = n.data as unknown as FlowControlNodeData;
       components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name } });
+    } else if (n.type === 'inline') {
+      const d = n.data as unknown as InlineNodeData;
+      components.push({ instance_id: n.id, definition_ref: { kind: 'inline', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name } });
     } else if (n.type === 'entryPoint') {
       const d = n.data as unknown as EpNodeData;
       entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '', config: d.config ?? {} });
@@ -151,8 +156,12 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
     if (srcType === 'orchestrator' && tgtType === 'middleware') connections.push({ source: e.source, target: e.target, type: 'middleware' });
     if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
-    if (srcType === 'flowControl' || tgtType === 'flowControl') {
-      const edgeLabel = (e.data as Record<string, unknown> | undefined)?.label as string | undefined;
+    if (srcType === 'flowControl' || tgtType === 'flowControl' ||
+        srcType === 'inline'      || tgtType === 'inline') {
+      // Condition nodes carry their branch on the sourceHandle ("true"/"false");
+      // Router edges carry an operator-assigned label in e.data.label.
+      const handleLabel = srcType === 'inline' && e.sourceHandle ? e.sourceHandle : undefined;
+      const edgeLabel = handleLabel ?? ((e.data as Record<string, unknown> | undefined)?.label as string | undefined);
       connections.push({ source: e.source, target: e.target, type: 'flow_control', ...(edgeLabel ? { label: edgeLabel } : {}) });
     }
   });
@@ -171,6 +180,12 @@ export function docToCanvas(
   const defByRef = new Map(componentDefs.map(cd => [refKey({ kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }), cd]));
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+  const inlineNodeTypeById = new Map<string, string>();
+  (doc.components ?? []).forEach(c => {
+    if (c.definition_ref.kind === 'inline') {
+      inlineNodeTypeById.set(c.instance_id, (c.config.node_type as string) ?? c.definition_ref.name);
+    }
+  });
   (doc.components ?? []).forEach(c => {
     const cd = defById.get(c.definition_id ?? '') ?? defByRef.get(refKey(c.definition_ref));
     const pos = layout[c.instance_id] ?? { x: 0, y: 0 };
@@ -187,6 +202,13 @@ export function docToCanvas(
       const defaultDisplayName: Record<string, string> = { router: 'Router', hil: 'Human-in-Loop', fork: 'Fork', join: 'Join' };
       const displayName = (c.config.display_name as string) || defaultDisplayName[nodeType] || nodeType;
       nodes.push({ id: c.instance_id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: c.instance_id, node_type: nodeType, display_name: displayName, config: c.config } as unknown as Record<string, unknown> });
+    } else if (c.definition_ref.kind === 'inline') {
+      const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
+      const defaultName: Record<string, string> = { llm: 'LLM', condition: 'Condition' };
+      nodes.push({ id: c.instance_id, type: 'inline', position: pos,
+        data: { _kind: 'inline', instance_id: c.instance_id, node_type: nodeType,
+          display_name: (c.config.display_name as string) || defaultName[nodeType] || nodeType,
+          config: c.config } as unknown as Record<string, unknown> });
     }
   });
   (doc.entry_points ?? []).forEach(ep => {
@@ -196,11 +218,13 @@ export function docToCanvas(
   });
   (doc.connections ?? []).forEach(conn => {
     if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware' || conn.type === 'flow_control') {
+      const isInlineCondition = inlineNodeTypeById.get(conn.source) === 'condition';
       edges.push({
-        id: `e_${conn.source}_${conn.target}`,
+        id: `e_${conn.source}_${conn.target}${conn.label ? '_' + conn.label : ''}`,
         source: conn.source,
         target: conn.target,
         type: 'default',
+        ...(isInlineCondition && conn.label ? { sourceHandle: conn.label } : {}),
         ...(conn.label ? { label: conn.label, data: { label: conn.label } } : {}),
       });
     }

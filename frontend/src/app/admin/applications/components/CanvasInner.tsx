@@ -31,6 +31,7 @@ export function validateConnection(
   sourceId: string,
   targetId: string,
   edges: Edge[],
+  sourceHandle?: string | null,
 ): string | null {
   const src = NODE_PORTS[sourceType];
   const tgt = NODE_PORTS[targetType];
@@ -39,7 +40,9 @@ export function validateConnection(
   const compatible = src.emits.some(sig => tgt.accepts.includes(sig));
   if (!compatible) return `Cannot connect ${sourceType} → ${targetType}`;
 
-  if (edges.some(e => e.source === sourceId && e.target === targetId)) {
+  // Handle-aware: a condition node's true/false branches are distinct sources even
+  // when they share a source node id, so both may legitimately reach the same target.
+  if (edges.some(e => e.source === sourceId && e.target === targetId && (e.sourceHandle ?? null) === (sourceHandle ?? null))) {
     return `These nodes are already connected`;
   }
 
@@ -355,7 +358,7 @@ export function CanvasInner({
         <CanvasLogo state={logoState} />
         <MiniMap
           style={{ background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, borderRadius: 8 }}
-          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : n.type === 'middleware' ? C.amber : n.type === 'flowControl' ? '#a855f7' : C.green}
+          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : n.type === 'middleware' ? C.amber : n.type === 'flowControl' ? '#a855f7' : n.type === 'inline' ? '#d0bcff' : C.green}
           maskColor="rgba(5,20,36,0.7)"
         />
       </ReactFlow>
