@@ -1168,8 +1168,13 @@ copyable examples drawn from the Branch node's documented examples,
 ```
 {{eq .output "APPROVED"}}
 {{gt (len .output) 100}}
-{{contains .summary "error"}}
+{{contains .output "error"}}
 ```
+
+(An earlier draft wrote the third example against `.summary`. `.output` is the LLM node's default
+`output_var`, so it is the key a user is most likely to actually have — and all three forms are
+pinned by test AF-IN-02b. Any variable name works; `contains` itself only works because
+`flowFuncs` registers it.)
 
 Plus a live read-only summary of which node each branch points to, derived from `edges` — the
 panel already receives `nodes` and `edges`, and an operator reading a boolean gate needs to

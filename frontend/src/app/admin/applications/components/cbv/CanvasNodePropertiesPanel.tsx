@@ -7,6 +7,7 @@ import { AgentNodePanel } from './panels/AgentNodePanel';
 import { EntryPointNodePanel } from './panels/EntryPointNodePanel';
 import { MiddlewareNodePanel } from './panels/MiddlewareNodePanel';
 import { FlowControlNodePanel } from './panels/FlowControlNodePanel';
+import { InlineNodePanel } from './panels/InlineNodePanel';
 
 // ── CanvasNodePropertiesPanel ────────────────────────────────────────────────
 
@@ -116,6 +117,19 @@ export function CanvasNodePropertiesPanel({
       <FlowControlNodePanel
         selectedNode={selectedNode}
         nodes={nodes}
+        setNodes={setNodes}
+        setIsDirty={setIsDirty}
+        setLogoResult={setLogoResult}
+      />
+    );
+  }
+
+  if (selectedNode.type === 'inline') {
+    return (
+      <InlineNodePanel
+        selectedNode={selectedNode}
+        nodes={nodes}
+        edges={edges}
         setNodes={setNodes}
         setIsDirty={setIsDirty}
         setLogoResult={setLogoResult}

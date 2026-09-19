@@ -902,3 +902,34 @@ the report, which the canvas already maps onto the offending node via `instance_
 **Watch for:** adding a validation code to `appflow.Validate` now changes publish behaviour for
 existing Temporal-backend apps. That is usually what you want, but it can reject a canvas that
 published fine yesterday — call it out in the deploy notes.
+
+## React Flow multi-handle nodes: three silent round-trip losses (2026-09-19)
+
+Adding a canvas node with **two named source handles** (an inline Condition node with `true` /
+`false` branches) surfaced three bugs that all typecheck cleanly and fail only at runtime, after
+a save/reload cycle. Anything else with named handles will hit the same three.
+
+1. **`docToCanvas` never set `sourceHandle`.** Edges were rebuilt from `conn.label` but the handle
+   id was dropped, so a reloaded canvas drew both branches from the same handle — and because
+   `canvasToDoc` derives the label FROM `sourceHandle`, the next save wrote both connections with
+   no label at all. A working gate silently became unroutable, one save after it looked fine.
+2. **Edge ids collided.** Ids were `e_${source}_${target}`. A condition whose true and false
+   branches both point at the same node produced two edges with identical ids, and React Flow kept
+   one. Fix: append the label.
+3. **`validateConnection` ignored `sourceHandle`.** Its duplicate guard compared
+   `(source, target)` only, so the second branch of "log either way, then continue" was refused
+   with a misleading "These nodes are already connected". Fix: compare
+   `(source, sourceHandle, target)`, normalising with `?? null` so every existing single-handle
+   node type behaves identically.
+
+**Watch for:** any new node type with more than one source handle. The pair
+`canvasToDoc` (handle → label) and `docToCanvas` (label → handle) must be symmetric, or the data
+degrades one save at a time.
+
+**Test it by executing a round trip, not by reading the diff.** These were caught by building an
+in-memory graph, running `canvasToDoc` then `docToCanvas`, and asserting labels, handles and edge
+ids survive — including the case where both branches share one target. Reading the code was not
+enough; all three looked correct.
+
+**Also verified while here:** `@xyflow`'s `addEdge` compares `sourceHandle` alongside
+source/target, so it does NOT dedupe a condition's two branches landing on the same node.

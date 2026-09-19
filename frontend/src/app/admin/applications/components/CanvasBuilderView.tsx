@@ -458,6 +458,17 @@ export function CanvasBuilderView({
         </div>
       )}
 
+      {/* Backend-mismatch warning: inline/flow-control nodes are Temporal-only, advisory only */}
+      {executionBackend !== 'temporal' && nodes.some(n => n.type === 'inline' || n.type === 'flowControl') && (
+        <div style={{ background: C.amberBg, borderBottom: `1px solid ${C.amberBorder}`, padding: '10px 20px', flexShrink: 0 }}>
+          <div style={{ fontSize: 12, color: C.amber }}>
+            Inline and flow-control nodes only execute on the Temporal backend. This app is set to
+            Local (Orchestrator) — the canvas graph is not executed. Switch Execution to
+            &quot;Temporal DAG&quot; to run this flow.
+          </div>
+        </div>
+      )}
+
       {/* Three-column canvas area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 

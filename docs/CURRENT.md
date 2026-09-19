@@ -109,13 +109,16 @@ because it means a busy cron job can exhaust the budget hosted apps rely on.
 
 ## Current migration slice
 
-**Inline Nodes Phase 1 (LLM + Condition) — Go BACKEND COMPLETE. Frontend NOT started.**
+**Inline Nodes Phase 1 (LLM + Condition) — ✅ COMPLETE (backend + frontend + E2E).**
 
 Plan: `docs/INLINE_NODES_PLAN.md` (authoritative; kept in sync with reality as steps landed).
 Brief: `docs/INLINE_NODES_DESIGN_BRIEF.md`.
-Steps 1–6 of 11 done. `go test ./...` zero failures (S1 total 1236). Nothing deployed yet.
+All 11 steps done. `go test ./...` zero failures (S1 total 1236); `tsc --noEmit` 0 errors;
+E2E `test_42_appflow_inline_nodes.py` **21/21, rerun-clean** against the live stack.
 
-### Done (steps 1–6)
+**Deployed:** `them-dag-worker` and `them-go-bridge` rebuilt and force-recreated 2026-09-19.
+
+### Done (steps 1–11)
 
 | Step | What | Commit |
 |---|---|---|
@@ -127,25 +130,23 @@ Steps 1–6 of 11 done. `go test ./...` zero failures (S1 total 1236). Nothing d
 | 4 | dag-worker: `dbLLMCaller.Complete`, activity registered, `InlineLLM` wired | `23add7c6` |
 | 5 | `isBuiltinKind` exemption + `appflow.Validate` wired into the validate/publish endpoint | `03574b52` |
 
-### NOT done — next session starts here (steps 7–11)
+### Frontend steps 7–11 (all complete)
 
-7. Frontend types — `InlineNodeData` in `applications/types.ts`; add `'inline'` to
-   `ComponentDefinitionSummary.kind` in `lib/apiTypes.ts`. **Do NOT add an `'inline'`
-   ConnectionDef type** — reuse `'flow_control'` (plan §1.14 explains why).
-8. `CanvasNodes.tsx` — `INLINE_META`, `InlineNode` (solid border + emoji; LLM `#d0bcff`,
-   Condition `#f97316`), condition renders TWO labelled source handles (`true`/`false`),
-   register `inline` in `NODE_TYPES`.
-9. `CanvasHelpers.ts` — `genInstanceId('inline')`; `canvasToDoc` inline branch + widen the
-   flow_control edge branch to inline endpoints, mapping the condition `sourceHandle` to
-   `conn.label`; `docToCanvas` restore + re-attach `sourceHandle` from `conn.label`;
-   **include the label in the edge id** (`e_${src}_${tgt}_${label}`) or both branches to the
-   same target collide. Missing the sourceHandle round-trip is silent data loss.
-10. `CanvasBuilderView.tsx` palette section + drop handler (seed `user_prompt: '{{.input}}'`);
-    `constants.ts` `NODE_PORTS.inline` (copy `flowControl`'s ports, else all connections are
-    silently rejected); `CanvasInner.tsx` minimap colour.
-11. `cbv/panels/InlineNodePanel.tsx` (the split in step 6 left the slot open — add the
-    `inline` branch to the shell's dispatch); backend-mismatch warning banner (plan §6.8);
-    E2E `scripts/tests/test_42_appflow_inline_nodes.py`; docs.
+| Step | What | Commit |
+|---|---|---|
+| 7-8 | `InlineNodeData` type; `'inline'` in `ComponentDefinitionSummary.kind`; `INLINE_META` + `InlineNode` (solid border vs flow-control's dashed; condition renders two labelled `true`/`false` source handles) | `70e402b5` |
+| 9-10 | serialisation (`canvasToDoc`/`docToCanvas`), `NODE_PORTS.inline`, palette + drop handler, minimap colour, **three silent-data-loss fixes** | `0b7abe99` |
+| 11 | `InlineNodePanel` (LLM + Condition config), shell dispatch, backend-mismatch banner, E2E test | this commit |
+
+**Three silent-data-loss bugs fixed in step 9-10** — all typecheck fine and fail only at runtime:
+1. `docToCanvas` never set `sourceHandle`, so a reloaded canvas drew both condition branches from
+   one handle and the NEXT save dropped the true/false labels — a working gate became unroutable.
+2. Edge ids were `e_${source}_${target}`, so a condition with both branches on one target produced
+   duplicate ids and React Flow kept one. Ids now include the label.
+3. `validateConnection` rejected a second edge between the same pair without considering
+   `sourceHandle`, so "log either way, then continue" was refused as "already connected".
+
+Proven by an executed round-trip check (12/12), not by inspection.
 
 **Standing rule from step 1:** any condition-expression example added to the UI needs a
 matching case in test AF-IN-02b. Go `text/template` has no string predicates — `contains`

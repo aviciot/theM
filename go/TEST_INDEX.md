@@ -3586,6 +3586,39 @@ Run: `python3.12 scripts/tests/test_41_appflow_fork_join.py` (requires `--profil
 | run_steps count ≥ 3 | Agent A, Agent B, and Agent C all invoked (parallel branches + post-join) |
 
 **Trigger:** any change to `internal/appflow/compiler.go`, `internal/appflow/workflow.go`, `cmd/dag-worker/main.go`
+
+### E2E — AppFlow inline nodes (`scripts/tests/test_42_appflow_inline_nodes.py`)
+
+Full live stack E2E for inline LLM + Condition nodes. Flow:
+`EP → LLM (mock provider) → Condition → (true: agent | false: agent)`.
+Run: `python3.12 scripts/tests/test_42_appflow_inline_nodes.py` (requires `--profile temporal`).
+**21 checks, rerun-clean.**
+
+⚠️ `them-dag-worker` must be REBUILT and **force-recreated** since the inline-node commits —
+activities register at startup and `build` + `restart` does not pick up a new image
+(see `docs/LESSONS.md`). Without it the run fails on a missing activity.
+
+| Check | What it proves |
+|---|---|
+| validate → no `component_not_found` for `kind:"inline"` | `isBuiltinKind` exemption works; inline nodes need no `component_definitions` row |
+| good definition → `valid=true` | inline llm/condition compile and pass `appflow.Validate` |
+| condition with 1 outgoing edge → `condition_edge_count` | compiler rules now surface at **validate time**, not first connection (step 5) |
+| error carries `instance_id` | drives the canvas red-ring/tooltip highlighting with no frontend work |
+| LLM with no prompts → `llm_no_prompt` | prompt validation reaches the API |
+| same broken doc on `execution_backend:"local"` → valid | the temporal gate keeps graph rules off local-backend apps (mirrors PUB-IN-04) |
+| WS `token` event received | `InlineLLMActivity` is registered, ran, and its output reached the client via the run stream — the first per-node client visibility in the AppFlow path |
+| run.status == completed | condition routed to a branch agent by edge label; full flow finished |
+| completed run carries no error text | clean terminal state |
+
+**Not asserted, deliberately:** `run_steps` count and `runs.final_output`. AppFlow writes neither
+— `SetFinalOutput` is called only from the orchestrator path
+(`internal/orchestrator/orchestrator.go:553`) and no AppFlow activity records steps. Both are the
+same known gap (plan §11 item 6); asserting them would assert a gap rather than a behaviour. The
+final text still reaches the client in the `done` event, which this test observes.
+
+**Trigger:** any change to `internal/appflow/` (compiler, validate, workflow, activities, nodes,
+graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
+
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
