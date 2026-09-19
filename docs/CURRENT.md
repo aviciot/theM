@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-18 (Inline Nodes Phase 1 — Go BACKEND COMPLETE, frontend pending; + LLM Gateway design track added, HEAD 6853539c)
+# Last updated: 2026-09-19 (LLM Gateway Phase 0 — metering fixes + internal/llmresolve COMPLETE, HEAD ed3620dc)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,18 +7,18 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `5bd57105` (pushed)
+HEAD: `ed3620dc` (not yet pushed)
 
 Recent commits (newest first):
 ```
+ed3620dc  fix(llm-gateway): Phase 0 metering fixes — monthly quota, token usage, DB pricing, key resolution dedup
+ad4477cc  docs(current): mark HEAD as pushed
+5bd57105  docs(current): add LLM Gateway design track + Phase 0 as next task
 6853539c  docs(gateway): LLM Gateway design — govern closed/internal agents
 03574b52  feat(admin): surface appflow topology errors at publish; exempt inline kind
 23add7c6  feat(dag-worker): register InlineLLMActivity; dbLLMCaller serves both interfaces
 b2fe07d0  feat(appflow): inline LLM activity + llm/condition workflow dispatch
 ea1fb862  refactor(appflow): split workflow.go 803 -> workflow/activities/graph
-3c3bb90e  feat(appflow): compile + validate inline llm/condition nodes
-08d5bfd4  refactor(canvas): split CanvasNodePropertiesPanel 1003 -> 7 files under 400
-1c2eda02  feat(appflow): inline node config types + workflow-safe template helpers
 ```
 
 ---
