@@ -36,22 +36,6 @@ DB name and schema: **them** — never `odin`.
 
 ---
 
-## Migration Goal
-
-**The long-term goal is a complete migration from Python to Go.**
-
-Migration order:
-1. Bridge (Python `app/`) → Go (`go/`) — the main API, WS, SSE, admin, run recording
-2. Auth service (`auth_service/`) → Go
-3. Temporal worker/orchestration/LLM layer → Go
-4. Remove Python entirely
-
-**One focused subsystem per task.** Do not migrate multiple subsystems in a single session.
-
-Current state: Agents Store slice complete (agents CRUD + discover/test/security-scan + Go auth). See `docs/CURRENT.md` for exact state and next steps. See `docs/implementation-status.md` for route ownership.
-
----
-
 ## Model Selection
 
 - **Opus** — architecture decisions, migration planning, wave scoping, complex trade-offs
