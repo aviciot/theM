@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-21 (Node Registry Phase 4 — COMPLETE, pushed, HEAD d7dd731d)
+# Last updated: 2026-09-21 (Node Registry Phase 5 — COMPLETE, pushed, HEAD 74bd54a7. Plan closed.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 #
 # NOTE: the "Parallel design track — LLM Gateway" section below (commits 52fcec69/936ae696/
@@ -13,15 +13,15 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `d7dd731d` (pushed)
+HEAD: `74bd54a7` (pushed)
 
 Recent commits (newest first):
 ```
+74bd54a7  feat(node-registry): Phase 5 — middleware adopts the node contract
+e3c82d1a  docs(current): mark HEAD as pushed, Node Registry Phase 4 complete
 d7dd731d  feat(node-registry): Phase 4 — app canvas renders from the registry
 b2bcdf17  docs(current): mark HEAD as pushed, Node Registry Phase 3 complete
 00415c1f  feat(node-registry): Phase 3 — register the 6 app-canvas node kinds
-ef987d17  feat(node-registry): Phase 2 — extract shared node metadata into internal/nodedefs
-118bb064  feat(node-registry): Phase 1 — runtime config split for app-canvas inline LLM nodes
 ```
 
 ---
