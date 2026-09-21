@@ -1,26 +1,28 @@
 # Current Session State — the-M
-# Last updated: 2026-09-19 (Node Registry Phase 3 — COMPLETE, pushed, HEAD 00415c1f)
+# Last updated: 2026-09-21 (Node Registry Phase 4 — COMPLETE, pending commit)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
+#
+# NOTE: the "Parallel design track — LLM Gateway" section below (commits 52fcec69/936ae696/
+# 4a9402e7/ed3620dc) describes work from a DIFFERENT, uncommitted session state — those commit
+# hashes are not reachable from HEAD as of this update. This session started from HEAD b2bcdf17
+# (Node Registry Phase 3, pushed) and did not touch LLM Gateway code. Do not assume the LLM
+# Gateway phases below are committed/live without checking `git log` first.
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `52fcec69` (not yet pushed)
+Session started from: `b2bcdf17` (Node Registry Phase 3, pushed)
+This session's work: Node Registry Phase 4 (see "Current migration slice" below) — pending commit.
 
-Recent commits (newest first):
+Recent commits at session start (newest first):
 ```
-52fcec69  feat(llm-gateway): Phase 3 — admin CRUD backend (clients, profiles, policy, requests)
-936ae696  feat(llm-gateway): Phase 2 — governance (model allowlist, aliases, token ceiling, monthly budget)
-4a9402e7  feat(llm-gateway): Phase 1 — gateway observe + meter
-ed3620dc  fix(llm-gateway): Phase 0 metering fixes — monthly quota, token usage, DB pricing, key resolution dedup
-ad4477cc  docs(current): mark HEAD as pushed
-5bd57105  docs(current): add LLM Gateway design track + Phase 0 as next task
-6853539c  docs(gateway): LLM Gateway design — govern closed/internal agents
-03574b52  feat(admin): surface appflow topology errors at publish; exempt inline kind
-23add7c6  feat(dag-worker): register InlineLLMActivity; dbLLMCaller serves both interfaces
-b2fe07d0  feat(appflow): inline LLM activity + llm/condition workflow dispatch
+b2bcdf17  docs(current): mark HEAD as pushed, Node Registry Phase 3 complete
+00415c1f  feat(node-registry): Phase 3 — register the 6 app-canvas node kinds
+ef987d17  feat(node-registry): Phase 2 — extract shared node metadata into internal/nodedefs
+35d49918  fix(gateway-ui): use marginLeft:260px on main to match sidebar layout
+118bb064  feat(node-registry): Phase 1 — runtime config split for app-canvas inline LLM nodes
 ```
 
 ---
@@ -198,7 +200,7 @@ Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see 
 
 ## Current migration slice
 
-**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-3 COMPLETE, Phase 4 NEXT.**
+**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-4 COMPLETE, Phase 5 NEXT.**
 
 Goal: a node is defined once; every canvas reads it. Today the same concept exists three ways —
 agent-builder nodes in a code registry, app-canvas nodes hardcoded in 6 places, middleware in the
@@ -209,8 +211,8 @@ DB table `them.middleware_defs`. They will drift permanently unless unified.
 | 1 | Runtime split — provider/model off the canvas into the Runtime screen | ✅ COMPLETE (2026-09-19) |
 | 2 | Extract shared registry into `internal/nodedefs` | ✅ COMPLETE (2026-09-19) |
 | 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ✅ COMPLETE (2026-09-19) |
-| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ⬜ NEXT |
-| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ⬜ NOT STARTED |
+| 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ✅ COMPLETE (2026-09-21) |
+| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ⬜ NEXT |
 
 **Phase 2 — COMPLETE (2026-09-19).** New package `go/internal/nodedefs` holds the portable node
 metadata (`Meta` struct: label/description/emoji/color/bg_color/edges/ports/config_fields/
@@ -241,11 +243,52 @@ exactly as before; only the registry now exists and is servable. `test_42` not r
 stack access this session) but `compiler.go`/`workflow.go`/`validate.go`/`graph.go` — the files it
 exercises — are untouched, so it should be unaffected. Full detail in `docs/NODE_REGISTRY_PLAN.md`.
 
-**Next: Phase 4** — app canvas stops hardcoding: palette, node rendering, handles and the
-properties form all driven by the `/admin/node-types` payload, copying the agent builder's
-existing `StepNode.tsx`/`StepConfigSection.tsx` pattern. Depends on Phase 3 (done). Gate: `tsc`
-clean, `test_42` green, and a manual round-trip (save → reload → condition still wired true/false)
-— registry-driven handles are exactly where the three step-9/10 silent-data-loss bugs hid before.
+**Phase 4 — COMPLETE (2026-09-21).** App canvas palette, node rendering (`CanvasNodes.tsx`), and
+serialization (`CanvasHelpers.ts`) now read from `GET /admin/node-types` via
+`frontend/src/lib/nodeRegistry.ts` — the same shared cache the agent builder's `StepNode.tsx` uses
+— instead of the hardcoded `FC_META`/`INLINE_META`/palette-array constants. `go test ./...` 0
+failures (full suite); `tsc --noEmit` 0 errors; `test_42_appflow_inline_nodes.py` 29/29 live after
+rebuild + force-recreate of `them-go-bridge` + `them-frontend`.
+
+**Bug found and fixed first, before Phase 4 could safely proceed:** Phase 3 legitimately produced
+two `/admin/node-types` entries typed `"llm"` (agentgen's `StepLLM` + appflow's app-canvas llm
+node — confirmed by Phase 3's own test), but the frontend's shared cache indexed by bare `type` in
+a flat map, so one would silently clobber the other once app-canvas became a second consumer of
+the merged array. Fixed with a `family` tag (`"agentgen"|"appflow"`) stamped onto each entry at
+the JSON-merge boundary in `go/internal/admin/node_types.go` (new helper `withFamily`, additive,
+doesn't touch either package's structs) + `getNodeDef(type, family)` in `nodeRegistry.ts` (default
+`family='agentgen'` — every existing agent-builder call site is unaffected). New test
+`TestNodeTypesHandler_FamilyDisambiguatesDuplicateType` (S1-125).
+
+**Handle-ID convention unified with the agent builder, by explicit user authorization this
+session** (existing app-canvas flows are test data — fine to recreate): condition branch handles
+are now `ctrl-out-true`/`ctrl-out-false` in React Flow, matching `nodeRegistry.ts`'s
+`resolveOutputPorts` convention, instead of the bare `true`/`false` used before. **The wire format
+is unchanged** — `ConnectionDef.label` sent to the backend is still the literal `"true"`/`"false"`
+(`appflow/validate.go:158` matches on that string; not touched, out of scope).
+`CanvasHelpers.ts`'s `canvasToDoc`/`docToCanvas` strip/re-add the `ctrl-out-` prefix at the
+serialization boundary. One consequential bug fixed in the same commit:
+`InlineNodePanel.tsx`'s branch-routing readout compared `sourceHandle === 'true'/'false'` directly
+and would have permanently shown "not connected" after the convention change — fixed to compare
+against `` `ctrl-out-${branch}` ``.
+
+**Deliberately not done:** `FlowControlNodePanel.tsx`/`InlineNodePanel.tsx` config forms stay
+hardcoded per-`node_type` — research this session confirmed the agent builder's own
+`StepConfigSection.tsx` has no `config_fields`-driven generic form renderer either (only
+visuals/handles/ports/policy are registry-driven there); Router/HIL's curated dropdowns and array
+editors would regress into plain text inputs under a naive generic renderer. One real improvement
+taken instead: panel headers/descriptions now read `getNodeDef(...).label`/`.description` instead
+of duplicating backend copy as hardcoded strings. **No live browser click-through was performed**
+(no browser in this session's environment) — the plan's Phase 4 gate asks for a human
+save→reload→"condition still wired true/false" round trip in the UI; `test_42`'s API-level
+publish/WS/condition-routing check (29/29) is a proxy for this, not a substitute. Recommend doing
+the actual click-through before trusting this in production. Full detail in
+`docs/NODE_REGISTRY_PLAN.md`.
+
+**Next: Phase 5** — middleware (`them.middleware_defs`) adopts the node contract: migration adds
+nullable `edges`/`input_ports`/`output_ports`/`config_fields` JSONB columns;
+`/admin/node-types` merges in a third family (`middleware`) alongside `agentgen`/`appflow`. Not
+started. Gate per `docs/NODE_REGISTRY_PLAN.md`.
 
 **Phase 1 — COMPLETE (2026-09-19).** New table `them.app_flow_llm_overrides` (migration 101,
 applied to live DB). `appflow.Compile` now emits `AppFlowSpec.LLMNodes`; new

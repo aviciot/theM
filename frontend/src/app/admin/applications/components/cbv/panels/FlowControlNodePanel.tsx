@@ -3,6 +3,7 @@ import type { Node } from '@xyflow/react';
 import type { FlowControlNodeData } from '../../../types';
 import { C } from '../../../constants';
 import { fieldStyle } from './panelShared';
+import { getNodeDef } from '@/lib/nodeRegistry';
 
 // ── FlowControlNodePanel (Router + HIL) ──────────────────────────────────────
 
@@ -21,6 +22,7 @@ export function FlowControlNodePanel({
   const d = (liveFcNode?.data ?? selectedNode.data) as unknown as FlowControlNodeData;
   const isRouter = d.node_type === 'router';
   const isHIL = d.node_type === 'hil';
+  const nodeDef = getNodeDef(d.node_type, 'appflow');
 
   // Unpack current config.
   const cfg = (d.config ?? {}) as Record<string, unknown>;
@@ -56,10 +58,8 @@ export function FlowControlNodePanel({
 
     return (
       <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#06b6d4', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Router</div>
-        <div style={{ fontSize: 11, color: C.textMuted }}>
-          Routes to one of multiple agents based on LLM intent classification of the user message.
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: nodeDef.border, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{nodeDef.label}</div>
+        <div style={{ fontSize: 11, color: C.textMuted }}>{nodeDef.description}</div>
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Output Labels</label>
@@ -109,10 +109,8 @@ export function FlowControlNodePanel({
 
     return (
       <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Human-in-Loop</div>
-        <div style={{ fontSize: 11, color: C.textMuted }}>
-          Pauses the flow and waits for human approval before continuing.
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: nodeDef.border, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{nodeDef.label}</div>
+        <div style={{ fontSize: 11, color: C.textMuted }}>{nodeDef.description}</div>
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Approver Role</label>

@@ -171,10 +171,13 @@ export interface EpNodeData {
   _errorMsg?: string;
 }
 
+// node_type is a string, not a literal union — new appflow node kinds
+// (see go/internal/appflow/noderegistry.go) need zero frontend type changes,
+// per docs/NODE_REGISTRY_PLAN.md Phase 4.
 export interface FlowControlNodeData {
   _kind: 'flow_control';
   instance_id: string;
-  node_type: 'router' | 'hil' | 'fork' | 'join';
+  node_type: string;
   display_name: string;
   config: Record<string, unknown>;
   _error?: boolean;
@@ -185,7 +188,7 @@ export interface FlowControlNodeData {
 export interface InlineNodeData {
   _kind: 'inline';
   instance_id: string;
-  node_type: 'llm' | 'condition';
+  node_type: string;
   display_name: string;
   config: Record<string, unknown>;
   _error?: boolean;

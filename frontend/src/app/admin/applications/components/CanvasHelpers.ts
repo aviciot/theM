@@ -26,6 +26,7 @@ import type {
   AppOrchestratorOut,
 } from '../types';
 import { EP_META, NODE_WIDTH, NODE_HEIGHT, EDGE_STYLE } from '../constants';
+import { getNodeDef } from '@/lib/nodeRegistry';
 
 // ── Misc helpers ──────────────────────────────────────────────────────────────
 export function makeId(): string {
@@ -158,9 +159,14 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
     if (srcType === 'flowControl' || tgtType === 'flowControl' ||
         srcType === 'inline'      || tgtType === 'inline') {
-      // Condition nodes carry their branch on the sourceHandle ("true"/"false");
-      // Router edges carry an operator-assigned label in e.data.label.
-      const handleLabel = srcType === 'inline' && e.sourceHandle ? e.sourceHandle : undefined;
+      // Condition (and any future branching inline kind) carries its branch on
+      // the sourceHandle, using the registry's "ctrl-out-{portID}" convention
+      // (see lib/nodeRegistry.ts resolveOutputPorts). The wire format expects
+      // the bare port id ("true"/"false"), not the handle id — strip the
+      // prefix. Router edges carry an operator-assigned label in e.data.label.
+      const handleLabel = srcType === 'inline' && e.sourceHandle?.startsWith('ctrl-out-')
+        ? e.sourceHandle.slice('ctrl-out-'.length)
+        : undefined;
       const edgeLabel = handleLabel ?? ((e.data as Record<string, unknown> | undefined)?.label as string | undefined);
       connections.push({ source: e.source, target: e.target, type: 'flow_control', ...(edgeLabel ? { label: edgeLabel } : {}) });
     }
@@ -199,15 +205,13 @@ export function docToCanvas(
       nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'flow_control') {
       const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
-      const defaultDisplayName: Record<string, string> = { router: 'Router', hil: 'Human-in-Loop', fork: 'Fork', join: 'Join' };
-      const displayName = (c.config.display_name as string) || defaultDisplayName[nodeType] || nodeType;
+      const displayName = (c.config.display_name as string) || getNodeDef(nodeType, 'appflow').label || nodeType;
       nodes.push({ id: c.instance_id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: c.instance_id, node_type: nodeType, display_name: displayName, config: c.config } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'inline') {
       const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
-      const defaultName: Record<string, string> = { llm: 'LLM', condition: 'Condition' };
       nodes.push({ id: c.instance_id, type: 'inline', position: pos,
         data: { _kind: 'inline', instance_id: c.instance_id, node_type: nodeType,
-          display_name: (c.config.display_name as string) || defaultName[nodeType] || nodeType,
+          display_name: (c.config.display_name as string) || getNodeDef(nodeType, 'appflow').label || nodeType,
           config: c.config } as unknown as Record<string, unknown> });
     }
   });
@@ -218,13 +222,17 @@ export function docToCanvas(
   });
   (doc.connections ?? []).forEach(conn => {
     if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware' || conn.type === 'flow_control') {
-      const isInlineCondition = inlineNodeTypeById.get(conn.source) === 'condition';
+      // Any inline node type with named control_output_ports (registry-driven,
+      // e.g. condition's true/false) carries its branch on the sourceHandle
+      // using the "ctrl-out-{portID}" convention (see lib/nodeRegistry.ts).
+      const srcInlineType = inlineNodeTypeById.get(conn.source);
+      const hasControlPorts = !!srcInlineType && (getNodeDef(srcInlineType, 'appflow').control_output_ports?.length ?? 0) > 0;
       edges.push({
         id: `e_${conn.source}_${conn.target}${conn.label ? '_' + conn.label : ''}`,
         source: conn.source,
         target: conn.target,
         type: 'default',
-        ...(isInlineCondition && conn.label ? { sourceHandle: conn.label } : {}),
+        ...(hasControlPorts && conn.label ? { sourceHandle: `ctrl-out-${conn.label}` } : {}),
         ...(conn.label ? { label: conn.label, data: { label: conn.label } } : {}),
       });
     }

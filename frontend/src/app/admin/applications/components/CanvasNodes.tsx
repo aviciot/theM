@@ -4,6 +4,7 @@ import type { EntryPointData, OrchestratorData, AgentData, MiddlewareData, FlowC
 import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
 import { useAppLayoutDir } from '../AppLayoutContext';
+import { getNodeDef, resolveOutputPorts } from '@/lib/nodeRegistry';
 
 // ── Tiny the-M logo badge for internal nodes ──────────────────────────────────
 function InternalMBadge() {
@@ -264,19 +265,17 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
 }
 
 // ── FlowControlNode ───────────────────────────────────────────────────────────
-const FC_META: Record<string, { emoji: string; color: string; label: string }> = {
-  router: { emoji: '🔀', color: '#06b6d4', label: 'Router' },
-  hil:    { emoji: '✋', color: '#a855f7', label: 'Human-in-Loop' },
-  fork:   { emoji: '⑂',  color: '#f59e0b', label: 'Fork' },
-  join:   { emoji: '⊕',  color: '#10b981', label: 'Join' },
-};
+// Metadata (emoji/color/label) comes from the appflow family of
+// GET /admin/node-types via getNodeDef(type, 'appflow') — see
+// docs/NODE_REGISTRY_PLAN.md Phase 4. No local hardcoded map.
 
 export function FlowControlNode({ id, data, selected }: { id: string; data: FlowControlNodeData; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
   const dir = useAppLayoutDir();
   const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
   const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
-  const meta = FC_META[data.node_type] ?? FC_META.router;
+  const nodeDef = getNodeDef(data.node_type, 'appflow');
+  const meta = { emoji: nodeDef.emoji, color: nodeDef.border, label: nodeDef.label };
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : meta.color;
   const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${meta.color}59`;
@@ -326,17 +325,21 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
 }
 
 // ── InlineNode ────────────────────────────────────────────────────────────────
-const INLINE_META: Record<string, { emoji: string; color: string; label: string }> = {
-  llm:       { emoji: '🧠', color: '#d0bcff', label: 'LLM' },
-  condition: { emoji: '⑂',  color: '#f97316', label: 'Condition' },
-};
+// Metadata (emoji/color/label) and named control-flow branches (e.g.
+// condition's true/false) come from the appflow family of
+// GET /admin/node-types via getNodeDef(type, 'appflow') +
+// resolveOutputPorts() — see docs/NODE_REGISTRY_PLAN.md Phase 4. A new
+// branching kind needs zero frontend changes: it just needs
+// control_output_ports populated in go/internal/appflow/noderegistry.go.
 
 export function InlineNode({ id, data, selected }: { id: string; data: InlineNodeData; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
   const dir = useAppLayoutDir();
   const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
   const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
-  const meta = INLINE_META[data.node_type] ?? INLINE_META.llm;
+  const nodeDef = getNodeDef(data.node_type, 'appflow');
+  const meta = { emoji: nodeDef.emoji, color: nodeDef.border, label: nodeDef.label };
+  const controlPorts = resolveOutputPorts(nodeDef, data.config ?? {}).filter(p => p.kind === 'control' && p.id !== 'ctrl-out');
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : meta.color;
   const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${meta.color}59`;
@@ -381,10 +384,18 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
           {data.node_type}
         </div>
       </div>
-      {data.node_type === 'condition' ? (
+      {controlPorts.length > 0 ? (
         <>
-          <Handle type="source" id="true"  position={sourcePos} style={{ ...handleStyle, background: '#4ade80', left: '35%' }} title="True branch" />
-          <Handle type="source" id="false" position={sourcePos} style={{ ...handleStyle, background: '#f87171', left: '65%' }} title="False branch" />
+          {controlPorts.map((port, i) => (
+            <Handle
+              key={port.id}
+              type="source"
+              id={port.id}
+              position={sourcePos}
+              style={{ ...handleStyle, background: port.color, left: `${(100 / (controlPorts.length + 1)) * (i + 1)}%` }}
+              title={port.label}
+            />
+          ))}
         </>
       ) : (
         <Handle type="source" position={sourcePos} style={handleStyle} />

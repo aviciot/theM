@@ -149,7 +149,7 @@ export function InlineNodePanel({
     const expression = (cfg.expression as string) ?? '';
 
     function branchTarget(branch: 'true' | 'false'): string {
-      const edge = edges.find(e => e.source === selectedNode.id && e.sourceHandle === branch);
+      const edge = edges.find(e => e.source === selectedNode.id && e.sourceHandle === `ctrl-out-${branch}`);
       if (!edge) return 'not connected';
       const target = nodes.find(n => n.id === edge.target);
       if (!target) return 'not connected';

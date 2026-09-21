@@ -52,6 +52,14 @@ export interface ExecutionPolicy {
 
 export interface NodeTypeInfo {
   type: string;
+  /**
+   * Which backend registry this entry came from. "type" is NOT a unique key
+   * across the merged /admin/node-types array — agentgen's StepLLM and
+   * appflow's app-canvas llm node are both legitimately typed "llm". Use
+   * getNodeDef(type, family) when a family is known (app canvas always knows
+   * it's asking for the appflow family).
+   */
+  family: 'agentgen' | 'appflow';
   version: number;
   label: string;
   description: string;
@@ -331,25 +339,36 @@ function toNodeDef(info: NodeTypeInfo): NodeDef {
 
 // ── In-memory cache populated after first fetch ───────────────────────────────
 
+// Keyed by "family:type" — "type" alone is not unique across families (see
+// NodeTypeInfo.family doc comment).
 let _cache: NodeDef[] | null = null;
-let _byType: Record<string, NodeDef> = {};
+let _byFamilyType: Record<string, NodeDef> = {};
+
+function familyTypeKey(family: string, type: string): string {
+  return `${family}:${type}`;
+}
 
 export function setCachedNodeTypes(defs: NodeDef[]): void {
   _cache = defs;
-  _byType = {};
-  for (const d of defs) _byType[d.type] = d;
+  _byFamilyType = {};
+  for (const d of defs) _byFamilyType[familyTypeKey(d.family, d.type)] = d;
 }
 
 export function getCachedNodeTypes(): NodeDef[] {
   return _cache ?? [];
 }
 
+/** All cached node defs belonging to one family (e.g. all 6 app-canvas kinds). */
+export function getCachedNodeTypesByFamily(family: NodeTypeInfo['family']): NodeDef[] {
+  return (_cache ?? []).filter(d => d.family === family);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const FALLBACK_EDGES: EdgeRules = { min_in: 0, max_in: 0, min_out: 0, max_out: 0 };
 
-const FALLBACK_DEF = (type: string): NodeDef => ({
-  type, version: 1, label: type, description: '', emoji: '🔧',
+const FALLBACK_DEF = (type: string, family: NodeTypeInfo['family']): NodeDef => ({
+  type, family, version: 1, label: type, description: '', emoji: '🔧',
   output_arity: 'single', is_source: false, is_sink: false,
   single_input: false, edges: FALLBACK_EDGES, executable: false,
   color: FALLBACK_BORDER, bg_color: FALLBACK_BG,
@@ -359,8 +378,14 @@ const FALLBACK_DEF = (type: string): NodeDef => ({
   summary: FALLBACK_SUMMARY,
 });
 
-export function getNodeDef(type: string): NodeDef {
-  return _byType[type] ?? FALLBACK_DEF(type);
+/**
+ * Look up a node def by type. `family` defaults to 'agentgen' — every
+ * existing agent-builder call site omits it and expects StepLLM/etc, never
+ * appflow's app-canvas nodes. App-canvas call sites must pass 'appflow'
+ * explicitly (see CanvasNodes.tsx, CanvasBuilderView.tsx).
+ */
+export function getNodeDef(type: string, family: NodeTypeInfo['family'] = 'agentgen'): NodeDef {
+  return _byFamilyType[familyTypeKey(family, type)] ?? FALLBACK_DEF(type, family);
 }
 
 export function isSingleInput(type: string): boolean  { return getNodeDef(type).single_input; }

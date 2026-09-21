@@ -30,8 +30,8 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 | 1 — Runtime config split | ✅ COMPLETE | (pending commit) |
 | 2 — Extract shared registry | ✅ COMPLETE | (pending commit) |
 | 3 — Register app canvas nodes | ✅ COMPLETE | (pending commit) |
-| 4 — App canvas renders from registry | ⬜ NOT STARTED ← **next** | — |
-| 5 — Middleware adopts node contract | ⬜ NOT STARTED | — |
+| 4 — App canvas renders from registry | ✅ COMPLETE | (pending commit) |
+| 5 — Middleware adopts node contract | ⬜ NOT STARTED ← **next** | — |
 
 **Update this table at the end of every session.** One phase per session.
 
@@ -314,12 +314,96 @@ changes to the files it exercises, but flagging rather than claiming verified-li
 
 ### Phase 4 — App canvas renders from the registry
 
-Frontend stops hardcoding. Palette, node rendering, handles and the properties form are all
-driven by the registry payload — copying `StepNode.tsx` / `StepConfigSection.tsx`, which already
-do exactly this for the agent builder.
+**STATUS: COMPLETE (2026-09-21).** `go test ./...` 0 failures (full suite, fresh Docker run);
+`tsc --noEmit` 0 errors; `test_42_appflow_inline_nodes.py` 29/29 (unchanged — this phase touched
+no execution code), verified live after rebuild + force-recreate of `them-go-bridge` and
+`them-frontend`.
 
-**Gate:** `tsc` clean, `test_42` green, and a manual round-trip (save → reload → condition still
-wired true/false). Registry-driven handles are exactly where a regression would hide.
+**Bug found and fixed before Phase 4 could safely proceed:** Phase 3 merged the `agentgen` and
+`appflow` families into one `/admin/node-types` array with two legitimate entries typed `"llm"`
+(agentgen's `StepLLM`, appflow's app-canvas llm node) — confirmed by Phase 3's own test. But the
+frontend's shared cache (`frontend/src/lib/nodeRegistry.ts`) indexed entries by bare `type` in a
+flat map (`_byType[d.type] = d`), so loading both families on one page would let one `"llm"` entry
+silently clobber the other, and `getNodeDef("llm")` would return whichever landed last. This was
+latent until Phase 4 became the first frontend consumer of the merged array from the app-canvas
+side. Fixed by:
+- `go/internal/admin/node_types.go`: `withFamily()` stamps a `"family": "agentgen"|"appflow"` tag
+  onto each entry at the JSON-merge boundary — additive, touches neither `agentgen` nor `appflow`'s
+  structs (keeping them decoupled, per Phase 3's stated design). New test
+  `TestNodeTypesHandler_FamilyDisambiguatesDuplicateType`.
+- `frontend/src/lib/nodeRegistry.ts`: cache is now keyed by `"family:type"`
+  (`_byFamilyType`, `familyTypeKey()`); `getNodeDef(type, family = 'agentgen')` — every existing
+  agent-builder call site is unchanged (they never pass `family` and get `agentgen` as before);
+  app-canvas call sites pass `'appflow'` explicitly. New `getCachedNodeTypesByFamily(family)`.
+
+**What was built (the actual Phase 4 cutover):**
+- `frontend/src/app/admin/applications/components/CanvasNodes.tsx`: `FC_META`/`INLINE_META`
+  hardcoded maps deleted. `FlowControlNode`/`InlineNode` call `getNodeDef(data.node_type,
+  'appflow')` for emoji/color/label. `InlineNode`'s hardcoded `data.node_type === 'condition'`
+  branch (two hand-written `Handle id="true"`/`id="false"`) replaced by a generic loop over
+  `resolveOutputPorts(nodeDef, cfg)`'s control ports — a new branching appflow kind needs a
+  `control_output_ports` entry in the Go registry and zero frontend changes.
+- `frontend/src/app/admin/applications/components/CanvasHelpers.ts`: `docToCanvas`'s hardcoded
+  `defaultDisplayName`/`defaultName` maps replaced by `getNodeDef(nodeType, 'appflow').label`.
+  Condition-branch `sourceHandle` restoration generalized from `d.node_type === 'condition'` to
+  "any inline node type whose registry entry has `control_output_ports`".
+- `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx`: added a `useEffect`
+  fetching `/admin/node-types` once (mirrors `useDefinitionLifecycle.ts`'s pattern), caches via
+  `setCachedNodeTypes`. Palette's two hardcoded JSX arrays (Flow Control section, Inline/Logic
+  section) replaced by `flowControlPalette`/`inlinePalette` — `appflowNodeTypes` filtered through
+  a small local `APPFLOW_NODE_COMPONENT` map (`node_type` → `'inline' | 'flow_control'`, i.e. which
+  RF node component/palette section it renders as). This split is a frontend/UI concern with no
+  backend equivalent — agentgen has no analogous grouping either — so it stays as a small local
+  map rather than inventing a new backend field for it. Drop-handler defaults
+  (`APPFLOW_NODE_DEFAULTS`) similarly kept local (design-time seed config, not portable metadata).
+- `frontend/src/app/admin/applications/types.ts`: `FlowControlNodeData.node_type` and
+  `InlineNodeData.node_type` relaxed from hardcoded literal unions (`'router'|'hil'|'fork'|'join'`,
+  `'llm'|'condition'`) to `string` — a new appflow kind needs zero frontend type-file edits.
+- `frontend/src/app/admin/applications/components/cbv/panels/FlowControlNodePanel.tsx` +
+  `InlineNodePanel.tsx`: config forms stay hardcoded per-`node_type` — **matches the agent
+  builder's actual precedent, not just the plan's stated intent**: research this session confirmed
+  `StepConfigSection.tsx` has no `config_fields`-driven generic form renderer anywhere in the
+  codebase either; only visuals/handles/ports/policy are registry-driven on that side. Router/HIL
+  forms use curated dropdowns and array editors that a generic renderer would regress into plain
+  text inputs — not attempted. The one real improvement taken: panel headers/descriptions now read
+  `getNodeDef(type, 'appflow').label`/`.description` instead of hardcoded duplicate strings, so
+  backend copy changes propagate without a frontend edit.
+- **Bug fixed as a direct consequence of the handle-id convention change** (see below):
+  `InlineNodePanel.tsx`'s `branchTarget()` compared `e.sourceHandle === branch` against the bare
+  `'true'`/`'false'` string; after the convention change below it would have permanently shown
+  "not connected" for both branches. Fixed to compare against `` `ctrl-out-${branch}` ``.
+
+**Handle-ID convention unified with the agent builder** (explicitly authorized by the user this
+session — existing app-canvas flows are test data, fine to lose/recreate): condition branch
+handles are now `ctrl-out-true`/`ctrl-out-false` in React Flow (matching `nodeRegistry.ts`'s
+`resolveOutputPorts` convention: `` `ctrl-out-${port.id}` ``), not the bare `true`/`false` used
+before. **The wire format (`ConnectionDef.label` sent to/from the backend) is unchanged** — still
+the literal string `"true"`/`"false"`, because `appflow/validate.go:158` matches
+`strings.EqualFold(e.Label, "true")` and cannot be touched without a backend change (out of scope).
+`CanvasHelpers.ts`'s `canvasToDoc` strips the `ctrl-out-` prefix before sending; `docToCanvas`
+re-adds it when restoring `sourceHandle` from a loaded definition.
+
+**Deliberately not done, flagged rather than silently skipped:**
+- No live browser click-through was performed (no browser available in this session's
+  environment) — the plan's gate asks for "a manual round-trip (save → reload → condition still
+  wired true/false)" done by a human in the UI. What *was* verified: `tsc --noEmit` clean, the
+  running `them-frontend` container confirmed to be serving the edited source
+  (`docker exec ... grep getNodeDef`), and `test_42`'s API-level publish/WS/condition-routing round
+  trip (29/29) — which exercises the same `canvasToDoc`/`docToCanvas`-shaped JSON path but via
+  direct API calls, not via drag-and-drop in a browser. **Recommend a human does the actual
+  click-through before trusting this in production.**
+- `NODE_PORTS` in `constants.ts` was left untouched — it encodes coarse cross-node-type wiring
+  rules (what can connect to `entryPoint`/`orchestrator`/`agent`/`middleware`/`flowControl`/
+  `inline`), not per-fine-kind edge arity. It was already keyed by RF node type, not `node_type`,
+  before this phase, and the registry's `edges` field is per-fine-kind — they solve different
+  problems. Not in scope.
+- `FlowControlNodePanel.tsx`/`InlineNodePanel.tsx` were not converted to a `config_fields`-driven
+  generic renderer — see above; this is genuinely more scope than "mirror the agent builder" implies
+  once you check what the agent builder actually does today.
+
+**Gate result:** `tsc --noEmit` 0 errors. `go test ./...` 0 failures (full suite). `test_42` 29/29
+live after rebuild+force-recreate of `them-go-bridge` and `them-frontend`. Manual browser
+click-through **not performed** — flagged above, recommended before production trust.
 
 ---
 

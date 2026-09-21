@@ -15,9 +15,34 @@ import { themApi, type Application, type Agent, type AppDefinition, type AppDefi
 import type { OrchNodeData, AgentNodeData, MwNodeData, EpNodeData, FlowControlNodeData, LogoState } from '../types';
 import { C, EP_META } from '../constants';
 import { agentIconForLibrary, applyDagreLayout, canvasToDoc, docToCanvas, genInstanceId } from './CanvasHelpers';
+import { fetchNodeTypes, setCachedNodeTypes, getCachedNodeTypesByFamily, getNodeDef, type NodeDef } from '@/lib/nodeRegistry';
 import { computeLogoState } from './CanvasLogo';
 import { CanvasInnerWithDrop, validateConnection } from './CanvasInner';
 import { CanvasNodePropertiesPanel } from './cbv/CanvasNodePropertiesPanel';
+
+// Which RF node component (and canvas palette section) each appflow node_type
+// renders as. This split is a frontend/UI concern, not portable node metadata
+// (agentgen has no equivalent grouping either) — see docs/NODE_REGISTRY_PLAN.md
+// Phase 4. Everything else (label, emoji, color, description, config fields,
+// edge rules, control ports) comes from GET /admin/node-types via
+// lib/nodeRegistry.ts. A new appflow kind needs one line here plus its
+// go/internal/appflow/noderegistry.go entry — no other frontend file changes.
+const APPFLOW_NODE_COMPONENT: Record<string, 'inline' | 'flow_control'> = {
+  llm: 'inline',
+  condition: 'inline',
+  router: 'flow_control',
+  hil: 'flow_control',
+  fork: 'flow_control',
+  join: 'flow_control',
+};
+
+// Per-kind default config seeded when a node is dropped onto the canvas.
+// Design-time defaults, not portable metadata — kept here alongside the
+// component-kind map above.
+const APPFLOW_NODE_DEFAULTS: Record<string, Record<string, unknown>> = {
+  llm: { user_prompt: '{{.input}}', output_var: 'output', max_tokens: 1024 },
+  condition: { expression: '' },
+};
 
 // ── CanvasBuilderView (V2) ────────────────────────────────────────────────────
 export function CanvasBuilderView({
@@ -111,6 +136,24 @@ export function CanvasBuilderView({
   };
   useEffect(() => { refreshProviderKeys(); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { themApi.listMCPServers().then(setAvailableMCPServers).catch(() => {}); }, []);
+
+  // App-canvas node registry (llm/condition/router/hil/fork/join) — fetched
+  // once, cached in lib/nodeRegistry.ts, consumed by CanvasNodes.tsx and the
+  // palette below. See docs/NODE_REGISTRY_PLAN.md Phase 4.
+  const [appflowNodeTypes, setAppflowNodeTypes] = useState<NodeDef[]>([]);
+  useEffect(() => {
+    fetchNodeTypes()
+      .then(defs => { setCachedNodeTypes(defs); setAppflowNodeTypes(getCachedNodeTypesByFamily('appflow')); })
+      .catch(() => {});
+  }, []);
+  const flowControlPalette = useMemo(
+    () => appflowNodeTypes.filter(d => APPFLOW_NODE_COMPONENT[d.type] === 'flow_control'),
+    [appflowNodeTypes],
+  );
+  const inlinePalette = useMemo(
+    () => appflowNodeTypes.filter(d => APPFLOW_NODE_COMPONENT[d.type] === 'inline'),
+    [appflowNodeTypes],
+  );
 
   // Canvas state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -354,22 +397,17 @@ export function CanvasBuilderView({
       const newNode: Node = { id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: id, display_name: cd.display_name, definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {}, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'flow_control' && payload.node_type) {
-      const nt = payload.node_type as 'router' | 'hil' | 'fork' | 'join';
+      const nt = payload.node_type;
       const id = genInstanceId('flow_control', nt, existingIds);
-      const fcDisplayNames: Record<string, string> = { router: 'Router', hil: 'Human-in-Loop', fork: 'Fork', join: 'Join' };
-      const displayName = fcDisplayNames[nt] ?? nt;
+      const displayName = getNodeDef(nt, 'appflow').label || nt;
       const newNode: Node = { id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: id, node_type: nt, display_name: displayName, config: {} } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'inline' && payload.node_type) {
-      const nt = payload.node_type as 'llm' | 'condition';
+      const nt = payload.node_type;
       const id = genInstanceId('inline', nt, existingIds);
-      const names: Record<string, string> = { llm: 'LLM', condition: 'Condition' };
-      const defaults: Record<string, Record<string, unknown>> = {
-        llm:       { user_prompt: '{{.input}}', output_var: 'output', max_tokens: 1024 },
-        condition: { expression: '' },
-      };
+      const displayName = getNodeDef(nt, 'appflow').label || nt;
       setNodes(ns => [...ns, { id, type: 'inline', position: pos,
-        data: { _kind: 'inline', instance_id: id, node_type: nt, display_name: names[nt], config: defaults[nt] } as unknown as Record<string, unknown> }]);
+        data: { _kind: 'inline', instance_id: id, node_type: nt, display_name: displayName, config: APPFLOW_NODE_DEFAULTS[nt] ?? {} } as unknown as Record<string, unknown> }]);
     } else if (nodeType === 'entryPoint' && payload.protocol) {
       const protocol = payload.protocol as EpNodeData['protocol'];
       const id = genInstanceId('ep', protocol, existingIds);
@@ -524,47 +562,39 @@ export function CanvasBuilderView({
             );
           })}
 
-          {/* Flow Control nodes */}
+          {/* Flow Control nodes — driven by GET /admin/node-types (appflow family) */}
           <div style={{ padding: '0 8px 12px' }}>
             <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Flow Control</div>
-            {([
-              { node_type: 'router' as const, emoji: '🔀', label: 'Router', desc: 'Route to one of multiple agents based on message intent', color: '6,182,212' },
-              { node_type: 'hil'    as const, emoji: '✋', label: 'Human-in-Loop', desc: 'Pause flow for human decision before continuing', color: '168,85,247' },
-              { node_type: 'fork'   as const, emoji: '⑂',  label: 'Fork', desc: 'Split into parallel branches, each running an agent concurrently', color: '245,158,11' },
-              { node_type: 'join'   as const, emoji: '⊕',  label: 'Join', desc: 'Wait for all parallel branches to complete and merge results', color: '16,185,129' },
-            ]).map(fc => (
+            {flowControlPalette.map(fc => (
               <div
-                key={fc.node_type}
+                key={fc.type}
                 draggable
-                onDragStart={e => { e.dataTransfer.setData('nodeType', 'flow_control'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.node_type })); e.dataTransfer.effectAllowed = 'move'; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${fc.color},0.04)`, border: `1px solid rgba(${fc.color},0.12)` }}
+                onDragStart={e => { e.dataTransfer.setData('nodeType', 'flow_control'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.type })); e.dataTransfer.effectAllowed = 'move'; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `${fc.border}0a`, border: `1px solid ${fc.border}1f` }}
               >
                 <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{fc.emoji}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{fc.label}</div>
-                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.desc}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.description}</div>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Inline / Logic nodes */}
+          {/* Inline / Logic nodes — driven by GET /admin/node-types (appflow family) */}
           <div style={{ padding: '0 8px 12px' }}>
             <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Inline / Logic</div>
-            {([
-              { node_type: 'llm'       as const, emoji: '🧠', label: 'LLM',       desc: 'Call a model with a prompt template; output feeds the next node', color: '208,188,255' },
-              { node_type: 'condition' as const, emoji: '⑂',  label: 'Condition', desc: 'Branch true/false on an expression over flow variables',          color: '249,115,22' },
-            ]).map(fc => (
+            {inlinePalette.map(fc => (
               <div
-                key={fc.node_type}
+                key={fc.type}
                 draggable
-                onDragStart={e => { e.dataTransfer.setData('nodeType', 'inline'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.node_type })); e.dataTransfer.effectAllowed = 'move'; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${fc.color},0.04)`, border: `1px solid rgba(${fc.color},0.12)` }}
+                onDragStart={e => { e.dataTransfer.setData('nodeType', 'inline'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.type })); e.dataTransfer.effectAllowed = 'move'; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `${fc.border}0a`, border: `1px solid ${fc.border}1f` }}
               >
                 <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{fc.emoji}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{fc.label}</div>
-                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.desc}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.description}</div>
                 </div>
               </div>
             ))}

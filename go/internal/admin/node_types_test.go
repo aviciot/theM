@@ -101,6 +101,37 @@ func TestNodeTypesHandler_IncludesAppCanvasKinds(t *testing.T) {
 	}
 }
 
+// TestNodeTypesHandler_FamilyDisambiguatesDuplicateType verifies every merged
+// entry carries a "family" tag ("agentgen" or "appflow"), and that the two
+// entries typed "llm" have different families — the frontend's node-type
+// cache is keyed by bare "type" (see nodeRegistry.ts), so without "family" a
+// consumer cannot tell agentgen's StepLLM apart from appflow's app-canvas
+// llm node when both are loaded.
+func TestNodeTypesHandler_FamilyDisambiguatesDuplicateType(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
+	admin.NodeTypesHandler{}.ServeHTTP(w, r)
+
+	var raw []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	llmFamilies := make(map[string]bool)
+	for _, entry := range raw {
+		family, _ := entry["family"].(string)
+		if family != "agentgen" && family != "appflow" {
+			t.Errorf("node type %q: expected family agentgen|appflow, got %q", entry["type"], family)
+		}
+		if entry["type"] == "llm" {
+			llmFamilies[family] = true
+		}
+	}
+	if len(llmFamilies) != 2 {
+		t.Errorf("expected the 2 \"llm\" entries to have 2 distinct families, got %v", llmFamilies)
+	}
+}
+
 func TestNodeTypesHandler_ExecutableComputedNotStored(t *testing.T) {
 	infos := agentgen.AllNodeTypeInfos()
 	byType := make(map[agentgen.StepType]agentgen.NodeTypeInfo, len(infos))
