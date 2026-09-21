@@ -1,28 +1,43 @@
 # Current Session State — the-M
-# Last updated: 2026-09-21 (Node Registry Phase 5 — COMPLETE, pushed, HEAD 74bd54a7. Plan closed.)
+# Last updated: 2026-09-21 (Tenant LLM Provider Management COMPLETE, HEAD ecbd63fe)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
-#
-# NOTE: the "Parallel design track — LLM Gateway" section below (commits 52fcec69/936ae696/
-# 4a9402e7/ed3620dc) describes work from a DIFFERENT, uncommitted session state — those commit
-# hashes are not reachable from HEAD as of this update. This session did not touch LLM Gateway
-# code. Do not assume the LLM Gateway phases below are committed/live without checking `git log`
-# first.
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `74bd54a7` (pushed)
+HEAD: `ecbd63fe` (not yet pushed)
 
 Recent commits (newest first):
 ```
+ecbd63fe  feat(tenant-llm): block platform key fallback, add tenant LLM provider UI
+52fcec69  feat(llm-gateway): Phase 3 — admin CRUD backend + frontend UI
 74bd54a7  feat(node-registry): Phase 5 — middleware adopts the node contract
 e3c82d1a  docs(current): mark HEAD as pushed, Node Registry Phase 4 complete
 d7dd731d  feat(node-registry): Phase 4 — app canvas renders from the registry
-b2bcdf17  docs(current): mark HEAD as pushed, Node Registry Phase 3 complete
-00415c1f  feat(node-registry): Phase 3 — register the 6 app-canvas node kinds
 ```
+
+---
+
+## Tenant LLM Provider Management — COMPLETE (2026-09-21)
+
+Commit: `ecbd63fe`. Frontend + Go llmresolve change. No new migrations needed (uses existing `llm_providers.tenant_id` from migration 057 and existing DAL/service/routes).
+
+**What was built:**
+
+- `go/internal/llmresolve/llmresolve.go` — platform key fallback REMOVED. `ResolveProvider` now uses app-level key → tenant-level key only. Platform key is never used for tenant calls. base_url and pricing metadata still fall back to the platform row.
+- `go/internal/llmresolve/llmresolve_integration_test.go` — updated `TestResolveProvider_NoPlatformKeyFallback` (was `FallsBackToPlatformWhenNoAppOrTenantKey`) to assert empty key + platform metadata available.
+- `frontend/src/app/admin/tenants/page.tsx` — added "LLM Providers" tab to the tenant side panel (platform-admin view). Shows all providers with key status (`own key set` / `no key`), masked current key, and per-provider API key input + save.
+- `frontend/src/lib/apiTypes.ts` — added `LLMProviderOut`, `LLMProviderUpsertInput`.
+- `frontend/src/lib/api.ts` — added `listPlatformProviders()`, `listTenantProviders(tenantId)`, `upsertTenantProvider(tenantId, name, body)`.
+
+**Hard constraint recorded:** Platform LLM API keys MUST NOT be used as fallback for tenant LLM calls. Tenants pay for their own usage. See `go/internal/llmresolve/llmresolve.go` comment.
+
+**Next recommended tasks:**
+1. Test the LLM Providers tab in the tenant panel — log in as super_admin, open Tenants, select a tenant, click "LLM Providers", set a key.
+2. Gateway Phase 4 — profile pipeline steps (PII filter, cache, guardrails) wired into execution. Deferred — needs File Guard and parallel canvas session to stabilize first.
+3. Canvas Node Registry Phase 6+ (if needed).
 
 ---
 
