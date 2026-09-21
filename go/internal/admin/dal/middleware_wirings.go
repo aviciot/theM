@@ -173,7 +173,8 @@ func DeleteMiddlewareWiring(ctx context.Context, db Querier, appID, wiringID str
 func ListMiddlewareDefs(ctx context.Context, db Querier) ([]MiddlewareDefSummary, error) {
 	const q = `
 SELECT id::text, slug, kind, display_name, description, config, is_builtin, scope,
-       COALESCE(emoji, ''), COALESCE(color, ''), COALESCE(bg_color, '')
+       COALESCE(emoji, ''), COALESCE(color, ''), COALESCE(bg_color, ''),
+       edges, input_ports, output_ports, config_fields
 FROM   them.middleware_defs
 WHERE  enabled = true
 ORDER  BY is_builtin DESC, slug`
@@ -187,11 +188,24 @@ ORDER  BY is_builtin DESC, slug`
 	var out []MiddlewareDefSummary
 	for rows.Next() {
 		var d MiddlewareDefSummary
-		var cfgRaw []byte
-		if err := rows.Scan(&d.ID, &d.Slug, &d.Kind, &d.DisplayName, &d.Description, &cfgRaw, &d.IsBuiltin, &d.Scope, &d.Emoji, &d.Color, &d.BgColor); err != nil {
+		var cfgRaw, edgesRaw, inPortsRaw, outPortsRaw, configFieldsRaw []byte
+		if err := rows.Scan(&d.ID, &d.Slug, &d.Kind, &d.DisplayName, &d.Description, &cfgRaw, &d.IsBuiltin, &d.Scope, &d.Emoji, &d.Color, &d.BgColor,
+			&edgesRaw, &inPortsRaw, &outPortsRaw, &configFieldsRaw); err != nil {
 			return nil, err
 		}
 		d.Config = cfgRaw
+		if len(edgesRaw) > 0 {
+			d.Edges = edgesRaw
+		}
+		if len(inPortsRaw) > 0 {
+			d.InputPorts = inPortsRaw
+		}
+		if len(outPortsRaw) > 0 {
+			d.OutputPorts = outPortsRaw
+		}
+		if len(configFieldsRaw) > 0 {
+			d.ConfigFields = configFieldsRaw
+		}
 		out = append(out, d)
 	}
 	if out == nil {
@@ -213,4 +227,13 @@ type MiddlewareDefSummary struct {
 	Emoji       string          `json:"emoji,omitempty"`
 	Color       string          `json:"color,omitempty"`
 	BgColor     string          `json:"bg_color,omitempty"`
+	// Node-contract fields (Phase 5, docs/NODE_REGISTRY_PLAN.md) — nullable in
+	// the DB; nil until a row is seeded (see db/102_middleware_defs_node_contract.sql).
+	// Raw JSON, not typed as nodedefs.EdgeRules/[]nodedefs.PortDef/etc., because
+	// this package (internal/admin/dal) has no dependency on internal/nodedefs
+	// today and this is the only caller — parse at the consumer if ever needed.
+	Edges        json.RawMessage `json:"edges,omitempty"`
+	InputPorts   json.RawMessage `json:"input_ports,omitempty"`
+	OutputPorts  json.RawMessage `json:"output_ports,omitempty"`
+	ConfigFields json.RawMessage `json:"config_fields,omitempty"`
 }

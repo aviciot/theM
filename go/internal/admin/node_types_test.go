@@ -14,7 +14,7 @@ import (
 func TestNodeTypesHandler_ReturnsAllTypes(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
-	admin.NodeTypesHandler{}.ServeHTTP(w, r)
+	admin.NewNodeTypesHandler(nil).ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -54,7 +54,7 @@ func TestNodeTypesHandler_ReturnsAllTypes(t *testing.T) {
 func TestNodeTypesHandler_IncludesAppCanvasKinds(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
-	admin.NodeTypesHandler{}.ServeHTTP(w, r)
+	admin.NewNodeTypesHandler(nil).ServeHTTP(w, r)
 
 	var infos []agentgen.NodeTypeInfo
 	if err := json.Unmarshal(w.Body.Bytes(), &infos); err != nil {
@@ -110,7 +110,7 @@ func TestNodeTypesHandler_IncludesAppCanvasKinds(t *testing.T) {
 func TestNodeTypesHandler_FamilyDisambiguatesDuplicateType(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
-	admin.NodeTypesHandler{}.ServeHTTP(w, r)
+	admin.NewNodeTypesHandler(nil).ServeHTTP(w, r)
 
 	var raw []map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
@@ -161,10 +161,102 @@ func TestNodeTypesHandler_VersionDefaultsToOne(t *testing.T) {
 	}
 }
 
+// TestNodeTypesHandler_MergesMiddlewareFamily verifies a them.middleware_defs
+// row with seeded node-contract columns (edges/config_fields — Phase 5,
+// docs/NODE_REGISTRY_PLAN.md) appears in the merged response tagged
+// family="middleware", with its edges and config_fields decoded correctly.
+func TestNodeTypesHandler_MergesMiddlewareFamily(t *testing.T) {
+	db := &mwDB{listRows: [][]any{
+		{
+			"def-uuid-1",           // id
+			"file-guard",           // slug
+			"guard",                // kind
+			"File Guard",           // display_name
+			"Scans uploaded files", // description
+			[]byte(`{}`),           // config
+			true,                   // is_builtin
+			"builtin",              // scope
+			"🛡️",                    // emoji
+			"#f59e0b",              // color
+			"rgba(245,158,11,0.08)", // bg_color
+			[]byte(`{"min_in":1,"max_in":1,"min_out":1,"max_out":1}`), // edges
+			nil, // input_ports
+			nil, // output_ports
+			[]byte(`[{"key":"enabled","type":"bool","required":true,"description":"Whether File Guard is active."}]`), // config_fields
+		},
+	}}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
+	admin.NewNodeTypesHandler(db).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var raw []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	var fg map[string]any
+	for _, entry := range raw {
+		if entry["type"] == "file-guard" {
+			fg = entry
+			break
+		}
+	}
+	if fg == nil {
+		t.Fatal("expected a \"file-guard\" entry in the merged response, not found")
+	}
+	if fg["family"] != "middleware" {
+		t.Errorf("expected family=middleware, got %v", fg["family"])
+	}
+	if fg["label"] != "File Guard" {
+		t.Errorf("expected label=\"File Guard\", got %v", fg["label"])
+	}
+	edges, ok := fg["edges"].(map[string]any)
+	if !ok {
+		t.Fatal("expected edges object to decode")
+	}
+	if edges["min_in"] != float64(1) || edges["max_out"] != float64(1) {
+		t.Errorf("expected edges min_in=1 max_out=1, got %v", edges)
+	}
+	fields, ok := fg["config_fields"].([]any)
+	if !ok || len(fields) != 1 {
+		t.Fatalf("expected 1 config_fields entry, got %v", fg["config_fields"])
+	}
+	if fg["executable"] != false {
+		t.Errorf("expected executable=false for middleware (workflow.go pass-through), got %v", fg["executable"])
+	}
+}
+
+// TestNodeTypesHandler_NilDBSkipsMiddlewareFamily verifies a nil db degrades
+// to "no middleware entries" rather than panicking — callers that only care
+// about agentgen/appflow (e.g. this file's other tests) can pass nil.
+func TestNodeTypesHandler_NilDBSkipsMiddlewareFamily(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
+	admin.NewNodeTypesHandler(nil).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var raw []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for _, entry := range raw {
+		if entry["family"] == "middleware" {
+			t.Errorf("expected no middleware entries with nil db, found %v", entry["type"])
+		}
+	}
+}
+
 func TestNodeTypesHandler_SortedOutput(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/admin/node-types", nil)
-	admin.NodeTypesHandler{}.ServeHTTP(w, r)
+	admin.NewNodeTypesHandler(nil).ServeHTTP(w, r)
 
 	var infos []agentgen.NodeTypeInfo
 	_ = json.Unmarshal(w.Body.Bytes(), &infos)

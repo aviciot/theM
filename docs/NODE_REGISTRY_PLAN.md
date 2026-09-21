@@ -1,5 +1,5 @@
 # Node Registry — Unify App Canvas, Agent Builder and Middleware
-# Status: Phases 1-3 COMPLETE. Phases 4-5 not started.
+# Status: Phases 1-5 COMPLETE.
 # Date: 2026-09-19
 
 ---
@@ -31,7 +31,7 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 | 2 — Extract shared registry | ✅ COMPLETE | (pending commit) |
 | 3 — Register app canvas nodes | ✅ COMPLETE | (pending commit) |
 | 4 — App canvas renders from registry | ✅ COMPLETE | (pending commit) |
-| 5 — Middleware adopts node contract | ⬜ NOT STARTED ← **next** | — |
+| 5 — Middleware adopts node contract | ✅ COMPLETE | (pending commit) |
 
 **Update this table at the end of every session.** One phase per session.
 
@@ -409,29 +409,70 @@ click-through **not performed** — flagged above, recommended before production
 
 ### Phase 5 — Middleware adopts the node contract
 
-**Middleware stays in the DB.** It gains the columns a node needs, so it can be returned in the
-same shape as a code node.
+**STATUS: COMPLETE (2026-09-21).** `go test ./...` 0 failures (full suite); `test_42` 29/29 live
+after rebuild + force-recreate of `them-go-bridge`. Backend-only by explicit user decision — no
+frontend files touched this phase (see below).
 
-Migration on `them.middleware_defs`, all nullable so existing rows keep working:
+**What was built:**
+- `db/102_middleware_defs_node_contract.sql` — adds 4 nullable columns to `them.middleware_defs`:
+  `edges`, `input_ports`, `output_ports`, `config_fields` (all JSONB). Existing rows with no
+  seeded data keep working — same fail-open precedent as `097_middleware_defs_visual.sql`. Also
+  seeds File Guard's real shape: `edges = {min_in:1, max_in:1, min_out:1, max_out:1}` (it sits
+  inline on an `orchestrator → middleware → agent` chain — one edge in, one out, not branching)
+  and `config_fields` mirroring `MiddlewareNodePanel.tsx`'s 6 real fields exactly (`enabled`,
+  `mode`, `max_file_size_mb`, `allowed_types`, `blocked_types`, `notify_on_fail`). Applied to the
+  live DB. The two other builtin rows (`cache_default`, `guard_default`) were left unseeded —
+  confirmed live to degrade to zero-value edges + empty config_fields, not an error.
+- `go/internal/admin/dal/middleware_wirings.go`: `MiddlewareDefSummary` gets 4 new
+  `json.RawMessage` fields (`Edges`, `InputPorts`, `OutputPorts`, `ConfigFields` — raw, not typed
+  as `nodedefs.EdgeRules`/`[]nodedefs.PortDef`, since this package has no dependency on
+  `internal/nodedefs` and node_types.go is the only consumer). `ListMiddlewareDefs` query/scan
+  extended; nil DB columns simply leave the field unset (`omitempty`).
+- `go/internal/admin/node_types.go`: **`NodeTypesHandler` gained a DB dependency for the first
+  time** — it was a zero-dependency `struct{}` through Phases 3-4. New `NewNodeTypesHandler(db
+  DBQuerier) NodeTypesHandler` constructor; `db` may be `nil` (degrades to "no middleware entries",
+  doesn't panic — every pre-existing agentgen/appflow-only test passes `nil`). New
+  `middlewareNodeInfo(d dal.MiddlewareDefSummary) appflow.AppCanvasNodeInfo` shapes a DB row into
+  the same JSON shape agentgen/appflow entries use (reused `appflow.AppCanvasNodeInfo` rather than
+  inventing a third struct — field-for-field match already existed). `Executable` is hardcoded
+  `false` for every middleware entry — `workflow.go`'s `case "middleware"` is still a pass-through
+  no-op (verified unchanged this phase), so "executable" would be a lie otherwise. `ServeHTTP`'s
+  merge loop gained a third pass over `dal.ListMiddlewareDefs`, tagged `withFamily(b,
+  "middleware")` — same mechanism Phase 4 added for `agentgen`/`appflow`. A middleware DB read
+  error fails open (agentgen/appflow entries still return) rather than 500ing the whole endpoint.
+- `go/internal/admin/router.go`: route registration changed from `NodeTypesHandler{}.ServeHTTP` to
+  `NewNodeTypesHandler(dbq).ServeHTTP` — `dbq` was already in scope in `BuildRouter`, no new
+  wiring needed. Route stays public/unauthenticated (unchanged) — middleware rows returned here
+  are the global/builtin catalog, same trust level as the two static Go registries.
+- Tests: `TestNodeTypesHandler_MergesMiddlewareFamily` (seeded row → `family="middleware"`, edges
+  and config_fields decode correctly, `executable=false`), `TestNodeTypesHandler_NilDBSkipsMiddlewareFamily`
+  (nil db → no middleware entries, no panic). All 4 pre-existing `node_types_test.go` tests updated
+  from `admin.NodeTypesHandler{}.ServeHTTP` to `admin.NewNodeTypesHandler(nil).ServeHTTP` —
+  behaviour unchanged (nil db was always the implicit case before this phase existed).
 
-| Column | Purpose |
-|---|---|
-| `edges JSONB` | in/out degree rules |
-| `input_ports JSONB` / `output_ports JSONB` | handles |
-| `config_fields JSONB` | typed field list so the properties panel renders itself |
+**Verified live:** `GET /api/v1/admin/node-types` returns 21 entries (18 from Phases 3-4 + 3
+middleware rows); `file-guard` entry has `family: "middleware"`, correct 1-in/1-out edges, all 6
+config_fields, `executable: false`.
 
-`/admin/node-types` merges code nodes + DB middleware into one list.
-
-**Kept:** per-tenant enable/disable, and adding a new guard by seeding a row — no deploy.
-**Dropped:** middleware as a UI special case.
-**Trade-off, stated plainly:** config-field definitions become JSONB data rather than
-compile-checked Go. Acceptable because it is what buys no-deploy seeding.
-
-**Separate and NOT in this phase:** making a middleware node actually execute inside the app
-canvas graph. Today `case "middleware"` is a pass-through that does nothing (`workflow.go:417`);
-File Guard runs only in the orchestrator and A2A paths. Wiring real execution is its own slice —
-see "Deferred" below. Phase 5 makes middleware *look and configure* like a node; it does not
-change what runs.
+**Deliberately NOT done this phase, by explicit user decision (not an oversight):**
+- **No frontend changes.** The canvas still fetches File Guard's visuals from the older, separate
+  `GET /admin/middleware-defs` call (`CanvasBuilderView.tsx`'s `mwVisualById`/`listMiddlewareDefs`)
+  — it does **not** yet read from the newly-merged `/admin/node-types` entry. Both endpoints now
+  serve overlapping data; the frontend cutover (retiring the separate fetch, per the plan's
+  "Dropped: middleware as a UI special case" goal) was explicitly deferred to a future session to
+  avoid touching File Guard's UI — a real security feature — in the same pass as a backend
+  architecture change.
+- **Making middleware actually execute inside the app-canvas graph** — confirmed unchanged this
+  phase: `internal/appflow/workflow.go`'s `case "middleware":` and `graph.go`'s `walkBranch`
+  `case "orchestrator", "middleware":` are both still pure pass-throughs (follow the first
+  outgoing edge, no side effects). File Guard still only runs via the orchestrator/A2A middleware
+  gate (`internal/middleware/gate.go`), never inside an app-canvas graph run. This was always
+  explicitly out of scope for Phase 5 (see "Deferred" below) — restated here as confirmed, not
+  assumed.
+- **`config_fields`-driven generic rendering of `MiddlewareNodePanel.tsx`** — same reasoning as
+  Phase 4's equivalent note for `FlowControlNodePanel.tsx`/`InlineNodePanel.tsx`: the panel's
+  curated form (toggle, dropdown, comma-separated-list inputs) would regress under a naive generic
+  renderer, and no such renderer exists anywhere in this codebase yet. Out of scope.
 
 ---
 

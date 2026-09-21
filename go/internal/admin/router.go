@@ -272,8 +272,10 @@ func BuildRouter(
 	r.Post("/admin/transform-assist", tf.Assist)
 
 	// Public routes — no auth required.
-	// /admin/node-types: static canvas node metadata, no tenant data.
-	r.Get("/admin/node-types", NodeTypesHandler{}.ServeHTTP)
+	// /admin/node-types: canvas node metadata (agentgen + appflow + middleware
+	// families), no tenant data — middleware_defs rows read here are the
+	// global/builtin catalog, same trust level as the two static Go registries.
+	r.Get("/admin/node-types", NewNodeTypesHandler(dbq).ServeHTTP)
 
 	return r
 }

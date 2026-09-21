@@ -199,7 +199,7 @@ Phases 1–6 are in `docs/LLM_GATEWAY_DESIGN.md` §14. Phase 1 is COMPLETE (see 
 
 ## Current migration slice
 
-**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-4 COMPLETE, Phase 5 NEXT.**
+**Node Registry unification — `docs/NODE_REGISTRY_PLAN.md`. Phases 1-5 COMPLETE. Plan closed.**
 
 Goal: a node is defined once; every canvas reads it. Today the same concept exists three ways —
 agent-builder nodes in a code registry, app-canvas nodes hardcoded in 6 places, middleware in the
@@ -211,7 +211,7 @@ DB table `them.middleware_defs`. They will drift permanently unless unified.
 | 2 | Extract shared registry into `internal/nodedefs` | ✅ COMPLETE (2026-09-19) |
 | 3 | Register the 6 app-canvas nodes (llm, condition, router, hil, fork, join) | ✅ COMPLETE (2026-09-19) |
 | 4 | App canvas renders from the registry (copy `StepNode.tsx`) | ✅ COMPLETE (2026-09-21) |
-| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ⬜ NEXT |
+| 5 | Middleware adopts the node contract — stays in DB, gains edges/ports/config_fields | ✅ COMPLETE (2026-09-21) |
 
 **Phase 2 — COMPLETE (2026-09-19).** New package `go/internal/nodedefs` holds the portable node
 metadata (`Meta` struct: label/description/emoji/color/bg_color/edges/ports/config_fields/
@@ -284,10 +284,35 @@ publish/WS/condition-routing check (29/29) is a proxy for this, not a substitute
 the actual click-through before trusting this in production. Full detail in
 `docs/NODE_REGISTRY_PLAN.md`.
 
-**Next: Phase 5** — middleware (`them.middleware_defs`) adopts the node contract: migration adds
-nullable `edges`/`input_ports`/`output_ports`/`config_fields` JSONB columns;
-`/admin/node-types` merges in a third family (`middleware`) alongside `agentgen`/`appflow`. Not
-started. Gate per `docs/NODE_REGISTRY_PLAN.md`.
+**Phase 5 — COMPLETE (2026-09-21).** Migration `db/102_middleware_defs_node_contract.sql` adds 4
+nullable columns to `them.middleware_defs` (`edges`, `input_ports`, `output_ports`,
+`config_fields`) and seeds File Guard's real shape (1-in/1-out edges; `config_fields` mirroring
+`MiddlewareNodePanel.tsx`'s 6 real fields). Applied to the live DB. `NodeTypesHandler` (backend)
+gained a DB dependency for the first time — `NewNodeTypesHandler(db)` (nil-safe, was `struct{}`
+through Phases 3-4) — and now merges a third family, `"middleware"`, sourced from
+`dal.ListMiddlewareDefs`, into `GET /admin/node-types` alongside `agentgen`/`appflow`.
+`Executable` is hardcoded `false` for every middleware entry — confirmed live that
+`workflow.go`'s `case "middleware"` is still a pass-through no-op. `go test ./...` 0 failures
+(full suite); `test_42` 29/29 live after rebuild + force-recreate of `them-go-bridge`. Verified
+live: `GET /api/v1/admin/node-types` returns 21 entries, `file-guard` tagged
+`family: "middleware"` with correct edges + 6 config_fields.
+
+**Backend-only, by explicit user decision.** No frontend files touched — the canvas still fetches
+File Guard's visuals via the older, separate `GET /admin/middleware-defs` call
+(`CanvasBuilderView.tsx`'s `mwVisualById`). Retiring that in favor of the newly-merged
+`/admin/node-types` entry (the plan's "Dropped: middleware as a UI special case" goal) is
+explicitly deferred — File Guard is a real security feature and the user did not want its UI
+touched in the same pass as this backend change. **This closes `docs/NODE_REGISTRY_PLAN.md`** —
+all 5 phases complete. Full detail in `docs/NODE_REGISTRY_PLAN.md`.
+
+**Not done / open for a future session (not urgent, not a regression):**
+- Frontend cutover of File Guard's visuals to the unified registry (above).
+- Actually executing middleware inside the app-canvas graph (`workflow.go`'s pass-through made
+  real) — was always out of scope for this plan; needs its own design.
+- A `config_fields`-driven generic form renderer — doesn't exist anywhere in this codebase yet;
+  would let `MiddlewareNodePanel.tsx`/`FlowControlNodePanel.tsx`/`InlineNodePanel.tsx` render
+  from data instead of hardcoded per-type forms, at the cost of losing today's curated dropdowns
+  and array editors unless purpose-built.
 
 **Phase 1 — COMPLETE (2026-09-19).** New table `them.app_flow_llm_overrides` (migration 101,
 applied to live DB). `appflow.Compile` now emits `AppFlowSpec.LLMNodes`; new
