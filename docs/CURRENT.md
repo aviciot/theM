@@ -1,27 +1,26 @@
 # Current Session State — the-M
-# Last updated: 2026-09-21 (Node Registry Phase 4 — COMPLETE, pending commit)
+# Last updated: 2026-09-21 (Node Registry Phase 4 — COMPLETE, pushed, HEAD d7dd731d)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 #
 # NOTE: the "Parallel design track — LLM Gateway" section below (commits 52fcec69/936ae696/
 # 4a9402e7/ed3620dc) describes work from a DIFFERENT, uncommitted session state — those commit
-# hashes are not reachable from HEAD as of this update. This session started from HEAD b2bcdf17
-# (Node Registry Phase 3, pushed) and did not touch LLM Gateway code. Do not assume the LLM
-# Gateway phases below are committed/live without checking `git log` first.
+# hashes are not reachable from HEAD as of this update. This session did not touch LLM Gateway
+# code. Do not assume the LLM Gateway phases below are committed/live without checking `git log`
+# first.
 
 ---
 
 ## HEAD
 
 Branch: `main`
-Session started from: `b2bcdf17` (Node Registry Phase 3, pushed)
-This session's work: Node Registry Phase 4 (see "Current migration slice" below) — pending commit.
+HEAD: `d7dd731d` (pushed)
 
-Recent commits at session start (newest first):
+Recent commits (newest first):
 ```
+d7dd731d  feat(node-registry): Phase 4 — app canvas renders from the registry
 b2bcdf17  docs(current): mark HEAD as pushed, Node Registry Phase 3 complete
 00415c1f  feat(node-registry): Phase 3 — register the 6 app-canvas node kinds
 ef987d17  feat(node-registry): Phase 2 — extract shared node metadata into internal/nodedefs
-35d49918  fix(gateway-ui): use marginLeft:260px on main to match sidebar layout
 118bb064  feat(node-registry): Phase 1 — runtime config split for app-canvas inline LLM nodes
 ```
 
