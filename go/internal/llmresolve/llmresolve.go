@@ -86,12 +86,10 @@ type Resolved struct {
 }
 
 // ResolveProvider resolves the API key, base URL, and pricing for provider
-// using the app -> tenant -> platform precedence: an app-scoped key (most
-// specific) wins if present; otherwise the tenant-scoped them.llm_providers
-// row; otherwise the platform-default row (tenant_id IS NULL). base_url and
-// pricing always come from the llm_providers row (tenant if matched, else
-// platform), independent of which level supplied the key, since provider_keys
-// carries no base_url/pricing of its own.
+// using the app -> tenant precedence only. Platform-default keys are NEVER
+// used as a fallback for tenant requests — tenants must configure their own
+// API keys. base_url and pricing come from the tenant row when present, else
+// from the platform row (metadata only — the platform key is not used).
 func (r *Resolver) ResolveProvider(ctx context.Context, applicationID, tenantID, provider string) (Resolved, error) {
 	appKey := ""
 	if applicationID != "" && tenantID != "" {
@@ -102,16 +100,26 @@ func (r *Resolver) ResolveProvider(ctx context.Context, applicationID, tenantID,
 		}
 	}
 
-	row := r.TenantProviderRow(ctx, tenantID, provider)
-	if row.Key == "" && row.BaseURL == "" && len(row.Pricing) == 0 {
-		row = r.PlatformProviderRow(ctx, provider)
-	}
+	tenantRow := r.TenantProviderRow(ctx, tenantID, provider)
 
+	// Key precedence: app-level → tenant-level. Platform key is NEVER used
+	// as a fallback — tenants pay for their own LLM usage.
 	key := appKey
 	if key == "" {
-		key = row.Key
+		key = tenantRow.Key
 	}
-	return Resolved{Key: key, BaseURL: row.BaseURL, Pricing: row.Pricing}, nil
+
+	// For base_url and pricing, fall back to platform metadata (not the key)
+	// when the tenant row has no values configured.
+	baseURL := tenantRow.BaseURL
+	pricing := tenantRow.Pricing
+	if baseURL == "" && len(pricing) == 0 {
+		platformRow := r.PlatformProviderRow(ctx, provider)
+		baseURL = platformRow.BaseURL
+		pricing = platformRow.Pricing
+	}
+
+	return Resolved{Key: key, BaseURL: baseURL, Pricing: pricing}, nil
 }
 
 // TenantProviderRow looks up the tenant-scoped them.llm_providers row for

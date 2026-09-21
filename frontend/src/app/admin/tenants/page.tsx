@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember, type GroupMapping, type GroupMappingInput } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan, type TenantMember, type GroupMapping, type GroupMappingInput, type LLMProviderOut } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { useRequireSuperAdmin } from '@/hooks/useRequireSuperAdmin';
@@ -60,7 +60,7 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   onPatched: (t: TenantRecord) => void;
   onDeleted: (id: string) => void;
 }) {
-  const [tab, setTab] = useState<'general' | 'idp' | 'quota' | 'members' | 'groups'>('general');
+  const [tab, setTab] = useState<'general' | 'idp' | 'quota' | 'members' | 'groups' | 'llm'>('general');
   const [displayName, setDisplayName] = useState(tenant.display_name);
   const [enabled, setEnabled] = useState(tenant.enabled);
   const [emailDomain, setEmailDomain] = useState(tenant.email_domain ?? '');
@@ -103,6 +103,11 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
   const [newGroupRole, setNewGroupRole] = useState('viewer');
   const [newGroupPriority, setNewGroupPriority] = useState(10);
   const [groupsSaving, setGroupsSaving] = useState(false);
+  const [llmProviders, setLlmProviders] = useState<LLMProviderOut[]>([]);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmSaving, setLlmSaving] = useState<Record<string, boolean>>({});
+  const [llmKeys, setLlmKeys] = useState<Record<string, string>>({});
+  const [llmMsgs, setLlmMsgs] = useState<Record<string, { ok: boolean; text: string } | null>>({});
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoMsg, setLogoMsg] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(tenant.logo_url ?? null);
@@ -155,6 +160,9 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     setNewGroupClaim('');
     setNewGroupRole('viewer');
     setNewGroupPriority(10);
+    setLlmProviders([]);
+    setLlmKeys({});
+    setLlmMsgs({});
     setDeleteConfirm(false);
     // Fetch full detail to get IdP config fields (list endpoint omits them)
     themApi.getTenant(tenant.id).then(detail => {
@@ -230,6 +238,40 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
       .catch(() => { /* quota row may not exist yet — leave form empty */ })
       .finally(() => setQuotaLoading(false));
   }, [tab, tenant.id]);
+
+  useEffect(() => {
+    if (tab !== 'llm') return;
+    setLlmLoading(true);
+    themApi.listTenantProviders(tenant.id)
+      .then(data => {
+        setLlmProviders(Array.isArray(data) ? data : []);
+        setLlmKeys({});
+      })
+      .catch(() => setLlmProviders([]))
+      .finally(() => setLlmLoading(false));
+  }, [tab, tenant.id]);
+
+  async function saveLlmProvider(name: string, defaultModel: string) {
+    const key = llmKeys[name] ?? '';
+    setLlmSaving(s => ({ ...s, [name]: true }));
+    setLlmMsgs(m => ({ ...m, [name]: null }));
+    try {
+      await themApi.upsertTenantProvider(tenant.id, name, {
+        api_key: key || undefined,
+        default_model: defaultModel,
+        enabled: true,
+      });
+      setLlmMsgs(m => ({ ...m, [name]: { ok: true, text: 'Saved' } }));
+      setLlmKeys(k => ({ ...k, [name]: '' }));
+      // Refresh provider list to show updated key_set status
+      const refreshed = await themApi.listTenantProviders(tenant.id);
+      setLlmProviders(Array.isArray(refreshed) ? refreshed : []);
+    } catch {
+      setLlmMsgs(m => ({ ...m, [name]: { ok: false, text: 'Failed to save' } }));
+    } finally {
+      setLlmSaving(s => ({ ...s, [name]: false }));
+    }
+  }
 
   async function saveGeneral() {
     setGenSaving(true); setGenMsg('');
@@ -372,13 +414,13 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
       </div>
 
       <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0', borderBottom: '1px solid rgba(255,255,255,.06)', flexWrap: 'wrap' }}>
-        {(['general', 'idp', 'quota', 'members', 'groups'] as const).map(t => (
+        {(['general', 'idp', 'quota', 'members', 'groups', 'llm'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '7px 14px', borderRadius: '8px 8px 0 0', fontSize: '13px', fontWeight: tab === t ? 600 : 400,
             background: tab === t ? 'rgba(255,255,255,.07)' : 'transparent',
             border: 'none', color: tab === t ? 'var(--tm-card-text)' : 'var(--tm-card-text-muted)', cursor: 'pointer',
           }}>
-            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : t === 'quota' ? 'Quotas' : t === 'members' ? 'Members' : 'Group Mappings'}
+            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : t === 'quota' ? 'Quotas' : t === 'members' ? 'Members' : t === 'groups' ? 'Group Mappings' : 'LLM Providers'}
           </button>
         ))}
       </div>
@@ -663,6 +705,60 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
                   {groupsMsg && <p style={{ fontSize: '12px', color: groupsMsg === 'Saved' ? '#34d399' : '#f87171', marginTop: '8px' }}>{groupsMsg}</p>}
                 </div>
               </>
+            )}
+          </>
+        )}
+
+        {tab === 'llm' && (
+          <>
+            <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: '0 0 16px 0' }}>
+              Set API keys for each LLM provider this tenant uses. Platform keys are never used as fallback — tenants must configure their own.
+            </p>
+            {llmLoading ? (
+              <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)' }}>Loading…</p>
+            ) : llmProviders.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'var(--tm-card-text-muted)' }}>No providers found. Platform admin must add providers first.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {llmProviders.map(p => (
+                  <div key={p.name} style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)', borderRadius: '10px', padding: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <div>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tm-card-text)' }}>{p.display_name}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', marginLeft: '8px', fontFamily: 'monospace' }}>{p.name}</span>
+                        {p.tenant_id ? (
+                          <span style={{ marginLeft: '8px', fontSize: '11px', fontWeight: 600, padding: '1px 7px', borderRadius: '8px', background: 'rgba(52,211,153,.12)', color: '#34d399', border: '1px solid rgba(52,211,153,.25)' }}>own key set</span>
+                        ) : (
+                          <span style={{ marginLeft: '8px', fontSize: '11px', fontWeight: 600, padding: '1px 7px', borderRadius: '8px', background: 'rgba(248,113,113,.1)', color: '#f87171', border: '1px solid rgba(248,113,113,.2)' }}>no key</span>
+                        )}
+                      </div>
+                      <span style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)' }}>{p.default_model}</span>
+                    </div>
+                    {p.api_key_masked && (
+                      <p style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', margin: '0 0 8px 0', fontFamily: 'monospace' }}>Current: {p.api_key_masked}</p>
+                    )}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="password"
+                        placeholder="Paste new API key…"
+                        value={llmKeys[p.name] ?? ''}
+                        onChange={e => setLlmKeys(k => ({ ...k, [p.name]: e.target.value }))}
+                        style={{ ...inp, flex: 1, fontFamily: 'monospace' }}
+                      />
+                      <button
+                        onClick={() => saveLlmProvider(p.name, p.default_model)}
+                        disabled={llmSaving[p.name]}
+                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: llmSaving[p.name] ? 'not-allowed' : 'pointer', opacity: llmSaving[p.name] ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                      >
+                        {llmSaving[p.name] ? 'Saving…' : 'Save Key'}
+                      </button>
+                    </div>
+                    {llmMsgs[p.name] && (
+                      <p style={{ fontSize: '12px', color: llmMsgs[p.name]?.ok ? '#34d399' : '#f87171', margin: '6px 0 0 0' }}>{llmMsgs[p.name]?.text}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </>
         )}

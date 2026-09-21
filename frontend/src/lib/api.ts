@@ -113,6 +113,8 @@ export type {
   GatewayPolicy,
   GatewayPolicyInput,
   GatewayRequest,
+  LLMProviderOut,
+  LLMProviderUpsertInput,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -197,6 +199,8 @@ import type {
   GatewayPolicy,
   GatewayPolicyInput,
   GatewayRequest,
+  LLMProviderOut,
+  LLMProviderUpsertInput,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -746,4 +750,14 @@ export const themApi = {
     api.put<GatewayPolicy>('/admin/gateway/policy', body),
   listGatewayRequests: (limit = 100) =>
     api.get<GatewayRequest[]>(`/admin/gateway/requests?limit=${limit}`),
+
+  // Platform LLM providers (super-admin)
+  listPlatformProviders: () =>
+    api.get<LLMProviderOut[]>('/admin/llm-providers'),
+
+  // Tenant-scoped LLM providers
+  listTenantProviders: (tenantId: string) =>
+    api.get<LLMProviderOut[]>(`/admin/tenants/${tenantId}/llm-providers`),
+  upsertTenantProvider: (tenantId: string, name: string, body: LLMProviderUpsertInput) =>
+    api.put<LLMProviderOut>(`/admin/tenants/${tenantId}/llm-providers/${name}`, body),
 };

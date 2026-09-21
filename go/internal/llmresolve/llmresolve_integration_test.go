@@ -147,9 +147,12 @@ func TestResolveProvider_FallsBackToTenantWhenNoAppKey(t *testing.T) {
 	}
 }
 
-// TestResolveProvider_FallsBackToPlatformWhenNoAppOrTenantKey verifies the
-// final fallback: the platform-default llm_providers row (tenant_id IS NULL).
-func TestResolveProvider_FallsBackToPlatformWhenNoAppOrTenantKey(t *testing.T) {
+// TestResolveProvider_NoPlatformKeyFallback verifies that when neither the app
+// nor the tenant has a key for a provider, the platform-default key is NOT
+// used as a fallback. Tenants must configure their own keys. The resolved key
+// must be empty; base_url and pricing from the platform row are still returned
+// (metadata only — not the key).
+func TestResolveProvider_NoPlatformKeyFallback(t *testing.T) {
 	pool := integrationPool(t)
 	tenantID, appID := setupTenantAndApp(t, pool, "inttest-llmr-plat")
 	ctx := context.Background()
@@ -159,8 +162,8 @@ func TestResolveProvider_FallsBackToPlatformWhenNoAppOrTenantKey(t *testing.T) {
 		pool.Exec(context.Background(), `DELETE FROM them.llm_providers WHERE name = $1 AND tenant_id IS NULL`, provider) //nolint:errcheck
 	})
 	_, err := pool.Exec(ctx,
-		`INSERT INTO them.llm_providers (name, display_name, default_model, api_key_encrypted, tenant_id, enabled)
-		 VALUES ($1,'Test Provider','m',$2,NULL,true)`,
+		`INSERT INTO them.llm_providers (name, display_name, default_model, api_key_encrypted, base_url, model_pricing, tenant_id, enabled)
+		 VALUES ($1,'Test Provider','m',$2,'https://api.example.com','{"m":{"input":1,"output":2}}'::jsonb,NULL,true)`,
 		provider, mustEncrypt(t, "platform-key"))
 	if err != nil {
 		t.Fatalf("insert platform llm_providers row: %v", err)
@@ -171,8 +174,16 @@ func TestResolveProvider_FallsBackToPlatformWhenNoAppOrTenantKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProvider: %v", err)
 	}
-	if resolved.Key != "platform-key" {
-		t.Errorf("want platform-default key, got %q", resolved.Key)
+	// Platform key must NOT be used — tenant pays for their own LLM usage.
+	if resolved.Key != "" {
+		t.Errorf("want empty key (platform key must not fall back), got %q", resolved.Key)
+	}
+	// base_url and pricing from the platform row should still be available.
+	if resolved.BaseURL != "https://api.example.com" {
+		t.Errorf("want platform base_url in metadata, got %q", resolved.BaseURL)
+	}
+	if _, ok := resolved.Pricing["m"]; !ok {
+		t.Error("want platform pricing metadata available")
 	}
 }
 

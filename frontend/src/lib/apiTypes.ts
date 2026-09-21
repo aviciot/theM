@@ -1144,3 +1144,23 @@ export interface GatewayRequest {
   streamed: boolean;
   created_at: string;
 }
+
+export interface LLMProviderOut {
+  id: number;
+  name: string;
+  display_name: string;
+  api_key_set: boolean;
+  api_key_masked?: string | null;
+  base_url?: string | null;
+  default_model: string;
+  model_pricing: Record<string, unknown>;
+  enabled: boolean;
+  tenant_id?: string | null;
+}
+
+export interface LLMProviderUpsertInput {
+  api_key?: string;
+  base_url?: string | null;
+  default_model: string;
+  enabled?: boolean;
+}
