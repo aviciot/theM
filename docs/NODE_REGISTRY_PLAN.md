@@ -27,11 +27,11 @@ DB — in one shape. The canvas draws them all identically and does not care whe
 
 | Phase | Status | Commit |
 |---|---|---|
-| 1 — Runtime config split | ✅ COMPLETE | (pending commit) |
-| 2 — Extract shared registry | ✅ COMPLETE | (pending commit) |
-| 3 — Register app canvas nodes | ✅ COMPLETE | (pending commit) |
-| 4 — App canvas renders from registry | ✅ COMPLETE | (pending commit) |
-| 5 — Middleware adopts node contract | ✅ COMPLETE | (pending commit) |
+| 1 — Runtime config split | ✅ COMPLETE | `118bb064` |
+| 2 — Extract shared registry | ✅ COMPLETE | `ef987d17` |
+| 3 — Register app canvas nodes | ✅ COMPLETE | `00415c1f` |
+| 4 — App canvas renders from registry | ✅ COMPLETE | `d7dd731d` |
+| 5 — Middleware adopts node contract | ✅ COMPLETE | `74bd54a7` |
 
 **Update this table at the end of every session.** One phase per session.
 
