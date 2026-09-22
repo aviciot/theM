@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import type { AppDefinition, ComponentDefinitionSummary } from '@/lib/api';
 import type { NodeDef } from '@/lib/nodeRegistry';
 import { C } from '../constants';
@@ -30,6 +31,7 @@ export function CanvasPalette({
   activeDef: AppDefinition | null;
   onNewDraft: () => void;
 }) {
+  const [agentSearch, setAgentSearch] = useState('');
   return (
     <div style={{ width: compPanelWidth, flexShrink: 0, display: 'flex', position: 'relative' }}>
       <div className="comp-panel" style={{ flex: 1, background: 'rgba(0,0,0,0.2)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -50,37 +52,6 @@ export function CanvasPalette({
             </div>
           ))}
         </div>
-
-        {/* Component kinds */}
-        {(['orchestrator', 'agent', 'middleware'] as const).map(kind => {
-          const items = componentDefs.filter(cd => cd.kind === kind);
-          if (items.length === 0) return null;
-          const kindColor = kind === 'orchestrator' ? '99,102,241' : kind === 'agent' ? '74,222,128' : '245,158,11';
-          const kindIconColor = kind === 'orchestrator' ? '#818cf8' : kind === 'agent' ? C.green : '#f59e0b';
-          const defaultKindIcon = kind === 'orchestrator' ? 'hub' : kind === 'agent' ? 'smart_toy' : 'shield';
-          return (
-            <div key={kind} style={{ padding: '0 8px 12px' }}>
-              <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
-              {items.map(cd => {
-                const itemIcon = kind === 'agent' ? (agentIconBySlug.get(cd.name) ?? defaultKindIcon) : kind === 'middleware' ? (cd.name.includes('guard') ? 'shield' : 'bolt') : defaultKindIcon;
-                return (
-                  <div
-                    key={cd.id}
-                    draggable
-                    onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{itemIcon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
-                      {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
 
         {/* Flow Control nodes — driven by GET /admin/node-types (appflow family) */}
         <div style={{ padding: '0 8px 12px' }}>
@@ -119,6 +90,116 @@ export function CanvasPalette({
             </div>
           ))}
         </div>
+
+        {/* Middleware — component kind */}
+        {(['middleware'] as const).map(kind => {
+          const items = componentDefs.filter(cd => cd.kind === kind);
+          if (items.length === 0) return null;
+          const kindColor = '245,158,11';
+          const kindIconColor = '#f59e0b';
+          const defaultKindIcon = 'shield';
+          return (
+            <div key={kind} style={{ padding: '0 8px 12px' }}>
+              <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
+              {items.map(cd => {
+                const itemIcon = cd.name.includes('guard') ? 'shield' : 'bolt';
+                return (
+                  <div
+                    key={cd.id}
+                    draggable
+                    onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{itemIcon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
+                      {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+
+        {/* Orchestrators — component kind */}
+        {(['orchestrator'] as const).map(kind => {
+          const items = componentDefs.filter(cd => cd.kind === kind);
+          if (items.length === 0) return null;
+          const kindColor = '99,102,241';
+          const kindIconColor = '#818cf8';
+          const defaultKindIcon = 'hub';
+          return (
+            <div key={kind} style={{ padding: '0 8px 12px' }}>
+              <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
+              {items.map(cd => (
+                <div
+                  key={cd.id}
+                  draggable
+                  onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{defaultKindIcon}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
+                    {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+
+        {/* Agents — searchable + scrollable since this list can grow large */}
+        {(() => {
+          const agents = componentDefs.filter(cd => cd.kind === 'agent');
+          if (agents.length === 0) return null;
+          const filtered = agentSearch.trim()
+            ? agents.filter(cd =>
+                cd.display_name.toLowerCase().includes(agentSearch.trim().toLowerCase()) ||
+                cd.name.toLowerCase().includes(agentSearch.trim().toLowerCase()))
+            : agents;
+          return (
+            <div style={{ padding: '0 8px 12px' }}>
+              <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>Agents</div>
+              <div style={{ padding: '0 8px 6px' }}>
+                <input
+                  type="text"
+                  value={agentSearch}
+                  onChange={e => setAgentSearch(e.target.value)}
+                  placeholder="Search agents…"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6,
+                    border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.25)',
+                    color: C.text, fontSize: 12, outline: 'none',
+                  }}
+                />
+              </div>
+              <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                {filtered.length === 0 && (
+                  <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 10px' }}>No agents match &quot;{agentSearch}&quot;</div>
+                )}
+                {filtered.map(cd => {
+                  const itemIcon = agentIconBySlug.get(cd.name) ?? 'smart_toy';
+                  return (
+                    <div
+                      key={cd.id}
+                      draggable
+                      onDragStart={e => { e.dataTransfer.setData('nodeType', 'agent'); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: 'rgba(74,222,128,0.04)', border: '1px solid rgba(74,222,128,0.12)' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16, color: C.green }}>{itemIcon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
+                        {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {!activeDef && (
           <div style={{ padding: '20px 16px', textAlign: 'center' }}>
