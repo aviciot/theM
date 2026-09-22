@@ -754,10 +754,18 @@ export const themApi = {
   // Platform LLM providers (super-admin)
   listPlatformProviders: () =>
     api.get<LLMProviderOut[]>('/admin/llm-providers'),
+  patchPlatformProvider: (id: number, body: { api_key?: string; enabled?: boolean; default_model?: string }) =>
+    api.patch<LLMProviderOut>(`/admin/llm-providers/${id}`, body),
 
-  // Tenant-scoped LLM providers
+  // Tenant-scoped LLM providers (super-admin managing other tenants)
   listTenantProviders: (tenantId: string) =>
     api.get<LLMProviderOut[]>(`/admin/tenants/${tenantId}/llm-providers`),
   upsertTenantProvider: (tenantId: string, name: string, body: LLMProviderUpsertInput) =>
     api.put<LLMProviderOut>(`/admin/tenants/${tenantId}/llm-providers/${name}`, body),
+
+  // Self-service LLM providers (tenant admin managing own tenant)
+  listMyLLMProviders: () =>
+    api.get<LLMProviderOut[]>('/admin/my/llm-providers'),
+  upsertMyLLMProvider: (name: string, body: LLMProviderUpsertInput) =>
+    api.put<LLMProviderOut>(`/admin/my/llm-providers/${name}`, body),
 };

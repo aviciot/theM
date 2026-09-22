@@ -4,6 +4,7 @@ export interface TheMUser {
   username: string;
   name: string;
   role: string;
+  tenant_id?: string;
 }
 
 export interface TokenResponse {

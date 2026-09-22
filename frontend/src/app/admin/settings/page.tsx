@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type SystemAgentRoleOut, type SystemAgentRoleIn, type MonitoringConfig } from '@/lib/api';
+import { themApi, type SystemAgentRoleOut, type SystemAgentRoleIn, type MonitoringConfig, type LLMProviderOut, type LLMProviderUpsertInput } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { ROLE_DEFAULTS, MONITORING_DEFAULTS } from './settingsConstants';
 import { RoleCard, type RoleForm } from './RoleCard';
 import { MonitoringPanel } from './MonitoringPanel';
@@ -17,9 +18,12 @@ function roleToForm(r: SystemAgentRoleOut): RoleForm {
   };
 }
 
-type SettingsTab = 'system_agents' | 'monitoring';
+type SettingsTab = 'system_agents' | 'monitoring' | 'llm_providers';
 
 export default function AdminSettingsPage() {
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.role === 'super_admin';
+
   const [activeTab, setActiveTab] = useState<SettingsTab>('system_agents');
   const [loading,   setLoading]   = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -31,6 +35,12 @@ export default function AdminSettingsPage() {
   const [monConfig,  setMonConfig]  = useState<MonitoringConfig>(MONITORING_DEFAULTS);
   const [monSaving,  setMonSaving]  = useState(false);
   const [monSaveMsg, setMonSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const [providers,    setProviders]    = useState<LLMProviderOut[]>([]);
+  const [provLoading,  setProvLoading]  = useState(false);
+  const [provApiKeys,  setProvApiKeys]  = useState<Record<string, string>>({});
+  const [provSaving,   setProvSaving]   = useState<Record<string, boolean>>({});
+  const [provSaveMsgs, setProvSaveMsgs] = useState<Record<string, { ok: boolean; text: string } | null>>({});
 
   useEffect(() => {
     const agentsFetch = themApi.getSystemAgents()
@@ -118,6 +128,53 @@ export default function AdminSettingsPage() {
     }
   }
 
+  async function loadProviders() {
+    setProvLoading(true);
+    try {
+      const list = isSuperAdmin
+        ? await themApi.listPlatformProviders()
+        : await themApi.listMyLLMProviders();
+      setProviders(list);
+    } catch {
+      setProviders([]);
+    } finally {
+      setProvLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === 'llm_providers') loadProviders();
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleSaveProvider(name: string) {
+    const apiKey = provApiKeys[name] ?? '';
+    setProvSaving((p) => ({ ...p, [name]: true }));
+    setProvSaveMsgs((p) => ({ ...p, [name]: null }));
+    try {
+      const prov = providers.find((p) => p.name === name);
+      if (isSuperAdmin) {
+        if (!prov?.id) throw new Error('provider id missing');
+        await themApi.patchPlatformProvider(prov.id, {
+          ...(apiKey ? { api_key: apiKey } : {}),
+        });
+      } else {
+        const body: LLMProviderUpsertInput = {
+          default_model: prov?.default_model ?? '',
+          ...(apiKey ? { api_key: apiKey } : {}),
+          enabled: prov?.enabled ?? true,
+        };
+        await themApi.upsertMyLLMProvider(name, body);
+      }
+      setProvApiKeys((p) => ({ ...p, [name]: '' }));
+      setProvSaveMsgs((p) => ({ ...p, [name]: { ok: true, text: 'Saved' } }));
+      await loadProviders();
+    } catch (e: unknown) {
+      setProvSaveMsgs((p) => ({ ...p, [name]: { ok: false, text: e instanceof Error ? e.message : 'Save failed' } }));
+    } finally {
+      setProvSaving((p) => ({ ...p, [name]: false }));
+    }
+  }
+
   return (
     <AuthGuard>
       <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)' }}>
@@ -131,8 +188,9 @@ export default function AdminSettingsPage() {
 
             <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid rgba(132,157,188,.12)', marginBottom: '0' }}>
               {([
-                { id: 'system_agents' as SettingsTab, label: 'System Agents', icon: 'smart_toy' },
-                { id: 'monitoring'    as SettingsTab, label: 'Monitoring',    icon: 'monitoring' },
+                { id: 'system_agents'  as SettingsTab, label: 'System Agents',  icon: 'smart_toy' },
+                { id: 'monitoring'     as SettingsTab, label: 'Monitoring',      icon: 'monitoring' },
+                { id: 'llm_providers'  as SettingsTab, label: 'LLM Providers',   icon: 'key' },
               ]).map((tab) => {
                 const active = activeTab === tab.id;
                 return (
@@ -148,6 +206,60 @@ export default function AdminSettingsPage() {
           <div style={{ padding: '28px 32px 64px', maxWidth: '860px' }}>
             {activeTab === 'monitoring' && (
               <MonitoringPanel monConfig={monConfig} setMonConfig={setMonConfig} monSaving={monSaving} monSaveMsg={monSaveMsg} onSave={handleSaveMonitoring} />
+            )}
+
+            {activeTab === 'llm_providers' && (
+              <>
+                <p style={{ fontSize: '13px', color: 'var(--tm-text-muted)', margin: '0 0 24px 0', lineHeight: 1.5 }}>
+                  {isSuperAdmin
+                    ? 'Platform-level LLM provider keys used by the-M itself for internal system operations.'
+                    : 'Your organisation\'s LLM provider keys. The-M never uses platform keys for your tenant calls — you must supply your own.'}
+                </p>
+                {provLoading && <div style={{ padding: '40px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>Loading…</div>}
+                {!provLoading && providers.length === 0 && (
+                  <div style={{ padding: '16px', borderRadius: '10px', background: 'rgba(132,157,188,0.06)', color: 'var(--tm-card-text-muted)', fontSize: '13px' }}>
+                    No LLM providers configured.
+                  </div>
+                )}
+                {!provLoading && providers.map((prov) => (
+                  <div key={prov.name} style={{ background: 'var(--tm-card-bg)', border: '1px solid var(--tm-card-border)', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: '15px', color: '#fff' }}>{prov.display_name || prov.name}</span>
+                        <span style={{ marginLeft: '10px', fontSize: '12px', padding: '2px 8px', borderRadius: '20px', background: prov.enabled ? 'rgba(74,192,136,0.12)' : 'rgba(132,157,188,0.1)', color: prov.enabled ? '#4ac088' : 'var(--tm-text-muted)' }}>
+                          {prov.enabled ? 'enabled' : 'disabled'}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>
+                        {prov.api_key_set
+                          ? (prov.api_key_masked ? `Key: ${prov.api_key_masked}` : 'Key set')
+                          : 'No key set'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="password"
+                        placeholder="New API key (leave blank to keep current)"
+                        value={provApiKeys[prov.name] ?? ''}
+                        onChange={(e) => setProvApiKeys((p) => ({ ...p, [prov.name]: e.target.value }))}
+                        style={{ flex: 1, background: 'var(--tm-input-bg, rgba(0,0,0,0.3))', border: '1px solid rgba(132,157,188,0.2)', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '13px' }}
+                      />
+                      <button
+                        onClick={() => handleSaveProvider(prov.name)}
+                        disabled={!!provSaving[prov.name]}
+                        style={{ padding: '8px 16px', background: 'var(--tm-accent)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: provSaving[prov.name] ? 'not-allowed' : 'pointer', opacity: provSaving[prov.name] ? 0.6 : 1 }}
+                      >
+                        {provSaving[prov.name] ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                    {provSaveMsgs[prov.name] && (
+                      <p style={{ margin: '6px 0 0', fontSize: '12px', color: provSaveMsgs[prov.name]!.ok ? '#4ac088' : '#e05252' }}>
+                        {provSaveMsgs[prov.name]!.text}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </>
             )}
 
             {activeTab === 'system_agents' && (

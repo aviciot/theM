@@ -207,6 +207,9 @@ func BuildRouter(
 
 				gatewayAdmin := NewGatewayHandler(dbq)
 				gatewayAdmin.Routes(tenantScoped)
+
+				// Tenant-admin self-service LLM provider key management.
+				llmProviders.TenantScopedRoutes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

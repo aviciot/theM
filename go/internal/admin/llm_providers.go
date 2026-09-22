@@ -9,6 +9,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // LLMProvidersHandler handles /api/v1/admin/llm-providers CRUD routes.
@@ -221,6 +222,51 @@ func (h *LLMProvidersHandler) UpsertForTenant(w http.ResponseWriter, r *http.Req
 	name := chi.URLParam(r, "name")
 	if tenantID == "" || name == "" {
 		writeError(w, http.StatusBadRequest, "missing tenant id or provider name")
+		return
+	}
+
+	var body service.LLMProviderCreate
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	out, err := h.svc.UpsertForTenant(r.Context(), tenantID, name, body)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// TenantScopedRoutes mounts LLM provider self-service endpoints for tenant admins.
+// The tenant ID comes from the JWT via AdminTenantMiddleware (already in context).
+// Mounted in the tenantScoped group so RequireTenantAdmin + AdminTenantMiddleware apply.
+func (h *LLMProvidersHandler) TenantScopedRoutes(r chi.Router) {
+	r.Get("/my/llm-providers", h.ListMine)
+	r.Put("/my/llm-providers/{name}", h.UpsertMine)
+}
+
+// ListMine handles GET /admin/my/llm-providers — returns merged providers for the caller's tenant.
+func (h *LLMProvidersHandler) ListMine(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	providers, err := h.svc.ListForTenant(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, providers)
+}
+
+// UpsertMine handles PUT /admin/my/llm-providers/{name} — upserts a provider key for the caller's tenant.
+func (h *LLMProvidersHandler) UpsertMine(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "missing provider name")
 		return
 	}
 
