@@ -27,12 +27,61 @@ export type GraphNode =
   | { kind: 'orchestrator'; run: RunDetail }
   | { kind: 'iteration';    iteration: number }
   | { kind: 'agent';        step: RunStep; task?: TaskOut; artifacts: ArtifactOut[] }
+  | { kind: 'dagnode';      step: RunStep }
   | { kind: 'summary';      artifact: ArtifactOut }
   | { kind: 'answer';       artifact: ArtifactOut };
 
 export type GraphRow = { nodes: GraphNode[]; parallel: boolean };
 
 export function buildGraph(detail: RunDetail, tasks: TaskOut[], artifacts: ArtifactOut[]): GraphRow[] {
+  // AppFlow (Graph-mode) steps are identified by a non-empty node_id — see
+  // db/103_run_steps_appflow_trace.sql. Orchestrator-mode steps never set it.
+  // These two shapes don't mix within one run, so branch once at the top
+  // rather than threading a check through every helper below.
+  if (detail.steps.some(s => s.node_id)) {
+    return buildDagGraph(detail);
+  }
+  return buildOrchestratorGraph(detail, tasks, artifacts);
+}
+
+// buildDagGraph renders an AppFlow run as the sequence of nodes in the order
+// they actually started (started_at) — not a true branch/merge layout (no
+// edges are drawn). This is deliberately the same "one row at a time, or a
+// parallel row for concurrent nodes" model buildOrchestratorGraph already
+// uses for parallel agents, reused rather than replaced, per
+// docs/APP_CANVAS_DEBUG_PLAN.md's "fix the existing Flow tree, don't build a
+// second visualizer" direction. Nodes that started within 1 second of each
+// other are grouped into one parallel row — an approximation for fork
+// branches, which the trace data (started_at only, no explicit branch/group
+// id) can't distinguish more precisely from two nodes that simply started in
+// quick succession.
+function buildDagGraph(detail: RunDetail): GraphRow[] {
+  const rows: GraphRow[] = [];
+  rows.push({ nodes: [{ kind: 'user', text: detail.goal || detail.user_message || '' }], parallel: false });
+  rows.push({ nodes: [{ kind: 'orchestrator', run: detail }], parallel: false });
+
+  const steps = [...detail.steps].sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+  const groupWindowMs = 1000;
+  let i = 0;
+  while (i < steps.length) {
+    const group = [steps[i]];
+    const groupStart = new Date(steps[i].started_at).getTime();
+    let j = i + 1;
+    while (j < steps.length && new Date(steps[j].started_at).getTime() - groupStart < groupWindowMs) {
+      group.push(steps[j]);
+      j++;
+    }
+    rows.push({
+      nodes: group.map(step => ({ kind: 'dagnode', step } as GraphNode)),
+      parallel: group.length > 1,
+    });
+    i = j;
+  }
+
+  return rows;
+}
+
+function buildOrchestratorGraph(detail: RunDetail, tasks: TaskOut[], artifacts: ArtifactOut[]): GraphRow[] {
   const rows: GraphRow[] = [];
 
   // Row 0: user message

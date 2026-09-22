@@ -411,12 +411,16 @@ func (a *AppFlowActivities) TraceNodeEventActivity(ctx context.Context, input Tr
 	return nil
 }
 
-// emitTrace publishes one node_start/node_done/node_error event. Shared by
+// emitTrace publishes one node_start/node_done/node_error event and persists
+// it to them.run_steps (docs/APP_CANVAS_DEBUG_PLAN.md Phase 3 — durable
+// storage; Phase 2 added only the live Redis publish below). Shared by
 // TraceNodeEventActivity and the Router/HIL/Agent/Inline LLM activities, which
-// call it inline since they already do I/O in this activity. No-op if
-// StreamPub is nil; never returns an error — tracing must never affect node
-// execution (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2).
+// call it inline since they already do I/O in this activity. Never returns an
+// error — tracing must never affect node execution (Phase 2's rule, extended
+// to the DB write here for the same reason).
 func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, eventType, detail string) {
+	a.persistTrace(ctx, runID, nodeID, kind, eventType, detail)
+
 	if a.StreamPub == nil {
 		return
 	}
@@ -432,6 +436,50 @@ func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, 
 	}
 	raw, _ := json.Marshal(payload)
 	_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
+}
+
+// persistTrace upserts a them.run_steps row for one AppFlow DAG node
+// execution, keyed on (run_id, node_id) (unique partial index added by
+// db/103_run_steps_appflow_trace.sql). node_start inserts a "running" row;
+// node_done/node_error update that same row to its terminal status, mirroring
+// the insert-then-update lifecycle orchestrator-mode steps already use.
+// Iteration is always 0 (not-applicable sentinel — a DAG node has no loop
+// iteration). No-op if a.DB is nil (matches every other activity's nil-DB
+// guard); errors are logged-and-discarded, never surfaced to the caller,
+// since a.DB is the BYPASSRLS Admin pool and this must never fail the node
+// execution it describes.
+func (a *AppFlowActivities) persistTrace(ctx context.Context, runID, nodeID, kind, eventType, detail string) {
+	if a.DB == nil || nodeID == "" {
+		return
+	}
+	switch eventType {
+	case "node_start":
+		const q = `
+			INSERT INTO them.run_steps (run_id, iteration, node_id, node_kind, status, started_at)
+			VALUES ($1::uuid, 0, $2, $3, 'running', now())
+			ON CONFLICT (run_id, node_id) WHERE node_id IS NOT NULL
+			DO UPDATE SET node_kind = EXCLUDED.node_kind, status = 'running', started_at = now(),
+				ended_at = NULL, error = NULL`
+		_, _ = a.DB.Exec(ctx, q, runID, nodeID, kind)
+	case "node_done", "node_error":
+		status := "completed"
+		if eventType == "node_error" {
+			status = "failed"
+		}
+		const q = `
+			UPDATE them.run_steps
+			SET status = $3, output = NULLIF($4, ''), error = NULLIF($5, ''),
+				ended_at = now(),
+				latency_ms = EXTRACT(EPOCH FROM (now() - started_at))::integer * 1000
+			WHERE run_id = $1::uuid AND node_id = $2`
+		var output, errMsg string
+		if eventType == "node_error" {
+			errMsg = detail
+		} else {
+			output = detail
+		}
+		_, _ = a.DB.Exec(ctx, q, runID, nodeID, status, output, errMsg)
+	}
 }
 
 // FinalizeRunActivity updates the run's DB status and publishes a terminal event

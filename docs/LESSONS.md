@@ -933,3 +933,28 @@ enough; all three looked correct.
 
 **Also verified while here:** `@xyflow`'s `addEdge` compares `sourceHandle` alongside
 source/target, so it does NOT dedupe a condition's two branches landing on the same node.
+
+## `them.run_steps.tool_call_id`: NOT NULL column never populated by its writer (found 2026-09-22)
+
+`db/001_schema.sql` declared `tool_call_id TEXT NOT NULL` with no default, but
+`internal/runrecorder.RecordAgentStep` — the only writer — never included it in its INSERT column
+list. This means every orchestrator-mode `run_steps` insert should have violated the NOT NULL
+constraint against a real Postgres instance, for as long as that mismatch existed.
+
+**Why the test suite never caught it:** `TestRecordAgentStep_insertsCorrectly`
+(`internal/runrecorder/recorder_test.go`) uses a `mockDB` that only records the SQL string and args
+passed to `Exec` — it never executes against real Postgres, so a NOT NULL violation can never
+surface there. Found only because App Canvas Debug Mode Phase 3 needed to extend this same table
+and a wider audit of it (schema + every reader/writer) was done first.
+
+**Fix (migration `db/103_run_steps_appflow_trace.sql`):** dropped the column outright rather than
+adding a default. Confirmed first that no reader needed it for anything beyond a
+`COALESCE(tool_call_id, '')` display field — nothing correlates on it.
+
+**Watch for:** any column added as `NOT NULL` to a table whose only writer is covered by a
+mock-only unit test. A schema-level constraint violation is invisible to that kind of test by
+construction — it needs either an integration test against real Postgres, or a manual check of the
+live DB, to ever surface. Consider this a standing reason to spot-check "does every NOT NULL column
+in a hot-path table actually get written" before trusting a table's shape from migrations alone —
+this repo already has a documented precedent (docs/CURRENT.md's `them-agent-runtime` crash-loop
+entry, 2026-09-22) of exactly this class of drift going unnoticed for a long time.

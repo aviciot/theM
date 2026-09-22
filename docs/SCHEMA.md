@@ -196,21 +196,43 @@ One row per orchestrator invocation (user goal → final answer).
 ---
 
 ## them.run_steps
-One row per agent (tool) invocation within a run. Kept for backward compatibility; new runs also create `them.tasks` child rows.
+One row per agent (tool) invocation within an orchestrator-mode run, OR one row
+per DAG node execution within an AppFlow (Graph-mode) run (migration 103 —
+App Canvas Debug Mode Phase 3, `docs/APP_CANVAS_DEBUG_PLAN.md`). The two shapes
+never mix within one run: orchestrator-mode rows populate `agent_slug`/
+`iteration`; AppFlow rows populate `node_id`/`node_kind` instead and use
+`iteration=0` as a not-applicable sentinel. Kept for backward compatibility;
+new orchestrator-mode runs also create `them.tasks` child rows.
+
+For an AppFlow node, the row is inserted (`status='running'`) when the node's
+`node_start` trace event fires, then updated in place — not a second row — to
+`completed`/`failed` when its `node_done`/`node_error` event fires. Keyed by a
+partial unique index on `(run_id, node_id) WHERE node_id IS NOT NULL`, so this
+never constrains orchestrator-mode rows (`node_id` always NULL there, and
+`run_id` legitimately repeats across many of them).
 
 | Column | Type | Purpose |
 |---|---|---|
 | id | UUID PK | |
 | run_id | UUID FK→runs | parent run |
-| agent_id | UUID FK→agents ON DELETE SET NULL | NULL if agent deleted |
-| iteration | INT | which loop iteration (1-indexed) |
-| agent_slug | TEXT | denormalized — survives agent deletion |
-| tool_call_id | TEXT | LLM-provided tool_use ID |
-| input | JSONB | tool input arguments |
-| output | TEXT | agent response text |
+| agent_id | UUID FK→agents ON DELETE SET NULL | NULL if agent deleted; orchestrator-mode only, never populated today |
+| iteration | INT, default 0 | orchestrator-mode: which loop iteration (1-indexed). AppFlow-mode: always 0 (not applicable) |
+| agent_slug | TEXT | orchestrator-mode only — denormalized, survives agent deletion |
+| node_id | TEXT, nullable | AppFlow-mode only — the canvas node's ID (migration 103) |
+| node_kind | TEXT, nullable | AppFlow-mode only — `router`/`hil`/`agent`/`llm`/`condition`/`fork`/`join` (migration 103) |
+| input | JSONB | orchestrator-mode: tool input arguments. Unused by AppFlow-mode today |
+| output | TEXT | orchestrator-mode: agent response text. AppFlow-mode: short kind-specific detail (e.g. `branch=true`), never a full prompt/response |
 | status | TEXT | `pending/running/completed/failed/timeout` |
-| latency_ms | INT | adapter round-trip time |
-| created_at | TIMESTAMPTZ | |
+| error | TEXT | failure detail (both modes) |
+| latency_ms | INT | orchestrator-mode: adapter round-trip time. AppFlow-mode: node_start → node_done/node_error wall time |
+| started_at | TIMESTAMPTZ | |
+| ended_at | TIMESTAMPTZ, nullable | |
+
+`tool_call_id` (formerly `TEXT NOT NULL`) was dropped by migration 103 — it was
+never populated by the only writer (`internal/runrecorder.RecordAgentStep`),
+so every insert should have been failing the NOT NULL constraint against a
+real Postgres instance. Not caught earlier because the unit test mocked the
+DB. No reader depended on it for anything beyond a always-empty display field.
 
 ---
 
@@ -688,6 +710,7 @@ Key relationships:
 | `db/088_allowed_principals.sql` | Phase 3 principal guard: `them.entry_points.allowed_principals TEXT NOT NULL DEFAULT 'internal' CHECK (IN ('internal','external','both'))`. Controls which principal types (internal token/user_jwt, external backend+X-External-User, or both) may call each EP. Default 'internal' is safe for all existing EPs. |
 | `db/097_middleware_defs_visual.sql` | Phase 1 middleware node registry: adds `emoji TEXT`, `color TEXT`, `bg_color TEXT` to `them.middleware_defs`. Seeds File Guard with `🛡️` / `#f59e0b` / `rgba(245,158,11,0.08)`. |
 | `db/101_app_flow_llm_overrides.sql` | Node Registry Phase 1: `them.app_flow_llm_overrides` table — per-app, per-node provider+model override for app-canvas inline LLM nodes, applied at workflow start ahead of the canvas-compiled value. |
+| `db/103_run_steps_appflow_trace.sql` | App Canvas Debug Mode Phase 3: `them.run_steps` gains `node_id`/`node_kind` (nullable) for AppFlow DAG node traces + a partial unique index on `(run_id, node_id) WHERE node_id IS NOT NULL`. Also drops the broken `tool_call_id TEXT NOT NULL` column (never populated by its writer — every insert should have been failing). |
 
 ---
 

@@ -134,7 +134,10 @@ export interface RunStep {
   id: string;
   iteration: number;
   agent_slug: string;
-  tool_call_id: string;
+  // node_id/node_kind identify an AppFlow (Graph-mode) DAG node execution.
+  // Empty for orchestrator-mode rows, which use agent_slug/iteration instead.
+  node_id: string;
+  node_kind: string;
   input: Record<string, unknown>;
   output: string | null;
   status: string;

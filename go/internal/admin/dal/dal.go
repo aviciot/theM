@@ -391,19 +391,23 @@ type SignalInput struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// RunStep is one step in a run from them.run_steps.
+// RunStep is one step in a run from them.run_steps. Orchestrator-mode rows
+// populate AgentSlug/Iteration; AppFlow (Graph-mode) rows populate NodeID/
+// NodeKind instead and use Iteration=0 as a not-applicable sentinel (see
+// db/103_run_steps_appflow_trace.sql).
 type RunStep struct {
-	ID         string `json:"id"`
-	Iteration  int    `json:"iteration"`
-	AgentSlug  string `json:"agent_slug,omitempty"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Input      any    `json:"input,omitempty"`
-	Output     string `json:"output,omitempty"`
-	Status     string `json:"status,omitempty"`
-	Error      string `json:"error,omitempty"`
-	LatencyMS  *int64 `json:"latency_ms,omitempty"`
-	StartedAt  string `json:"started_at"`
-	EndedAt    string `json:"ended_at,omitempty"`
+	ID        string `json:"id"`
+	Iteration int    `json:"iteration"`
+	AgentSlug string `json:"agent_slug,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	NodeKind  string `json:"node_kind,omitempty"`
+	Input     any    `json:"input,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Error     string `json:"error,omitempty"`
+	LatencyMS *int64 `json:"latency_ms,omitempty"`
+	StartedAt string `json:"started_at"`
+	EndedAt   string `json:"ended_at,omitempty"`
 }
 
 // RunUsage is one usage row from them.run_usage.

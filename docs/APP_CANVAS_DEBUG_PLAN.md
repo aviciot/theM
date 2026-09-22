@@ -1,5 +1,5 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, phased. Phase 1 + 2 COMPLETE. Phase 3 NEXT.
+# Status: PLANNED, phased. Phase 1 + 2 + 3 COMPLETE. Phase 4 NEXT.
 # Date: 2026-09-22
 
 ---
@@ -10,7 +10,7 @@
 |---|---|---|
 | 1 — Debug worker pool + routing | New Temporal queue, worker container(s), per-run routing | ✅ COMPLETE (2026-09-22) |
 | 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ✅ COMPLETE (2026-09-22) |
-| 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ⬜ NOT STARTED |
+| 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ✅ COMPLETE (2026-09-22) |
 | 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ⬜ NOT STARTED |
 | 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ⬜ NOT STARTED |
 | 6 — Debug UI: Step controls | Step button, lockstep multi-branch pause/resume, canvas node highlighting | ⬜ NOT STARTED |
@@ -344,9 +344,91 @@ improvement over the agent builder's in-memory-only session.
    genuinely run concurrently) rather than an artificial single-file ordering. Confirmed with the
    user as the chosen approach over "step one branch, auto-run the others."
 
+### Phase 3 — COMPLETE (2026-09-22)
+
+**Bug found and fixed first, before Phase 3 could safely extend this table:**
+`them.run_steps.tool_call_id` was `TEXT NOT NULL` with no default, but
+`internal/runrecorder.RecordAgentStep` (its only writer) never included it in the INSERT column
+list — every orchestrator-mode insert should have been failing this constraint against a real
+Postgres instance. Not caught earlier because the unit test mocks the DB (`mockDB` records SQL/args
+only, never executes). Fixed by dropping the column in migration `db/103_run_steps_appflow_trace.sql`
+— no reader depended on it beyond an always-empty `COALESCE(tool_call_id, '')` display field. Full
+write-up in `docs/LESSONS.md`.
+
+**What was built:**
+
+- `db/103_run_steps_appflow_trace.sql`, applied to the live DB: drops `tool_call_id`; adds nullable
+  `node_id TEXT`, `node_kind TEXT`; sets `iteration` default `0` (AppFlow rows have no loop-iteration
+  concept, so `0` is a not-applicable sentinel rather than making the column nullable); adds a
+  partial unique index `idx_run_steps_run_node ON (run_id, node_id) WHERE node_id IS NOT NULL` so an
+  AppFlow node's `node_start` insert and its later `node_done`/`node_error` update target the same
+  row via `ON CONFLICT`, while never constraining orchestrator-mode rows (`node_id` always NULL
+  there, `run_id` legitimately repeats across many of them).
+- `go/internal/appflow/activities.go`: new `(a *AppFlowActivities) persistTrace(...)`, called from
+  `emitTrace` (the single choke point every node kind's trace already flows through — Router/HIL/
+  Agent/Inline-LLM inline, Condition/Fork/Join via `TraceNodeEventActivity`). `node_start` inserts a
+  `running` row; `node_done`/`node_error` update that same row to `completed`/`failed` with
+  `ended_at`/`latency_ms`/`output`-or-`error` set. Uses `a.DB` directly (already wired to the
+  Admin/BYPASSRLS pool — same pool `ExecuteHILActivity`'s `them.hil_approvals` insert already uses,
+  confirmed by dedicated research this session), so no RLS `SET app.tenant_id` dance is needed, only
+  a plain `INSERT`/`UPDATE`. Never fails the caller, same rule as `emitTrace` itself.
+- `go/internal/admin/dal/dal.go` (`RunStep` struct) + `go/internal/admin/dal/runs.go`
+  (`GetRunDetail`'s steps query): `ToolCallID` field/column replaced with `NodeID`/`NodeKind`.
+- `frontend/src/lib/apiTypes.ts` (`RunStep`): same field swap.
+- `frontend/src/app/runs/runsTypes.ts` (`buildGraph`): now branches on whether any step has a
+  non-empty `node_id` (the only signal distinguishing an AppFlow run's steps from an orchestrator
+  run's — no separate mode field exists on `Run`). AppFlow rows go through new `buildDagGraph`,
+  which renders nodes as rows in `started_at` order — nodes starting within 1 second of each other
+  group into one "parallel" row (an approximation for fork branches; the trace data has no explicit
+  branch/group id to do this exactly). This is **not** a true branch/merge graph layout with drawn
+  edges — deliberately reuses the existing renderer's row/parallel-row model instead of building a
+  second visualizer, per this plan's own direction ("fix the existing Flow tree, don't replace it").
+  Orchestrator runs go through the unchanged (renamed) `buildOrchestratorGraph`.
+- `frontend/src/app/runs/RunGraph.tsx`: new `dagnode` card kind (renders `node_kind`/`node_id`/
+  `status`/`latency_ms`, and on expand, `output` as "Detail" + `error`).
+- **Go tests:** `go/internal/appflow/trace_persist_integration_test.go` (new, `-tags=integration`,
+  needs live Postgres — `persistTrace` calls a concrete `*pgxpool.Pool`, not an interface, so this
+  can't be a plain unit test) — S2-12 in `go/TEST_INDEX.md`, 4 tests (PT-1..4): upsert-on-conflict
+  collapses node_start+node_done into one row; node_error sets failed status with error text
+  preserved; nil-DB no-ops without panicking; empty-node_id inserts nothing. All 4 pass against the
+  live `them-postgres` (using the real `THEM_DB_URL_ADMIN` value from `.env`, not the test file's
+  placeholder default). `go test ./...` 0 failures, full suite (55 packages) — confirmed both via
+  direct `docker run golang:1.25-alpine` and again inside the `them-dag-worker` image build (which
+  runs the full suite at build time).
+- **Frontend:** `tsc --noEmit` 0 errors. No frontend test framework exists anywhere in this repo to
+  add a `buildGraph` unit test to (confirmed by search) — verification is `tsc` + the container
+  rebuild/health-check below, consistent with how every other frontend-only change in this repo's
+  history has been verified.
+- **Deployed and verified healthy:** `them-dag-worker`, `them-dag-worker-2`, `them-dag-worker-debug`
+  (activities.go changed, all three are the same image), `them-go-bridge` (DAL changed), and
+  `them-frontend` (buildGraph/RunGraph changed) all rebuilt and force-recreated; logs confirm clean
+  startup (dag-workers polling both queues, go-bridge answering `/health/live` 200, frontend serving
+  `/login` 200) — no crash loops.
+
+**Not done / explicitly deferred to a later phase (not a regression):**
+- No live full end-to-end Temporal-workflow-through-WS-to-Postgres round trip was performed this
+  session (unlike Phase 1/2, which used the `temporal` CLI directly against a hand-built workflow
+  input). The integration test instead calls `persistTrace` directly with a real `*pgxpool.Pool` —
+  the exact same function `emitTrace` calls internally, so the SQL/upsert logic is proven against
+  live Postgres, but a real Condition/Fork/Join node hasn't been watched writing its row through a
+  live workflow run in this session. Recommend a manual `temporal workflow start` verification
+  (same recipe as Phase 1/2) before fully trusting this against a truly live run, if that matters
+  before Phase 4 begins.
+- `buildDagGraph`'s 1-second time-window grouping is a heuristic, not a structural fact — it can
+  mis-group two genuinely sequential (not concurrent) fast nodes as "parallel," or fail to group two
+  fork branches that happen to start slightly more than 1 second apart. A structurally correct
+  rendering would need the trace data (or `run_steps`) to carry an explicit branch/fork-group id,
+  which doesn't exist yet — flagged as a candidate improvement, not built here (was explicitly out
+  of scope: this phase's gate was "populate the storage + make the existing tree not blank," not
+  "draw a pixel-perfect DAG").
+- No per-app log-verbosity setting exists yet — that's Phase 4. Every AppFlow run's steps are
+  persisted unconditionally right now (matching Phase 2's unconditional trace-emission decision),
+  with no way to turn it off for a high-volume production app. Phase 4's job.
+- `agent_id` on `run_steps` remains unpopulated by either writer (orchestrator or AppFlow) — flagged
+  in Phase 3's research but intentionally left alone; out of scope for this phase.
+
 ## Remaining open question
 
-None — the sole open question (unconditional vs debug-gated event emission) was resolved and
-implemented in Phase 2 (see that section above): **unconditional emission**, no persistence yet.
-Phase 3 may surface new open questions of its own (exact `run_steps` column design, how the
-log-level setting gates persistence) — track those there when that session starts, not here.
+None carried over from Phase 1/2. Phase 4 (log-verbosity setting) should decide: does "off" mean
+AppFlow stops persisting entirely (revert to Phase 2's live-Redis-only behavior), or does it always
+persist status-level rows and only "full" adds richer detail? Not decided here.

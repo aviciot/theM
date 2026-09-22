@@ -104,6 +104,36 @@ function NodeCard({ node, expanded, onToggle }: { node: GraphNode; expanded: boo
     );
   }
 
+  if (node.kind === 'dagnode') {
+    const { step } = node;
+    const col = statusColor(step.status);
+    return (
+      <div onClick={onToggle} style={{ ...baseStyle, border: `1px solid ${col}40`, background: `${col}06`, padding: '12px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: col }}>account_tree</span>
+          <span style={{ fontSize: '12px', fontWeight: 700, color: col }}>{step.node_kind || 'node'}</span>
+          {step.latency_ms != null && (
+            <span style={{ fontSize: '10px', color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{step.latency_ms}ms</span>
+          )}
+        </div>
+        <div style={{ fontSize: '10px', color: 'var(--tm-text-muted)', marginBottom: expanded ? '10px' : 0 }}>{step.node_id} · {step.status}</div>
+        {expanded && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {step.output && (
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '3px' }}>Detail</div>
+                <div style={{ fontSize: '11px', color: 'var(--tm-text)', background: 'var(--tm-surface-2)', borderRadius: '6px', padding: '6px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '120px', overflowY: 'auto' }}>
+                  {step.output}
+                </div>
+              </div>
+            )}
+            {step.error && <div style={{ fontSize: '11px', color: '#f87171' }}>Error: {step.error}</div>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (node.kind === 'summary') {
     const text = node.artifact.parts.find(p => p.text)?.text ?? '';
     return (

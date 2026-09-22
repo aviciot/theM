@@ -3243,6 +3243,28 @@ go test -tags=integration -v ./internal/admin/dal/... -run TestDAL_SumMonthlyTok
 
 ---
 
+### S2-12 · AppFlow trace persistence — `internal/appflow/trace_persist_integration_test.go`
+
+**Purpose:** Prove `persistTrace` (the DB half of `emitTrace`, wired for App Canvas Debug Mode Phase 3 durable trace storage, `docs/APP_CANVAS_DEBUG_PLAN.md`) correctly upserts `them.run_steps` rows against real PostgreSQL — the `(run_id, node_id)` partial unique index and `node_id`/`node_kind` columns added by `db/103_run_steps_appflow_trace.sql` can't be exercised by a mock, since `AppFlowActivities.DB` is a concrete `*pgxpool.Pool`, not an interface.
+
+Build tag: `//go:build integration`. Package: `appflow`. Uses `TEST_POSTGRES_DSN` (falls back to a placeholder localhost DSN — override with the real `THEM_DB_URL_ADMIN` value from `.env` when running locally, since `AppFlowActivities.DB` is always the Admin/BYPASSRLS pool in production).
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| PT-1 | `TestPersistTrace_NodeStartThenNodeDone_UpsertsOneRow` | node_start inserts a `running` row; node_done on the same node_id updates that same row (not a second row) to `completed`, with `output`, `node_kind`, and `latency_ms` all set |
+| PT-2 | `TestPersistTrace_NodeError_SetsFailedStatusAndError` | node_error sets `status=failed` and preserves the detail string in `error` (not `output`) |
+| PT-3 | `TestPersistTrace_NilDB_NoOp` | nil `a.DB` does not panic — matches every other AppFlow activity's nil-DB guard |
+| PT-4 | `TestPersistTrace_EmptyNodeID_NoOp` | an empty `node_id` inserts no row — guards against silently creating untraceable rows outside the partial unique index's `WHERE node_id IS NOT NULL` predicate |
+
+```bash
+TEST_POSTGRES_DSN="$(grep '^THEM_DB_URL_ADMIN=' .env | cut -d= -f2-)" \
+go test -tags=integration -v ./internal/appflow/... -run TestPersistTrace
+```
+
+**Trigger:** any change to `internal/appflow/activities.go` `emitTrace`/`persistTrace`, or to `db/103_run_steps_appflow_trace.sql`
+
+---
+
 ### S2-11 · internal/llmresolve DB-backed precedence — `internal/llmresolve/llmresolve_integration_test.go`
 
 **Purpose:** Prove the shared app → tenant → platform provider-key/pricing precedence chain (extracted from `workerconfig/loader.go` and `cmd/dag-worker/main.go`'s duplicate `resolveKey`) against real PostgreSQL, including the tenant-scoping fix on the app-level key lookup.
@@ -3338,6 +3360,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` (`StartAppFlow` debug-queue routing) | S1-129 |
 | `internal/appflow/activities.go` (`emitTrace`, `TraceNodeEventActivity`, node_start/node_done/node_error on Router/HIL/Agent/Inline LLM) | S1-130 |
 | `internal/appflow/workflow.go` (Condition/Fork/Join `traceNode` calls), `internal/appflow/graph.go` (`walkBranch` `traceNode` calls) | S1-131 |
+| `internal/appflow/activities.go` (`persistTrace` — run_steps upsert), `db/103_run_steps_appflow_trace.sql` | S2-12 (integration) |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
@@ -3651,7 +3674,7 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
 | S2-10 | SumMonthlyTokens regression (SMT-1..2): ColumnExists, NoRuns | 2 |
 | S2-11 | internal/llmresolve DB-backed precedence (LLMR-I1..5): AppKeyWins, FallsBackToTenant, FallsBackToPlatform, CrossTenantAppID_ReturnsEmpty, PricingComesFromMatchedProviderRow | 5 |
-| **S2 total** | | **59** |
+| **S2 total** | | **63** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
 | **`go test ./...` total** | | **1320** (S1 total; this line is out of sync with S1/S2 subtotals above pre-dating this entry — full reconciliation not in scope for this change) |

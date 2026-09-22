@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 COMPLETE, Phase 3 NEXT, HEAD 6104b349)
+# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 + 3 COMPLETE, Phase 4 NEXT, HEAD pending commit)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,9 +7,10 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `6104b349` (not yet pushed — confirm push credentials before pushing)
+HEAD: `6104b349` at session start; Phase 3 work in this session not yet committed (see below) —
+not pushed either way, confirm push credentials before pushing.
 
-Recent commits (newest first):
+Recent commits (newest first, at session start):
 ```
 6104b349  feat(app-canvas): live per-node trace events for Graph-mode runs (Phase 2)
 865ad388  feat(app-canvas): debug worker pool + task-queue routing (Phase 1)
@@ -27,12 +28,68 @@ e5fec91d  docs(current): Tenant LLM self-service COMPLETE, HEAD 970b0cfb
 
 ## START HERE — next session
 
-**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phases 1 and 2 are COMPLETE — start **Phase 3**
-(durable trace storage: extend `them.run_steps`, make the existing Run History "Flow" tree
-populate for Graph-mode runs). One phase per session — do not start Phase 4 in the same session
-as Phase 3. No open design questions block Phase 3 start (Phase 2's only open question was
-resolved and implemented) — but expect Phase 3 to surface its own (exact column design on
-`run_steps` vs. a new table, how the log-level setting gates persistence).
+**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phases 1, 2, and 3 are COMPLETE — start **Phase 4**
+(per-app runtime log-verbosity setting: `off`/`status`/`full`, gating how much AppFlow persists to
+`them.run_steps`; debug mode always forces `full` for its own run). One phase per session — do not
+start Phase 5 in the same session as Phase 4. Phase 4 has one open question of its own, not yet
+decided (see the plan doc's end): does `off` mean AppFlow stops persisting entirely (revert to
+Phase 2's live-Redis-only behavior), or does it always persist status-level rows and only `full`
+adds richer detail?
+
+---
+
+## App Canvas Debug Mode — Phase 3 (durable trace storage) — COMPLETE (2026-09-22)
+
+Not yet committed this session — see `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 3 section for full
+detail. Summary:
+
+- **Bug found and fixed first:** `them.run_steps.tool_call_id` was `TEXT NOT NULL` with no default,
+  but its only writer (`internal/runrecorder.RecordAgentStep`) never included it in the INSERT —
+  every orchestrator-mode step insert should have been failing this constraint against real
+  Postgres. Not caught earlier because the unit test mocks the DB. Fixed by dropping the column
+  (migration `db/103_run_steps_appflow_trace.sql`, applied to the live DB) — no reader depended on
+  it beyond an always-empty display field. Full write-up: `docs/LESSONS.md`.
+- Same migration adds nullable `node_id`/`node_kind` to `run_steps`, a default of `0` on
+  `iteration` (AppFlow rows have no loop-iteration concept), and a partial unique index on
+  `(run_id, node_id) WHERE node_id IS NOT NULL` so a node's `node_start` insert and later
+  `node_done`/`node_error` update collapse into one row via `ON CONFLICT`.
+- `go/internal/appflow/activities.go`: new `persistTrace` wired into `emitTrace` — the single choke
+  point every node kind's trace event already flows through (Phase 2). Uses the existing Admin/
+  BYPASSRLS pool (`a.DB`), same one `ExecuteHILActivity` already writes through — no RLS GUC
+  handling needed, confirmed by dedicated research this session.
+- `go/internal/admin/dal/` (`RunStep`, `GetRunDetail`) and `frontend/src/lib/apiTypes.ts`:
+  `ToolCallID` → `NodeID`/`NodeKind`.
+- `frontend/src/app/runs/runsTypes.ts`'s `buildGraph` now branches on "any step has a node_id" and
+  renders AppFlow runs via new `buildDagGraph` (nodes as rows in `started_at` order, 1-second
+  time-window grouping approximates parallel/fork rows) — reusing the existing row/parallel-row
+  renderer rather than building a second visualizer. `RunGraph.tsx` gained a `dagnode` card kind.
+  **Not a true branch/merge graph with drawn edges** — a heuristic ordering, flagged as a known
+  limitation, not a structural fact (no explicit branch/group id exists in the trace data yet).
+- Tests: `go/internal/appflow/trace_persist_integration_test.go` (new, `-tags=integration`, needs
+  live Postgres since `persistTrace` calls a concrete `*pgxpool.Pool`) — S2-12 in
+  `go/TEST_INDEX.md`, 4 tests, all passing against the live `them-postgres`. `go test ./...` 0
+  failures, full suite (55 packages). `tsc --noEmit` 0 errors (no frontend test framework exists in
+  this repo to add a unit test to).
+- **Deployed:** `them-dag-worker`, `them-dag-worker-2`, `them-dag-worker-debug`, `them-go-bridge`,
+  `them-frontend` all rebuilt and force-recreated on this local dev box; logs confirm healthy
+  startup, no crash loops.
+
+**Not done / deferred (not a regression):** no full live Temporal-workflow-through-WS round trip
+was performed this session (unlike Phase 1/2) — the integration test calls `persistTrace` directly
+with a real DB pool, proving the SQL/upsert logic, but a live workflow run writing a row through the
+full stack hasn't been watched this session. Recommend a manual `temporal workflow start` check
+(same recipe Phase 1/2 used) before fully trusting this in a truly live run. No per-app
+log-verbosity setting yet (Phase 4) — every AppFlow run persists unconditionally right now, same as
+Phase 2's live-emission behavior. `agent_id` on `run_steps` remains unpopulated by either writer —
+noted, not addressed, out of scope for this phase.
+
+**Not yet committed to git this session** — files changed (uncommitted at time of writing):
+`db/103_run_steps_appflow_trace.sql` (new), `go/internal/appflow/activities.go`,
+`go/internal/appflow/trace_persist_integration_test.go` (new),
+`go/internal/admin/dal/dal.go`, `go/internal/admin/dal/runs.go`,
+`frontend/src/lib/apiTypes.ts`, `frontend/src/app/runs/runsTypes.ts`,
+`frontend/src/app/runs/RunGraph.tsx`, `go/TEST_INDEX.md`, `docs/SCHEMA.md`, `docs/LESSONS.md`,
+`docs/APP_CANVAS_DEBUG_PLAN.md`, `docs/CURRENT.md`.
 
 ---
 

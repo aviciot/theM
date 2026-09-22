@@ -198,7 +198,7 @@ func (d *DB) GetRunDetail(ctx context.Context, tenantID, runID string) (RunDetai
 
 	// Steps
 	stepsQ := `SELECT id::text, iteration,
-        COALESCE(agent_slug, ''), COALESCE(tool_call_id, ''),
+        COALESCE(agent_slug, ''), COALESCE(node_id, ''), COALESCE(node_kind, ''),
         COALESCE(input::text, ''), COALESCE(output, ''),
         COALESCE(status, ''), COALESCE(error, ''),
         latency_ms, started_at::text, COALESCE(ended_at::text, '')
@@ -213,7 +213,7 @@ func (d *DB) GetRunDetail(ctx context.Context, tenantID, runID string) (RunDetai
 		var inputStr string
 		if err := srows.Scan(
 			&s.ID, &s.Iteration,
-			&s.AgentSlug, &s.ToolCallID,
+			&s.AgentSlug, &s.NodeID, &s.NodeKind,
 			&inputStr, &s.Output,
 			&s.Status, &s.Error,
 			&s.LatencyMS, &s.StartedAt, &s.EndedAt,
