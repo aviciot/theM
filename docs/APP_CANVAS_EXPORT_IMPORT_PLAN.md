@@ -1,5 +1,5 @@
 # App Canvas — Export / Import JSON
-# Status: dangling-root gap FIXED (2026-09-22, backend). Export/import feature itself PLANNED, not started.
+# Status: dangling-root gap FIXED (2026-09-22). Export/import feature BUILT (2026-09-22), pending manual test.
 # Date: 2026-09-21
 
 ---
@@ -164,7 +164,7 @@ this is the same UI an import-then-validate flow reuses unchanged.
 
 ### Testing
 
-- `tsc --noEmit` clean (project gate).
+- `tsc --noEmit` clean (project gate). ✅ 0 errors.
 - Manual round-trip in the browser (this feature is impossible to meaningfully unit-test
   end-to-end without a browser — file download/upload, `Blob`, `FileReader` are all DOM APIs):
   1. Build a small app in the canvas (e.g. the "Sentiment Router" flow already proposed this
@@ -176,8 +176,54 @@ this is the same UI an import-then-validate flow reuses unchanged.
   4. Negative: import a garbage/non-JSON file, confirm a friendly error, no crash.
   5. Negative: import valid JSON with wrong shape (e.g. missing `components`), confirm a
      friendly error, no crash.
+  **Status: not yet performed — planned as Stage 1 of the joint test-app session
+  (user + assistant testing together in the browser).**
 
 ---
+
+## Implementation — COMPLETE (2026-09-22)
+
+**File-size cleanup done first** (`CanvasBuilderView.tsx` was 754 lines, over the 400-line
+guideline and past the 500-line stop-and-propose rule): extracted `CanvasTopBar.tsx` (134
+lines — top bar buttons, execution-backend selector, validation/backend-mismatch banners) and
+`CanvasPalette.tsx` (149 lines — the draggable component/node palette), both pure presentation
+components taking props from `CanvasBuilderView.tsx`, which is now 647 lines (was 754; grew back
+partially from the export/import handlers added afterward, but still smaller than before and the
+two new files are well under the guideline). `tsc --noEmit` 0 errors after the split, confirmed
+before adding new logic.
+
+**Export/Import built:**
+- `frontend/src/app/admin/applications/components/CanvasExportImport.ts` (new, 72 lines) —
+  `exportAppDefinition(doc, appSlug)` (Blob + synthetic `<a download>`, same mechanism as the
+  agent builder), `checkAppDefinitionShape(doc)` (deeper than the agent builder's 2-field check —
+  validates every field `validateDefinition` enforces server-side: `schema_version===2`,
+  `components`/`entry_points`/`connections` are arrays, each element's required non-empty string
+  fields), `parseImportedAppDefinition(rawText)` (JSON.parse + shape check, returns a discriminated
+  `{doc}` or `{error}` result — no raw JS exceptions escape to the caller, unlike the agent
+  builder's precedent).
+- `CanvasBuilderView.tsx`: `importFileRef` (hidden file input), `handleExport` (works whether or
+  not a draft is loaded — exports current canvas state via `canvasToDoc`, or the last-loaded
+  `draft` if nothing is active), `handleImportJSON` (click the hidden input), `handleImportFileChange`
+  (`FileReader` → `parseImportedAppDefinition` → on success, creates a new draft via the same
+  `themApi.createDefinition` call `newDraft()` uses, seeded with the imported doc, then
+  `reloadDefs(res.id)` to load it onto the canvas — import never touches in-memory canvas state
+  directly, it always goes through the same create-and-load path every other draft does).
+- `CanvasTopBar.tsx`: two new optional slot props, `exportButton`/`importControls` (React nodes),
+  kept as injected slots rather than hardcoded buttons so `CanvasTopBar` stays a pure display
+  component with no feature-specific logic of its own.
+- **Import gated to `!activeDef`** (no definition loaded yet) — confirmed via `reloadDefs()`
+  that `activeDef` stays `null` only when the app has zero definitions at all; the instant any
+  draft/definition exists (via `newDraft`, publish, or import itself), `activeDef` is set and the
+  Import button disappears. Matches the agent builder's `!defId` gate exactly, per user decision.
+- **No backend changes for this feature** — confirmed unnecessary by the earlier research; the
+  existing Validate flow already reports `component_not_found`/`component_disabled`/
+  `component_deprecated`/`dangling_connection`/`duplicate_instance_id`/`dangling_root` (the last
+  one added this session, see below) for anything an import could introduce.
+
+**Deployed:** `them-frontend` rebuilt and force-recreated; container healthy, serving.
+
+**Not yet done:** the manual browser test plan above — this is Stage 1 of testing together with
+the user, not yet performed.
 
 ## Open questions (for the user, not decided unilaterally)
 

@@ -1,6 +1,6 @@
 'use client';
 import '@xyflow/react/dist/style.css';
-import { useState, useEffect, useMemo, type DragEvent } from 'react';
+import { useState, useEffect, useMemo, useRef, type DragEvent } from 'react';
 import {
   ReactFlowProvider,
   addEdge,
@@ -19,6 +19,9 @@ import { fetchNodeTypes, setCachedNodeTypes, getCachedNodeTypesByFamily, getNode
 import { computeLogoState } from './CanvasLogo';
 import { CanvasInnerWithDrop, validateConnection } from './CanvasInner';
 import { CanvasNodePropertiesPanel } from './cbv/CanvasNodePropertiesPanel';
+import { CanvasTopBar } from './CanvasTopBar';
+import { CanvasPalette } from './CanvasPalette';
+import { exportAppDefinition, parseImportedAppDefinition } from './CanvasExportImport';
 
 // Which RF node component (and canvas palette section) each appflow node_type
 // renders as. This split is a frontend/UI concern, not portable node metadata
@@ -160,6 +163,9 @@ export function CanvasBuilderView({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [layoutDir, setLayoutDir] = useState<'TB' | 'LR'>('TB');
 
+  // Export/Import JSON (docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md)
+  const importFileRef = useRef<HTMLInputElement>(null);
+
 
   useEffect(() => {
     if (selectedNode?.type === 'agent' || selectedNode?.type === 'middleware') {
@@ -273,6 +279,42 @@ export function CanvasBuilderView({
     } catch {
       showToast('Failed to create draft', false);
     }
+  }
+
+  // ── Export / Import JSON (docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md) ────────────
+  // Import is gated to "no definition loaded yet" — same rule the agent
+  // builder uses — so it never silently discards an in-progress draft.
+  function handleExport() {
+    const doc = activeDef ? canvasToDoc(nodes, edges, draft?.name ?? app.name, executionBackend) : draft;
+    if (!doc) { showToast('Nothing to export yet', false); return; }
+    exportAppDefinition(doc, app.slug ?? app.name);
+  }
+
+  function handleImportJSON() {
+    importFileRef.current?.click();
+  }
+
+  function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-importing the same filename consecutively
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const result = parseImportedAppDefinition(ev.target?.result as string);
+      if ('error' in result) {
+        showToast(`Import failed: ${result.error}`, false);
+        return;
+      }
+      const seedWithName: AppDefinitionDoc = { ...result.doc, name: result.doc.name || app.name };
+      try {
+        const res = await themApi.createDefinition(app.id, { definition: seedWithName });
+        await reloadDefs(res.id);
+        showToast('Imported — click Validate to confirm every referenced component exists in this tenant', true);
+      } catch {
+        showToast('Import failed: could not create draft from imported file', false);
+      }
+    };
+    reader.readAsText(file);
   }
 
   async function saveDraft() {
@@ -423,208 +465,59 @@ export function CanvasBuilderView({
   const isLive = app.active_revision != null;
   const logoState = computeLogoState({ loaded: !!activeDef, isDirty, busy: validating || saving || publishing, lastResult: logoResult });
 
-  const EP_MS_ICON_MAP: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
-      {/* Top bar */}
-      <div style={{
-        height: 56, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10,
-        padding: '0 20px', borderBottom: `1px solid ${C.glassBorder}`,
-        background: C.surface, position: 'sticky', top: 0, zIndex: 20,
-      }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-        </button>
-        <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{app.name}</span>
-        {activeDef && (
-          <span style={{
-            padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-            background: isLive ? C.greenBg : 'rgba(208,188,255,0.12)',
-            color: isLive ? C.green : C.purple,
-            border: `1px solid ${isLive ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
-          }}>
-            {isLive ? `Rev ${app.active_revision} • live` : 'draft'}
-          </span>
-        )}
-        <div style={{ flex: 1 }} />
-        {activeDef && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>Execution</span>
-            <select
-              value={executionBackend ?? 'local'}
-              onChange={e => { setExecutionBackend(e.target.value as 'local' | 'temporal'); setIsDirty(true); setLogoResult('none'); }}
-              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: C.text, fontSize: 11, padding: '3px 6px', cursor: 'pointer', outline: 'none' }}
-            >
-              <option value="local">Local (Orchestrator)</option>
-              <option value="temporal">Temporal DAG</option>
-            </select>
-          </div>
-        )}
-        {activeDef && isDirty && (
-          <button onClick={saveDraft} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        )}
-        {activeDef && (
-          <button
-            onClick={handlePublishClick}
-            disabled={publishing || saving || validating}
-            style={{
-              padding: '7px 16px', borderRadius: 8, cursor: publishing || saving || validating ? 'not-allowed' : 'pointer',
-              fontSize: 12, fontWeight: 700,
-              background: isLive ? 'rgba(245,158,11,0.15)' : C.greenBg,
-              color: isLive ? '#f59e0b' : C.green,
-              border: `1px solid ${isLive ? 'rgba(245,158,11,0.4)' : C.greenBorder}`,
-              opacity: publishing || saving || validating ? 0.6 : 1,
-            }}
-          >
-            {publishing ? 'Publishing…' : isLive ? 'Re-publish' : 'Publish'}
-          </button>
-        )}
-      </div>
-
-      {/* Validation errors banner */}
-      {validationReport && !validationReport.valid && (
-        <div style={{ background: C.errorBg, borderBottom: `1px solid rgba(255,180,171,0.3)`, padding: '10px 20px', flexShrink: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.error, marginBottom: 4 }}>Validation errors:</div>
-          {(validationReport.errors ?? []).map((err, i) => (
-            <div key={i} style={{ fontSize: 12, color: C.error }}>
-              {err.instance_id ? `[${err.instance_id}] ` : ''}{err.message}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Backend-mismatch warning: inline/flow-control nodes are Temporal-only, advisory only */}
-      {executionBackend !== 'temporal' && nodes.some(n => n.type === 'inline' || n.type === 'flowControl') && (
-        <div style={{ background: C.amberBg, borderBottom: `1px solid ${C.amberBorder}`, padding: '10px 20px', flexShrink: 0 }}>
-          <div style={{ fontSize: 12, color: C.amber }}>
-            Inline and flow-control nodes only execute on the Temporal backend. This app is set to
-            Local (Orchestrator) — the canvas graph is not executed. Switch Execution to
-            &quot;Temporal DAG&quot; to run this flow.
-          </div>
-        </div>
-      )}
+      <CanvasTopBar
+        app={app}
+        activeDef={activeDef}
+        isLive={isLive}
+        isDirty={isDirty}
+        saving={saving}
+        publishing={publishing}
+        validating={validating}
+        validationReport={validationReport}
+        executionBackend={executionBackend}
+        nodes={nodes}
+        onBack={onBack}
+        onSetExecutionBackend={v => { setExecutionBackend(v); setIsDirty(true); setLogoResult('none'); }}
+        onSaveDraft={saveDraft}
+        onPublishClick={handlePublishClick}
+        exportButton={
+          <button onClick={handleExport} title="Export as JSON file" style={{
+            background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.5)',
+            color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+          }}>↑ Export JSON</button>
+        }
+        importControls={!activeDef ? (
+          <>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".json,application/json"
+              style={{ display: 'none' }}
+              onChange={handleImportFileChange}
+            />
+            <button onClick={handleImportJSON} title="Import a JSON app definition into a new draft" style={{
+              background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.5)',
+              color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+            }}>↓ Import JSON</button>
+          </>
+        ) : undefined}
+      />
 
       {/* Three-column canvas area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* Left: Component Palette */}
-        <div style={{ width: compPanelWidth, flexShrink: 0, display: 'flex', position: 'relative' }}>
-          <div className="comp-panel" style={{ flex: 1, background: 'rgba(0,0,0,0.2)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Components</div>
-
-          {/* Entry Points */}
-          <div style={{ padding: '0 8px 12px' }}>
-            <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600 }}>Entry Points</div>
-            {(['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const).map(protocol => (
-              <div
-                key={protocol}
-                draggable
-                onDragStart={e => { e.dataTransfer.setData('nodeType', 'entryPoint'); e.dataTransfer.setData('nodeData', JSON.stringify({ protocol })); e.dataTransfer.effectAllowed = 'move'; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: 'rgba(0,209,255,0.04)', border: '1px solid rgba(0,209,255,0.12)' }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#00d1ff' }}>{EP_MS_ICON_MAP[protocol] ?? 'bolt'}</span>
-                <span style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{protocol.charAt(0).toUpperCase() + protocol.slice(1)}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Component kinds */}
-          {(['orchestrator', 'agent', 'middleware'] as const).map(kind => {
-            const items = componentDefs.filter(cd => cd.kind === kind);
-            if (items.length === 0) return null;
-            const kindColor = kind === 'orchestrator' ? '99,102,241' : kind === 'agent' ? '74,222,128' : '245,158,11';
-            const kindIconColor = kind === 'orchestrator' ? '#818cf8' : kind === 'agent' ? C.green : '#f59e0b';
-            const defaultKindIcon = kind === 'orchestrator' ? 'hub' : kind === 'agent' ? 'smart_toy' : 'shield';
-            return (
-              <div key={kind} style={{ padding: '0 8px 12px' }}>
-                <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
-                {items.map(cd => {
-                  const itemIcon = kind === 'agent' ? (agentIconBySlug.get(cd.name) ?? defaultKindIcon) : kind === 'middleware' ? (cd.name.includes('guard') ? 'shield' : 'bolt') : defaultKindIcon;
-                  return (
-                    <div
-                      key={cd.id}
-                      draggable
-                      onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{itemIcon}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
-                        {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-
-          {/* Flow Control nodes — driven by GET /admin/node-types (appflow family) */}
-          <div style={{ padding: '0 8px 12px' }}>
-            <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Flow Control</div>
-            {flowControlPalette.map(fc => (
-              <div
-                key={fc.type}
-                draggable
-                onDragStart={e => { e.dataTransfer.setData('nodeType', 'flow_control'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.type })); e.dataTransfer.effectAllowed = 'move'; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `${fc.border}0a`, border: `1px solid ${fc.border}1f` }}
-              >
-                <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{fc.emoji}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{fc.label}</div>
-                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.description}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Inline / Logic nodes — driven by GET /admin/node-types (appflow family) */}
-          <div style={{ padding: '0 8px 12px' }}>
-            <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Inline / Logic</div>
-            {inlinePalette.map(fc => (
-              <div
-                key={fc.type}
-                draggable
-                onDragStart={e => { e.dataTransfer.setData('nodeType', 'inline'); e.dataTransfer.setData('nodeData', JSON.stringify({ node_type: fc.type })); e.dataTransfer.effectAllowed = 'move'; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `${fc.border}0a`, border: `1px solid ${fc.border}1f` }}
-              >
-                <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{fc.emoji}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{fc.label}</div>
-                  <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fc.description}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {!activeDef && (
-            <div style={{ padding: '20px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>No definition loaded</div>
-              <button onClick={newDraft} style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: C.cyan, color: '#021520', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>
-                Create First Definition
-              </button>
-            </div>
-          )}
-          </div>
-          {/* Resize grip */}
-          <div
-            onMouseDown={startCompPanelResize}
-            style={{
-              width: 10, flexShrink: 0, cursor: 'col-resize',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(0,0,0,0.25)', borderRight: '1px solid rgba(255,255,255,0.05)',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.45)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.25)'; }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {[0,1,2,3].map(i => <div key={i} style={{ width: 2, height: 2, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />)}
-            </div>
-          </div>
-        </div>
+        <CanvasPalette
+          compPanelWidth={compPanelWidth}
+          onStartResize={startCompPanelResize}
+          componentDefs={componentDefs}
+          agentIconBySlug={agentIconBySlug}
+          flowControlPalette={flowControlPalette}
+          inlinePalette={inlinePalette}
+          activeDef={activeDef}
+          onNewDraft={newDraft}
+        />
 
         {/* Center: ReactFlow canvas */}
         <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
