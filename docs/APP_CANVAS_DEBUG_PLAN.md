@@ -1,6 +1,28 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, not started.
+# Status: PLANNED, phased. Phase 1 NEXT.
 # Date: 2026-09-22
+
+---
+
+## Progress
+
+| Phase | What | Status |
+|---|---|---|
+| 1 — Debug worker pool + routing | New Temporal queue, worker container(s), per-run routing | ⬜ NEXT |
+| 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ⬜ NOT STARTED |
+| 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ⬜ NOT STARTED |
+| 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ⬜ NOT STARTED |
+| 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ⬜ NOT STARTED |
+| 6 — Debug UI: Step controls | Step button, lockstep multi-branch pause/resume, canvas node highlighting | ⬜ NOT STARTED |
+
+**One phase per session** (same discipline as `docs/NODE_REGISTRY_PLAN.md`). Update this table
+at the end of every session. Read `docs/CURRENT.md` for exact HEAD/status before starting.
+
+**Recommended order rationale:** 1→2→3 build the invisible backend foundation in dependency
+order (nowhere to route without a queue; nothing to store without events; nothing to view without
+storage). 4 is a small, independent slot-in once 3 exists. 5→6 are the user-visible payoff,
+split because "watch it run" (5) is meaningfully simpler than "pause and inspect mid-flight" (6)
+and each deserves its own focused session.
 
 ---
 
@@ -78,6 +100,43 @@ browser tab closing, unlike the agent builder's in-memory-only debug session.
 ---
 
 ## Architecture
+
+### Phase 1 checklist (start here in a fresh session)
+
+Everything needed for Phase 1 is in subsection "1." immediately below — this checklist is just
+the concrete to-do list extracted from that prose:
+
+- [ ] `go/internal/appflow/workflow.go`: add `AppFlowDebugTaskQueue = "appflow-dag-debug"` constant
+      next to the existing `AppFlowTaskQueue`.
+- [ ] `go/internal/execution/lifecycle.go`: `StartAppFlow` (~line 680) currently hardcodes
+      `TaskQueue: appflow.AppFlowTaskQueue` — thread a `debug bool` parameter through from the
+      caller and select `AppFlowDebugTaskQueue` when true. Trace the call chain up from here to
+      find where the debug-start decision needs to originate (likely a new WS/HTTP entry point —
+      not yet designed; the existing debug-start flow is Phase 5/6's job, so for Phase 1 alone, a
+      minimal test harness that calls `StartAppFlow(debug=true)` directly is enough to prove the
+      routing works, without building the real UI trigger yet).
+- [ ] `docker-compose.dev.yml`: new `them-dag-worker-debug` service — same `Dockerfile.dag-worker`
+      image, same env vars as `them-dag-worker`, `TEMPORAL_HOST_PORT` unchanged (same Temporal
+      server), but no separate task-queue env var exists yet on that image — check
+      `go/cmd/dag-worker/main.go` for how `AppFlowTaskQueue` is wired into the worker's `New(...)`
+      call; the debug worker needs to register against `AppFlowDebugTaskQueue` instead, which may
+      require a new env var (e.g. `APPFLOW_TASK_QUEUE_OVERRIDE`) or a build-time distinction —
+      decide and document whichever approach is chosen.
+- [ ] `docker-compose.hetzner.yml`: mirror the same addition (this session's `them-dag-worker`
+      Hetzner gap was just closed — don't reintroduce the same "dev has it, prod doesn't" pattern
+      for the debug pool).
+- [ ] Prove it end-to-end: start `them-dag-worker-debug`, confirm via container logs it's polling
+      `appflow-dag-debug` (same log-message pattern as the existing `"appflow-worker polling"`
+      line), then run a minimal AppFlow workflow dispatched with `debug=true` and confirm (via
+      Temporal UI or worker logs) it was picked up by the debug worker, not `them-dag-worker`.
+- [ ] `go test ./...` — zero failures. Add a test proving `StartAppFlow`'s queue selection logic
+      (unit-level, no live Temporal needed — same style as existing `lifecycle_test.go` coverage).
+- [ ] Update `go/TEST_INDEX.md`, this doc's Progress table, and `docs/CURRENT.md` before handing
+      over.
+
+**Phase 1 gate:** a workflow started with `debug=true` is picked up by the debug worker, not the
+production one, proven by log inspection — no UI, no trace events, no storage yet. That is all
+later phases' job.
 
 ### 1. A separate Temporal task queue + worker pool for debug runs
 

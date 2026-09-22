@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (Tenant LLM self-service + platform admin LLM key UI COMPLETE, HEAD 970b0cfb)
+# Last updated: 2026-09-22 (App Canvas Debug Mode — plan written, Phase 1 NEXT, HEAD 70d91890 pushed)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,16 +7,68 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `970b0cfb` (not yet pushed)
+HEAD: `70d91890` (pushed)
 
 Recent commits (newest first):
 ```
+70d91890  docs: plan real (non-simulated) debug mode for the app canvas
+19923bd6  fix(app-canvas): condition-node handle spread in LR layout; remove dead AI Advisor
+b1323abb  fix(compose): add missing RLS DSN env vars to them-agent-runtime
+5bda4ad4  fix(deploy): add them-dag-worker + them-dag-worker-2 to Hetzner overlay
+996b5dae  feat(app-canvas): rename Local/Temporal DAG to Simple/Graph; add them-dag-worker-2
+394c16c5  feat(app-canvas): export/import JSON, split CanvasBuilderView.tsx first
+e5fec91d  docs(current): Tenant LLM self-service COMPLETE, HEAD 970b0cfb
 970b0cfb  feat(settings): tenant-admin LLM provider self-service + platform admin LLM key management
-ecbd63fe  feat(tenant-llm): block platform key fallback, add tenant LLM provider UI
-52fcec69  feat(llm-gateway): Phase 3 — admin CRUD backend + frontend UI
-74bd54a7  feat(node-registry): Phase 5 — middleware adopts the node contract
-e3c82d1a  docs(current): mark HEAD as pushed, Node Registry Phase 4 complete
 ```
+
+---
+
+## START HERE — next session
+
+**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Then start **Phase 1** (the plan's "Phase 1
+checklist" section has the concrete file-by-file to-do list). One phase per session — do not
+start Phase 2 in the same session as Phase 1.
+
+**What this session did (2026-09-22), most recent first:**
+- Fixed a real bug: Condition node's true/false handles overlapped in horizontal ("Graph") layout
+  — spread logic used `left: X%` unconditionally, which has no effect on a Position.Right handle.
+  Fixed in `CanvasNodes.tsx`. Removed the fully-dead "AI Advisor" button + its orphaned backing
+  code (`AdvisorPanel.tsx` deleted — never imported anywhere, no backend endpoint existed for it).
+- Renamed the app-canvas execution-mode dropdown "Local (Orchestrator)"/"Temporal DAG" →
+  "Simple (Orchestrator)"/"Graph (Canvas Flow)" — the old names implied a non-Temporal path that
+  doesn't exist; both modes run on Temporal. Display-text-only, confirmed safe (no code branches
+  on the English strings).
+- Added a second Temporal worker replica for the Graph engine (`them-dag-worker-2`) in dev, then
+  discovered and fixed a bigger gap: **`docker-compose.hetzner.yml` had no `them-dag-worker` at
+  all** — the Graph engine had never been deployable to production. Added both
+  `them-dag-worker`/`them-dag-worker-2` there (config only, not deployed/built on this box).
+- Found and fixed a live bug while testing: `them-agent-runtime` (hosts canvas-built A2A agents)
+  was in a silent crash-restart loop — missing `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` env vars,
+  present on every other Go service but this one. Fixed in `docker-compose.yml` (covers Hetzner
+  too, which has no override for this service).
+- Built app-canvas Export/Import JSON (mirrors the agent builder's existing feature) — pure
+  frontend, no backend endpoint, deeper client-side shape validation than the agent builder's
+  precedent. Split the oversized `CanvasBuilderView.tsx` (754 lines) into `CanvasTopBar.tsx` +
+  `CanvasPalette.tsx` first, per the file-size rule, before adding the new feature.
+- Verified live, end-to-end, via hand-built JSON pushed through the real API (not just unit
+  tests): a Simple-mode app (Entry Point → Orchestrator → Agent) and a Graph-mode app (LLM node →
+  Condition → branch → Agent) both ran successfully over a real WebSocket connection. Both test
+  apps (`stage1-import-test`, `stage2-graph-llm-condition-v2`) are still live in the `default`
+  tenant for manual UI inspection.
+- Wrote `docs/APP_CANVAS_DEBUG_PLAN.md` — a 6-phase plan for real (non-simulated) per-node debug
+  tracing for Graph-mode runs, with a separate Temporal worker pool for debug traffic. 5 design
+  decisions confirmed with the user; 1 still open (see the plan doc's "Remaining open question").
+  **This is the next body of work — start with Phase 1.**
+
+**Known UI bug, not yet fixed, low priority:** application cards on the Applications list
+overflow/don't reflow correctly — only fully visible by browser zoom-out. Found this session,
+not investigated or fixed. Worth a look, not urgent.
+
+**Deployment state:** all fixes above are live on this local dev box (`them-frontend`,
+`them-go-bridge`, `them-agent-runtime`, `them-dag-worker-2` all rebuilt/force-recreated and
+healthy). The two Hetzner compose additions (`them-agent-runtime` env vars via the shared base
+file, `them-dag-worker`/`them-dag-worker-2`) are config-only — **not yet built or deployed to the
+actual Hetzner host.**
 
 ---
 
