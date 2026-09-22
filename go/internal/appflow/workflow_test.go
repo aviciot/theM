@@ -383,7 +383,9 @@ func TestInlineLLMActivity_NoKeyInInput(t *testing.T) {
 	}
 }
 
-// AF-WF-15: Stream:true publishes exactly one token event to the run's stream key.
+// AF-WF-15: Stream:true publishes exactly one "token" event to the run's
+// stream key, alongside the node_start/node_done trace events every AppFlow
+// activity now emits unconditionally (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2).
 func TestInlineLLMActivity_StreamPublishesToken(t *testing.T) {
 	caller := &fakeInlineLLMCaller{response: "streamed response"}
 	streamPub := &fakeStreamPub{}
@@ -398,23 +400,27 @@ func TestInlineLLMActivity_StreamPublishesToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(streamPub.keys) != 1 {
-		t.Fatalf("want exactly 1 stream publish, got %d", len(streamPub.keys))
-	}
 	wantKey := "them:dash:run:run-9:stream"
-	if streamPub.keys[0] != wantKey {
-		t.Errorf("stream key: want %q, got %q", wantKey, streamPub.keys[0])
+	for _, k := range streamPub.keys {
+		if k != wantKey {
+			t.Errorf("stream key: want %q, got %q", wantKey, k)
+		}
 	}
-	if len(streamPub.payloads) != 1 {
-		t.Fatalf("want exactly 1 payload, got %d", len(streamPub.payloads))
+
+	var tokenPayloads []map[string]interface{}
+	for _, raw := range streamPub.payloads {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("payload not valid JSON: %v", err)
+		}
+		if payload["type"] == "token" {
+			tokenPayloads = append(tokenPayloads, payload)
+		}
 	}
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(streamPub.payloads[0]), &payload); err != nil {
-		t.Fatalf("payload not valid JSON: %v", err)
+	if len(tokenPayloads) != 1 {
+		t.Fatalf("want exactly 1 token payload, got %d (all payloads: %v)", len(tokenPayloads), streamPub.payloads)
 	}
-	if payload["type"] != "token" {
-		t.Errorf("payload type: want %q, got %v", "token", payload["type"])
-	}
+	payload := tokenPayloads[0]
 	if payload["content"] != "streamed response" {
 		t.Errorf("payload content: want %q, got %v", "streamed response", payload["content"])
 	}
@@ -462,6 +468,206 @@ func TestFinalizeRunActivityInput_JSONRoundTrip(t *testing.T) {
 	}
 	if out.ErrMsg != in.ErrMsg {
 		t.Errorf("err_msg: want %q, got %q", in.ErrMsg, out.ErrMsg)
+	}
+}
+
+// ── docs/APP_CANVAS_DEBUG_PLAN.md Phase 2: node_start/node_done/node_error trace events ──
+
+// tracePayloadsOfType decodes every fakeStreamPub payload and returns only
+// those whose "type" field matches wantType, in publish order.
+func tracePayloadsOfType(t *testing.T, pub *fakeStreamPub, wantType string) []map[string]interface{} {
+	t.Helper()
+	var out []map[string]interface{}
+	for _, raw := range pub.payloads {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("payload not valid JSON: %v", err)
+		}
+		if payload["type"] == wantType {
+			out = append(out, payload)
+		}
+	}
+	return out
+}
+
+// AF-TR-01: InlineLLMActivity emits node_start then node_done on success, with
+// kind="llm" and no detail (Phase 2 keeps LLM node detail empty — no
+// prompt/response content is captured at this stage).
+func TestInlineLLMActivity_EmitsStartAndDoneTrace(t *testing.T) {
+	caller := &fakeInlineLLMCaller{response: "hi"}
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{InlineLLM: caller, StreamPub: streamPub}
+
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		RunID:  "run-tr-1",
+		NodeID: "llm-1",
+		Vars:   FlowVars{"input": "hi"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	starts := tracePayloadsOfType(t, streamPub, "node_start")
+	dones := tracePayloadsOfType(t, streamPub, "node_done")
+	if len(starts) != 1 || len(dones) != 1 {
+		t.Fatalf("want 1 node_start and 1 node_done, got %d and %d", len(starts), len(dones))
+	}
+	if starts[0]["kind"] != "llm" || starts[0]["node_id"] != "llm-1" || starts[0]["run_id"] != "run-tr-1" {
+		t.Errorf("node_start: unexpected fields: %v", starts[0])
+	}
+	if dones[0]["kind"] != "llm" {
+		t.Errorf("node_done kind: want %q, got %v", "llm", dones[0]["kind"])
+	}
+}
+
+// AF-TR-02: InlineLLMActivity emits node_error (not node_done) when the LLM call fails.
+func TestInlineLLMActivity_EmitsErrorTrace(t *testing.T) {
+	caller := &fakeInlineLLMCaller{err: errors.New("boom")}
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{InlineLLM: caller, StreamPub: streamPub}
+
+	_, err := acts.InlineLLMActivity(context.Background(), InlineLLMActivityInput{
+		RunID:  "run-tr-2",
+		NodeID: "llm-2",
+		Vars:   FlowVars{"input": "hi"},
+	})
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if len(tracePayloadsOfType(t, streamPub, "node_error")) != 1 {
+		t.Fatalf("want 1 node_error, got %d", len(tracePayloadsOfType(t, streamPub, "node_error")))
+	}
+	if len(tracePayloadsOfType(t, streamPub, "node_done")) != 0 {
+		t.Fatal("want 0 node_done on failure")
+	}
+}
+
+// AF-TR-03: InvokeAgentActivity emits node_start/node_done with kind="agent".
+func TestInvokeAgentActivity_EmitsStartAndDoneTrace(t *testing.T) {
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{
+		AgentInvoker: &fakeAgentInvoker{response: "hi"},
+		StreamPub:    streamPub,
+	}
+	_, err := acts.InvokeAgentActivity(context.Background(), AgentInvokeActivityInput{
+		RunID:   "run-tr-3",
+		NodeID:  "agent-1",
+		AgentID: "agent-uuid-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	starts := tracePayloadsOfType(t, streamPub, "node_start")
+	dones := tracePayloadsOfType(t, streamPub, "node_done")
+	if len(starts) != 1 || len(dones) != 1 {
+		t.Fatalf("want 1 node_start and 1 node_done, got %d and %d", len(starts), len(dones))
+	}
+	if starts[0]["kind"] != "agent" {
+		t.Errorf("kind: want %q, got %v", "agent", starts[0]["kind"])
+	}
+}
+
+// AF-TR-04: ExecuteHILActivity emits node_start unconditionally, and
+// node_error (never node_done) when it fails before persisting — node_done
+// for a successful HIL persist fires later from execHILNode (nodes.go) once
+// the approval decision is known, not from this activity. No live DB is
+// needed to exercise this: the nil-DB error path already covers the trace
+// emission order without requiring *pgxpool.Pool (not mockable without one).
+func TestExecuteHILActivity_EmitsStartThenErrorTrace_NilDB(t *testing.T) {
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{StreamPub: streamPub}
+
+	_, err := acts.ExecuteHILActivity(context.Background(), HILActivityInput{
+		RunID:  "run-tr-4",
+		NodeID: "hil-1",
+	})
+	if err == nil {
+		t.Fatal("want error with nil DB, got nil")
+	}
+	if len(tracePayloadsOfType(t, streamPub, "node_start")) != 1 {
+		t.Fatalf("want 1 node_start, got %d", len(tracePayloadsOfType(t, streamPub, "node_start")))
+	}
+	if len(tracePayloadsOfType(t, streamPub, "node_error")) != 1 {
+		t.Fatalf("want 1 node_error, got %d", len(tracePayloadsOfType(t, streamPub, "node_error")))
+	}
+	if len(tracePayloadsOfType(t, streamPub, "node_done")) != 0 {
+		t.Fatal("want 0 node_done — HIL's done event fires from execHILNode, not this activity")
+	}
+}
+
+type fakeRouterLLMCaller struct {
+	label string
+	err   error
+}
+
+func (f *fakeRouterLLMCaller) ClassifyIntent(_ context.Context, _, _ string, _ []string, _, _, _, _ string) (string, error) {
+	return f.label, f.err
+}
+
+// AF-TR-06b: ExecuteRouterActivity emits node_start then node_done with
+// detail="label=<chosen>" on success.
+func TestExecuteRouterActivity_EmitsStartAndDoneTrace(t *testing.T) {
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{
+		LLMCaller: &fakeRouterLLMCaller{label: "billing"},
+		StreamPub: streamPub,
+	}
+	out, err := acts.ExecuteRouterActivity(context.Background(), RouterActivityInput{
+		RunID:  "run-tr-7",
+		NodeID: "router-1",
+		Labels: []string{"billing", "support"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ChosenLabel != "billing" {
+		t.Fatalf("chosen label: want %q, got %q", "billing", out.ChosenLabel)
+	}
+	dones := tracePayloadsOfType(t, streamPub, "node_done")
+	if len(dones) != 1 {
+		t.Fatalf("want 1 node_done, got %d", len(dones))
+	}
+	if dones[0]["detail"] != "label=billing" {
+		t.Errorf("detail: want %q, got %v", "label=billing", dones[0]["detail"])
+	}
+}
+
+// AF-TR-05: TraceNodeEventActivity publishes the given event type verbatim,
+// including Detail when non-empty, and never returns an error.
+func TestTraceNodeEventActivity_PublishesEvent(t *testing.T) {
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{StreamPub: streamPub}
+
+	err := acts.TraceNodeEventActivity(context.Background(), TraceEventInput{
+		RunID:     "run-tr-5",
+		NodeID:    "cond-1",
+		Kind:      "condition",
+		EventType: "node_done",
+		Detail:    "branch=true",
+	})
+	if err != nil {
+		t.Fatalf("TraceNodeEventActivity must never return an error, got: %v", err)
+	}
+	dones := tracePayloadsOfType(t, streamPub, "node_done")
+	if len(dones) != 1 {
+		t.Fatalf("want 1 node_done, got %d", len(dones))
+	}
+	if dones[0]["detail"] != "branch=true" {
+		t.Errorf("detail: want %q, got %v", "branch=true", dones[0]["detail"])
+	}
+	if dones[0]["node_id"] != "cond-1" || dones[0]["kind"] != "condition" {
+		t.Errorf("unexpected fields: %v", dones[0])
+	}
+}
+
+// AF-TR-06: TraceNodeEventActivity is a safe no-op when StreamPub is nil.
+func TestTraceNodeEventActivity_NilStreamPub_NoOp(t *testing.T) {
+	acts := &AppFlowActivities{}
+	err := acts.TraceNodeEventActivity(context.Background(), TraceEventInput{
+		RunID: "run-tr-6", NodeID: "n1", Kind: "condition", EventType: "node_start",
+	})
+	if err != nil {
+		t.Fatalf("want nil error with no StreamPub, got %v", err)
 	}
 }
 

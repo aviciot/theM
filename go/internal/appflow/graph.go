@@ -123,6 +123,7 @@ func walkBranch(
 			}
 			curID = firstEdgeTarget(outEdges[node.ID])
 		case "condition":
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
 			var cfg InlineConditionConfig
 			if len(node.Config) > 0 {
 				_ = json.Unmarshal(node.Config, &cfg)
@@ -130,6 +131,7 @@ func walkBranch(
 			vars["input"] = accumulated
 			rendered, rErr := renderFlowTemplate(cfg.Expression, vars)
 			if rErr != nil {
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", rErr.Error())
 				return accumulated, fmt.Errorf("branch condition %q: render expression: %w", node.ID, rErr)
 			}
 			branch := "false"
@@ -138,12 +140,16 @@ func walkBranch(
 			}
 			nextID := findEdgeByLabel(outEdges[node.ID], branch)
 			if nextID == "" {
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", fmt.Sprintf("no outgoing edge labelled %q", branch))
 				return accumulated, fmt.Errorf("branch condition %q: no outgoing edge labelled %q", node.ID, branch)
 			}
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch)
 			curID = nextID
 		case "orchestrator", "middleware":
 			curID = firstEdgeTarget(outEdges[node.ID])
 		case "join":
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "")
 			// Reached join — stop this branch.
 			return accumulated, nil
 		default:

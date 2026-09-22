@@ -3336,6 +3336,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/llm_providers.go` (TenantScopedRoutes, ListMine, UpsertMine) | S1-127 |
 | `internal/appflow/workflow.go` (`AppFlowDebugTaskQueue`, `activityTaskQueueFor`) | S1-128 |
 | `internal/execution/lifecycle.go` (`StartAppFlow` debug-queue routing) | S1-129 |
+| `internal/appflow/activities.go` (`emitTrace`, `TraceNodeEventActivity`, node_start/node_done/node_error on Router/HIL/Agent/Inline LLM) | S1-130 |
+| `internal/appflow/workflow.go` (Condition/Fork/Join `traceNode` calls), `internal/appflow/graph.go` (`walkBranch` `traceNode` calls) | S1-131 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
@@ -3572,7 +3574,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-127 | LLM Provider tenant self-service (`llm_providers_test.go`): LLPTenantScoped_ListMine_Empty (GET /my/llm-providers 200 empty array via fakeDB), LLPTenantScoped_UpsertMine_InvalidBody (PUT /my/llm-providers/{name} 400 on non-JSON body) | 2 |
 | S1-128 | App Canvas Debug Mode Phase 1 — `activityTaskQueueFor` (`workflow_test.go`): `TestActivityTaskQueueFor` — debug=false returns AppFlowTaskQueue, debug=true returns AppFlowDebugTaskQueue, asserts the two constants are distinct | 1 |
 | S1-129 | App Canvas Debug Mode Phase 1 — `Lifecycle.StartAppFlow` debug routing (`lifecycle_test.go`): `TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue` (debug=false → StartWorkflowOptions.TaskQueue=appflow-dag, input.Debug=false), `TestLifecycle_StartAppFlow_Debug_UsesDebugQueue` (debug=true → TaskQueue=appflow-dag-debug, input.Debug=true propagated so the workflow's internal ActivityOptions also route to the debug queue) | 2 |
-| **S1 total** | | **1325** |
+| S1-130 | App Canvas Debug Mode Phase 2 — activity-level node_start/node_done/node_error trace emission (`workflow_test.go`, AF-TR-01..07): `TestInlineLLMActivity_EmitsStartAndDoneTrace`, `TestInlineLLMActivity_EmitsErrorTrace`, `TestInvokeAgentActivity_EmitsStartAndDoneTrace`, `TestExecuteHILActivity_EmitsStartThenErrorTrace_NilDB` (node_start always fires; node_done for HIL fires later from `execHILNode`, not this activity), `TestExecuteRouterActivity_EmitsStartAndDoneTrace` (detail=`label=<chosen>`), `TestTraceNodeEventActivity_PublishesEvent`, `TestTraceNodeEventActivity_NilStreamPub_NoOp`. Also updated `TestInlineLLMActivity_StreamPublishesToken` to filter for the `"token"`-type payload specifically, since node_start/node_done now also publish to the same stream. | 7 |
+| S1-131 | App Canvas Debug Mode Phase 2 — workflow-level trace coverage for Condition/Fork/Join, which have no activity of their own (`workflow_temporal_test.go`, new `testsuite.WorkflowTestSuite`, AF-TR-W01..03): `TestConditionNode_EmitsStartAndDoneTrace` (detail=`branch=true`), `TestConditionNode_NoMatchingEdge_EmitsErrorTrace` (node_error not node_done on failure), `TestForkJoin_EmitsTraceForAllNodes` (fork/2 condition branches/join all emit start+done exactly once; fork detail=`branches=2`; proves `traceNode` fires correctly from both `workflow.go`'s main loop and `graph.go`'s `walkBranch`, and that the join node's trace fires from the fork case in `workflow.go` since `walkBranch` never visits the join node itself — it stops as soon as it reaches it) | 3 |
+| **S1 total** | | **1335** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

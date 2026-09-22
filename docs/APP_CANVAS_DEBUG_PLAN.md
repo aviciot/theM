@@ -1,5 +1,5 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, phased. Phase 1 COMPLETE. Phase 2 NEXT.
+# Status: PLANNED, phased. Phase 1 + 2 COMPLETE. Phase 3 NEXT.
 # Date: 2026-09-22
 
 ---
@@ -9,7 +9,7 @@
 | Phase | What | Status |
 |---|---|---|
 | 1 — Debug worker pool + routing | New Temporal queue, worker container(s), per-run routing | ✅ COMPLETE (2026-09-22) |
-| 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ⬜ NEXT |
+| 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ✅ COMPLETE (2026-09-22) |
 | 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ⬜ NOT STARTED |
 | 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ⬜ NOT STARTED |
 | 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ⬜ NOT STARTED |
@@ -158,6 +158,89 @@ change for any existing app today. `them-dag-worker-debug` on this local dev box
 just built); the Hetzner compose addition is config-only, not deployed to the actual Hetzner host
 (consistent with how `them-dag-worker`/`-2` were handled on Hetzner in the prior session).
 
+### Phase 2 — COMPLETE (2026-09-22)
+
+**Scope deliberately kept minimal, per explicit user direction:** every node kind emits
+`node_start`/`node_done`/`node_error`, with only small kind-specific detail (condition's chosen
+branch, router's chosen label, fork's branch count, HIL's approval outcome) — no per-node debug
+config, no `TraceMode`/redaction, no persistence. Goal: watch a real Graph-mode run's actual path,
+node by node, live. Nothing more.
+
+**Architecture investigated before implementing** (user asked for this explicitly — see the
+"do not assume the current proposed solution is correct" research request this session): Router,
+HIL, Agent, and Inline LLM already dispatch through real Temporal Activities (allowed to do I/O);
+Condition, Fork, and Join execute entirely in workflow code (pure in-memory branching, no I/O,
+subject to Temporal's determinism/replay rules). Evaluated and rejected as alternatives: Temporal
+Queries (pull-only, can't push a live event), Updates (solve synchronous external mutation, not
+this), workflow memo/search attributes (visibility metadata, not a live feed), `workflow.SideEffect`
+(makes a *value* replay-safe, not an I/O mechanism). Conclusion: a small trace-only Activity is the
+correct, not just convenient, answer — there is no other Temporal-native way to get an I/O-free
+workflow decision published live. Full write-up not preserved as a separate doc; summarized here.
+
+**What was built:**
+
+- `go/internal/appflow/activities.go`: `TraceEventInput` (small: `run_id`, `node_id`, `kind`,
+  `event_type`, optional `detail` string — never a full prompt/response). New
+  `AppFlowActivities.TraceNodeEventActivity` — one `StreamPub.XAdd` call to the existing
+  `them:dash:run:{runID}:stream` key, same wire shape as the existing `token`/`done`/`error`
+  events. New shared `emitTrace` helper used by both `TraceNodeEventActivity` and inline calls
+  from `ExecuteRouterActivity`, `ExecuteHILActivity`, `InvokeAgentActivity`, `InlineLLMActivity` —
+  these four already do I/O, so they publish directly instead of calling the new activity.
+  **Never fails the caller** — a tracing publish failure must never affect node execution or
+  trigger a retry, same rule already established for `InlineLLMActivity`'s token-streaming XAdd.
+- `go/internal/appflow/workflow.go`: new `AppFlowTraceNodeEventActivityName` constant; new
+  `traceNode(ctx, ...)` workflow-side helper (fire-and-ignore via `.Get(ctx, nil)`, error
+  discarded) used by Condition, Fork, and Join in the main dispatch loop — the three kinds with no
+  activity of their own. Fork's `node_done` detail is `branches=<N>`; **the join node's own trace
+  fires from the fork case here, once, after `wg.Wait()`** — not from `walkBranch`, since each
+  branch's loop stops as soon as it reaches the join node and never actually visits it (see below).
+- `go/internal/appflow/graph.go` (`walkBranch`): same Condition trace calls, for a Condition node
+  reached inside a fork branch. The `case "join"` here is defensive/correct for a join reached via
+  some other path (not the fork-designated `stopID`) but is not exercised by the simple 2-branch
+  fork/join topology this phase tested — not a bug, just an untested edge case worth knowing about.
+- HIL is special-cased: `ExecuteHILActivity` only emits `node_start` (and `node_error` if it fails
+  before persisting) — the actual approval outcome (`approved`/`rejected`/timeout) is only known
+  later, in `execHILNode` (`nodes.go`), after the signal or timer resolves, so that function calls
+  `traceNode` directly once the decision is in.
+- `go/cmd/dag-worker/main.go`: `AppFlowTraceNodeEventActivity` registered on the AppFlow worker
+  alongside the other 5 AppFlow activities (same task queue selection, so debug runs' trace
+  activity also executes on the debug pool).
+- **10 new tests**, S1-130/S1-131 in `go/TEST_INDEX.md` (S1 total 1325→1335): 7 activity-level
+  (`workflow_test.go`) covering start/done/error emission for all 4 activity-backed kinds plus
+  `TraceNodeEventActivity` directly; 3 workflow-level (`workflow_temporal_test.go`, new
+  `testsuite.WorkflowTestSuite`) proving Condition/Fork/Join tracing actually fires correctly
+  end-to-end through a real Temporal workflow test environment — activity-level mocking alone
+  can't exercise `traceNode`'s `workflow.ExecuteActivity` call. `go test ./...` 0 failures, full
+  suite. One existing test (`TestInlineLLMActivity_StreamPublishesToken`) updated to filter for
+  the `"token"`-type payload specifically, since `node_start`/`node_done` now also publish to the
+  same stream key.
+- `docs/REDIS.md`: added the previously-undocumented `them:dash:run:{run_id}:stream` key (a
+  pre-existing gap, not introduced this session) with the new `node_start`/`node_done`/`node_error`
+  types noted alongside the existing ones. Confirmed and documented: unknown `type` values are
+  silently ignored by both `sse/handler.go` (`return true // skip unknown event types`) and
+  `ws/handler.go` (`default: return nil`) — these new types are safe to ship without any consumer
+  change or wire-format migration.
+
+**Phase 2 gate — MET:** every node kind in a real Graph-mode run now publishes a live
+`node_start`/`node_done`/`node_error` event to the run's existing Redis Stream, unconditionally,
+provably via an end-to-end Temporal workflow test — not just unit-level activity mocks. No
+persistence, no UI consumption, no per-node config — all explicitly deferred to later phases.
+
+**Deliberately deferred, not decided here (do not assume settled):**
+- Whether input/output snapshots are ever captured in `detail` beyond the current short strings —
+  the user explicitly scoped this phase to avoid capturing full prompts/inputs/outputs "unless
+  already safely available and clearly required," and none of the 7 node kinds needed that to hit
+  this phase's goal.
+- Per-node debug configuration (a `DebugConfig`/`TraceMode` field on `AppFlowNode`, redaction
+  rules, etc.) — discussed and explicitly deferred by the user as a possible Phase 3/4 concern,
+  not built here. If it resurfaces, the candidate shape discussed was one generic field on
+  `AppFlowNode` (e.g. `TraceMode: ""|"full"|"redacted"|"off"`), not a per-field redaction schema.
+- The Phase 1 plan doc's original open question ("unconditional vs debug-gated emission") is now
+  answered by this phase's implementation: **unconditional emission**, matching the user's explicit
+  instruction. Persistence gating is Phase 3/4's job, unchanged.
+
+---
+
 ### 1. A separate Temporal task queue + worker pool for debug runs
 
 New task queue constants (mirroring the existing `AppFlowTaskQueue = "appflow-dag"` /
@@ -181,24 +264,13 @@ production actually does, by construction.
 threaded from the WS/HTTP debug-start call down to this dispatch point, selecting
 `AppFlowDebugTaskQueue` instead when true.
 
-### 2. Per-node trace events — the new instrumentation every activity needs
+### 2. Per-node trace events — the new instrumentation every activity needs — ✅ DONE (Phase 2)
 
-Each AppFlow activity (`InlineLLMActivity`, router/HIL/fork/join execution, `InvokeAgentActivity`,
-etc. — everything dispatched from `internal/appflow/workflow.go`'s main loop) needs to publish a
-start and a done/error event, mirroring the existing `token`/`done` `XAdd` pattern already used
-for LLM streaming:
-- `node_start {run_id, node_id, kind, started_at}`
-- `node_done {run_id, node_id, kind, output_snapshot, latency_ms}` /
-  `node_error {run_id, node_id, kind, error, latency_ms}`
-
-**Open design question (not yet decided):** should this instrumentation be unconditional (every
-run, debug or not, emits these events — cheap, and closes the `run_steps` gap for ALL runs, not
-just debug ones) or gated behind the debug flag (less always-on overhead, but means a production
-run still has zero forensic trace if something goes wrong and debug wasn't on)? Leaning toward
-**unconditional emission, gated recording** — always emit the events (cheap pub/sub), but only
-persist them to a durable table when the run is a debug run, keeping decision #1 (debug is opt-in
-for overhead) intact while still allowing a future decision to persist for all runs without
-re-touching the activities. Needs explicit confirmation before implementation, not decided here.
+**RESOLVED (Phase 2, see the completion section above):** unconditional emission, every run,
+every node kind. Actual shape shipped is deliberately smaller than originally sketched here —
+`{run_id, node_id, kind, detail?}`, no `started_at`/`output_snapshot`/`latency_ms` — the user
+scoped Phase 2 down to "just enough to follow the path live," explicitly deferring snapshots and
+timing to whenever Phase 3 (persistence) actually needs them.
 
 ### 3. Durable per-node trace storage
 
@@ -274,9 +346,7 @@ improvement over the agent builder's in-memory-only session.
 
 ## Remaining open question
 
-1. **Unconditional vs debug-gated event emission** (architecture section 2) — should the
-   `node_start`/`node_done`/`node_error` events always be published (cheap pub/sub) regardless of
-   the app's configured log level, with the log-level setting only controlling what gets
-   *persisted*? Or should emission itself be skipped entirely when log level is `off`? Leaning
-   toward "always emit, level controls persistence" (simpler code path, one less conditional
-   deep inside the workflow/activity hot path) but not yet explicitly confirmed.
+None — the sole open question (unconditional vs debug-gated event emission) was resolved and
+implemented in Phase 2 (see that section above): **unconditional emission**, no persistence yet.
+Phase 3 may surface new open questions of its own (exact `run_steps` column design, how the
+log-level setting gates persistence) — track those there when that session starts, not here.

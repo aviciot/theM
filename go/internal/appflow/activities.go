@@ -129,6 +129,23 @@ type InlineLLMActivityOutput struct {
 	OutputVar string `json:"output_var"`
 }
 
+// TraceEventInput is the input to AppFlowTraceActivity — a live, unconditional
+// per-node progress event (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). Emitted for
+// every run, debug or not; not persisted anywhere (Phase 3's job). Kept
+// deliberately small: an event type, which node, and a short kind-specific
+// Detail string — never full prompts/inputs/outputs.
+type TraceEventInput struct {
+	RunID  string `json:"run_id"`
+	NodeID string `json:"node_id"`
+	Kind   string `json:"kind"`
+	// EventType is "node_start" | "node_done" | "node_error".
+	EventType string `json:"event_type"`
+	// Detail is a short, node-kind-specific summary (e.g. a condition's chosen
+	// branch, a router's chosen label, a fork's branch count). Empty for
+	// node_start. Never a full prompt, response, or other large/sensitive text.
+	Detail string `json:"detail,omitempty"`
+}
+
 // ── Activity dependencies and implementations ─────────────────────────────────
 
 // AppFlowActivities holds dependencies for AppFlow Temporal activities.
@@ -196,12 +213,16 @@ type InlineLLMRequest struct {
 // ExecuteRouterActivity calls an LLM to classify the user message and returns
 // the matching intent label from the router's output_labels list.
 func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input RouterActivityInput) (RouterActivityOutput, error) {
+	a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_start", "")
+
 	if len(input.Labels) == 0 {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", "no output_labels configured")
 		return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"router has no output_labels configured", "NoLabels", nil,
 		)
 	}
 	if a.LLMCaller == nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", "no LLM caller configured")
 		return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"router: no LLM caller configured on this worker", "NoLLMCaller", nil,
 		)
@@ -214,17 +235,20 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 
 	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProviderName, input.LLMModel, input.TenantID, input.ApplicationID)
 	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", err.Error())
 		return RouterActivityOutput{}, fmt.Errorf("router classify: %w", err)
 	}
 
 	// Validate the returned label is in the allowed set.
 	for _, l := range input.Labels {
 		if strings.EqualFold(l, label) {
+			a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_done", "label="+l)
 			return RouterActivityOutput{ChosenLabel: l}, nil
 		}
 	}
 
 	// LLM returned an unknown label — fail explicitly so the caller can react.
+	a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", fmt.Sprintf("unknown label %q", label))
 	return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 		fmt.Sprintf("router: LLM returned unknown label %q (valid: %v)", label, input.Labels),
 		"RouterUnknownLabel", nil,
@@ -234,8 +258,14 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 // ExecuteHILActivity persists an HIL approval request to them.hil_approvals and
 // returns immediately. The workflow then pauses waiting for the hil_approval signal.
 // This activity is idempotent — a duplicate (same run_id + node_id) is silently ignored.
+// Only publishes node_start here — the "done" event (approved/rejected) fires
+// from execHILNode in nodes.go once the approval signal or timeout resolves,
+// since that decision happens in workflow code, after this activity returns.
 func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILActivityInput) (HILActivityOutput, error) {
+	a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_start", "")
+
 	if a.DB == nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_error", "no DB configured")
 		return HILActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"hil: no DB configured on AppFlowActivities", "NoDB", nil,
 		)
@@ -252,6 +282,7 @@ func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILAct
 		input.NodeID, input.ApproverRole, input.Prompt, input.FallbackAction,
 	)
 	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_error", "insert approval request failed")
 		return HILActivityOutput{}, fmt.Errorf("hil: insert approval request: %w", err)
 	}
 	return HILActivityOutput{}, nil
@@ -261,12 +292,16 @@ func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILAct
 // The agent endpoint is resolved by the AgentInvoker (which queries DB for the
 // agent record and performs the HTTP call). Returns the agent's text response.
 func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input AgentInvokeActivityInput) (AgentInvokeActivityOutput, error) {
+	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_start", "")
+
 	if a.AgentInvoker == nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "no AgentInvoker configured")
 		return AgentInvokeActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"appflow: no AgentInvoker configured on AppFlowActivities", "NoAgentInvoker", nil,
 		)
 	}
 	if input.AgentID == "" {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "empty agent_id")
 		return AgentInvokeActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("appflow: node %q has empty agent_id (re-publish the application canvas to stamp IDs)", input.NodeID),
 			"EmptyAgentID", nil,
@@ -274,8 +309,10 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 	}
 	text, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.UserMessage)
 	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", err.Error())
 		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
 	}
+	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", "")
 	return AgentInvokeActivityOutput{ResponseText: text}, nil
 }
 
@@ -284,7 +321,10 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 // classification). Templates are rendered here, not in the workflow, because
 // text/template execution is not deterministic-safe workflow code.
 func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineLLMActivityInput) (InlineLLMActivityOutput, error) {
+	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_start", "")
+
 	if a.InlineLLM == nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "no InlineLLM caller configured")
 		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"inline llm: no InlineLLM caller configured on this worker", "NoInlineLLMCaller", nil,
 		)
@@ -292,6 +332,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 
 	systemPrompt, err := renderFlowTemplate(input.SystemPrompt, input.Vars)
 	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "render system_prompt failed")
 		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("inline llm %q: render system_prompt: %v", input.NodeID, err),
 			"InlineLLMRenderFailed", nil,
@@ -299,6 +340,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 	}
 	userPrompt, err := renderFlowTemplate(input.UserPrompt, input.Vars)
 	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "render user_prompt failed")
 		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("inline llm %q: render user_prompt: %v", input.NodeID, err),
 			"InlineLLMRenderFailed", nil,
@@ -327,8 +369,10 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		ApplicationID: input.ApplicationID,
 	})
 	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", err.Error())
 		return InlineLLMActivityOutput{}, fmt.Errorf("inline llm %q: %w", input.NodeID, err)
 	}
+	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_done", "")
 
 	if input.Stream && a.StreamPub != nil && responseText != "" {
 		key := fmt.Sprintf("them:dash:run:%s:stream", input.RunID)
@@ -350,6 +394,44 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		ResponseText: responseText,
 		OutputVar:    input.OutputVar,
 	}, nil
+}
+
+// TraceNodeEventActivity publishes a live node_start/node_done/node_error event
+// to the run's Redis Stream (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). It exists
+// so Condition/Fork/Join — which execute entirely in workflow code and do no
+// I/O for their real logic — have a determinism-safe way to report what they
+// did. Router/HIL/Agent/Inline LLM emit the same events inline from their own
+// activities instead of calling this one, since they already do I/O there.
+//
+// Never fails the caller: a tracing publish failure must not affect node
+// execution or trigger a retry (same rule as InlineLLMActivity's token
+// streaming — see the comment on that XAdd call).
+func (a *AppFlowActivities) TraceNodeEventActivity(ctx context.Context, input TraceEventInput) error {
+	a.emitTrace(ctx, input.RunID, input.NodeID, input.Kind, input.EventType, input.Detail)
+	return nil
+}
+
+// emitTrace publishes one node_start/node_done/node_error event. Shared by
+// TraceNodeEventActivity and the Router/HIL/Agent/Inline LLM activities, which
+// call it inline since they already do I/O in this activity. No-op if
+// StreamPub is nil; never returns an error — tracing must never affect node
+// execution (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2).
+func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, eventType, detail string) {
+	if a.StreamPub == nil {
+		return
+	}
+	key := fmt.Sprintf("them:dash:run:%s:stream", runID)
+	payload := map[string]interface{}{
+		"type":    eventType,
+		"run_id":  runID,
+		"node_id": nodeID,
+		"kind":    kind,
+	}
+	if detail != "" {
+		payload["detail"] = detail
+	}
+	raw, _ := json.Marshal(payload)
+	_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
 }
 
 // FinalizeRunActivity updates the run's DB status and publishes a terminal event

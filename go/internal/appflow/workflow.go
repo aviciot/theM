@@ -46,6 +46,12 @@ const (
 	// AppFlowInlineLLMActivityName is the registered name for the inline LLM node activity.
 	AppFlowInlineLLMActivityName = "AppFlowInlineLLMActivity"
 
+	// AppFlowTraceNodeEventActivityName is the registered name for the live
+	// node_start/node_done/node_error trace-publish activity (Phase 2 of
+	// docs/APP_CANVAS_DEBUG_PLAN.md). Used by Condition/Fork/Join, which have
+	// no activity of their own for their real logic.
+	AppFlowTraceNodeEventActivityName = "AppFlowTraceNodeEventActivity"
+
 	// AppFlowSignalHILApproval is the signal name for HIL human approval.
 	AppFlowSignalHILApproval = "hil_approval"
 
@@ -69,6 +75,22 @@ func activityTaskQueueFor(debug bool) string {
 		return AppFlowDebugTaskQueue
 	}
 	return AppFlowTaskQueue
+}
+
+// traceNode fires a node_start/node_done/node_error event via
+// AppFlowTraceNodeEventActivity. Used only by Condition/Fork/Join, which do no
+// I/O of their own (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). Always emitted,
+// never persisted, never allowed to fail the node it describes — the .Get
+// error is deliberately discarded, matching TraceNodeEventActivity's own
+// never-fail contract.
+func traceNode(ctx workflow.Context, runID, nodeID, kind, eventType, detail string) {
+	_ = workflow.ExecuteActivity(ctx, AppFlowTraceNodeEventActivityName, TraceEventInput{
+		RunID:     runID,
+		NodeID:    nodeID,
+		Kind:      kind,
+		EventType: eventType,
+		Detail:    detail,
+	}).Get(ctx, nil)
 }
 
 // ── Workflow types ─────────────────────────────────────────────────────────────
@@ -366,6 +388,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "condition":
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
 			var cfg InlineConditionConfig
 			if len(node.Config) > 0 {
 				_ = json.Unmarshal(node.Config, &cfg)
@@ -373,6 +396,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			vars["input"] = accumulated
 			rendered, rErr := renderFlowTemplate(cfg.Expression, vars)
 			if rErr != nil {
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", rErr.Error())
 				out.Status = "failed"
 				retErr = temporalerr.NewNonRetryableApplicationError(
 					fmt.Sprintf("condition %q: render expression: %v", node.ID, rErr),
@@ -386,6 +410,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			}
 			nextID := findEdgeByLabel(outEdgesBySource[node.ID], branch)
 			if nextID == "" {
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", fmt.Sprintf("no outgoing edge labelled %q", branch))
 				out.Status = "failed"
 				retErr = temporalerr.NewNonRetryableApplicationError(
 					fmt.Sprintf("condition %q: no outgoing edge labelled %q", node.ID, branch),
@@ -393,11 +418,13 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				)
 				return
 			}
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch)
 			currentID = nextID
 			continue
 
 		case "fork":
 			branches := outEdgesBySource[node.ID]
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", fmt.Sprintf("branches=%d", len(branches)))
 			branchResults := make([]string, len(branches))
 			wg := workflow.NewWaitGroup(ctx)
 			// Find the join node that all branches converge on.
@@ -423,6 +450,15 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			if merged != "" {
 				accumulated = merged
 			}
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", fmt.Sprintf("branches=%d", len(branches)))
+			// The join node itself is never visited by walkBranch — each branch
+			// stops as soon as it reaches joinID (see walkBranch's loop condition
+			// in graph.go), so its trace fires here instead, once all branches
+			// have converged.
+			if joinNode, ok := nodeByID[joinID]; ok {
+				traceNode(ctx, input.RunID, joinNode.ID, joinNode.Kind, "node_start", "")
+				traceNode(ctx, input.RunID, joinNode.ID, joinNode.Kind, "node_done", "")
+			}
 			// Continue from the join node's outgoing edge.
 			if joinID != "" {
 				currentID = firstEdgeTarget(outEdgesBySource[joinID])
@@ -432,6 +468,8 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "join":
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "")
 			// Join nodes are consumed inside walkBranch; reaching one in the main
 			// loop means a bare join with no preceding fork — treat as pass-through.
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])

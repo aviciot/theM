@@ -200,6 +200,9 @@ func run() error {
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InlineLLMActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowInlineLLMActivityName,
 	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.TraceNodeEventActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowTraceNodeEventActivityName,
+	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)
 	}

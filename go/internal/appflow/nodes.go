@@ -138,5 +138,15 @@ func execHILNode(
 		workflow.GetSignalChannel(ctx, signalName).Receive(ctx, &approval)
 	}
 
+	// The approval decision (approved/rejected/timeout) is only known here, in
+	// workflow code, after the signal or timer resolves — ExecuteHILActivity
+	// already returned before this point, so this activity's "done" event
+	// fires separately via traceNode rather than emitTrace.
+	if approval.Approved {
+		traceNode(ctx, input.RunID, node.ID, "hil", "node_done", "approved: "+approval.Comment)
+	} else {
+		traceNode(ctx, input.RunID, node.ID, "hil", "node_done", "rejected: "+approval.Comment)
+	}
+
 	return approval.Approved, approval.Comment, nil
 }
