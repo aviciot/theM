@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-21 (Tenant LLM Provider Management COMPLETE, HEAD ecbd63fe)
+# Last updated: 2026-09-22 (Tenant LLM self-service + platform admin LLM key UI COMPLETE, HEAD 970b0cfb)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,16 +7,43 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `ecbd63fe` (not yet pushed)
+HEAD: `970b0cfb` (not yet pushed)
 
 Recent commits (newest first):
 ```
+970b0cfb  feat(settings): tenant-admin LLM provider self-service + platform admin LLM key management
 ecbd63fe  feat(tenant-llm): block platform key fallback, add tenant LLM provider UI
 52fcec69  feat(llm-gateway): Phase 3 — admin CRUD backend + frontend UI
 74bd54a7  feat(node-registry): Phase 5 — middleware adopts the node contract
 e3c82d1a  docs(current): mark HEAD as pushed, Node Registry Phase 4 complete
-d7dd731d  feat(node-registry): Phase 4 — app canvas renders from the registry
 ```
+
+---
+
+## Tenant LLM Self-Service + Platform Admin LLM Key Management — COMPLETE (2026-09-22)
+
+Commit: `970b0cfb`. Tenant admins can now manage their own LLM provider API keys from the Settings page. Platform admins (super_admin) can manage the-M platform-level keys from the same page.
+
+**What was built:**
+
+- `go/internal/admin/llm_providers.go` — added `TenantScopedRoutes` with `GET /admin/my/llm-providers` and `PUT /admin/my/llm-providers/{name}`. Uses `tenantctx.MustTenantIDFromCtx` to scope to the caller's tenant. No super_admin required.
+- `go/internal/admin/router.go` — mounted `TenantScopedRoutes` in the `tenantScoped` group.
+- `go/internal/admin/llm_providers_test.go` — 2 new tests (LLP-TS-01..02): ListMine empty 200, UpsertMine invalid body 400.
+- `frontend/src/app/admin/settings/page.tsx` — added "LLM Providers" tab:
+  - tenant admin: calls `listMyLLMProviders` / `upsertMyLLMProvider` (own tenant)
+  - super_admin: calls `listPlatformProviders` / `patchPlatformProvider` (platform-level)
+  - shows enabled/disabled badge, masked key status, per-provider API key password input + Save button
+- `frontend/src/lib/api.ts` — added `patchPlatformProvider`, `listMyLLMProviders`, `upsertMyLLMProvider`.
+- `frontend/src/types/auth.ts` — added `tenant_id?: string` to `TheMUser` (auth `/me` already returns it).
+
+**Navigation:** Settings → LLM Providers tab (visible to all authenticated admin users).
+
+**Hard constraint still in effect:** Platform LLM API keys MUST NOT be used as fallback for tenant LLM calls. See `go/internal/llmresolve/llmresolve.go`.
+
+**Next recommended tasks:**
+1. Test: log in as tenant admin (payops_ai), go to Settings → LLM Providers, set an OpenAI key, verify it's saved.
+2. Test: log in as super_admin, go to Settings → LLM Providers, verify platform-level keys show.
+3. Gateway Phase 4 — profile pipeline steps (PII filter, cache, guardrails). Deferred — canvas session needs to stabilize first.
 
 ---
 
