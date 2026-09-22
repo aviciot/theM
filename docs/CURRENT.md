@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 + 3 COMPLETE, Phase 4 NEXT, HEAD pending commit)
+# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 + 3 COMPLETE, Phase 4 NEXT, HEAD 85a436bb)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,11 +7,12 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `6104b349` at session start; Phase 3 work in this session not yet committed (see below) —
-not pushed either way, confirm push credentials before pushing.
+HEAD: `85a436bb` — committed this session, **not yet pushed** (confirm push credentials before
+pushing to `origin/main`).
 
-Recent commits (newest first, at session start):
+Recent commits (newest first):
 ```
+85a436bb  feat(app-canvas): durable trace storage for Graph-mode runs (Phase 3)
 6104b349  feat(app-canvas): live per-node trace events for Graph-mode runs (Phase 2)
 865ad388  feat(app-canvas): debug worker pool + task-queue routing (Phase 1)
 70d91890  docs: plan real (non-simulated) debug mode for the app canvas
@@ -40,8 +41,7 @@ adds richer detail?
 
 ## App Canvas Debug Mode — Phase 3 (durable trace storage) — COMPLETE (2026-09-22)
 
-Not yet committed this session — see `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 3 section for full
-detail. Summary:
+Commit `85a436bb`. See `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 3 section for full detail. Summary:
 
 - **Bug found and fixed first:** `them.run_steps.tool_call_id` was `TEXT NOT NULL` with no default,
   but its only writer (`internal/runrecorder.RecordAgentStep`) never included it in the INSERT —
@@ -82,14 +82,6 @@ full stack hasn't been watched this session. Recommend a manual `temporal workfl
 log-verbosity setting yet (Phase 4) — every AppFlow run persists unconditionally right now, same as
 Phase 2's live-emission behavior. `agent_id` on `run_steps` remains unpopulated by either writer —
 noted, not addressed, out of scope for this phase.
-
-**Not yet committed to git this session** — files changed (uncommitted at time of writing):
-`db/103_run_steps_appflow_trace.sql` (new), `go/internal/appflow/activities.go`,
-`go/internal/appflow/trace_persist_integration_test.go` (new),
-`go/internal/admin/dal/dal.go`, `go/internal/admin/dal/runs.go`,
-`frontend/src/lib/apiTypes.ts`, `frontend/src/app/runs/runsTypes.ts`,
-`frontend/src/app/runs/RunGraph.tsx`, `go/TEST_INDEX.md`, `docs/SCHEMA.md`, `docs/LESSONS.md`,
-`docs/APP_CANVAS_DEBUG_PLAN.md`, `docs/CURRENT.md`.
 
 ---
 
