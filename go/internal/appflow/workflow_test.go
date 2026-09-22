@@ -464,3 +464,19 @@ func TestFinalizeRunActivityInput_JSONRoundTrip(t *testing.T) {
 		t.Errorf("err_msg: want %q, got %q", in.ErrMsg, out.ErrMsg)
 	}
 }
+
+// docs/APP_CANVAS_DEBUG_PLAN.md Phase 1: activityTaskQueueFor selects the
+// isolated debug queue when a run is in debug mode, and the production queue
+// otherwise. AppFlowWorkflow uses this for every ActivityOptions.TaskQueue it
+// builds, so a debug run's activities always land on them-dag-worker-debug.
+func TestActivityTaskQueueFor(t *testing.T) {
+	if got := activityTaskQueueFor(false); got != AppFlowTaskQueue {
+		t.Errorf("debug=false: want %q, got %q", AppFlowTaskQueue, got)
+	}
+	if got := activityTaskQueueFor(true); got != AppFlowDebugTaskQueue {
+		t.Errorf("debug=true: want %q, got %q", AppFlowDebugTaskQueue, got)
+	}
+	if AppFlowTaskQueue == AppFlowDebugTaskQueue {
+		t.Fatal("AppFlowTaskQueue and AppFlowDebugTaskQueue must be distinct queue names")
+	}
+}

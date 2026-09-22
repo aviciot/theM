@@ -1,5 +1,5 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, phased. Phase 1 NEXT.
+# Status: PLANNED, phased. Phase 1 COMPLETE. Phase 2 NEXT.
 # Date: 2026-09-22
 
 ---
@@ -8,8 +8,8 @@
 
 | Phase | What | Status |
 |---|---|---|
-| 1 — Debug worker pool + routing | New Temporal queue, worker container(s), per-run routing | ⬜ NEXT |
-| 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ⬜ NOT STARTED |
+| 1 — Debug worker pool + routing | New Temporal queue, worker container(s), per-run routing | ✅ COMPLETE (2026-09-22) |
+| 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ⬜ NEXT |
 | 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ⬜ NOT STARTED |
 | 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ⬜ NOT STARTED |
 | 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ⬜ NOT STARTED |
@@ -101,42 +101,62 @@ browser tab closing, unlike the agent builder's in-memory-only debug session.
 
 ## Architecture
 
-### Phase 1 checklist (start here in a fresh session)
+### Phase 1 — COMPLETE (2026-09-22)
 
-Everything needed for Phase 1 is in subsection "1." immediately below — this checklist is just
-the concrete to-do list extracted from that prose:
+All checklist items done:
 
-- [ ] `go/internal/appflow/workflow.go`: add `AppFlowDebugTaskQueue = "appflow-dag-debug"` constant
-      next to the existing `AppFlowTaskQueue`.
-- [ ] `go/internal/execution/lifecycle.go`: `StartAppFlow` (~line 680) currently hardcodes
-      `TaskQueue: appflow.AppFlowTaskQueue` — thread a `debug bool` parameter through from the
-      caller and select `AppFlowDebugTaskQueue` when true. Trace the call chain up from here to
-      find where the debug-start decision needs to originate (likely a new WS/HTTP entry point —
-      not yet designed; the existing debug-start flow is Phase 5/6's job, so for Phase 1 alone, a
-      minimal test harness that calls `StartAppFlow(debug=true)` directly is enough to prove the
-      routing works, without building the real UI trigger yet).
-- [ ] `docker-compose.dev.yml`: new `them-dag-worker-debug` service — same `Dockerfile.dag-worker`
-      image, same env vars as `them-dag-worker`, `TEMPORAL_HOST_PORT` unchanged (same Temporal
-      server), but no separate task-queue env var exists yet on that image — check
-      `go/cmd/dag-worker/main.go` for how `AppFlowTaskQueue` is wired into the worker's `New(...)`
-      call; the debug worker needs to register against `AppFlowDebugTaskQueue` instead, which may
-      require a new env var (e.g. `APPFLOW_TASK_QUEUE_OVERRIDE`) or a build-time distinction —
-      decide and document whichever approach is chosen.
-- [ ] `docker-compose.hetzner.yml`: mirror the same addition (this session's `them-dag-worker`
-      Hetzner gap was just closed — don't reintroduce the same "dev has it, prod doesn't" pattern
-      for the debug pool).
-- [ ] Prove it end-to-end: start `them-dag-worker-debug`, confirm via container logs it's polling
-      `appflow-dag-debug` (same log-message pattern as the existing `"appflow-worker polling"`
-      line), then run a minimal AppFlow workflow dispatched with `debug=true` and confirm (via
-      Temporal UI or worker logs) it was picked up by the debug worker, not `them-dag-worker`.
-- [ ] `go test ./...` — zero failures. Add a test proving `StartAppFlow`'s queue selection logic
-      (unit-level, no live Temporal needed — same style as existing `lifecycle_test.go` coverage).
-- [ ] Update `go/TEST_INDEX.md`, this doc's Progress table, and `docs/CURRENT.md` before handing
-      over.
+- [x] `go/internal/appflow/workflow.go`: `AppFlowDebugTaskQueue = "appflow-dag-debug"` constant
+      added next to `AppFlowTaskQueue`. `AppFlowWorkflowInput.Debug bool` added. New pure helper
+      `activityTaskQueueFor(debug bool) string` selects the queue; `AppFlowWorkflow` uses it for
+      both `ActivityOptions` blocks it builds (`shortAO` for finalize/HIL, `ao` for the main node
+      walk) — this was the part not called out explicitly in the original plan prose: the
+      workflow itself dispatches activities via `ActivityOptions.TaskQueue`, independently of
+      which queue the *workflow* was started on, so both needed the same debug/production switch.
+- [x] `go/internal/execution/lifecycle.go`: `StartAppFlow` now takes `debug bool`, selects
+      `AppFlowDebugTaskQueue`/`AppFlowTaskQueue` for `StartWorkflowOptions.TaskQueue`, and sets
+      `input.Debug = debug` so the workflow's internal activity dispatch matches. Both existing
+      callers (`internal/ws/handler.go`, `internal/sse/handler.go`) updated to pass `false` —
+      no debug-start entry point exists yet; that's Phase 5/6.
+- [x] `go/cmd/dag-worker/main.go` + `go/internal/config/config.go`: new env var
+      `APPFLOW_TASK_QUEUE_OVERRIDE` — when set, the AppFlow worker registers on that queue instead
+      of `appflow.AppFlowTaskQueue`. Same binary/image as production, no build-time distinction
+      needed. The worker's `canvas-dag-nodes` registration (agent-builder Temporal path) is
+      **not** affected — still always registers on the production `canvas-dag-nodes` queue on
+      every dag-worker container, including the debug one (documented as intentional; that path
+      has no debug queue yet, out of scope for this plan).
+- [x] `docker-compose.dev.yml` + `docker-compose.hetzner.yml`: new `them-dag-worker-debug` service
+      in both, same `Dockerfile.dag-worker` image, `APPFLOW_TASK_QUEUE_OVERRIDE=appflow-dag-debug`
+      set. Both validated with `docker compose ... config --quiet` (0 errors) and
+      `config --services` (service present). Hetzner block intentionally has no
+      `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` — matches the pre-existing gap already flagged for
+      `them-dag-worker`/`-2` in that file (see `docs/CURRENT.md` 2026-09-22 entry); not
+      reintroducing anything new, just not fixing a pre-existing issue as a side effect here.
+- [x] Proven end-to-end on the live local stack: built + started `them-dag-worker-debug`; logs
+      confirmed `"appflow-worker polling" task_queue=appflow-dag-debug` (and, as expected,
+      `canvas-dag-nodes` too). Started a workflow directly via `temporal workflow start
+      --task-queue appflow-dag-debug --type AppFlowWorkflow ... --input '{...,"debug":true}'`
+      using the `temporal` CLI already present in the `temporal-admin-tools` container. Confirmed
+      via `docker logs`: the workflow's `AppFlowFinalizeRunActivity` executed **only** on
+      `them-dag-worker-debug` (`TaskQueue":"appflow-dag-debug"` in its log lines); `them-dag-worker`
+      and `them-dag-worker-2`'s logs show no activity for this workflow ID at all — their most
+      recent entries predate this test. Deliberately fed an invalid empty UUID as `run_id` so the
+      workflow would fail fast (no need for a real `them.runs` row) — the failure itself (in
+      `pgxRunStatusUpdater`) is expected and irrelevant to what this test proves.
+- [x] `go test ./...` — 0 failures (full suite, via Docker golang:1.25-alpine per the "no local Go
+      toolchain" constraint). New tests: `TestActivityTaskQueueFor` (`internal/appflow`),
+      `TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue` +
+      `TestLifecycle_StartAppFlow_Debug_UsesDebugQueue` (`internal/execution`). `go build ./...`
+      also clean. `go/TEST_INDEX.md` updated (S1-128, S1-129; S1 total 1322→1325).
 
-**Phase 1 gate:** a workflow started with `debug=true` is picked up by the debug worker, not the
-production one, proven by log inspection — no UI, no trace events, no storage yet. That is all
-later phases' job.
+**Phase 1 gate — MET:** a workflow started with `debug=true` is picked up by the debug worker,
+not the production one, proven by log inspection. No UI, no trace events, no storage yet — that
+is all later phases' job, unchanged from the original plan.
+
+**Not done / deliberately deferred to a later phase (not a regression):** no WS/HTTP entry point
+sets `debug=true` yet — both live callers pass `false` explicitly, so there is zero behavior
+change for any existing app today. `them-dag-worker-debug` on this local dev box is running (not
+just built); the Hetzner compose addition is config-only, not deployed to the actual Hetzner host
+(consistent with how `them-dag-worker`/`-2` were handled on Hetzner in the prior session).
 
 ### 1. A separate Temporal task queue + worker pool for debug runs
 

@@ -21,6 +21,13 @@ const (
 	// AppFlowTaskQueue is the Temporal task queue polled by dag-worker for AppFlowWorkflow.
 	AppFlowTaskQueue = "appflow-dag"
 
+	// AppFlowDebugTaskQueue is the Temporal task queue polled by the isolated debug
+	// worker pool (them-dag-worker-debug) for AppFlowWorkflow runs started with
+	// debug=true. Same workflow/activity code as AppFlowTaskQueue — isolation is by
+	// queue only, so debug traffic never competes with or risks production traffic.
+	// See docs/APP_CANVAS_DEBUG_PLAN.md Phase 1.
+	AppFlowDebugTaskQueue = "appflow-dag-debug"
+
 	// AppFlowWorkflowType is the registered workflow type name.
 	AppFlowWorkflowType = "AppFlowWorkflow"
 
@@ -54,6 +61,16 @@ func WorkflowIDForRun(tenantID, runID string) string {
 	return "appflow:" + tenantID + ":" + runID
 }
 
+// activityTaskQueueFor returns AppFlowDebugTaskQueue when debug is true, else
+// AppFlowTaskQueue. Extracted as a pure function so the selection logic can be
+// unit-tested without spinning up a Temporal workflow test environment.
+func activityTaskQueueFor(debug bool) string {
+	if debug {
+		return AppFlowDebugTaskQueue
+	}
+	return AppFlowTaskQueue
+}
+
 // ── Workflow types ─────────────────────────────────────────────────────────────
 
 // AppFlowWorkflowInput is the input to AppFlowWorkflow.
@@ -84,6 +101,13 @@ type AppFlowWorkflowInput struct {
 	// TemporalCfg holds execution controls (timeouts, retry policy).
 	// Nil = use hardcoded defaults (fail-open: never blocks a workflow).
 	TemporalCfg *TemporalExecCfg `json:"temporal_cfg,omitempty"`
+	// Debug routes this run's activities to AppFlowDebugTaskQueue instead of
+	// AppFlowTaskQueue, so it executes on the isolated debug worker pool. The
+	// workflow itself must also be started with TaskQueue: AppFlowDebugTaskQueue
+	// (StartWorkflowOptions) for a debug worker to pick it up in the first place —
+	// this field only controls the *activity* dispatch queue used inside the
+	// workflow function once it's already running.
+	Debug bool `json:"debug,omitempty"`
 }
 
 // TemporalExecCfg carries Temporal execution controls resolved at workflow submit time.
@@ -125,9 +149,14 @@ type HILApprovalPayload struct {
 //   - FinalizeRunActivity runs via defer on every exit path (including workflow cancellation)
 //     using workflow.NewDisconnectedContext so it executes even when ctx is cancelled.
 func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppFlowWorkflowOutput, retErr error) {
+	// Activities dispatch to the debug queue when this run was started in debug
+	// mode, so they land on the isolated debug worker pool rather than production
+	// (see AppFlowWorkflowInput.Debug).
+	activityTaskQueue := activityTaskQueueFor(input.Debug)
+
 	// Shared activity options for short-lived finalize/HIL activities.
 	shortAO := workflow.ActivityOptions{
-		TaskQueue:           AppFlowTaskQueue,
+		TaskQueue:           activityTaskQueue,
 		StartToCloseTimeout: 30 * time.Second,
 		RetryPolicy:         &temporalerr.RetryPolicy{MaximumAttempts: 3},
 	}
@@ -216,7 +245,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 
 	// Walk nodes from start_id. Fork/Join enables parallel branches.
 	ao := workflow.ActivityOptions{
-		TaskQueue:           AppFlowTaskQueue,
+		TaskQueue:           activityTaskQueue,
 		StartToCloseTimeout: actTimeout,
 		RetryPolicy: &temporalerr.RetryPolicy{
 			MaximumAttempts: retryMax,

@@ -77,6 +77,14 @@ type Config struct {
 	// Parsed from DAG_WORKER_MAX_CONCURRENT_ACTIVITIES; default 50; 0 uses the default.
 	DAGWorkerMaxConcurrentActivities int
 
+	// AppFlowTaskQueueOverride, when non-empty, makes cmd/dag-worker's AppFlow
+	// worker poll this task queue instead of appflow.AppFlowTaskQueue. Used to
+	// run the same dag-worker image as an isolated debug pool
+	// (them-dag-worker-debug polls appflow.AppFlowDebugTaskQueue) without a
+	// separate binary or build. Read from APPFLOW_TASK_QUEUE_OVERRIDE; empty
+	// means use the production queue (default for them-dag-worker/-2).
+	AppFlowTaskQueueOverride string
+
 	// MCPServiceURL is the internal base URL of them-mcp-service (e.g. http://them-mcp-service:8010).
 	// When empty the probe proxy endpoint returns 503 — mcp-service is not deployed.
 	MCPServiceURL string
@@ -161,6 +169,7 @@ func Load() (*Config, error) {
 		WorkerTaskQueue:  getEnv("WORKER_TASK_QUEUE", "them-orchestration-go"),
 
 		DAGWorkerMaxConcurrentActivities: parseDAGWorkerConcurrency(os.Getenv("DAG_WORKER_MAX_CONCURRENT_ACTIVITIES")),
+		AppFlowTaskQueueOverride:         os.Getenv("APPFLOW_TASK_QUEUE_OVERRIDE"),
 
 		MCPServiceURL: getEnv("MCP_SERVICE_URL", ""),
 

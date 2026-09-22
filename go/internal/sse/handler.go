@@ -440,7 +440,9 @@ func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionH
 		LLMProvider:     llmCfg.ProviderName,
 		LLMModel:        llmCfg.Model,
 	}
-	return h.lc.StartAppFlow(ctx, handle, input)
+	// debug=false: no debug-session entry point exists yet on this transport —
+	// see docs/APP_CANVAS_DEBUG_PLAN.md Phase 5/6.
+	return h.lc.StartAppFlow(ctx, handle, input, false)
 }
 
 // streamEvents forwards run-stream events to the SSE response until orchestration

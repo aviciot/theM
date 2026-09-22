@@ -11,6 +11,11 @@
 //	TEMPORAL_ENABLED=true (required — worker exits if false)
 //	TEMPORAL_HOST_PORT    — Temporal frontend address (default localhost:7233)
 //	DAG_WORKER_MAX_CONCURRENT_ACTIVITIES — activity concurrency (default 50)
+//	APPFLOW_TASK_QUEUE_OVERRIDE — optional; makes the AppFlow worker poll this
+//	                              queue instead of appflow.AppFlowTaskQueue. Set to
+//	                              appflow.AppFlowDebugTaskQueue ("appflow-dag-debug")
+//	                              on them-dag-worker-debug to run this same image as
+//	                              the isolated debug worker pool.
 //	DATABASE_HOST / DATABASE_PORT / DATABASE_NAME / DATABASE_USER / DATABASE_PASSWORD
 //	SECRET_KEY            — HMAC key for AES-GCM credential decryption
 //	MCP_SERVICE_URL       — optional; enables mcp_call steps
@@ -172,7 +177,11 @@ func run() error {
 		StreamPub:     streamPub,
 		AgentInvoker:  agentCaller,
 	}
-	appFlowWorker := temporalworker.New(temporalCli, appflow.AppFlowTaskQueue, temporalworker.Options{
+	appFlowTaskQueue := appflow.AppFlowTaskQueue
+	if cfg.AppFlowTaskQueueOverride != "" {
+		appFlowTaskQueue = cfg.AppFlowTaskQueueOverride
+	}
+	appFlowWorker := temporalworker.New(temporalCli, appFlowTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
 	})
 	appFlowWorker.RegisterWorkflow(appflow.AppFlowWorkflow)
@@ -194,7 +203,7 @@ func run() error {
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)
 	}
-	log.Info("appflow-worker polling", "task_queue", appflow.AppFlowTaskQueue)
+	log.Info("appflow-worker polling", "task_queue", appFlowTaskQueue)
 
 	// ── 11. Block on SIGTERM / SIGINT ─────────────────────────────────────────
 	quit := make(chan os.Signal, 1)

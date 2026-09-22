@@ -3334,6 +3334,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/llmgateway/` (any file), `cmd/them/main.go` (gateway wiring), `db/100_llm_gateway.sql` | S1-119 + S1-120 |
 | `internal/admin/gateway.go`, `internal/admin/dal/gateway.go` | S1-121 |
 | `internal/admin/llm_providers.go` (TenantScopedRoutes, ListMine, UpsertMine) | S1-127 |
+| `internal/appflow/workflow.go` (`AppFlowDebugTaskQueue`, `activityTaskQueueFor`) | S1-128 |
+| `internal/execution/lifecycle.go` (`StartAppFlow` debug-queue routing) | S1-129 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
@@ -3568,7 +3570,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-125 | Node Registry Phase 4 — `/admin/node-types` "family" disambiguation (`node_types_test.go`): `TestNodeTypesHandler_FamilyDisambiguatesDuplicateType` — every merged entry carries `family` ("agentgen"\|"appflow"); the 2 entries typed "llm" have 2 distinct families. Fixes a latent bug: the frontend's shared node-type cache (`nodeRegistry.ts`) indexed by bare `type`, so without `family` one "llm" entry would silently clobber the other once app-canvas (Phase 4) became a second consumer of the merged array | 1 |
 | S1-126 | Node Registry Phase 5 — middleware adopts the node contract (`node_types_test.go`): `TestNodeTypesHandler_MergesMiddlewareFamily` (a `them.middleware_defs` row with seeded `edges`/`config_fields` JSONB appears in the merged `/admin/node-types` response tagged `family="middleware"`, edges/config_fields decode correctly, `executable=false` since middleware is a workflow.go pass-through), `TestNodeTypesHandler_NilDBSkipsMiddlewareFamily` (nil db degrades to "no middleware entries", doesn't panic — existing agentgen/appflow-only tests in this file pass `NewNodeTypesHandler(nil)`) | 2 |
 | S1-127 | LLM Provider tenant self-service (`llm_providers_test.go`): LLPTenantScoped_ListMine_Empty (GET /my/llm-providers 200 empty array via fakeDB), LLPTenantScoped_UpsertMine_InvalidBody (PUT /my/llm-providers/{name} 400 on non-JSON body) | 2 |
-| **S1 total** | | **1322** |
+| S1-128 | App Canvas Debug Mode Phase 1 — `activityTaskQueueFor` (`workflow_test.go`): `TestActivityTaskQueueFor` — debug=false returns AppFlowTaskQueue, debug=true returns AppFlowDebugTaskQueue, asserts the two constants are distinct | 1 |
+| S1-129 | App Canvas Debug Mode Phase 1 — `Lifecycle.StartAppFlow` debug routing (`lifecycle_test.go`): `TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue` (debug=false → StartWorkflowOptions.TaskQueue=appflow-dag, input.Debug=false), `TestLifecycle_StartAppFlow_Debug_UsesDebugQueue` (debug=true → TaskQueue=appflow-dag-debug, input.Debug=true propagated so the workflow's internal ActivityOptions also route to the debug queue) | 2 |
+| **S1 total** | | **1325** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

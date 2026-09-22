@@ -15,6 +15,7 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
@@ -123,17 +124,23 @@ func (f *fakeRecorder) UpdateRunStatus(_ context.Context, runID string, status d
 }
 
 type fakeTemporal struct {
-	run       *fakeWorkflowRun
-	err       error
-	called    bool
-	lastInput temporal.WorkflowInput
+	run           *fakeWorkflowRun
+	err           error
+	called        bool
+	lastInput     temporal.WorkflowInput
+	lastAppFlowIn appflow.AppFlowWorkflowInput
+	lastTaskQueue string
 }
 
-func (f *fakeTemporal) ExecuteWorkflow(_ context.Context, _ temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+func (f *fakeTemporal) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
 	f.called = true
+	f.lastTaskQueue = opts.TaskQueue
 	if len(args) > 0 {
-		if inp, ok := args[0].(temporal.WorkflowInput); ok {
+		switch inp := args[0].(type) {
+		case temporal.WorkflowInput:
 			f.lastInput = inp
+		case appflow.AppFlowWorkflowInput:
+			f.lastAppFlowIn = inp
 		}
 	}
 	if f.err != nil {
@@ -1019,4 +1026,44 @@ func TestAllowedPrincipals_Internal_AdmitsUserJWT(t *testing.T) {
 	tok := mintHS256JWT(secret, 42, tenantID, 0)
 	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: tok})
 	require.NoError(t, err, "user_jwt token is internal — must be admitted by internal EP")
+}
+
+// docs/APP_CANVAS_DEBUG_PLAN.md Phase 1: StartAppFlow must dispatch to the
+// production appflow-dag queue when debug=false.
+func TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, false)
+	require.NoError(t, err)
+	assert.True(t, tmp.called)
+	assert.Equal(t, appflow.AppFlowTaskQueue, tmp.lastTaskQueue)
+	assert.False(t, tmp.lastAppFlowIn.Debug, "workflow input Debug must be false when debug=false")
+}
+
+// docs/APP_CANVAS_DEBUG_PLAN.md Phase 1: StartAppFlow must dispatch to the
+// isolated appflow-dag-debug queue when debug=true, and the workflow input's
+// Debug field must be set so the workflow's internal activity dispatch also
+// routes to the debug queue.
+func TestLifecycle_StartAppFlow_Debug_UsesDebugQueue(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, true)
+	require.NoError(t, err)
+	assert.True(t, tmp.called)
+	assert.Equal(t, appflow.AppFlowDebugTaskQueue, tmp.lastTaskQueue)
+	assert.True(t, tmp.lastAppFlowIn.Debug, "workflow input Debug must be true when debug=true, so the workflow's internal activity dispatch also routes to the debug queue")
 }

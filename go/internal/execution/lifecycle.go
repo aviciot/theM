@@ -636,7 +636,8 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 	return wfRun, nil
 }
 
-// StartAppFlow launches an AppFlowWorkflow on the appflow-dag Temporal task queue.
+// StartAppFlow launches an AppFlowWorkflow on the appflow-dag Temporal task queue,
+// or on appflow-dag-debug (the isolated debug worker pool) when debug is true.
 // It is the dispatch counterpart of Start for applications whose active definition
 // carries execution_backend="temporal".
 //
@@ -647,7 +648,7 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 //
 // Returns the WorkflowRun. The caller MUST have subscribed to the event bus
 // before calling StartAppFlow — same ordering invariant as Start.
-func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input appflow.AppFlowWorkflowInput) (temporalclient.WorkflowRun, error) {
+func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input appflow.AppFlowWorkflowInput, debug bool) (temporalclient.WorkflowRun, error) {
 	if lc.temporal == nil {
 		return nil, startErr("temporal client not configured")
 	}
@@ -657,6 +658,7 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 	input.TenantID = h.EPConfig.TenantID
 	input.ApplicationID = h.EPConfig.AppID
 	input.EntryPointSlug = h.EPConfig.EPSlug
+	input.Debug = debug
 
 	// Resolve Temporal execution controls (fail-open: hardcoded defaults on error or nil loader).
 	if lc.temporalCfgLoader != nil {
@@ -675,9 +677,13 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 		}
 	}
 
+	taskQueue := appflow.AppFlowTaskQueue
+	if debug {
+		taskQueue = appflow.AppFlowDebugTaskQueue
+	}
 	wfOpts := temporalclient.StartWorkflowOptions{
 		ID:        appflow.WorkflowIDForRun(h.EPConfig.TenantID, h.RunID),
-		TaskQueue: appflow.AppFlowTaskQueue,
+		TaskQueue: taskQueue,
 	}
 	if input.TemporalCfg != nil && input.TemporalCfg.WorkflowTimeoutS != nil && *input.TemporalCfg.WorkflowTimeoutS > 0 {
 		wfOpts.WorkflowRunTimeout = time.Duration(*input.TemporalCfg.WorkflowTimeoutS) * time.Second
@@ -687,6 +693,8 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 		"run_id", h.RunID,
 		"ep_slug", h.EPConfig.EPSlug,
 		"user_id", h.UserID,
+		"debug", debug,
+		"task_queue", taskQueue,
 	)
 
 	wfRun, wfErr := lc.temporal.ExecuteWorkflow(ctx, wfOpts, appflow.AppFlowWorkflow, input)
