@@ -79,8 +79,8 @@ export function CanvasTopBar({
               onChange={e => onSetExecutionBackend(e.target.value as 'local' | 'temporal')}
               style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: C.text, fontSize: 11, padding: '3px 6px', cursor: 'pointer', outline: 'none' }}
             >
-              <option value="local">Local (Orchestrator)</option>
-              <option value="temporal">Temporal DAG</option>
+              <option value="local">Simple (Orchestrator)</option>
+              <option value="temporal">Graph (Canvas Flow)</option>
             </select>
           </div>
         )}
@@ -123,9 +123,9 @@ export function CanvasTopBar({
       {executionBackend !== 'temporal' && nodes.some(n => n.type === 'inline' || n.type === 'flowControl') && (
         <div style={{ background: C.amberBg, borderBottom: `1px solid ${C.amberBorder}`, padding: '10px 20px', flexShrink: 0 }}>
           <div style={{ fontSize: 12, color: C.amber }}>
-            Inline and flow-control nodes only execute on the Temporal backend. This app is set to
-            Local (Orchestrator) — the canvas graph is not executed. Switch Execution to
-            &quot;Temporal DAG&quot; to run this flow.
+            Inline and flow-control nodes only execute in Graph mode. This app is set to
+            Simple (Orchestrator) — the canvas graph is not executed. Switch Execution to
+            &quot;Graph (Canvas Flow)&quot; to run this flow.
           </div>
         </div>
       )}

@@ -20,6 +20,43 @@ e3c82d1a  docs(current): mark HEAD as pushed, Node Registry Phase 4 complete
 
 ---
 
+## App canvas: "Simple"/"Graph" rename + second DAG worker replica — COMPLETE (2026-09-22)
+
+Two small, unrelated changes made while testing the new app-canvas export/import feature together
+with the user:
+
+**Execution-mode rename** (`frontend/src/app/admin/applications/components/CanvasTopBar.tsx`,
+lines 82-83, 127-128): the dropdown options "Local (Orchestrator)" / "Temporal DAG" and the
+matching warning-banner text renamed to "Simple (Orchestrator)" / "Graph (Canvas Flow)". Both
+names were confusing — "Local" implied a non-Temporal execution path that doesn't exist (the
+classic Orchestrator runs on `them-go-worker`, a Temporal worker, exactly like the graph path
+runs on `them-dag-worker` — there is no non-Temporal code path anywhere in this system). Confirmed
+by research before renaming: this is the *only* place in the codebase these English display
+strings appear; every comparison in frontend and Go code branches on the short stored values
+`"local"`/`"temporal"` only, which are **unchanged** — this is a display-text-only rename, safe
+by construction. `tsc --noEmit` 0 errors; `them-frontend` rebuilt and force-recreated.
+
+**`them-dag-worker-2` replica added** (`docker-compose.dev.yml`): a second instance of the same
+`Dockerfile.dag-worker` image, same `profiles: [temporal]` gate, polling the same two Temporal
+task queues (`canvas-dag-nodes`, `appflow-dag`) as the primary — mirrors the existing
+`them-go-worker`/`them-go-worker-2` pattern. Temporal's SDK distributes individual activities
+(single node executions) across whichever of the two workers is free; this is standard Temporal
+worker-pool behavior, not new code. Built, started, and confirmed polling both queues via
+container logs. `test_42_appflow_inline_nodes.py` 29/29 with both replicas running (extra
+confidence this doesn't break anything, not just a formality — proves a run's activities complete
+correctly with two workers competing for the same queue).
+
+**Trigger map updated** (`CLAUDE.md`, `go/CLAUDE.md`): any restart of `them-dag-worker` after
+editing `internal/temporal/`, `cmd/dag-worker/`, or `internal/appflow/activities.go` must now also
+restart `them-dag-worker-2`.
+
+**Not done:** `docker-compose.hetzner.yml` (production) was not touched — the replica was added
+to `docker-compose.dev.yml` only, since that's what this local dev session runs. Recommend
+mirroring the same `them-dag-worker-2` addition to the Hetzner compose file before this reaches
+production, as its own explicit step.
+
+---
+
 ## Tenant LLM Self-Service + Platform Admin LLM Key Management — COMPLETE (2026-09-22)
 
 Commit: `970b0cfb`. Tenant admins can now manage their own LLM provider API keys from the Settings page. Platform admins (super_admin) can manage the-M platform-level keys from the same page.

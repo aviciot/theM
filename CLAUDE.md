@@ -183,7 +183,7 @@ cd go && go test ./...   # full suite — must be zero failures before every com
 | `go/internal/mcp/` (any file), `go/cmd/mcp-service/main.go`, `Dockerfile.mcp-service` | `go test ./internal/mcp/...` |
 | `go/internal/admin/mcp_servers.go`, `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go` | `go test ./internal/admin/...` |
 | `go/internal/agentgen/` | `go test ./internal/agentgen/...` |
-| `go/internal/temporal/` or `go/cmd/dag-worker/` | `go test ./internal/temporal/...` + **restart them-dag-worker** |
+| `go/internal/temporal/` or `go/cmd/dag-worker/` | `go test ./internal/temporal/...` + **restart them-dag-worker AND them-dag-worker-2** (two replicas of the same image, same Temporal task queues) |
 | `go/cmd/agent-runtime/` | `go test ./...` + **rebuild + restart them-agent-runtime** |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | compose health smoke (bring up stack, check all containers healthy) |
 | Before a release / PR merge | `go test ./...` + live E2E smoke |
@@ -203,7 +203,7 @@ ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
 
 ```bash
 # Go Temporal worker registers activities at startup. If you edit go/internal/temporal/ or go/cmd/dag-worker/:
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-go-worker them-dag-worker
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-go-worker them-dag-worker them-dag-worker-2
 docker logs them-go-worker --tail 5   # confirm polling
 ```
 
