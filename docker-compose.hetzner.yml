@@ -395,6 +395,95 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  # ── Canvas DAG Worker ──────────────────────────────────────────────────────────
+  # Runs the AppFlow/canvas graph engine (Router/HIL/Fork/Join/LLM/Condition
+  # nodes — "Graph (Canvas Flow)" execution mode). Was missing from this file
+  # entirely before 2026-09-22 — dev had it, Hetzner did not, so Graph-mode
+  # apps were never actually deployable to production. Added to bring parity
+  # with dev, mirroring the them-go-worker/them-go-worker-2 replica pattern.
+  them-dag-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dag-worker
+    container_name: them-dag-worker
+    profiles: [temporal]
+    environment:
+      THE_M_INSTANCE_ID: "dag-worker-1"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      DAG_WORKER_MAX_CONCURRENT_ACTIVITIES: ${DAG_WORKER_MAX_CONCURRENT_ACTIVITIES:-50}
+      MCP_SERVICE_URL: "http://them-mcp-service:8010"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ── Canvas DAG Worker 2 ────────────────────────────────────────────────────────
+  them-dag-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.dag-worker
+    container_name: them-dag-worker-2
+    profiles: [temporal]
+    environment:
+      THE_M_INSTANCE_ID: "dag-worker-2"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      DAG_WORKER_MAX_CONCURRENT_ACTIVITIES: ${DAG_WORKER_MAX_CONCURRENT_ACTIVITIES:-50}
+      MCP_SERVICE_URL: "http://them-mcp-service:8010"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
 # ── Named volumes (Docker manages ownership — no manual chown required) ────────
 volumes:
   them-postgres-data:

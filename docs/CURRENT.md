@@ -50,10 +50,22 @@ correctly with two workers competing for the same queue).
 editing `internal/temporal/`, `cmd/dag-worker/`, or `internal/appflow/activities.go` must now also
 restart `them-dag-worker-2`.
 
-**Not done:** `docker-compose.hetzner.yml` (production) was not touched — the replica was added
-to `docker-compose.dev.yml` only, since that's what this local dev session runs. Recommend
-mirroring the same `them-dag-worker-2` addition to the Hetzner compose file before this reaches
-production, as its own explicit step.
+**`docker-compose.hetzner.yml` — UPDATE (2026-09-22):** turned out to be a bigger gap than
+expected — `them-dag-worker` didn't exist in the production overlay **at all**, not just missing
+its replica. The Graph/canvas-flow execution engine had never been deployed to production;
+Hetzner only ever ran the classic Orchestrator (`them-go-worker`/`them-go-worker-2`). Added both
+`them-dag-worker` and `them-dag-worker-2` to `docker-compose.hetzner.yml`, mirroring the
+`them-go-worker`/`them-go-worker-2` env-var style already used in that file (`profiles:
+[temporal]`, same `depends_on` health-check pattern). Validated with `docker compose ... config
+--quiet` against the base `docker-compose.yml` + this overlay — 0 errors, both services confirmed
+present via `config --services`. **Not built or started** — this box is local dev, not the
+Hetzner host; actually deploying this is its own explicit production-deployment step, not done
+here. **Pre-existing gap noted, not fixed:** neither `them-go-worker(-2)` nor the new
+`them-dag-worker(-2)` entries in this file set `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` — the RLS
+role DSNs `docs/CURRENT.md`'s "Step H2 — RLS Closure" section says are required (binaries fail
+fast without them). Confirmed via grep: **zero** occurrences of either var anywhere in
+`docker-compose.hetzner.yml`, for any service — this predates today's change and affects the
+whole file equally, so it was flagged rather than silently fixed as a side effect of this task.
 
 ---
 
