@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 COMPLETE, Phase 2 NEXT, HEAD 865ad388)
+# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 COMPLETE, Phase 3 NEXT, HEAD 6104b349)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `865ad388` (not yet pushed — no push credentials confirmed available this session)
+HEAD: `6104b349` (not yet pushed — confirm push credentials before pushing)
 
 Recent commits (newest first):
 ```
+6104b349  feat(app-canvas): live per-node trace events for Graph-mode runs (Phase 2)
 865ad388  feat(app-canvas): debug worker pool + task-queue routing (Phase 1)
 70d91890  docs: plan real (non-simulated) debug mode for the app canvas
 19923bd6  fix(app-canvas): condition-node handle spread in LR layout; remove dead AI Advisor
@@ -26,11 +27,62 @@ e5fec91d  docs(current): Tenant LLM self-service COMPLETE, HEAD 970b0cfb
 
 ## START HERE — next session
 
-**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phase 1 is COMPLETE — start **Phase 2** (per-node
-trace instrumentation). One phase per session — do not start Phase 3 in the same session as
-Phase 2. Phase 2 has an explicit open design question (unconditional vs debug-gated event
-emission) that needs confirming with the user before writing code — see the plan doc's
-"Remaining open question" section.
+**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phases 1 and 2 are COMPLETE — start **Phase 3**
+(durable trace storage: extend `them.run_steps`, make the existing Run History "Flow" tree
+populate for Graph-mode runs). One phase per session — do not start Phase 4 in the same session
+as Phase 3. No open design questions block Phase 3 start (Phase 2's only open question was
+resolved and implemented) — but expect Phase 3 to surface its own (exact column design on
+`run_steps` vs. a new table, how the log-level setting gates persistence).
+
+---
+
+## App Canvas Debug Mode — Phase 2 (live per-node trace events) — COMPLETE (2026-09-22)
+
+Commit: `6104b349`. Full detail in `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 2 section — summary:
+
+- Every AppFlow node kind (Router, HIL, Agent, Inline LLM, Condition, Fork, Join) now publishes
+  `node_start`/`node_done`/`node_error` to the run's existing Redis stream
+  (`them:dash:run:{runID}:stream`), **unconditionally** — every run, debug or not, no app setting
+  gates this yet (that's Phase 3/4's job). Scope was explicitly kept minimal per user direction:
+  no per-node debug config, no `TraceMode`/redaction, no persistence, no full prompt/input/output
+  capture — just enough small kind-specific detail (condition's chosen branch, router's chosen
+  label, fork's branch count, HIL's approval outcome) to follow a run's actual path live.
+- **Architecture was investigated, not assumed**, per explicit user request: evaluated Temporal
+  Queries (pull-only, can't push live), Updates (wrong tool — solves synchronous external
+  mutation), workflow memo/search attributes (visibility metadata, not a live feed), and
+  `workflow.SideEffect` (makes a value replay-safe, not an I/O mechanism) — all rejected. A small
+  trace-only Activity (`AppFlowTraceNodeEventActivity`) is the only Temporal-native way to publish
+  an I/O-free workflow decision (Condition/Fork/Join) live; Router/HIL/Agent/Inline LLM already do
+  I/O in their own activities, so they publish inline instead via a shared `emitTrace` helper.
+- HIL is special-cased: `ExecuteHILActivity` only emits `node_start` — the approval outcome is
+  only known later in `execHILNode` (`nodes.go`) after the signal/timer resolves, so that function
+  calls the workflow-side `traceNode` helper directly once the decision is in.
+- The join node's own trace fires from the `"fork"` case in `workflow.go`, once, after
+  `wg.Wait()` — **not** from inside `walkBranch` (`graph.go`), since each fork branch's loop stops
+  as soon as it reaches the join node and never actually visits it.
+- `go/cmd/dag-worker/main.go`: new activity registered on the AppFlow worker; rebuilt and
+  force-recreated `them-dag-worker`, `them-dag-worker-2`, and `them-dag-worker-debug` (Dockerfile
+  runs `go test ./...` at build time — 0 failures confirmed again in-image). All three confirmed
+  healthy and polling their correct queues post-restart.
+- `go test ./...` 0 failures (full suite). 10 new tests (S1-130, S1-131 in `go/TEST_INDEX.md`; S1
+  total 1325→1335): 7 activity-level (`workflow_test.go`), 3 workflow-level using a new
+  `testsuite.WorkflowTestSuite` (`workflow_temporal_test.go`) — needed because `traceNode` calls
+  `workflow.ExecuteActivity`, which can't be exercised by activity-level mocking alone.
+- `docs/REDIS.md` updated: added the previously-undocumented `them:dash:run:{run_id}:stream` key
+  (a pre-existing gap, not introduced this session) with the new event types noted. Confirmed and
+  documented: unknown `type` values are silently ignored by both `sse/handler.go` and
+  `ws/handler.go` (fail-open) — new types are safe to ship with zero consumer changes.
+- **Live-verified on this local dev box**, not just unit tests: started a real `AppFlowWorkflow`
+  via the `temporal` CLI with a Condition node, then `XRANGE`'d the run's actual Redis stream —
+  confirmed `node_start`/`node_done` entries with the exact expected shape
+  (`{"kind":"condition","node_id":"cond1",...,"detail":"branch=true"}`), followed by the normal
+  `done` event.
+
+**Not done / explicitly deferred (not a regression):** no persistence (Phase 3), no app-level
+log-verbosity setting to gate anything (Phase 4), no UI consumption of these events yet (Phase
+5/6). No per-node debug config (`DebugConfig`/`TraceMode`/redaction) — discussed and explicitly
+deferred by the user; if it resurfaces, the candidate shape discussed was one generic field on
+`AppFlowNode` (e.g. `TraceMode: ""|"full"|"redacted"|"off"`), not a per-field redaction schema.
 
 ---
 
