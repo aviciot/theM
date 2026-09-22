@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (App Canvas Debug Mode — plan written, Phase 1 NEXT, HEAD 70d91890 pushed)
+# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 COMPLETE, Phase 2 NEXT, HEAD 865ad388)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `70d91890` (pushed)
+HEAD: `865ad388` (not yet pushed — no push credentials confirmed available this session)
 
 Recent commits (newest first):
 ```
+865ad388  feat(app-canvas): debug worker pool + task-queue routing (Phase 1)
 70d91890  docs: plan real (non-simulated) debug mode for the app canvas
 19923bd6  fix(app-canvas): condition-node handle spread in LR layout; remove dead AI Advisor
 b1323abb  fix(compose): add missing RLS DSN env vars to them-agent-runtime
@@ -25,9 +26,68 @@ e5fec91d  docs(current): Tenant LLM self-service COMPLETE, HEAD 970b0cfb
 
 ## START HERE — next session
 
-**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Then start **Phase 1** (the plan's "Phase 1
-checklist" section has the concrete file-by-file to-do list). One phase per session — do not
-start Phase 2 in the same session as Phase 1.
+**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phase 1 is COMPLETE — start **Phase 2** (per-node
+trace instrumentation). One phase per session — do not start Phase 3 in the same session as
+Phase 2. Phase 2 has an explicit open design question (unconditional vs debug-gated event
+emission) that needs confirming with the user before writing code — see the plan doc's
+"Remaining open question" section.
+
+---
+
+## App Canvas Debug Mode — Phase 1 (debug worker pool + routing) — COMPLETE (2026-09-22)
+
+Commit: `865ad388`. Full detail in `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 1 section — summary:
+
+- New Temporal task queue `appflow.AppFlowDebugTaskQueue = "appflow-dag-debug"`
+  (`go/internal/appflow/workflow.go`), alongside the existing `AppFlowTaskQueue`.
+- `AppFlowWorkflowInput.Debug bool` — new field. `AppFlowWorkflow` now dispatches **all** its
+  activities (`shortAO` for finalize/HIL, `ao` for the main node walk) to the debug queue when
+  set, via new pure helper `activityTaskQueueFor(debug bool)`.
+- `Lifecycle.StartAppFlow` (`go/internal/execution/lifecycle.go`) signature changed — now takes
+  `debug bool`, selects the Temporal `StartWorkflowOptions.TaskQueue` and sets `input.Debug`
+  accordingly. **Both existing call sites** (`internal/ws/handler.go`, `internal/sse/handler.go`)
+  updated to pass `debug=false` explicitly — zero behavior change for any app running today, since
+  no entry point sets `true` yet.
+- New env var `APPFLOW_TASK_QUEUE_OVERRIDE` (`go/internal/config/config.go`,
+  `go/cmd/dag-worker/main.go`) — when set, the AppFlow worker in `cmd/dag-worker` polls that queue
+  instead of the production one. Same binary/image, no build-time distinction. The worker's
+  separate `canvas-dag-nodes` registration (agent-builder Temporal path) is unaffected by this
+  var — every dag-worker container, including the debug one, still also polls
+  `canvas-dag-nodes` (harmless idle capacity; that path has no debug queue, out of scope).
+- New service `them-dag-worker-debug` in **both** `docker-compose.dev.yml` and
+  `docker-compose.hetzner.yml` — same `Dockerfile.dag-worker` image,
+  `APPFLOW_TASK_QUEUE_OVERRIDE=appflow-dag-debug` set. Both compose files validated with
+  `config --quiet` (0 errors). Hetzner block has no RLS DSN vars, same pre-existing gap already
+  flagged for `them-dag-worker`/`-2` there — not newly introduced, not fixed here either.
+- `go test ./...` 0 failures (full suite, via `docker run golang:1.25-alpine` — no local Go
+  toolchain on this box). 3 new tests: `TestActivityTaskQueueFor`
+  (`internal/appflow/workflow_test.go`), `TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue`
+  + `TestLifecycle_StartAppFlow_Debug_UsesDebugQueue` (`internal/execution/lifecycle_test.go`).
+  `go/TEST_INDEX.md` updated (S1-128, S1-129; total 1322→1325).
+- **Live-verified end-to-end on this local dev box:** built and started `them-dag-worker-debug`;
+  logs confirmed `"appflow-worker polling" task_queue=appflow-dag-debug`. Used the `temporal` CLI
+  (already present in the `temporal-admin-tools` container) to start an `AppFlowWorkflow`
+  directly on `appflow-dag-debug` with `"debug":true` in its input. Confirmed via `docker logs`
+  that only `them-dag-worker-debug` executed any activity for that workflow ID — `them-dag-worker`
+  and `them-dag-worker-2` show no entries for it at all. The test workflow was deliberately given
+  an invalid empty `run_id` so it would fail fast in `FinalizeRunActivity` without needing a real
+  `them.runs` row — that failure is expected and irrelevant to what the test proves (queue
+  routing, not full run correctness).
+
+**Deployment state:** `them-dag-worker-debug` is built and running on this local dev box
+(profile `temporal`, part of the normal `--profile temporal up -d` set going forward). The
+Hetzner compose addition is config-only — **not built or deployed to the actual Hetzner host**,
+consistent with how `them-dag-worker`/`-2` were handled there in the prior session.
+
+**Not done / explicitly deferred to a later phase (not a regression):**
+- No WS/HTTP entry point sets `debug=true` yet — that's Phase 5/6 (the setup panel + Run
+  All/Step controls need to exist before there's a reason to flip the flag from the UI).
+- No per-node trace events exist yet — that's Phase 2, and it has one explicit open question
+  (unconditional vs debug-gated emission) flagged in the plan doc, not yet decided.
+- Not pushed to `origin/main` — no push credentials confirmed available this session; push
+  manually or confirm credentials before starting Phase 2 if remote sync matters.
+
+---
 
 **What this session did (2026-09-22), most recent first:**
 - Fixed a real bug: Condition node's true/false handles overlapped in horizontal ("Graph") layout
