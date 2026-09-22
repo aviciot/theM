@@ -332,6 +332,12 @@ func (f *publishFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal
 func (f *publishFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
 	return nil
 }
+func (f *publishFakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+	return dal.DefaultLogVerbosity, nil
+}
+func (f *publishFakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, _ string) error {
+	return nil
+}
 func (f *publishFakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error) { return nil, nil }
 func (f *publishFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil

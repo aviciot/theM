@@ -275,6 +275,62 @@ func TestPutTemporalPlatformConfig_ZeroMaxConcurrent_ReturnsValidationError(t *t
 	}
 }
 
+// ── AppFlow trace log-verbosity (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4) ─────
+
+// LV-SVC-1: no stored row → default "status".
+func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {
+	svc := service.NewConfigService(&fakeDal{})
+	v, err := svc.GetLogVerbosity(context.Background(), "app-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != dal.DefaultLogVerbosity {
+		t.Errorf("expected default %q, got %q", dal.DefaultLogVerbosity, v)
+	}
+}
+
+// LV-SVC-2: stored row is returned as-is.
+func TestGetLogVerbosity_StoredRow_Returned(t *testing.T) {
+	svc := service.NewConfigService(&fakeDal{logVerbosity: dal.LogVerbosityOff})
+	v, err := svc.GetLogVerbosity(context.Background(), "app-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != dal.LogVerbosityOff {
+		t.Errorf("expected %q, got %q", dal.LogVerbosityOff, v)
+	}
+}
+
+// LV-SVC-3: DAL error propagates.
+func TestGetLogVerbosity_DALError_Propagates(t *testing.T) {
+	svc := service.NewConfigService(&fakeDal{logVerbosityErr: errors.New("db down")})
+	_, err := svc.GetLogVerbosity(context.Background(), "app-1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+// LV-SVC-4: valid value upserts and is echoed back.
+func TestPutLogVerbosity_ValidValue_Upserts(t *testing.T) {
+	svc := service.NewConfigService(&fakeDal{})
+	v, err := svc.PutLogVerbosity(context.Background(), "app-1", dal.LogVerbosityFull)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != dal.LogVerbosityFull {
+		t.Errorf("expected %q, got %q", dal.LogVerbosityFull, v)
+	}
+}
+
+// LV-SVC-5: invalid value → validation error, no DAL write attempted.
+func TestPutLogVerbosity_InvalidValue_ReturnsValidationError(t *testing.T) {
+	svc := service.NewConfigService(&fakeDal{})
+	_, err := svc.PutLogVerbosity(context.Background(), "app-1", "verbose")
+	if err == nil {
+		t.Fatal("expected validation error for invalid log_verbosity, got nil")
+	}
+}
+
 // ── MergeTemporalConfigs ───────────────────────────────────────────────────
 
 // TC-SVC-7: App override takes precedence over platform.

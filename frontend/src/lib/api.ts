@@ -108,6 +108,8 @@ export type {
   RoleMapping,
   TemporalConfig,
   TemporalAppConfigPatch,
+  LogVerbosity,
+  LogVerbosityConfig,
   GatewayClient,
   GatewayProfile,
   GatewayPolicy,
@@ -194,6 +196,8 @@ import type {
   MiddlewareDef,
   TemporalConfig,
   TemporalAppConfigPatch,
+  LogVerbosity,
+  LogVerbosityConfig,
   GatewayClient,
   GatewayProfile,
   GatewayPolicy,
@@ -497,6 +501,8 @@ export const themApi = {
   putTemporalPlatformConfig: (body: TemporalConfig) => api.put<TemporalConfig>('/admin/temporal-config', body),
   getTemporalAppConfig: (appId: string) => api.get<TemporalConfig>(`/admin/applications/${appId}/temporal-config`),
   putTemporalAppConfig: (appId: string, body: TemporalAppConfigPatch) => api.put<TemporalConfig>(`/admin/applications/${appId}/temporal-config`, body),
+  getLogVerbosity: (appId: string) => api.get<LogVerbosityConfig>(`/admin/applications/${appId}/log-verbosity`),
+  putLogVerbosity: (appId: string, logVerbosity: LogVerbosity) => api.put<LogVerbosityConfig>(`/admin/applications/${appId}/log-verbosity`, { log_verbosity: logVerbosity }),
 
   // ── Role management ────────────────────────────────────────────────────────
   listRoles: () => api.get<TenantRole[]>('/admin/roles'),

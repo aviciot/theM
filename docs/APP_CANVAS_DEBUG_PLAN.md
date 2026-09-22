@@ -1,5 +1,5 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, phased. Phase 1 + 2 + 3 COMPLETE. Phase 4 NEXT.
+# Status: PLANNED, phased. Phase 1 + 2 + 3 + 4 COMPLETE. Phase 5 NEXT.
 # Date: 2026-09-22
 
 ---
@@ -11,7 +11,7 @@
 | 1 — Debug worker pool + routing | New Temporal queue, worker container(s), per-run routing | ✅ COMPLETE (2026-09-22) |
 | 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ✅ COMPLETE (2026-09-22) |
 | 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ✅ COMPLETE (2026-09-22) |
-| 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ⬜ NOT STARTED |
+| 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ✅ COMPLETE (2026-09-22) |
 | 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ⬜ NOT STARTED |
 | 6 — Debug UI: Step controls | Step button, lockstep multi-branch pause/resume, canvas node highlighting | ⬜ NOT STARTED |
 
@@ -427,8 +427,78 @@ write-up in `docs/LESSONS.md`.
 - `agent_id` on `run_steps` remains unpopulated by either writer (orchestrator or AppFlow) — flagged
   in Phase 3's research but intentionally left alone; out of scope for this phase.
 
+### Phase 4 — COMPLETE (2026-09-22)
+
+**Open question RESOLVED, by explicit user decision this session:** `off` means zero
+`them.run_steps` writes — a full revert to Phase 2's live-Redis-only behavior for that run, not a
+second "cheap but not nothing" tier. Rationale recorded at decision time: a verbosity setting whose
+cheapest tier still writes a row isn't really "off," and the existing precedent in this codebase is
+that nothing persists today, so `off` mapping to "unchanged, no surprise write" is the least
+surprising default. This makes `status` the meaningful middle tier (lightweight history, no
+payloads) and `full` debug's tier (everything) — a clean three-way split with no overlap.
+
+**What was built:**
+
+- `db/104_app_log_verbosity.sql`, applied to the live DB: new table `them.app_debug_config`
+  (`application_id` PK, `log_verbosity TEXT NOT NULL DEFAULT 'status' CHECK IN ('off','status','full')`,
+  `updated_at`) — single-tier per-app setting, no platform-level default row like
+  `app_temporal_config` has, since the plan only ever specified "per app." Mirrors
+  `app_temporal_config`'s shape (same PK/FK/GRANT pattern) per `docs/SCHEMA.md`.
+- **Handler → Service → DAL**, mirroring `TemporalConfigHandler`/`ConfigService`/`temporal_config.go`
+  exactly: `internal/admin/dal/log_verbosity.go` (`GetAppLogVerbosity`/`UpsertAppLogVerbosity`,
+  `IsValidLogVerbosity`, exported `LogVerbosityOff`/`Status`/`Full`/`DefaultLogVerbosity` constants),
+  `internal/admin/service/config.go` (`GetLogVerbosity`/`PutLogVerbosity`, enum validation via the
+  existing `unprocessable()` helper → 422), `internal/admin/log_verbosity.go`
+  (`LogVerbosityHandler.AppRoutes`, `GET`/`PUT`). Mounted in `router.go` alongside the existing
+  per-app `temporal-config` route (`GET`/`PUT /admin/applications/{id}/log-verbosity`,
+  tenant-scoped).
+- **Resolution at workflow-start time**, mirroring `TemporalConfigLoader`/`PgxTemporalConfigLoader`
+  exactly: new `AppFlowWorkflowInput.LogVerbosity string` field; `internal/appflow/log_verbosity_loader.go`
+  (`PgxLogVerbosityLoader`); `internal/execution/lifecycle.go` gained the `LogVerbosityLoader`
+  interface + `WithLogVerbosityLoader` + resolution logic in `StartAppFlow` — fail-open to
+  `dal.DefaultLogVerbosity` on nil loader or load error, **and unconditionally overridden to
+  `dal.LogVerbosityFull` when `debug=true`**, regardless of what the loader returned. Wired in
+  `cmd/them/main.go` next to the other AppFlow loaders.
+- **Threaded through every trace call site**, since the resolved level must be visible inside the
+  activity process (a separate process boundary from the workflow that resolved it), the same
+  reason `Debug` itself never needed to cross that boundary but `LogVerbosity` does:
+  `TraceEventInput` and all 4 activity input structs (`RouterActivityInput`, `HILActivityInput`,
+  `AgentInvokeActivityInput`, `InlineLLMActivityInput`) gained a `Verbosity string` field;
+  `traceNode` (workflow.go) and `emitTrace` (activities.go) both gained a `verbosity` parameter; all
+  10 call sites across `workflow.go`, `graph.go` (`walkBranch`), and `nodes.go`
+  (`execRouterNode`/`execHILNode`) pass `input.LogVerbosity` through.
+- `persistTrace` now branches on verbosity: `off` returns immediately (no DB call at all — the live
+  Redis publish in `emitTrace` happens independently and is unaffected); `status` writes/updates the
+  row but passes empty strings for `output`/`error` regardless of event type; `full` (or empty, for
+  fail-open compatibility with any caller that predates this field) is unchanged from Phase 3.
+- **Frontend:** new Runtime tab "Trace Logging" (`RuntimeLogVerbosityTab.tsx`, mirrors
+  `RuntimeTemporalTab.tsx`'s load/save/status-message structure but as a single dropdown, not
+  numeric override fields) — off/status/full with an inline description of each level so a tenant
+  admin doesn't need to read this doc to make the choice. `apiTypes.ts` (`LogVerbosity`,
+  `LogVerbosityConfig`), `api.ts` (`getLogVerbosity`/`putLogVerbosity`), wired into `RuntimeView.tsx`
+  as a third tab alongside General/Temporal.
+- **Tests:** 5 service tests (LV-SVC-1..5), 5 handler tests (LV-1..5), 4 `Lifecycle.StartAppFlow`
+  tests covering no-loader-default / loaded-value-used / debug-forces-full / loader-error-fail-open
+  (S1-132..134 in `go/TEST_INDEX.md`, S1 total 1335→1349), plus 3 new integration tests against live
+  Postgres (PT-5..7 in S2-12) proving `off` writes nothing and `status` withholds detail on both
+  success and failure. `go test ./...` 0 failures, full suite (confirmed via
+  `docker run golang:1.25-alpine`, no local Go toolchain on this box). The integration suite (S2-12,
+  all 7 tests including the 3 new ones) was run for real against the live `them-postgres` container
+  on this box, joined via its `them-network` Docker network using the DSN read live from
+  `them-dag-worker`'s own running environment (never printed) — not skipped for lack of a host-exposed
+  Postgres port. `tsc --noEmit` 0 errors.
+
+**Not done / deliberately deferred (not a regression):** no live end-to-end Temporal-workflow run
+was started this session to watch a real `off`/`status` run's rows (or lack thereof) land through
+the full stack — verification was via the integration test calling `persistTrace` directly (same
+function `emitTrace` calls internally) plus the full unit suite. No container rebuild/redeploy was
+performed this session either (`them-dag-worker`/`-2`/`-debug`, `them-go-bridge`, `them-frontend`
+all need a rebuild to pick up this phase's code before it's live on this box) — recommended as the
+first step of whichever session verifies this phase or starts Phase 5.
+
+---
+
 ## Remaining open question
 
-None carried over from Phase 1/2. Phase 4 (log-verbosity setting) should decide: does "off" mean
-AppFlow stops persisting entirely (revert to Phase 2's live-Redis-only behavior), or does it always
-persist status-level rows and only "full" adds richer detail? Not decided here.
+None. The Phase 4 open question (see above) is resolved. No new open questions raised by this
+phase.

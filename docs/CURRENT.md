@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 + 3 COMPLETE, Phase 4 NEXT, HEAD 85a436bb)
+# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 + 3 + 4 COMPLETE, Phase 5 NEXT, HEAD pending commit)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,8 +7,18 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `85a436bb` — committed this session, **not yet pushed** (confirm push credentials before
-pushing to `origin/main`).
+HEAD: `85a436bb` plus this session's Phase 4 changes, **not yet committed**. Files changed this
+session: `db/104_app_log_verbosity.sql`; `go/internal/admin/dal/log_verbosity.go`;
+`go/internal/admin/log_verbosity.go`; `go/internal/admin/router.go`;
+`go/internal/admin/service/config.go`; `go/internal/admin/service/service.go`;
+`go/internal/appflow/log_verbosity_loader.go`; `go/internal/appflow/activities.go`;
+`go/internal/appflow/workflow.go`; `go/internal/appflow/graph.go`; `go/internal/appflow/nodes.go`;
+`go/internal/execution/lifecycle.go`; `go/cmd/them/main.go`; test files (`config_test.go`,
+`config_handler_test.go`, `lifecycle_test.go`, `service_test.go` + 3 other fake-DAL test files,
+`trace_persist_integration_test.go`); `go/TEST_INDEX.md`; `docs/SCHEMA.md`;
+`docs/APP_CANVAS_DEBUG_PLAN.md`; frontend: `apiTypes.ts`, `api.ts`, new
+`RuntimeLogVerbosityTab.tsx`, `RuntimeView.tsx`. **Not yet committed or pushed** — commit these
+together with a clear message before starting Phase 5.
 
 Recent commits (newest first):
 ```
@@ -29,13 +39,53 @@ e5fec91d  docs(current): Tenant LLM self-service COMPLETE, HEAD 970b0cfb
 
 ## START HERE — next session
 
-**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phases 1, 2, and 3 are COMPLETE — start **Phase 4**
-(per-app runtime log-verbosity setting: `off`/`status`/`full`, gating how much AppFlow persists to
-`them.run_steps`; debug mode always forces `full` for its own run). One phase per session — do not
-start Phase 5 in the same session as Phase 4. Phase 4 has one open question of its own, not yet
-decided (see the plan doc's end): does `off` mean AppFlow stops persisting entirely (revert to
-Phase 2's live-Redis-only behavior), or does it always persist status-level rows and only `full`
-adds richer detail?
+**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phases 1–4 are COMPLETE — start **Phase 5** (Debug
+UI: setup panel + Run All button + WS/SSE consumer, mirroring the agent builder's
+`buildDebugParamSpecs()` dynamic scan pattern). One phase per session — do not start Phase 6 in the
+same session as Phase 5. Before starting Phase 5: commit this session's uncommitted Phase 4 changes
+(see HEAD above) and confirm push credentials.
+
+---
+
+## App Canvas Debug Mode — Phase 4 (runtime log-verbosity setting) — COMPLETE (2026-09-22)
+
+Not yet committed. See `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 4 section for full detail. Summary:
+
+- **Open question resolved:** `off` = zero `them.run_steps` writes (full revert to Phase 2's
+  live-Redis-only behavior for that run) — not a second "cheap" tier that still writes a row.
+  `status` = minimal row (node_id/kind/status/latency, no output/error). `full` = today's Phase 3
+  behavior (unchanged). Debug mode always forces `full` regardless of the app's setting.
+- New table `them.app_debug_config` (migration `db/104_app_log_verbosity.sql`, applied to the live
+  DB) — single-tier per-app setting, default `'status'`. Full Handler → Service → DAL stack added,
+  mirroring the existing `app_temporal_config` pattern exactly (same file shapes, same validation
+  helper, same route-mounting style). New admin routes:
+  `GET`/`PUT /admin/applications/{id}/log-verbosity`.
+- Resolved once per run in `Lifecycle.StartAppFlow` (new `LogVerbosityLoader` interface +
+  `PgxLogVerbosityLoader`, mirroring `TemporalConfigLoader`), fail-open to the default on error,
+  forced to `full` when `debug=true`. Threaded into `AppFlowWorkflowInput.LogVerbosity` and from
+  there into every activity input struct and every `traceNode`/`emitTrace` call site (10 call
+  sites across `workflow.go`, `graph.go`, `nodes.go`) — needed because the resolved value must
+  cross the workflow→activity process boundary, unlike `Debug` which only ever needed to be read
+  workflow-side.
+- `persistTrace` branches on verbosity: `off` returns immediately (no DB call), `status` writes the
+  row without output/error, `full` unchanged from Phase 3.
+- New frontend Runtime tab "Trace Logging" (`RuntimeLogVerbosityTab.tsx`) — dropdown + inline
+  description per level, mirrors `RuntimeTemporalTab.tsx`'s load/save structure.
+- Tests: 5 service (LV-SVC-1..5), 5 handler (LV-1..5), 4 `Lifecycle.StartAppFlow` (S1-132..134 in
+  `go/TEST_INDEX.md`, S1 total 1335→1349), 3 new integration tests (PT-5..7 in S2-12) — all run for
+  real against the live `them-postgres` container on this box (joined via `them-network`, DSN read
+  live from `them-dag-worker`'s own running env, never printed). `go test ./...` 0 failures, full
+  suite. `tsc --noEmit` 0 errors.
+- **Deployed:** `them-dag-worker`, `them-dag-worker-2`, `them-dag-worker-debug`, `them-go-bridge`,
+  `them-frontend` all rebuilt and force-recreated on this local dev box; logs confirm healthy
+  startup (dag-workers polling both queues, go-bridge answering `/health/live` 200, frontend
+  serving `/login` 200), no crash loops.
+
+**Not done / deferred (not a regression):** no live end-to-end Temporal-workflow run was started
+this session to watch a real `off`/`status` run's rows (or lack thereof) land through the full
+stack live — verification was via the integration test calling `persistTrace` directly (the same
+function `emitTrace` calls internally) plus the full unit suite. Not committed to git yet — do
+that before starting Phase 5.
 
 ---
 

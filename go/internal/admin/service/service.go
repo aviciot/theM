@@ -169,6 +169,10 @@ type Dal interface {
 	GetTemporalAppConfig(ctx context.Context, appID string) (*dal.TemporalConfig, error)
 	UpsertTemporalAppConfig(ctx context.Context, appID string, cfg dal.TemporalConfig) error
 
+	// AppFlow trace log-verbosity — per-app only (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4)
+	GetAppLogVerbosity(ctx context.Context, appID string) (string, error)
+	UpsertAppLogVerbosity(ctx context.Context, appID, verbosity string) error
+
 	// LLM providers — platform-global, no tenant
 	ListProviders(ctx context.Context) ([]dal.LLMProvider, error)
 	GetProvider(ctx context.Context, id int64) (dal.LLMProvider, error)

@@ -51,6 +51,7 @@ func execRouterNode(
 		LLMProviderName:  input.LLMProviderName,
 		LLMProvider:      input.LLMProvider,
 		LLMModel:         input.LLMModel,
+		Verbosity:        input.LogVerbosity,
 	}).Get(ctx, &routerOut)
 	if err != nil {
 		return "", fmt.Errorf("router %q: %w", node.ID, err)
@@ -106,6 +107,7 @@ func execHILNode(
 		Prompt:         cfg.Prompt,
 		TimeoutSecs:    cfg.TimeoutSeconds,
 		FallbackAction: cfg.FallbackAction,
+		Verbosity:      input.LogVerbosity,
 	}).Get(hilCtx, &hilOut); aErr != nil {
 		return false, "", fmt.Errorf("hil %q: persist: %w", node.ID, aErr)
 	}
@@ -143,9 +145,9 @@ func execHILNode(
 	// already returned before this point, so this activity's "done" event
 	// fires separately via traceNode rather than emitTrace.
 	if approval.Approved {
-		traceNode(ctx, input.RunID, node.ID, "hil", "node_done", "approved: "+approval.Comment)
+		traceNode(ctx, input.RunID, node.ID, "hil", "node_done", "approved: "+approval.Comment, input.LogVerbosity)
 	} else {
-		traceNode(ctx, input.RunID, node.ID, "hil", "node_done", "rejected: "+approval.Comment)
+		traceNode(ctx, input.RunID, node.ID, "hil", "node_done", "rejected: "+approval.Comment, input.LogVerbosity)
 	}
 
 	return approval.Approved, approval.Comment, nil

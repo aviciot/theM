@@ -15,6 +15,7 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
@@ -1066,4 +1067,84 @@ func TestLifecycle_StartAppFlow_Debug_UsesDebugQueue(t *testing.T) {
 	assert.True(t, tmp.called)
 	assert.Equal(t, appflow.AppFlowDebugTaskQueue, tmp.lastTaskQueue)
 	assert.True(t, tmp.lastAppFlowIn.Debug, "workflow input Debug must be true when debug=true, so the workflow's internal activity dispatch also routes to the debug queue")
+}
+
+// fakeLogVerbosityLoader is a test double for LogVerbosityLoader.
+type fakeLogVerbosityLoader struct {
+	verbosity string
+	err       error
+}
+
+func (f *fakeLogVerbosityLoader) Load(_ context.Context, _ string) (string, error) {
+	return f.verbosity, f.err
+}
+
+// docs/APP_CANVAS_DEBUG_PLAN.md Phase 4: with no loader attached, StartAppFlow
+// must fall back to dal.DefaultLogVerbosity (fail-open) for a non-debug run.
+func TestLifecycle_StartAppFlow_NoLoader_UsesDefaultVerbosity(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, false)
+	require.NoError(t, err)
+	assert.Equal(t, dal.DefaultLogVerbosity, tmp.lastAppFlowIn.LogVerbosity)
+}
+
+// A configured loader's value must reach the workflow input for a non-debug run.
+func TestLifecycle_StartAppFlow_NotDebug_UsesLoadedVerbosity(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	lc.WithLogVerbosityLoader(&fakeLogVerbosityLoader{verbosity: dal.LogVerbosityOff})
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, false)
+	require.NoError(t, err)
+	assert.Equal(t, dal.LogVerbosityOff, tmp.lastAppFlowIn.LogVerbosity)
+}
+
+// Debug mode must force "full" regardless of the app's configured setting —
+// a debug session needs full detail independent of the production default.
+func TestLifecycle_StartAppFlow_Debug_ForcesFullVerbosity(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	lc.WithLogVerbosityLoader(&fakeLogVerbosityLoader{verbosity: dal.LogVerbosityOff})
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, true)
+	require.NoError(t, err)
+	assert.Equal(t, dal.LogVerbosityFull, tmp.lastAppFlowIn.LogVerbosity, "debug=true must force full verbosity even though the loader returned off")
+}
+
+// On loader error, StartAppFlow must fall back to the default (fail-open),
+// not propagate the error or block the run.
+func TestLifecycle_StartAppFlow_LoaderError_FallsBackToDefault(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	lc.WithLogVerbosityLoader(&fakeLogVerbosityLoader{err: errors.New("db down")})
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, false)
+	require.NoError(t, err)
+	assert.Equal(t, dal.DefaultLogVerbosity, tmp.lastAppFlowIn.LogVerbosity)
 }

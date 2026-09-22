@@ -183,6 +183,29 @@ func (s *ConfigService) PutTemporalAppConfig(ctx context.Context, appID string, 
 	return s.GetTemporalEffectiveConfig(ctx, appID)
 }
 
+// ── AppFlow trace log-verbosity ─────────────────────────────────────────────
+
+// GetLogVerbosity returns the effective per-app trace log-verbosity setting
+// (DefaultLogVerbosity when no row exists).
+func (s *ConfigService) GetLogVerbosity(ctx context.Context, appID string) (string, error) {
+	v, err := s.dal.GetAppLogVerbosity(ctx, appID)
+	if err != nil {
+		return "", fmt.Errorf("get app log verbosity: %w", err)
+	}
+	return v, nil
+}
+
+// PutLogVerbosity validates and stores the per-app trace log-verbosity setting.
+func (s *ConfigService) PutLogVerbosity(ctx context.Context, appID, verbosity string) (string, error) {
+	if !dal.IsValidLogVerbosity(verbosity) {
+		return "", unprocessable(`log_verbosity must be one of "off", "status", "full"`)
+	}
+	if err := s.dal.UpsertAppLogVerbosity(ctx, appID, verbosity); err != nil {
+		return "", fmt.Errorf("upsert app log verbosity: %w", err)
+	}
+	return verbosity, nil
+}
+
 func validateTemporalConfig(cfg dal.TemporalConfig) error {
 	if cfg.MaxConcurrentWorkflows != nil && *cfg.MaxConcurrentWorkflows < 1 {
 		return unprocessable("max_concurrent_workflows must be >= 1")

@@ -71,6 +71,7 @@ func walkBranch(
 				NodeID:        node.ID,
 				AgentID:       node.AgentID,
 				UserMessage:   accumulated,
+				Verbosity:     input.LogVerbosity,
 			}).Get(agentCtx, &agentOut)
 			if err != nil {
 				return accumulated, fmt.Errorf("branch agent %q: %w", node.ID, err)
@@ -109,6 +110,7 @@ func walkBranch(
 				Temperature:   cfg.Temperature,
 				OutputVar:     cfg.OutputVar,
 				Stream:        true,
+				Verbosity:     input.LogVerbosity,
 			}).Get(llmCtx, &llmOut)
 			if err != nil {
 				return accumulated, fmt.Errorf("branch llm %q: %w", node.ID, err)
@@ -123,7 +125,7 @@ func walkBranch(
 			}
 			curID = firstEdgeTarget(outEdges[node.ID])
 		case "condition":
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "", input.LogVerbosity)
 			var cfg InlineConditionConfig
 			if len(node.Config) > 0 {
 				_ = json.Unmarshal(node.Config, &cfg)
@@ -131,7 +133,7 @@ func walkBranch(
 			vars["input"] = accumulated
 			rendered, rErr := renderFlowTemplate(cfg.Expression, vars)
 			if rErr != nil {
-				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", rErr.Error())
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", rErr.Error(), input.LogVerbosity)
 				return accumulated, fmt.Errorf("branch condition %q: render expression: %w", node.ID, rErr)
 			}
 			branch := "false"
@@ -140,16 +142,16 @@ func walkBranch(
 			}
 			nextID := findEdgeByLabel(outEdges[node.ID], branch)
 			if nextID == "" {
-				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", fmt.Sprintf("no outgoing edge labelled %q", branch))
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", fmt.Sprintf("no outgoing edge labelled %q", branch), input.LogVerbosity)
 				return accumulated, fmt.Errorf("branch condition %q: no outgoing edge labelled %q", node.ID, branch)
 			}
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch)
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch, input.LogVerbosity)
 			curID = nextID
 		case "orchestrator", "middleware":
 			curID = firstEdgeTarget(outEdges[node.ID])
 		case "join":
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "")
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "", input.LogVerbosity)
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "", input.LogVerbosity)
 			// Reached join — stop this branch.
 			return accumulated, nil
 		default:

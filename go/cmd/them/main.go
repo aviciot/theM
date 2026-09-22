@@ -295,6 +295,11 @@ func run() error {
 	execLifecycle.WithAppFlowLLMOverrideLoader(appflow.NewPgxAppFlowLLMOverrideLoader(rlsPools))
 	log.Info("appflow llm override loader wired")
 
+	// Wire AppFlow trace log-verbosity loader — resolves per-app off/status/full
+	// setting at workflow start; debug runs always force "full" regardless.
+	execLifecycle.WithLogVerbosityLoader(appflow.NewPgxLogVerbosityLoader(rlsPools))
+	log.Info("appflow log verbosity loader wired")
+
 	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
 	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,
 	// session events to browser clients. No Temporal, no recording.

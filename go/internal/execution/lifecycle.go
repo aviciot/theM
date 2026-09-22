@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
@@ -83,6 +84,7 @@ type Lifecycle struct {
 	roleChecker      RoleChecker   // optional; nil = role gate disabled
 	temporalCfgLoader TemporalConfigLoader // optional; nil = hardcoded defaults for AppFlow
 	llmOverrideLoader AppFlowLLMOverrideLoader // optional; nil = no inline LLM node overrides applied
+	logVerbosityLoader LogVerbosityLoader // optional; nil = dal.DefaultLogVerbosity for AppFlow
 	logger           *slog.Logger
 }
 
@@ -184,6 +186,21 @@ type AppFlowLLMOverrideLoader interface {
 // When nil (default), StartAppFlow applies no overrides.
 func (lc *Lifecycle) WithAppFlowLLMOverrideLoader(l AppFlowLLMOverrideLoader) *Lifecycle {
 	lc.llmOverrideLoader = l
+	return lc
+}
+
+// LogVerbosityLoader resolves the per-app AppFlow trace log-verbosity setting
+// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4). If nil or if Load returns an error,
+// StartAppFlow falls back to dal.DefaultLogVerbosity (fail-open).
+type LogVerbosityLoader interface {
+	// Load returns the effective log-verbosity ("off"|"status"|"full") for the given applicationID.
+	Load(ctx context.Context, applicationID string) (string, error)
+}
+
+// WithLogVerbosityLoader attaches a LogVerbosityLoader.
+// When nil (default), StartAppFlow uses dal.DefaultLogVerbosity for every run.
+func (lc *Lifecycle) WithLogVerbosityLoader(l LogVerbosityLoader) *Lifecycle {
+	lc.logVerbosityLoader = l
 	return lc
 }
 
@@ -675,6 +692,21 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 		if overrides, err := lc.llmOverrideLoader.Load(ctx, h.EPConfig.AppID); err == nil {
 			appflow.ApplyLLMOverrides(input.Spec, overrides)
 		}
+	}
+
+	// Resolve AppFlow trace log-verbosity (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+	// Debug mode always forces "full" regardless of the app's configured
+	// setting — a debug session needs full detail to be useful, independent
+	// of what the app owner set for production traffic.
+	input.LogVerbosity = dal.DefaultLogVerbosity
+	if lc.logVerbosityLoader != nil {
+		if v, err := lc.logVerbosityLoader.Load(ctx, h.EPConfig.AppID); err == nil {
+			input.LogVerbosity = v
+		}
+		// On error: leave LogVerbosity at the default (fail-open).
+	}
+	if debug {
+		input.LogVerbosity = dal.LogVerbosityFull
 	}
 
 	taskQueue := appflow.AppFlowTaskQueue

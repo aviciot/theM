@@ -271,6 +271,12 @@ func (f *agentDefFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*da
 func (f *agentDefFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
 	return nil
 }
+func (f *agentDefFakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+	return dal.DefaultLogVerbosity, nil
+}
+func (f *agentDefFakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, _ string) error {
+	return nil
+}
 func (f *agentDefFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
 	return nil, nil
 }

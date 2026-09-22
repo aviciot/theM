@@ -1095,6 +1095,13 @@ export interface TemporalAppConfigPatch {
   retry_max_attempts?: number | null;
 }
 
+// docs/APP_CANVAS_DEBUG_PLAN.md Phase 4 — per-app AppFlow trace log-verbosity.
+export type LogVerbosity = 'off' | 'status' | 'full';
+
+export interface LogVerbosityConfig {
+  log_verbosity: LogVerbosity;
+}
+
 // ── LLM Gateway admin types ────────────────────────────────────────────────────
 
 export interface GatewayClient {

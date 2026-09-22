@@ -530,6 +530,36 @@ the `application_id` FK and TenantTx-scoped admin routes, not a row policy on th
 
 ---
 
+## them.app_debug_config (migration 104 — App Canvas Debug Mode Phase 4)
+
+Per-app AppFlow trace log-verbosity setting. Controls how much `persistTrace`
+(`internal/appflow/activities.go`) writes to `them.run_steps` for Graph-mode runs. No row = default
+`'status'`. `Lifecycle.StartAppFlow` resolves this once per run into
+`AppFlowWorkflowInput.LogVerbosity`, fail-open to the default on load error; a debug-mode run always
+uses `'full'` regardless of this setting.
+
+| Column | Type | Purpose |
+|---|---|---|
+| application_id | UUID NOT NULL, FK → applications(id) ON DELETE CASCADE | |
+| log_verbosity | TEXT NOT NULL DEFAULT 'status', CHECK IN ('off','status','full') | see semantics below |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+PRIMARY KEY (application_id). No RLS (same as `app_temporal_config`) — isolation is via the
+`application_id` FK and TenantTx-scoped admin routes.
+
+**Verbosity semantics** (enforced in `persistTrace`, not in the DB):
+- `off` — no `them.run_steps` write at all. The run's live Redis stream (`them:dash:run:{run_id}:stream`)
+  still publishes `node_start`/`node_done`/`node_error` while a viewer is connected; only durable
+  persistence is skipped. The Run History "Flow" tab stays empty for these runs.
+- `status` — the row is written/updated (`node_id`, `node_kind`, `status`, `latency_ms`), but
+  `output`/`error` detail is never persisted (`NULL`), whether the node succeeded or failed.
+- `full` — today's Phase 3 behavior: status plus `output`/`error` detail.
+
+Admin routes: `GET`/`PUT /admin/applications/{id}/log-verbosity` (`internal/admin/log_verbosity.go`).
+Frontend: Runtime → Trace Logging tab (`RuntimeLogVerbosityTab.tsx`).
+
+---
+
 ## them.middleware_defs
 
 Registry of middleware component types (builtin and tenant-scoped). Migration: `db/001_schema.sql`; visual columns added by `db/097_middleware_defs_visual.sql`.

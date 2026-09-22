@@ -102,6 +102,10 @@ type fakeDal struct {
 	temporalCfg    *dal.TemporalConfig
 	temporalCfgErr error
 
+	// log verbosity fields
+	logVerbosity    string
+	logVerbosityErr error
+
 	// LLM provider fields
 	providers              []dal.LLMProvider
 	provider               dal.LLMProvider
@@ -390,6 +394,22 @@ func (f *fakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.Tempor
 }
 func (f *fakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
 	return f.temporalCfgErr
+}
+func (f *fakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+	if f.logVerbosityErr != nil {
+		return "", f.logVerbosityErr
+	}
+	if f.logVerbosity == "" {
+		return dal.DefaultLogVerbosity, nil
+	}
+	return f.logVerbosity, nil
+}
+func (f *fakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, v string) error {
+	if f.logVerbosityErr != nil {
+		return f.logVerbosityErr
+	}
+	f.logVerbosity = v
+	return nil
 }
 
 // Agent action stubs (platform-global, no tenant scope).

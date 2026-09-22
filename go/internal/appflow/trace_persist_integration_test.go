@@ -49,8 +49,8 @@ func TestPersistTrace_NodeStartThenNodeDone_UpsertsOneRow(t *testing.T) {
 	defer pool.Exec(context.Background(), `DELETE FROM them.runs WHERE id = $1::uuid`, runID)
 
 	a := &AppFlowActivities{DB: pool}
-	a.persistTrace(context.Background(), runID, "cond1", "condition", "node_start", "")
-	a.persistTrace(context.Background(), runID, "cond1", "condition", "node_done", "branch=true")
+	a.persistTrace(context.Background(), runID, "cond1", "condition", "node_start", "", "full")
+	a.persistTrace(context.Background(), runID, "cond1", "condition", "node_done", "branch=true", "full")
 
 	var count int
 	var status, output, nodeKind string
@@ -89,8 +89,8 @@ func TestPersistTrace_NodeError_SetsFailedStatusAndError(t *testing.T) {
 	defer pool.Exec(context.Background(), `DELETE FROM them.runs WHERE id = $1::uuid`, runID)
 
 	a := &AppFlowActivities{DB: pool}
-	a.persistTrace(context.Background(), runID, "router1", "router", "node_start", "")
-	a.persistTrace(context.Background(), runID, "router1", "router", "node_error", "no output_labels configured")
+	a.persistTrace(context.Background(), runID, "router1", "router", "node_start", "", "full")
+	a.persistTrace(context.Background(), runID, "router1", "router", "node_error", "no output_labels configured", "full")
 
 	var status, errText string
 	row := pool.QueryRow(context.Background(),
@@ -109,7 +109,7 @@ func TestPersistTrace_NodeError_SetsFailedStatusAndError(t *testing.T) {
 func TestPersistTrace_NilDB_NoOp(t *testing.T) {
 	a := &AppFlowActivities{}
 	// Must not panic with a nil DB — same guard every other activity uses.
-	a.persistTrace(context.Background(), uuid.NewString(), "n1", "condition", "node_start", "")
+	a.persistTrace(context.Background(), uuid.NewString(), "n1", "condition", "node_start", "", "full")
 }
 
 func TestPersistTrace_EmptyNodeID_NoOp(t *testing.T) {
@@ -127,7 +127,7 @@ func TestPersistTrace_EmptyNodeID_NoOp(t *testing.T) {
 	// index predicate that keeps orchestrator-mode rows (node_id always NULL)
 	// out of this constraint; an empty string is a distinct, wrong case that
 	// would otherwise silently create untraceable rows.
-	a.persistTrace(context.Background(), runID, "", "condition", "node_start", "")
+	a.persistTrace(context.Background(), runID, "", "condition", "node_start", "", "full")
 
 	var count int
 	row := pool.QueryRow(context.Background(),
@@ -137,5 +137,93 @@ func TestPersistTrace_EmptyNodeID_NoOp(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected no rows for empty node_id, got %d", count)
+	}
+}
+
+// PT-5 (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4): verbosity="off" must skip
+// persistence entirely — the live Redis publish in emitTrace is unaffected,
+// but persistTrace itself must not write any row.
+func TestPersistTrace_VerbosityOff_NoWrite(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), integrationDSN())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	runID := seedRun(t, pool)
+	defer pool.Exec(context.Background(), `DELETE FROM them.runs WHERE id = $1::uuid`, runID)
+
+	a := &AppFlowActivities{DB: pool}
+	a.persistTrace(context.Background(), runID, "n1", "condition", "node_start", "", "off")
+	a.persistTrace(context.Background(), runID, "n1", "condition", "node_done", "branch=true", "off")
+
+	var count int
+	row := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM them.run_steps WHERE run_id = $1::uuid AND node_id = 'n1'`, runID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no rows written for verbosity=off, got %d", count)
+	}
+}
+
+// PT-6: verbosity="status" writes the row (status/timing) but never persists
+// output/error detail, whether the node succeeded or failed.
+func TestPersistTrace_VerbosityStatus_WritesRowWithoutDetail(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), integrationDSN())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	runID := seedRun(t, pool)
+	defer pool.Exec(context.Background(), `DELETE FROM them.runs WHERE id = $1::uuid`, runID)
+
+	a := &AppFlowActivities{DB: pool}
+	a.persistTrace(context.Background(), runID, "n1", "condition", "node_start", "", "status")
+	a.persistTrace(context.Background(), runID, "n1", "condition", "node_done", "branch=true", "status")
+
+	var status, output string
+	row := pool.QueryRow(context.Background(),
+		`SELECT status, COALESCE(output,'') FROM them.run_steps WHERE run_id = $1::uuid AND node_id = 'n1'`, runID)
+	if err := row.Scan(&status, &output); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expected status=completed, got %q", status)
+	}
+	if output != "" {
+		t.Fatalf("expected no output detail persisted at verbosity=status, got %q", output)
+	}
+}
+
+// PT-7: verbosity="status" on a failed node writes status=failed but still
+// withholds the error text — the row exists, the detail does not.
+func TestPersistTrace_VerbosityStatus_NodeError_NoErrorTextPersisted(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), integrationDSN())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	runID := seedRun(t, pool)
+	defer pool.Exec(context.Background(), `DELETE FROM them.runs WHERE id = $1::uuid`, runID)
+
+	a := &AppFlowActivities{DB: pool}
+	a.persistTrace(context.Background(), runID, "n1", "router", "node_start", "", "status")
+	a.persistTrace(context.Background(), runID, "n1", "router", "node_error", "no output_labels configured", "status")
+
+	var status, errText string
+	row := pool.QueryRow(context.Background(),
+		`SELECT status, COALESCE(error,'') FROM them.run_steps WHERE run_id = $1::uuid AND node_id = 'n1'`, runID)
+	if err := row.Scan(&status, &errText); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("expected status=failed, got %q", status)
+	}
+	if errText != "" {
+		t.Fatalf("expected no error text persisted at verbosity=status, got %q", errText)
 	}
 }

@@ -9,6 +9,7 @@ import { CanvasAgentsSection } from './RuntimeAgentsSection';
 import { RuntimeAppFlowLLMSection } from './RuntimeAppFlowLLMSection';
 import type { VoiceDraft } from './RuntimeVoicePanel';
 import { RuntimeTemporalTab } from './RuntimeTemporalTab';
+import { RuntimeLogVerbosityTab } from './RuntimeLogVerbosityTab';
 
 type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string; base_url?: string };
 const LOCAL_PROVIDERS = new Set(['ollama', 'vllm', 'lmstudio']);
@@ -22,7 +23,7 @@ type EPLLMDraft  = { provider: string; model: string };
 type EPSumDraft  = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 type NodeLLMDraft = { provider: string; model: string };
 
-type RuntimeTab = 'general' | 'temporal';
+type RuntimeTab = 'general' | 'temporal' | 'log-verbosity';
 
 export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBack: () => void; onUpdate?: (patch: Partial<Application>) => void }) {
   const [runtimeTab, setRuntimeTab] = useState<RuntimeTab>('general');
@@ -290,6 +291,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
         {([
           { id: 'general'  as RuntimeTab, label: 'General',  icon: 'tune' },
           { id: 'temporal' as RuntimeTab, label: 'Temporal', icon: 'schedule_send' },
+          { id: 'log-verbosity' as RuntimeTab, label: 'Trace Logging', icon: 'manage_search' },
         ]).map(tab => {
           const active = runtimeTab === tab.id;
           return (
@@ -303,6 +305,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
 
       <div style={{ maxWidth: 720 }}>
         {runtimeTab === 'temporal' && <RuntimeTemporalTab appId={app.id} />}
+        {runtimeTab === 'log-verbosity' && <RuntimeLogVerbosityTab appId={app.id} />}
         {runtimeTab === 'general' && (<>
         <EPSections
           entryPoints={entryPoints} orchMetas={orchMetas}

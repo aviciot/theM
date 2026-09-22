@@ -3245,7 +3245,7 @@ go test -tags=integration -v ./internal/admin/dal/... -run TestDAL_SumMonthlyTok
 
 ### S2-12 · AppFlow trace persistence — `internal/appflow/trace_persist_integration_test.go`
 
-**Purpose:** Prove `persistTrace` (the DB half of `emitTrace`, wired for App Canvas Debug Mode Phase 3 durable trace storage, `docs/APP_CANVAS_DEBUG_PLAN.md`) correctly upserts `them.run_steps` rows against real PostgreSQL — the `(run_id, node_id)` partial unique index and `node_id`/`node_kind` columns added by `db/103_run_steps_appflow_trace.sql` can't be exercised by a mock, since `AppFlowActivities.DB` is a concrete `*pgxpool.Pool`, not an interface.
+**Purpose:** Prove `persistTrace` (the DB half of `emitTrace`, wired for App Canvas Debug Mode Phase 3 durable trace storage, `docs/APP_CANVAS_DEBUG_PLAN.md`) correctly upserts `them.run_steps` rows against real PostgreSQL — the `(run_id, node_id)` partial unique index and `node_id`/`node_kind` columns added by `db/103_run_steps_appflow_trace.sql` can't be exercised by a mock, since `AppFlowActivities.DB` is a concrete `*pgxpool.Pool`, not an interface. PT-5..7 (added for Phase 4) prove the `verbosity` parameter added in that phase correctly gates how much of the row gets written.
 
 Build tag: `//go:build integration`. Package: `appflow`. Uses `TEST_POSTGRES_DSN` (falls back to a placeholder localhost DSN — override with the real `THEM_DB_URL_ADMIN` value from `.env` when running locally, since `AppFlowActivities.DB` is always the Admin/BYPASSRLS pool in production).
 
@@ -3255,13 +3255,16 @@ Build tag: `//go:build integration`. Package: `appflow`. Uses `TEST_POSTGRES_DSN
 | PT-2 | `TestPersistTrace_NodeError_SetsFailedStatusAndError` | node_error sets `status=failed` and preserves the detail string in `error` (not `output`) |
 | PT-3 | `TestPersistTrace_NilDB_NoOp` | nil `a.DB` does not panic — matches every other AppFlow activity's nil-DB guard |
 | PT-4 | `TestPersistTrace_EmptyNodeID_NoOp` | an empty `node_id` inserts no row — guards against silently creating untraceable rows outside the partial unique index's `WHERE node_id IS NOT NULL` predicate |
+| PT-5 | `TestPersistTrace_VerbosityOff_NoWrite` | verbosity="off" writes no row at all (Phase 4) — the live Redis publish in `emitTrace` is unaffected, only durable persistence is skipped |
+| PT-6 | `TestPersistTrace_VerbosityStatus_WritesRowWithoutDetail` | verbosity="status" writes the row (status/timing) but never persists `output`, on a successful node |
+| PT-7 | `TestPersistTrace_VerbosityStatus_NodeError_NoErrorTextPersisted` | verbosity="status" on a failed node writes `status=failed` but still withholds the `error` text — the row exists, the detail does not |
 
 ```bash
 TEST_POSTGRES_DSN="$(grep '^THEM_DB_URL_ADMIN=' .env | cut -d= -f2-)" \
 go test -tags=integration -v ./internal/appflow/... -run TestPersistTrace
 ```
 
-**Trigger:** any change to `internal/appflow/activities.go` `emitTrace`/`persistTrace`, or to `db/103_run_steps_appflow_trace.sql`
+**Trigger:** any change to `internal/appflow/activities.go` `emitTrace`/`persistTrace`, or to `db/103_run_steps_appflow_trace.sql` or `db/104_app_log_verbosity.sql`
 
 ---
 
@@ -3360,7 +3363,11 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` (`StartAppFlow` debug-queue routing) | S1-129 |
 | `internal/appflow/activities.go` (`emitTrace`, `TraceNodeEventActivity`, node_start/node_done/node_error on Router/HIL/Agent/Inline LLM) | S1-130 |
 | `internal/appflow/workflow.go` (Condition/Fork/Join `traceNode` calls), `internal/appflow/graph.go` (`walkBranch` `traceNode` calls) | S1-131 |
-| `internal/appflow/activities.go` (`persistTrace` — run_steps upsert), `db/103_run_steps_appflow_trace.sql` | S2-12 (integration) |
+| `internal/appflow/activities.go` (`persistTrace` — run_steps upsert), `db/103_run_steps_appflow_trace.sql`, `db/104_app_log_verbosity.sql` | S2-12 (integration) |
+| `internal/admin/service/config.go` (`GetLogVerbosity`/`PutLogVerbosity`) | S1-132 |
+| `internal/admin/log_verbosity.go` (`LogVerbosityHandler`) | S1-133 |
+| `internal/execution/lifecycle.go` (`LogVerbosityLoader`, `WithLogVerbosityLoader`, verbosity resolution in `StartAppFlow`) | S1-134 |
+| `internal/appflow/log_verbosity_loader.go` (`PgxLogVerbosityLoader`) | S1-134 (via Lifecycle wiring; no dedicated DB-backed unit test — mirrors `PgxTemporalConfigLoader`, which also has none) |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
@@ -3386,7 +3393,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstreamer_writer_adapter.go` | S1-20 + S1-23 |
 | `cmd/worker/main.go` | S1-29 + S1 (full suite) |
 | `internal/a2a/server.go` | S1-14 |
-| `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
+| `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 + S1-129 + S1-134 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
 | `internal/admin/agent_definition_schema.go` | S1-71 |
@@ -3599,7 +3606,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-129 | App Canvas Debug Mode Phase 1 — `Lifecycle.StartAppFlow` debug routing (`lifecycle_test.go`): `TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue` (debug=false → StartWorkflowOptions.TaskQueue=appflow-dag, input.Debug=false), `TestLifecycle_StartAppFlow_Debug_UsesDebugQueue` (debug=true → TaskQueue=appflow-dag-debug, input.Debug=true propagated so the workflow's internal ActivityOptions also route to the debug queue) | 2 |
 | S1-130 | App Canvas Debug Mode Phase 2 — activity-level node_start/node_done/node_error trace emission (`workflow_test.go`, AF-TR-01..07): `TestInlineLLMActivity_EmitsStartAndDoneTrace`, `TestInlineLLMActivity_EmitsErrorTrace`, `TestInvokeAgentActivity_EmitsStartAndDoneTrace`, `TestExecuteHILActivity_EmitsStartThenErrorTrace_NilDB` (node_start always fires; node_done for HIL fires later from `execHILNode`, not this activity), `TestExecuteRouterActivity_EmitsStartAndDoneTrace` (detail=`label=<chosen>`), `TestTraceNodeEventActivity_PublishesEvent`, `TestTraceNodeEventActivity_NilStreamPub_NoOp`. Also updated `TestInlineLLMActivity_StreamPublishesToken` to filter for the `"token"`-type payload specifically, since node_start/node_done now also publish to the same stream. | 7 |
 | S1-131 | App Canvas Debug Mode Phase 2 — workflow-level trace coverage for Condition/Fork/Join, which have no activity of their own (`workflow_temporal_test.go`, new `testsuite.WorkflowTestSuite`, AF-TR-W01..03): `TestConditionNode_EmitsStartAndDoneTrace` (detail=`branch=true`), `TestConditionNode_NoMatchingEdge_EmitsErrorTrace` (node_error not node_done on failure), `TestForkJoin_EmitsTraceForAllNodes` (fork/2 condition branches/join all emit start+done exactly once; fork detail=`branches=2`; proves `traceNode` fires correctly from both `workflow.go`'s main loop and `graph.go`'s `walkBranch`, and that the join node's trace fires from the fork case in `workflow.go` since `walkBranch` never visits the join node itself — it stops as soon as it reaches it) | 3 |
-| **S1 total** | | **1335** |
+| S1-132 | App Canvas Debug Mode Phase 4 — `ConfigService.GetLogVerbosity`/`PutLogVerbosity` (`config_test.go`, LV-SVC-1..5): no-row-returns-default, stored-row-returned, DAL-error-propagates, valid-value-upserts-and-echoes, invalid-value-returns-validation-error (no DAL write attempted) | 5 |
+| S1-133 | App Canvas Debug Mode Phase 4 — `LogVerbosityHandler` HTTP layer (`config_handler_test.go`, LV-1..5): GET no-row→200 default, GET stored-row→200 its value, PUT valid→200 echoes back, PUT invalid enum value→422, PUT bad JSON→400 | 5 |
+| S1-134 | App Canvas Debug Mode Phase 4 — `Lifecycle.StartAppFlow` log-verbosity resolution (`lifecycle_test.go`): `TestLifecycle_StartAppFlow_NoLoader_UsesDefaultVerbosity` (nil loader → dal.DefaultLogVerbosity), `TestLifecycle_StartAppFlow_NotDebug_UsesLoadedVerbosity` (loader's value reaches workflow input for a non-debug run), `TestLifecycle_StartAppFlow_Debug_ForcesFullVerbosity` (debug=true forces "full" even though the loader returned "off" — a debug session needs full detail independent of the app's production setting), `TestLifecycle_StartAppFlow_LoaderError_FallsBackToDefault` (loader error is fail-open, not propagated) | 4 |
+| **S1 total** | | **1349** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 

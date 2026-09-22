@@ -230,3 +230,89 @@ func TestPutTemporalPlatformConfig_BadJSON_Returns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ── LogVerbosityHandler tests (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4) ──────
+
+// LV-1: GET log-verbosity with no stored row — returns 200 with the default.
+func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	h := admin.NewLogVerbosityHandler(db)
+	r := chi.NewRouter()
+	h.AppRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/log-verbosity", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "status", body["log_verbosity"])
+}
+
+// LV-2: GET log-verbosity with a stored row — returns its value.
+func TestGetLogVerbosity_StoredRow_ReturnsValue(t *testing.T) {
+	db := &fakeDB{queryRowStr: "full"}
+	h := admin.NewLogVerbosityHandler(db)
+	r := chi.NewRouter()
+	h.AppRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/log-verbosity", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "full", body["log_verbosity"])
+}
+
+// LV-3: PUT log-verbosity with a valid value — returns 200 and echoes it back.
+func TestPutLogVerbosity_Valid_Returns200(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewLogVerbosityHandler(db)
+	r := chi.NewRouter()
+	h.AppRoutes(r)
+
+	body, _ := json.Marshal(map[string]any{"log_verbosity": "off"})
+	req := httptest.NewRequest(http.MethodPut, "/log-verbosity", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var respBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &respBody))
+	assert.Equal(t, "off", respBody["log_verbosity"])
+}
+
+// LV-4: PUT log-verbosity with an invalid value — returns 422.
+func TestPutLogVerbosity_InvalidValue_Returns422(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewLogVerbosityHandler(db)
+	r := chi.NewRouter()
+	h.AppRoutes(r)
+
+	body, _ := json.Marshal(map[string]any{"log_verbosity": "verbose"})
+	req := httptest.NewRequest(http.MethodPut, "/log-verbosity", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+// LV-5: PUT log-verbosity with bad JSON — returns 400.
+func TestPutLogVerbosity_BadJSON_Returns400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewLogVerbosityHandler(db)
+	r := chi.NewRouter()
+	h.AppRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPut, "/log-verbosity", bytes.NewReader([]byte(`not json`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

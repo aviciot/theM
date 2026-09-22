@@ -83,13 +83,14 @@ func activityTaskQueueFor(debug bool) string {
 // never persisted, never allowed to fail the node it describes — the .Get
 // error is deliberately discarded, matching TraceNodeEventActivity's own
 // never-fail contract.
-func traceNode(ctx workflow.Context, runID, nodeID, kind, eventType, detail string) {
+func traceNode(ctx workflow.Context, runID, nodeID, kind, eventType, detail, verbosity string) {
 	_ = workflow.ExecuteActivity(ctx, AppFlowTraceNodeEventActivityName, TraceEventInput{
 		RunID:     runID,
 		NodeID:    nodeID,
 		Kind:      kind,
 		EventType: eventType,
 		Detail:    detail,
+		Verbosity: verbosity,
 	}).Get(ctx, nil)
 }
 
@@ -130,6 +131,13 @@ type AppFlowWorkflowInput struct {
 	// this field only controls the *activity* dispatch queue used inside the
 	// workflow function once it's already running.
 	Debug bool `json:"debug,omitempty"`
+	// LogVerbosity is the resolved effective trace-persistence level for this
+	// run: "off"|"status"|"full" (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+	// Resolved once by StartAppFlow from them.app_debug_config before the
+	// workflow starts (fail-open default "status" on load error or no row).
+	// When Debug is true, StartAppFlow always sets this to "full" regardless
+	// of the app's configured setting, overriding whatever was loaded.
+	LogVerbosity string `json:"log_verbosity,omitempty"`
 }
 
 // TemporalExecCfg carries Temporal execution controls resolved at workflow submit time.
@@ -327,6 +335,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				NodeID:        node.ID,
 				AgentID:       node.AgentID,
 				UserMessage:   accumulated,
+				Verbosity:     input.LogVerbosity,
 			}).Get(ctx, &agentOut)
 			if err != nil {
 				out.Status = "failed"
@@ -370,6 +379,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				Temperature:   cfg.Temperature,
 				OutputVar:     cfg.OutputVar,
 				Stream:        true,
+				Verbosity:     input.LogVerbosity,
 			}).Get(ctx, &llmOut)
 			if err != nil {
 				out.Status = "failed"
@@ -388,7 +398,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "condition":
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "", input.LogVerbosity)
 			var cfg InlineConditionConfig
 			if len(node.Config) > 0 {
 				_ = json.Unmarshal(node.Config, &cfg)
@@ -396,7 +406,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			vars["input"] = accumulated
 			rendered, rErr := renderFlowTemplate(cfg.Expression, vars)
 			if rErr != nil {
-				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", rErr.Error())
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", rErr.Error(), input.LogVerbosity)
 				out.Status = "failed"
 				retErr = temporalerr.NewNonRetryableApplicationError(
 					fmt.Sprintf("condition %q: render expression: %v", node.ID, rErr),
@@ -410,7 +420,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			}
 			nextID := findEdgeByLabel(outEdgesBySource[node.ID], branch)
 			if nextID == "" {
-				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", fmt.Sprintf("no outgoing edge labelled %q", branch))
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_error", fmt.Sprintf("no outgoing edge labelled %q", branch), input.LogVerbosity)
 				out.Status = "failed"
 				retErr = temporalerr.NewNonRetryableApplicationError(
 					fmt.Sprintf("condition %q: no outgoing edge labelled %q", node.ID, branch),
@@ -418,13 +428,13 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				)
 				return
 			}
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch)
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch, input.LogVerbosity)
 			currentID = nextID
 			continue
 
 		case "fork":
 			branches := outEdgesBySource[node.ID]
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", fmt.Sprintf("branches=%d", len(branches)))
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", fmt.Sprintf("branches=%d", len(branches)), input.LogVerbosity)
 			branchResults := make([]string, len(branches))
 			wg := workflow.NewWaitGroup(ctx)
 			// Find the join node that all branches converge on.
@@ -450,14 +460,14 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			if merged != "" {
 				accumulated = merged
 			}
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", fmt.Sprintf("branches=%d", len(branches)))
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", fmt.Sprintf("branches=%d", len(branches)), input.LogVerbosity)
 			// The join node itself is never visited by walkBranch — each branch
 			// stops as soon as it reaches joinID (see walkBranch's loop condition
 			// in graph.go), so its trace fires here instead, once all branches
 			// have converged.
 			if joinNode, ok := nodeByID[joinID]; ok {
-				traceNode(ctx, input.RunID, joinNode.ID, joinNode.Kind, "node_start", "")
-				traceNode(ctx, input.RunID, joinNode.ID, joinNode.Kind, "node_done", "")
+				traceNode(ctx, input.RunID, joinNode.ID, joinNode.Kind, "node_start", "", input.LogVerbosity)
+				traceNode(ctx, input.RunID, joinNode.ID, joinNode.Kind, "node_done", "", input.LogVerbosity)
 			}
 			// Continue from the join node's outgoing edge.
 			if joinID != "" {
@@ -468,8 +478,8 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "join":
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "")
-			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "")
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "", input.LogVerbosity)
+			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "", input.LogVerbosity)
 			// Join nodes are consumed inside walkBranch; reaching one in the main
 			// loop means a bare join with no preceding fork — treat as pass-through.
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])

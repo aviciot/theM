@@ -38,6 +38,9 @@ type RouterActivityInput struct {
 	LLMProviderName string `json:"llm_provider_name,omitempty"`
 	LLMProvider     string `json:"llm_provider,omitempty"`
 	LLMModel        string `json:"llm_model,omitempty"`
+	// Verbosity is the resolved effective log-verbosity for this run
+	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // RouterActivityOutput is returned by AppFlowExecuteRouterActivity.
@@ -56,6 +59,9 @@ type HILActivityInput struct {
 	Prompt         string `json:"prompt,omitempty"`
 	TimeoutSecs    int    `json:"timeout_seconds,omitempty"`
 	FallbackAction string `json:"fallback_action,omitempty"` // "reject"|"approve"|"abort"
+	// Verbosity is the resolved effective log-verbosity for this run
+	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // HILActivityOutput is returned by AppFlowExecuteHILActivity.
@@ -83,6 +89,9 @@ type AgentInvokeActivityInput struct {
 	// AgentID is the UUID from agents.id (server-stamped in _resolved_agent_ids).
 	AgentID     string `json:"agent_id"`
 	UserMessage string `json:"user_message"`
+	// Verbosity is the resolved effective log-verbosity for this run
+	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // AgentInvokeActivityOutput is returned by AppFlowInvokeAgentActivity.
@@ -118,6 +127,9 @@ type InlineLLMActivityInput struct {
 
 	// Stream, when true, publishes token events to the run's Redis stream.
 	Stream bool `json:"stream,omitempty"`
+	// Verbosity is the resolved effective log-verbosity for this run
+	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // InlineLLMActivityOutput is returned by AppFlowInlineLLMActivity.
@@ -144,6 +156,11 @@ type TraceEventInput struct {
 	// branch, a router's chosen label, a fork's branch count). Empty for
 	// node_start. Never a full prompt, response, or other large/sensitive text.
 	Detail string `json:"detail,omitempty"`
+	// Verbosity is the resolved effective log-verbosity for this run
+	// ("off"|"status"|"full") — see AppFlowWorkflowInput.LogVerbosity
+	// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4). Governs how much persistTrace
+	// writes to them.run_steps; the live Redis publish is unaffected.
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // ── Activity dependencies and implementations ─────────────────────────────────
@@ -213,16 +230,16 @@ type InlineLLMRequest struct {
 // ExecuteRouterActivity calls an LLM to classify the user message and returns
 // the matching intent label from the router's output_labels list.
 func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input RouterActivityInput) (RouterActivityOutput, error) {
-	a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_start", "")
+	a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_start", "", input.Verbosity)
 
 	if len(input.Labels) == 0 {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", "no output_labels configured")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", "no output_labels configured", input.Verbosity)
 		return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"router has no output_labels configured", "NoLabels", nil,
 		)
 	}
 	if a.LLMCaller == nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", "no LLM caller configured")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", "no LLM caller configured", input.Verbosity)
 		return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"router: no LLM caller configured on this worker", "NoLLMCaller", nil,
 		)
@@ -235,20 +252,20 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 
 	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProviderName, input.LLMModel, input.TenantID, input.ApplicationID)
 	if err != nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", err.Error())
+		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", err.Error(), input.Verbosity)
 		return RouterActivityOutput{}, fmt.Errorf("router classify: %w", err)
 	}
 
 	// Validate the returned label is in the allowed set.
 	for _, l := range input.Labels {
 		if strings.EqualFold(l, label) {
-			a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_done", "label="+l)
+			a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_done", "label="+l, input.Verbosity)
 			return RouterActivityOutput{ChosenLabel: l}, nil
 		}
 	}
 
 	// LLM returned an unknown label — fail explicitly so the caller can react.
-	a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", fmt.Sprintf("unknown label %q", label))
+	a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", fmt.Sprintf("unknown label %q", label), input.Verbosity)
 	return RouterActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 		fmt.Sprintf("router: LLM returned unknown label %q (valid: %v)", label, input.Labels),
 		"RouterUnknownLabel", nil,
@@ -262,10 +279,10 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 // from execHILNode in nodes.go once the approval signal or timeout resolves,
 // since that decision happens in workflow code, after this activity returns.
 func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILActivityInput) (HILActivityOutput, error) {
-	a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_start", "")
+	a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_start", "", input.Verbosity)
 
 	if a.DB == nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_error", "no DB configured")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_error", "no DB configured", input.Verbosity)
 		return HILActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"hil: no DB configured on AppFlowActivities", "NoDB", nil,
 		)
@@ -282,7 +299,7 @@ func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILAct
 		input.NodeID, input.ApproverRole, input.Prompt, input.FallbackAction,
 	)
 	if err != nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_error", "insert approval request failed")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "hil", "node_error", "insert approval request failed", input.Verbosity)
 		return HILActivityOutput{}, fmt.Errorf("hil: insert approval request: %w", err)
 	}
 	return HILActivityOutput{}, nil
@@ -292,16 +309,16 @@ func (a *AppFlowActivities) ExecuteHILActivity(ctx context.Context, input HILAct
 // The agent endpoint is resolved by the AgentInvoker (which queries DB for the
 // agent record and performs the HTTP call). Returns the agent's text response.
 func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input AgentInvokeActivityInput) (AgentInvokeActivityOutput, error) {
-	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_start", "")
+	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_start", "", input.Verbosity)
 
 	if a.AgentInvoker == nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "no AgentInvoker configured")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "no AgentInvoker configured", input.Verbosity)
 		return AgentInvokeActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"appflow: no AgentInvoker configured on AppFlowActivities", "NoAgentInvoker", nil,
 		)
 	}
 	if input.AgentID == "" {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "empty agent_id")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "empty agent_id", input.Verbosity)
 		return AgentInvokeActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("appflow: node %q has empty agent_id (re-publish the application canvas to stamp IDs)", input.NodeID),
 			"EmptyAgentID", nil,
@@ -309,10 +326,10 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 	}
 	text, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.UserMessage)
 	if err != nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", err.Error())
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", err.Error(), input.Verbosity)
 		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
 	}
-	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", "")
+	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", "", input.Verbosity)
 	return AgentInvokeActivityOutput{ResponseText: text}, nil
 }
 
@@ -321,10 +338,10 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 // classification). Templates are rendered here, not in the workflow, because
 // text/template execution is not deterministic-safe workflow code.
 func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineLLMActivityInput) (InlineLLMActivityOutput, error) {
-	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_start", "")
+	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_start", "", input.Verbosity)
 
 	if a.InlineLLM == nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "no InlineLLM caller configured")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "no InlineLLM caller configured", input.Verbosity)
 		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			"inline llm: no InlineLLM caller configured on this worker", "NoInlineLLMCaller", nil,
 		)
@@ -332,7 +349,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 
 	systemPrompt, err := renderFlowTemplate(input.SystemPrompt, input.Vars)
 	if err != nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "render system_prompt failed")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "render system_prompt failed", input.Verbosity)
 		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("inline llm %q: render system_prompt: %v", input.NodeID, err),
 			"InlineLLMRenderFailed", nil,
@@ -340,7 +357,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 	}
 	userPrompt, err := renderFlowTemplate(input.UserPrompt, input.Vars)
 	if err != nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "render user_prompt failed")
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", "render user_prompt failed", input.Verbosity)
 		return InlineLLMActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("inline llm %q: render user_prompt: %v", input.NodeID, err),
 			"InlineLLMRenderFailed", nil,
@@ -369,10 +386,10 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		ApplicationID: input.ApplicationID,
 	})
 	if err != nil {
-		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", err.Error())
+		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", err.Error(), input.Verbosity)
 		return InlineLLMActivityOutput{}, fmt.Errorf("inline llm %q: %w", input.NodeID, err)
 	}
-	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_done", "")
+	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_done", "", input.Verbosity)
 
 	if input.Stream && a.StreamPub != nil && responseText != "" {
 		key := fmt.Sprintf("them:dash:run:%s:stream", input.RunID)
@@ -407,7 +424,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 // execution or trigger a retry (same rule as InlineLLMActivity's token
 // streaming — see the comment on that XAdd call).
 func (a *AppFlowActivities) TraceNodeEventActivity(ctx context.Context, input TraceEventInput) error {
-	a.emitTrace(ctx, input.RunID, input.NodeID, input.Kind, input.EventType, input.Detail)
+	a.emitTrace(ctx, input.RunID, input.NodeID, input.Kind, input.EventType, input.Detail, input.Verbosity)
 	return nil
 }
 
@@ -418,8 +435,8 @@ func (a *AppFlowActivities) TraceNodeEventActivity(ctx context.Context, input Tr
 // call it inline since they already do I/O in this activity. Never returns an
 // error — tracing must never affect node execution (Phase 2's rule, extended
 // to the DB write here for the same reason).
-func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, eventType, detail string) {
-	a.persistTrace(ctx, runID, nodeID, kind, eventType, detail)
+func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, eventType, detail, verbosity string) {
+	a.persistTrace(ctx, runID, nodeID, kind, eventType, detail, verbosity)
 
 	if a.StreamPub == nil {
 		return
@@ -448,8 +465,17 @@ func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, 
 // guard); errors are logged-and-discarded, never surfaced to the caller,
 // since a.DB is the BYPASSRLS Admin pool and this must never fail the node
 // execution it describes.
-func (a *AppFlowActivities) persistTrace(ctx context.Context, runID, nodeID, kind, eventType, detail string) {
-	if a.DB == nil || nodeID == "" {
+//
+// verbosity gates how much is written (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4):
+//   - "off": no write at all — the live Redis publish in emitTrace is
+//     unaffected, only durable persistence is skipped.
+//   - "status": the row is written/updated, but output/error detail is never
+//     stored (NULL) — same shape whether the node succeeded or failed.
+//   - "full" or empty (fail-open default when a caller predates this field,
+//     e.g. an in-flight workflow started before this phase deployed):
+//     today's behavior — output/error detail included.
+func (a *AppFlowActivities) persistTrace(ctx context.Context, runID, nodeID, kind, eventType, detail, verbosity string) {
+	if a.DB == nil || nodeID == "" || verbosity == "off" {
 		return
 	}
 	switch eventType {
@@ -473,10 +499,12 @@ func (a *AppFlowActivities) persistTrace(ctx context.Context, runID, nodeID, kin
 				latency_ms = EXTRACT(EPOCH FROM (now() - started_at))::integer * 1000
 			WHERE run_id = $1::uuid AND node_id = $2`
 		var output, errMsg string
-		if eventType == "node_error" {
-			errMsg = detail
-		} else {
-			output = detail
+		if verbosity != "status" {
+			if eventType == "node_error" {
+				errMsg = detail
+			} else {
+				output = detail
+			}
 		}
 		_, _ = a.DB.Exec(ctx, q, runID, nodeID, status, output, errMsg)
 	}

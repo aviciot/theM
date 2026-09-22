@@ -365,6 +365,12 @@ func (f *isolationFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*d
 func (f *isolationFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
 	return nil
 }
+func (f *isolationFakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+	return dal.DefaultLogVerbosity, nil
+}
+func (f *isolationFakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, _ string) error {
+	return nil
+}
 func (f *isolationFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
 	return nil, nil
 }

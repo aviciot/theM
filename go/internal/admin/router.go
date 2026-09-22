@@ -188,6 +188,11 @@ func BuildRouter(
 				tenantScoped.Get("/applications/{id}/temporal-config", temporalCfgApp.GetApp)
 				tenantScoped.Put("/applications/{id}/temporal-config", temporalCfgApp.PutApp)
 
+				// Per-app AppFlow trace log-verbosity (tenant-scoped).
+				logVerbosityApp := NewLogVerbosityHandler(dbq)
+				tenantScoped.Get("/applications/{id}/log-verbosity", logVerbosityApp.GetApp)
+				tenantScoped.Put("/applications/{id}/log-verbosity", logVerbosityApp.PutApp)
+
 				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)
 
