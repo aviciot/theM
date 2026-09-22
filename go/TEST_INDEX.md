@@ -227,6 +227,8 @@ without touching the database.
 | `TestValidateDefinition_DeprecatedComponent_ReturnsDeprecated` | Deprecated component → valid=false, code=component_deprecated |
 | `TestValidateDefinition_DuplicateInstanceID_ReturnsError` | Duplicate instance_id in components → valid=false, error reported |
 | `TestValidateDefinition_DanglingConnection_ReturnsError` | Connection target not in instance_ids → valid=false, code=dangling_connection |
+| `TestValidateDefinition_DanglingRoot_ReturnsError` | Entry point `root` not in instance_ids → valid=false, code=dangling_root (Node Registry export/import work — previously unchecked, an EP with a typo'd/deleted root silently left its orchestrator unset at publish with no error) |
+| `TestValidateDefinition_ValidRoot_NoError` | Entry point `root` correctly pointing at a real component → no dangling_root error |
 | `TestValidateDefinition_InvalidProtocol_ReturnsError` | Entry point protocol not in allowlist → valid=false, code=invalid_protocol |
 | `TestValidateDefinition_EmbeddedSecret_ReturnsError` | secret_value key → valid=false (structural_error) |
 | `TestValidateDefinition_DefinitionNotFound_ReturnsErrNotFound` | Missing defID → ErrNotFound (not a report) |
@@ -3564,7 +3566,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-124 | Node Registry Phase 3 — `/admin/node-types` merges agentgen + appflow families (`node_types_test.go`): ReturnsAllTypes updated to assert `len(agentgen)+len(appflow)` total (12+6=18); new IncludesAppCanvasKinds (router/hil/fork/join/condition present with label+executable, exactly 2 entries typed "llm" — one per family, condition's 2 control_output_ports survive the merge) | 1 |
 | S1-125 | Node Registry Phase 4 — `/admin/node-types` "family" disambiguation (`node_types_test.go`): `TestNodeTypesHandler_FamilyDisambiguatesDuplicateType` — every merged entry carries `family` ("agentgen"\|"appflow"); the 2 entries typed "llm" have 2 distinct families. Fixes a latent bug: the frontend's shared node-type cache (`nodeRegistry.ts`) indexed by bare `type`, so without `family` one "llm" entry would silently clobber the other once app-canvas (Phase 4) became a second consumer of the merged array | 1 |
 | S1-126 | Node Registry Phase 5 — middleware adopts the node contract (`node_types_test.go`): `TestNodeTypesHandler_MergesMiddlewareFamily` (a `them.middleware_defs` row with seeded `edges`/`config_fields` JSONB appears in the merged `/admin/node-types` response tagged `family="middleware"`, edges/config_fields decode correctly, `executable=false` since middleware is a workflow.go pass-through), `TestNodeTypesHandler_NilDBSkipsMiddlewareFamily` (nil db degrades to "no middleware entries", doesn't panic — existing agentgen/appflow-only tests in this file pass `NewNodeTypesHandler(nil)`) | 2 |
-| **S1 total** | | **1318** |
+| **S1 total** | | **1320** |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
 
@@ -3642,4 +3644,4 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | **S2 total** | | **59** |
 | S3 live | manual | 23 |
 | S1-IDP | idpcrypto (AES-256-GCM encrypt/decrypt for IdP client_secret): IDP-1..9 | 9 |
-| **`go test ./...` total** | | **1318** (S1 total; this line is out of sync with S1/S2 subtotals above pre-dating this entry — full reconciliation not in scope for this change) |
+| **`go test ./...` total** | | **1320** (S1 total; this line is out of sync with S1/S2 subtotals above pre-dating this entry — full reconciliation not in scope for this change) |

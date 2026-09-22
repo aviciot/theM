@@ -236,6 +236,21 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 				Message:    fmt.Sprintf("entry_point %q: invalid protocol %q", ep.InstanceID, ep.Protocol),
 			})
 		}
+
+		// root must reference a known instance_id. Previously unchecked: an entry
+		// point with a dangling root (typo, deleted node, hand-edited/imported JSON)
+		// passed validation silently and left its orchestrator unset at publish time
+		// with no error surfaced anywhere — see docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md.
+		if ep.Root != "" {
+			if _, ok := instanceIDs[ep.Root]; !ok {
+				errs = append(errs, ValidationError{
+					InstanceID: ep.InstanceID,
+					Field:      "root",
+					Code:       "dangling_root",
+					Message:    fmt.Sprintf("entry_point %q: root %q is not a known instance_id", ep.InstanceID, ep.Root),
+				})
+			}
+		}
 	}
 
 	// Validate connections — sources and targets must reference known instance_ids.

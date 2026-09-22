@@ -711,6 +711,75 @@ func TestValidateDefinition_DanglingConnection_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestValidateDefinition_DanglingRoot_ReturnsError(t *testing.T) {
+	d := newPublishFakeDal()
+	raw := json.RawMessage(`{
+		"components": [
+			{"instance_id":"orch_a","name":"A","definition_ref":{"kind":"orchestrator","namespace":"builtin","name":"standard-orchestrator","version":1},"config":{}}
+		],
+		"entry_points": [
+			{"instance_id":"ep_1","slug":"ws-1","protocol":"websocket","root":"nonexistent"}
+		],
+		"connections": []
+	}`)
+	addDraft(d, "def-6b", raw)
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/standard-orchestrator": makeOrchDef("comp-1"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-6b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Valid {
+		t.Error("want valid=false for dangling root")
+	}
+	found := false
+	for _, ve := range report.Errors {
+		if ve.Code == "dangling_root" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want code=dangling_root in errors: %+v", report.Errors)
+	}
+}
+
+func TestValidateDefinition_ValidRoot_NoError(t *testing.T) {
+	d := newPublishFakeDal()
+	raw := json.RawMessage(`{
+		"components": [
+			{"instance_id":"orch_a","name":"A","definition_ref":{"kind":"orchestrator","namespace":"builtin","name":"standard-orchestrator","version":1},"config":{}}
+		],
+		"entry_points": [
+			{"instance_id":"ep_1","slug":"ws-1","protocol":"websocket","root":"orch_a"}
+		],
+		"connections": []
+	}`)
+	addDraft(d, "def-6c", raw)
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/standard-orchestrator": makeOrchDef("comp-1"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	report, err := svc.ValidateDefinition(context.Background(), "tenant-1", "app-1", "def-6c")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, ve := range report.Errors {
+		if ve.Code == "dangling_root" {
+			t.Errorf("unexpected dangling_root error for a valid root: %+v", ve)
+		}
+	}
+}
+
 func TestValidateDefinition_InvalidProtocol_ReturnsError(t *testing.T) {
 	d := newPublishFakeDal()
 	raw := json.RawMessage(`{
