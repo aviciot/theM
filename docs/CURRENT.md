@@ -20,6 +20,37 @@ e3c82d1a  docs(current): mark HEAD as pushed, Node Registry Phase 4 complete
 
 ---
 
+## Bug fix: them-agent-runtime crash loop — THEM_DB_URL_APP missing — COMPLETE (2026-09-22)
+
+Found while testing a Graph-mode app (LLM → Condition → canvas-built agent) end-to-end:
+`them-agent-runtime` (both replicas, `docker-compose.yml`) was in a silent crash-restart loop —
+`docker ps` showed "Restarting (1)" — because its `environment:` block never had
+`THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` set. Every other Go service in this repo already has them
+(`them-go-bridge`, `them-go-worker(-2)`, `them-dag-worker(-2)`); this one was missed. Since the RLS
+closure work (`go/CLAUDE.md` Step H2) made these hard requirements — every Go binary fails fast at
+startup without them — this container has presumably been broken since that landed, not something
+introduced this session. It went unnoticed until now because nothing in the Graph-mode test suite
+so far actually invokes a **canvas-built** A2A agent (the `echo_agent` kind, hosted on
+`them-agent-runtime`) — `test_42` and `test_40` both use `a2a_echo`, a separate standalone
+test-agent container with no such dependency.
+
+Fixed by adding the same two env lines to `them-agent-runtime`'s block in `docker-compose.yml`.
+Rebuilt via `--force-recreate`; both replicas now report healthy. Confirmed live: a
+Graph-mode app calling a canvas-built agent (`echo_agent`) now reaches it over the network
+successfully (previously: DNS lookup failure, since Compose only creates a service-DNS entry for
+running containers) — though that specific agent then returned HTTP 401 for an unrelated reason
+(likely a canvas-agent invocation-auth requirement not wired up in this test — not investigated
+further, since the goal was confirming the network/crash-loop fix, and the standalone `a2a_echo`
+agent (no auth) worked end-to-end once substituted). **Flagged, not chased down:** why `echo_agent`
+specifically 401s on A2A invocation from the dag-worker — worth a dedicated look before relying on
+canvas-built agents in a Graph-mode flow.
+
+**Hetzner:** `docker-compose.hetzner.yml` has no `them-agent-runtime` override — it inherits the
+service definition entirely from the base `docker-compose.yml`, which is the file this fix landed
+in. Production is covered by this same fix, no separate change needed.
+
+---
+
 ## App canvas: "Simple"/"Graph" rename + second DAG worker replica — COMPLETE (2026-09-22)
 
 Two small, unrelated changes made while testing the new app-canvas export/import feature together
