@@ -43,12 +43,6 @@ export const glass = {
 // ── Entry point types ─────────────────────────────────────────────────────────
 export const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
 
-// ── Proposal allowed fields ───────────────────────────────────────────────────
-export const PROPOSAL_ALLOWED_FIELDS = new Set([
-  'system_prompt', 'description', 'display_name',
-  'max_iterations', 'history_window', 'max_parallel_tools',
-]);
-
 // ── Canvas CSS ────────────────────────────────────────────────────────────────
 export const CANVAS_STYLES = `
   /* Force all text bright — builder lives on a dark bg, globals.css light-mode vars bleed in */
@@ -472,18 +466,6 @@ export const THINK_DURATIONS = LOGO_PATHS.map((_, i) => {
   const r = (((i + 7) * 2246822519) >>> 0) / 0xffffffff;
   return +(0.9 + r * 1.4).toFixed(2);
 });
-
-// ── Advisor field labels/icons ────────────────────────────────────────────────
-export const FIELD_LABEL: Record<string, string> = {
-  system_prompt: 'System prompt', description: 'Description',
-  display_name: 'Display name', max_iterations: 'Max iterations',
-  history_window: 'History window', max_parallel_tools: 'Max parallel tools',
-};
-
-export const FIELD_ICON: Record<string, string> = {
-  system_prompt: 'edit_note', description: 'description', display_name: 'label',
-  max_iterations: 'repeat', history_window: 'history', max_parallel_tools: 'fork_right',
-};
 
 // ── Canvas toolbar button style ───────────────────────────────────────────────
 export const toolBtnStyle: React.CSSProperties = {

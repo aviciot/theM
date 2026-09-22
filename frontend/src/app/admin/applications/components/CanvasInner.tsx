@@ -185,7 +185,7 @@ export function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPicke
 
 // ── CanvasInner ───────────────────────────────────────────────────────────────
 export function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onToggleLayout, layoutDir, onNodesDelete, logoState, advisorOpen, onAdvisorOpen,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onToggleLayout, layoutDir, onNodesDelete, logoState,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -203,8 +203,6 @@ export function CanvasInner({
   layoutDir?: 'TB' | 'LR';
   onNodesDelete?: () => void;
   logoState: LogoState;
-  advisorOpen: boolean;
-  onAdvisorOpen: () => void;
 }) {
   const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
@@ -314,24 +312,6 @@ export function CanvasInner({
             {layoutDir === 'LR' ? '⇅' : '⇆'}
           </button>
         )}
-        <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
-        <button
-          onClick={onAdvisorOpen}
-          title="AI Workflow Advisor"
-          style={{
-            ...iconBtn,
-            width: 'auto', height: 30, padding: '0 10px', gap: 5,
-            display: 'flex', alignItems: 'center', borderRadius: 6,
-            border: advisorOpen ? `1px solid rgba(0,240,255,0.35)` : '1px solid transparent',
-            background: advisorOpen ? 'rgba(0,240,255,0.08)' : 'transparent',
-            color: advisorOpen ? C.cyan : C.textMuted,
-          }}
-          onMouseEnter={e => { if (!advisorOpen) { e.currentTarget.style.color = C.cyan; e.currentTarget.style.border = `1px solid rgba(0,240,255,0.2)`; } }}
-          onMouseLeave={e => { if (!advisorOpen) { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.border = '1px solid transparent'; } }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>assistant</span>
-          <span style={{ fontSize: 11, fontWeight: 600 }}>AI Advisor</span>
-        </button>
       </div>
 
       <ReactFlow

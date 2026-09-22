@@ -544,8 +544,6 @@ export function CanvasBuilderView({
                 layoutDir={layoutDir}
                 onNodesDelete={() => { setIsDirty(true); setLogoResult('none'); setSelectedNode(null); }}
                 logoState={logoState}
-                advisorOpen={false}
-                onAdvisorOpen={() => {}}
               />
             </ReactFlowProvider>
           ) : (

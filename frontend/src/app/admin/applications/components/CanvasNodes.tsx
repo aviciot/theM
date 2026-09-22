@@ -386,16 +386,28 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
       </div>
       {controlPorts.length > 0 ? (
         <>
-          {controlPorts.map((port, i) => (
-            <Handle
-              key={port.id}
-              type="source"
-              id={port.id}
-              position={sourcePos}
-              style={{ ...handleStyle, background: port.color, left: `${(100 / (controlPorts.length + 1)) * (i + 1)}%` }}
-              title={port.label}
-            />
-          ))}
+          {controlPorts.map((port, i) => {
+            const spreadPct = `${(100 / (controlPorts.length + 1)) * (i + 1)}%`;
+            // Spread multiple control-output handles along whichever edge is
+            // actually the exit edge: left/right (%) on a bottom/top source,
+            // top/bottom (%) on a left/right source. Using `left` alone for a
+            // Position.Right/Left handle has no effect (xyflow's base CSS
+            // anchors those via `right`/`left: 0` + `top: 50%`), so both
+            // handles previously collapsed onto the same point in LR layout.
+            const spreadStyle = sourcePos === Position.Right
+              ? { top: spreadPct }
+              : { left: spreadPct };
+            return (
+              <Handle
+                key={port.id}
+                type="source"
+                id={port.id}
+                position={sourcePos}
+                style={{ ...handleStyle, background: port.color, ...spreadStyle }}
+                title={port.label}
+              />
+            );
+          })}
         </>
       ) : (
         <Handle type="source" position={sourcePos} style={handleStyle} />

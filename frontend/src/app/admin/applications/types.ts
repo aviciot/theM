@@ -93,29 +93,6 @@ export interface MiddlewareData {
   [key: string]: unknown;
 }
 
-export type ProposalStatus = 'pending' | 'applying' | 'applied' | 'failed' | 'stale';
-
-export interface Proposal {
-  id: string;
-  type: string;
-  targetType: 'orchestrator' | 'agent';
-  targetId: string;
-  targetName: string;
-  field: string;
-  current: string | number;
-  suggested: string | number;
-  reason: string;
-  status: ProposalStatus;
-  error?: string;
-}
-
-export interface AdvisorMessage {
-  role: 'user' | 'assistant';
-  text: string;
-  streaming?: boolean;
-  proposals?: Proposal[];
-}
-
 // ── Canvas V2 node data interfaces ───────────────────────────────────────────
 export interface OrchNodeData {
   _kind: 'orchestrator';
