@@ -25,7 +25,8 @@ type saRoleStored struct {
 	BaseURL         *string `json:"base_url"`
 	SystemPrompt    *string `json:"system_prompt"`
 	APIKeyEncrypted *string `json:"api_key_encrypted"`
-	KeyID           *int64  `json:"key_id"` // mode="general" only; nil = that provider's default platform key
+	KeyID           *int64  `json:"key_id"`        // mode="general" only; nil = that provider's default platform key
+	GeneralModel    *string `json:"general_model"` // mode="general" only; nil = that provider's default_model
 }
 
 type saConfigStored struct {
@@ -41,8 +42,9 @@ type SystemAgentRoleOut struct {
 	Model        *string `json:"model"`
 	BaseURL      *string `json:"base_url"`
 	SystemPrompt *string `json:"system_prompt"`
-	APIKeyHint   *string `json:"api_key_hint"` // masked, never plaintext
-	KeyID        *int64  `json:"key_id"`       // mode="general" only
+	APIKeyHint   *string `json:"api_key_hint"`  // masked, never plaintext
+	KeyID        *int64  `json:"key_id"`        // mode="general" only
+	GeneralModel *string `json:"general_model"` // mode="general" only
 }
 
 type SystemAgentsOut struct {
@@ -65,6 +67,11 @@ type SystemAgentRoleIn struct {
 	// via the LLM Providers tab instead of clearing key_id here — a real but
 	// minor UX gap, not fixed in this pass.
 	KeyID *int64 `json:"key_id"`
+
+	// GeneralModel (mode="general" only): nil = leave unchanged; "" clears back
+	// to that provider's default_model. Validated against the platform
+	// provider's allowed_models in Put below.
+	GeneralModel *string `json:"general_model"`
 }
 
 type SystemAgentsIn struct {
@@ -128,6 +135,34 @@ func (h *SystemAgentsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		}
 		if incoming.KeyID != nil {
 			existing.KeyID = incoming.KeyID
+		}
+		if incoming.GeneralModel != nil {
+			s := *incoming.GeneralModel
+			if s == "" {
+				existing.GeneralModel = nil
+			} else {
+				effectiveMode := existing.Mode
+				if incoming.Mode != nil {
+					effectiveMode = *incoming.Mode
+				}
+				effectiveProvider := existing.Provider
+				if incoming.Provider != nil && *incoming.Provider != "" {
+					effectiveProvider = incoming.Provider
+				}
+				if effectiveMode == "general" && effectiveProvider != nil {
+					provider, err := h.dal.GetProviderByNamePlatform(r.Context(), *effectiveProvider)
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "unknown provider")
+						return
+					}
+					allowed := dal.AllowedModelsOrEmpty(provider.AllowedModelsRaw)
+					if len(allowed) > 0 && !stringInSliceLocal(s, allowed) {
+						writeError(w, http.StatusBadRequest, "general_model is not in this provider's allowed models")
+						return
+					}
+				}
+				existing.GeneralModel = &s
+			}
 		}
 		if incoming.Provider != nil {
 			s := *incoming.Provider
@@ -286,6 +321,7 @@ func (h *SystemAgentsHandler) configToOut(cfg saConfigStored) SystemAgentsOut {
 			BaseURL:      r.BaseURL,
 			SystemPrompt: r.SystemPrompt,
 			KeyID:        r.KeyID,
+			GeneralModel: r.GeneralModel,
 		}
 		if r.APIKeyEncrypted != nil && *r.APIKeyEncrypted != "" {
 			hint := keyHint(h.fernetKey, *r.APIKeyEncrypted)
@@ -304,4 +340,14 @@ func keyHint(fernetKey []byte, encrypted string) string {
 		return ""
 	}
 	return plain[:4] + strings.Repeat("•", 8) + plain[len(plain)-4:]
+}
+
+// stringInSliceLocal reports whether needle is present in haystack.
+func stringInSliceLocal(needle string, haystack []string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }

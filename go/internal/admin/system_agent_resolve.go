@@ -35,6 +35,61 @@ type systemAgentRoleResolverDAL interface {
 	GetLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
 }
 
+// resolveGeneralMode is the shared "General mode" resolution used by both
+// resolveSystemAgentRole (tenant) and resolvePlatformSystemAgentRole
+// (platform): look up the named provider, then its chosen key (or default
+// key when keyID is nil), decrypt it, and fall back to the provider's
+// default_model when generalModel is unset. Callers scope getProvider/
+// getDefaultKey/getKey to their own tenant vs platform rows via closures.
+// Returns ok=false on any lookup/decrypt failure — callers must degrade
+// silently, never substituting a different scope's key.
+func resolveGeneralMode(
+	fernetKey []byte,
+	getProvider func() (dal.LLMProvider, error),
+	getDefaultKey func(llmProviderID int64) (dal.LLMProviderKey, error),
+	getKey func(id int64) (dal.LLMProviderKey, error),
+	keyID *int64,
+	generalModel *string,
+) (resolvedSystemAgentRole, bool) {
+	provider, err := getProvider()
+	if err != nil {
+		return resolvedSystemAgentRole{}, false
+	}
+
+	var key dal.LLMProviderKey
+	if keyID != nil {
+		key, err = getKey(*keyID)
+	} else {
+		key, err = getDefaultKey(provider.ID)
+	}
+	if err != nil {
+		// No usable key at this scope — hard rule: never fall back to a
+		// different scope's key. Degrade exactly like "role disabled".
+		return resolvedSystemAgentRole{}, false
+	}
+
+	apiKey, err := crypto.DecryptStored(fernetKey, key.APIKeyEncrypted)
+	if err != nil || apiKey == "" {
+		return resolvedSystemAgentRole{}, false
+	}
+
+	model := provider.DefaultModel
+	if generalModel != nil && *generalModel != "" {
+		model = *generalModel
+	}
+	baseURL := ""
+	if provider.BaseURL != nil {
+		baseURL = *provider.BaseURL
+	}
+
+	return resolvedSystemAgentRole{
+		Provider: provider.Name,
+		Model:    model,
+		APIKey:   apiKey,
+		BaseURL:  baseURL,
+	}, true
+}
+
 // resolvedSystemAgentRole is the effective, decrypted config for one role call.
 type resolvedSystemAgentRole struct {
 	Provider     string
@@ -67,41 +122,13 @@ func resolveSystemAgentRole(
 		if cfg.ProviderName == nil || *cfg.ProviderName == "" {
 			return resolvedSystemAgentRole{}, false
 		}
-		provider, err := d.GetProviderByNameForTenant(ctx, *cfg.ProviderName, tenantID)
-		if err != nil {
-			return resolvedSystemAgentRole{}, false
-		}
-
-		var key dal.LLMProviderKey
-		if cfg.KeyID != nil {
-			key, err = d.GetLLMProviderKey(ctx, *cfg.KeyID, &tenantID)
-		} else {
-			key, err = d.GetDefaultLLMProviderKey(ctx, provider.ID, &tenantID)
-		}
-		if err != nil {
-			// No usable key for this tenant+provider — hard rule: never fall
-			// back to a platform key. Degrade exactly like "role disabled".
-			return resolvedSystemAgentRole{}, false
-		}
-
-		apiKey, err := crypto.DecryptStored(fernetKey, key.APIKeyEncrypted)
-		if err != nil || apiKey == "" {
-			return resolvedSystemAgentRole{}, false
-		}
-
-		model := provider.DefaultModel
-		baseURL := ""
-		if provider.BaseURL != nil {
-			baseURL = *provider.BaseURL
-		}
-
-		return resolvedSystemAgentRole{
-			Provider:     provider.Name,
-			Model:        model,
-			APIKey:       apiKey,
-			BaseURL:      baseURL,
-			SystemPrompt: "", // general mode has no per-role custom prompt; caller's own default applies
-		}, true
+		return resolveGeneralMode(
+			fernetKey,
+			func() (dal.LLMProvider, error) { return d.GetProviderByNameForTenant(ctx, *cfg.ProviderName, tenantID) },
+			func(llmProviderID int64) (dal.LLMProviderKey, error) { return d.GetDefaultLLMProviderKey(ctx, llmProviderID, &tenantID) },
+			func(id int64) (dal.LLMProviderKey, error) { return d.GetLLMProviderKey(ctx, id, &tenantID) },
+			cfg.KeyID, cfg.GeneralModel,
+		)
 
 	case "custom":
 		if cfg.CustomProvider == nil || cfg.CustomModel == nil || cfg.CustomAPIKeyEncrypted == nil {
@@ -179,36 +206,13 @@ func resolvePlatformSystemAgentRole(ctx context.Context, d platformSystemAgentRo
 		if role.Provider == nil || *role.Provider == "" {
 			return resolvedSystemAgentRole{}, false
 		}
-		provider, err := d.GetProviderByNamePlatform(ctx, *role.Provider)
-		if err != nil {
-			return resolvedSystemAgentRole{}, false
-		}
-
-		var key dal.LLMProviderKey
-		if role.KeyID != nil {
-			key, err = d.GetLLMProviderKey(ctx, *role.KeyID, nil)
-		} else {
-			key, err = d.GetDefaultLLMProviderKey(ctx, provider.ID, nil)
-		}
-		if err != nil {
-			return resolvedSystemAgentRole{}, false
-		}
-
-		apiKey, err := crypto.DecryptStored(fernetKey, key.APIKeyEncrypted)
-		if err != nil || apiKey == "" {
-			return resolvedSystemAgentRole{}, false
-		}
-
-		baseURL := ""
-		if provider.BaseURL != nil {
-			baseURL = *provider.BaseURL
-		}
-		return resolvedSystemAgentRole{
-			Provider: provider.Name,
-			Model:    provider.DefaultModel,
-			APIKey:   apiKey,
-			BaseURL:  baseURL,
-		}, true
+		return resolveGeneralMode(
+			fernetKey,
+			func() (dal.LLMProvider, error) { return d.GetProviderByNamePlatform(ctx, *role.Provider) },
+			func(llmProviderID int64) (dal.LLMProviderKey, error) { return d.GetDefaultLLMProviderKey(ctx, llmProviderID, nil) },
+			func(id int64) (dal.LLMProviderKey, error) { return d.GetLLMProviderKey(ctx, id, nil) },
+			role.KeyID, role.GeneralModel,
+		)
 	}
 
 	// mode="" or "custom": today's behavior, unchanged.

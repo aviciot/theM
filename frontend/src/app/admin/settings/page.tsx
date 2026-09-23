@@ -19,10 +19,11 @@ function roleToForm(r: SystemAgentRoleOut): RoleForm {
     base_url:      r.base_url ?? '',
     system_prompt: r.system_prompt ?? '',
     key_id:        r.key_id ?? null,
+    general_model: r.general_model ?? null,
   };
 }
 
-const emptyRoleForm: RoleForm = { enabled: false, mode: 'custom', provider: '', model: '', api_key: '', base_url: '', system_prompt: '', key_id: null };
+const emptyRoleForm: RoleForm = { enabled: false, mode: 'custom', provider: '', model: '', api_key: '', base_url: '', system_prompt: '', key_id: null, general_model: null };
 
 type SettingsTab = 'system_agents' | 'monitoring' | 'llm_providers';
 
@@ -101,6 +102,7 @@ export default function AdminSettingsPage() {
           mode,
           provider: f.provider || null,
           key_id: f.key_id ?? null,
+          general_model: f.general_model || null,
         }
       : {
           enabled:       f.enabled,

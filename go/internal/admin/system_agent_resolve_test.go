@@ -147,6 +147,42 @@ func TestResolveSystemAgentRole_GeneralMode_UsesExplicitKeyID(t *testing.T) {
 	}
 }
 
+func TestResolveSystemAgentRole_GeneralMode_UsesStoredGeneralModel(t *testing.T) {
+	fernetKey := testFernetKey(t)
+	enc := encryptForTest(t, fernetKey, "sk-tenant-default-key")
+	d := &fakeSystemAgentResolverDAL{
+		cfg:        dal.TenantSystemAgentConfig{Mode: "general", ProviderName: strp2("anthropic"), GeneralModel: strp2("claude-haiku-4-5")},
+		provider:   dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "claude-sonnet-4-6"},
+		defaultKey: dal.LLMProviderKey{ID: 5, APIKeyEncrypted: enc, IsDefault: true},
+	}
+	resolved, ok := resolveSystemAgentRole(context.Background(), d, fernetKey, "tid", "classifier",
+		"", "", "", "", "")
+	if !ok {
+		t.Fatal("want ok=true")
+	}
+	if resolved.Model != "claude-haiku-4-5" {
+		t.Errorf("want stored general_model to override provider.DefaultModel, got %+v", resolved)
+	}
+}
+
+func TestResolveSystemAgentRole_GeneralMode_NoGeneralModel_FallsBackToProviderDefault(t *testing.T) {
+	fernetKey := testFernetKey(t)
+	enc := encryptForTest(t, fernetKey, "sk-tenant-default-key")
+	d := &fakeSystemAgentResolverDAL{
+		cfg:        dal.TenantSystemAgentConfig{Mode: "general", ProviderName: strp2("anthropic")},
+		provider:   dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "claude-sonnet-4-6"},
+		defaultKey: dal.LLMProviderKey{ID: 5, APIKeyEncrypted: enc, IsDefault: true},
+	}
+	resolved, ok := resolveSystemAgentRole(context.Background(), d, fernetKey, "tid", "classifier",
+		"", "", "", "", "")
+	if !ok {
+		t.Fatal("want ok=true")
+	}
+	if resolved.Model != "claude-sonnet-4-6" {
+		t.Errorf("want provider.DefaultModel used when general_model unset, got %+v", resolved)
+	}
+}
+
 // ── Custom mode ───────────────────────────────────────────────────────────────────
 
 func TestResolveSystemAgentRole_CustomMode_UsesOwnFields(t *testing.T) {
@@ -250,6 +286,25 @@ func TestResolvePlatformSystemAgentRole_GeneralMode_UsesDefaultKeyWhenKeyIDNil(t
 	}
 	if resolved.Provider != "groq" || resolved.Model != "llama-3.3-70b-versatile" || resolved.APIKey != "sk-platform-default-key" {
 		t.Errorf("unexpected resolved value: %+v", resolved)
+	}
+}
+
+func TestResolvePlatformSystemAgentRole_GeneralMode_UsesStoredGeneralModel(t *testing.T) {
+	fernetKey := testFernetKey(t)
+	enc := encryptForTest(t, fernetKey, "sk-platform-default-key")
+	provider := "groq"
+	d := &fakeSystemAgentResolverDAL{
+		platformProvider: dal.LLMProvider{ID: 3, Name: "groq", DefaultModel: "llama-3.3-70b-versatile"},
+		defaultKey:       dal.LLMProviderKey{ID: 7, APIKeyEncrypted: enc},
+	}
+	resolved, ok := resolvePlatformSystemAgentRole(context.Background(), d, fernetKey, saRoleStored{
+		Enabled: true, Mode: "general", Provider: &provider, GeneralModel: strp2("llama-3.1-8b-instant"),
+	})
+	if !ok {
+		t.Fatal("want ok=true")
+	}
+	if resolved.Model != "llama-3.1-8b-instant" {
+		t.Errorf("want stored GeneralModel to override provider.DefaultModel, got %+v", resolved)
 	}
 }
 

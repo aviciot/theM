@@ -1,11 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { themApi, type LLMProviderOut, type LLMProviderKeyOut } from '@/lib/api';
+import { useState } from 'react';
+import { themApi } from '@/lib/api';
 import {
   PROVIDERS, PROVIDER_MODELS, CUSTOM_MODEL_SENTINEL,
   getRoleLabel, getRoleDescription, getRolePromptPlaceholder, getRoleWhereUsed,
   inputStyle,
 } from './settingsConstants';
+import { GeneralModePicker } from './GeneralModePicker';
 
 export interface RoleForm {
   enabled: boolean;
@@ -16,6 +17,7 @@ export interface RoleForm {
   base_url: string;
   system_prompt: string;
   key_id?: number | null;
+  general_model?: string | null;
 }
 
 interface TestState {
@@ -96,38 +98,8 @@ export function RoleCard({
 
   const mode: 'general' | 'custom' = form.mode === 'general' ? 'general' : 'custom';
 
-  // General mode: platform's own enabled providers + that provider's named keys.
-  const [platformProviders, setPlatformProviders] = useState<LLMProviderOut[]>([]);
-  const [providerKeys, setProviderKeys] = useState<LLMProviderKeyOut[]>([]);
-  const [keysLoading, setKeysLoading] = useState(false);
-
-  useEffect(() => {
-    if (mode !== 'general') return;
-    themApi.listPlatformProviders()
-      .then((provs) => setPlatformProviders(provs.filter((p) => p.enabled)))
-      .catch(() => setPlatformProviders([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode !== 'general' || !form.provider) {
-      setProviderKeys([]);
-      return;
-    }
-    setKeysLoading(true);
-    themApi.listPlatformProviderKeys(form.provider)
-      .then((keys) => setProviderKeys(keys))
-      .catch(() => setProviderKeys([]))
-      .finally(() => setKeysLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.provider]);
-
   function handleModeChange(next: 'general' | 'custom') {
     onChange({ mode: next });
-  }
-
-  function handleGeneralProviderChange(providerName: string) {
-    onChange({ provider: providerName, key_id: null });
   }
 
   function handleProviderChange(provider: string) {
@@ -212,38 +184,15 @@ export function RoleCard({
       </div>
 
       {mode === 'general' ? (
-        <>
-          <p style={{ fontSize: '12px', color: 'var(--tm-text-muted)', margin: '0 0 16px 0', lineHeight: 1.5 }}>
-            Uses the-M's own platform LLM Providers configuration — pick which provider and named
-            key this role should call. Test the key itself from the LLM Providers tab.
-          </p>
-          {platformProviders.length === 0 && (
-            <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(230,184,92,0.08)', border: '1px solid rgba(230,184,92,0.22)', color: '#e6b85c', fontSize: '13px', marginBottom: '16px' }}>
-              No platform providers enabled yet — enable one in the LLM Providers tab first.
-            </div>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <Field label="Provider">
-              <select value={form.provider} onChange={(e) => handleGeneralProviderChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
-                <option value="">— select provider —</option>
-                {platformProviders.map((p) => <option key={p.name} value={p.name}>{p.display_name || p.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Key" hint={keysLoading ? 'Loading keys…' : (providerKeys.length === 0 && form.provider ? 'No named keys saved for this provider yet.' : undefined)}>
-              <select
-                value={form.key_id ?? ''}
-                onChange={(e) => onChange({ key_id: e.target.value ? Number(e.target.value) : null })}
-                disabled={!form.provider || keysLoading}
-                style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
-              >
-                <option value="">— use default key —</option>
-                {providerKeys.map((k) => (
-                  <option key={k.id} value={k.id}>{k.name}{k.is_default ? ' (default)' : ''}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        </>
+        <GeneralModePicker
+          isSuperAdmin={true}
+          provider={form.provider}
+          model={form.general_model ?? ''}
+          keyId={form.key_id ?? null}
+          onProviderChange={(p) => onChange({ provider: p, key_id: null, general_model: '' })}
+          onModelChange={(m) => onChange({ general_model: m })}
+          onKeyIdChange={(k) => onChange({ key_id: k })}
+        />
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>

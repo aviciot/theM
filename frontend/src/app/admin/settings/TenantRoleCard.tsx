@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { themApi, type LLMProviderOut, type LLMProviderKeyOut, type TenantSystemAgentConfigOut } from '@/lib/api';
+import { themApi, type TenantSystemAgentConfigOut } from '@/lib/api';
 import { getRoleLabel, getRoleDescription, getRoleWhereUsed, getRolePromptPlaceholder, inputStyle } from './settingsConstants';
+import { GeneralModePicker } from './GeneralModePicker';
 
 type Mode = 'general' | 'custom';
 
@@ -36,11 +37,9 @@ export function TenantRoleCard({ role }: { role: string }) {
   const [cfg, setCfg] = useState<TenantSystemAgentConfigOut | null>(null);
   const [mode, setMode] = useState<Mode>('custom');
 
-  const [providers, setProviders] = useState<LLMProviderOut[]>([]);
   const [generalProvider, setGeneralProvider] = useState('');
+  const [generalModel, setGeneralModel] = useState('');
   const [generalKeyId, setGeneralKeyId] = useState<number | null>(null);
-  const [providerKeys, setProviderKeys] = useState<LLMProviderKeyOut[]>([]);
-  const [keysLoading, setKeysLoading] = useState(false);
 
   const [customProvider, setCustomProvider] = useState('');
   const [customModel, setCustomModel] = useState('');
@@ -53,49 +52,28 @@ export function TenantRoleCard({ role }: { role: string }) {
   const [testState, setTestState] = useState<TestState>({ loading: false });
 
   useEffect(() => {
-    Promise.all([
-      themApi.getTenantSystemAgentConfig(role),
-      themApi.listMyLLMProviders(),
-    ]).then(([c, provs]) => {
+    themApi.getTenantSystemAgentConfig(role).then((c) => {
       setCfg(c);
       setMode(c.mode);
       setGeneralProvider(c.provider_name ?? '');
+      setGeneralModel(c.general_model ?? '');
       setGeneralKeyId(c.key_id ?? null);
       setCustomProvider(c.custom_provider ?? '');
       setCustomModel(c.custom_model ?? '');
       setCustomBaseUrl(c.custom_base_url ?? '');
       setCustomSystemPrompt(c.custom_system_prompt ?? '');
-      setProviders(provs.filter((p) => p.enabled));
     }).catch(() => {
-      setCfg({ role, mode: 'custom', provider_name: null, key_id: null, custom_provider: null, custom_model: null, custom_api_key_masked: null, custom_base_url: null, custom_system_prompt: null });
+      setCfg({ role, mode: 'custom', provider_name: null, key_id: null, general_model: null, custom_provider: null, custom_model: null, custom_api_key_masked: null, custom_base_url: null, custom_system_prompt: null });
     }).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role]);
-
-  useEffect(() => {
-    if (mode !== 'general' || !generalProvider) {
-      setProviderKeys([]);
-      return;
-    }
-    setKeysLoading(true);
-    themApi.listProviderKeys(generalProvider)
-      .then((keys) => setProviderKeys(keys))
-      .catch(() => setProviderKeys([]))
-      .finally(() => setKeysLoading(false));
-  }, [mode, generalProvider]);
-
-  function handleGeneralProviderChange(name: string) {
-    setGeneralProvider(name);
-    setGeneralKeyId(null);
-    setSaveMsg(null);
-  }
 
   async function handleSave() {
     setSaving(true);
     setSaveMsg(null);
     try {
       const body = mode === 'general'
-        ? { mode: 'general' as const, provider_name: generalProvider || null, key_id: generalKeyId }
+        ? { mode: 'general' as const, provider_name: generalProvider || null, general_model: generalModel || null, key_id: generalKeyId }
         : {
             mode: 'custom' as const,
             custom_provider: customProvider || null,
@@ -184,36 +162,15 @@ export function TenantRoleCard({ role }: { role: string }) {
       </div>
 
       {mode === 'general' ? (
-        <>
-          <p style={{ fontSize: '12px', color: 'var(--tm-text-muted)', margin: '0 0 16px 0', lineHeight: 1.5 }}>
-            Uses your own LLM Providers configuration — pick which provider and named key this role
-            should call. Test the key itself from the LLM Providers tab; testing here is not needed.
-          </p>
-          {providers.length === 0 && (
-            <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(230,184,92,0.08)', border: '1px solid rgba(230,184,92,0.22)', color: '#e6b85c', fontSize: '13px', marginBottom: '16px' }}>
-              No providers enabled yet — enable one in the LLM Providers tab first.
-            </div>
-          )}
-          <Field label="Provider">
-            <select value={generalProvider} onChange={(e) => handleGeneralProviderChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
-              <option value="">— select provider —</option>
-              {providers.map((p) => <option key={p.name} value={p.name}>{p.display_name || p.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Key" hint={keysLoading ? 'Loading keys…' : (providerKeys.length === 0 && generalProvider ? 'No named keys saved for this provider yet.' : undefined)}>
-            <select
-              value={generalKeyId ?? ''}
-              onChange={(e) => setGeneralKeyId(e.target.value ? Number(e.target.value) : null)}
-              disabled={!generalProvider || keysLoading}
-              style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
-            >
-              <option value="">— use default key —</option>
-              {providerKeys.map((k) => (
-                <option key={k.id} value={k.id}>{k.name}{k.is_default ? ' (default)' : ''}</option>
-              ))}
-            </select>
-          </Field>
-        </>
+        <GeneralModePicker
+          isSuperAdmin={false}
+          provider={generalProvider}
+          model={generalModel}
+          keyId={generalKeyId}
+          onProviderChange={(p) => { setGeneralProvider(p); setSaveMsg(null); }}
+          onModelChange={(m) => { setGeneralModel(m); setSaveMsg(null); }}
+          onKeyIdChange={(k) => { setGeneralKeyId(k); setSaveMsg(null); }}
+        />
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>

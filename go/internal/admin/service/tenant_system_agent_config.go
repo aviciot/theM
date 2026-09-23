@@ -23,6 +23,7 @@ type TenantSystemAgentConfigOut struct {
 	Mode               string  `json:"mode"`
 	ProviderName       *string `json:"provider_name"`
 	KeyID              *int64  `json:"key_id"`
+	GeneralModel       *string `json:"general_model"`
 	CustomProvider     *string `json:"custom_provider"`
 	CustomModel        *string `json:"custom_model"`
 	CustomAPIKeyMasked *string `json:"custom_api_key_masked"`
@@ -35,6 +36,7 @@ type TenantSystemAgentConfigIn struct {
 	Mode               string  `json:"mode"`
 	ProviderName       *string `json:"provider_name"`
 	KeyID              *int64  `json:"key_id"`
+	GeneralModel       *string `json:"general_model"`
 	CustomProvider     *string `json:"custom_provider"`
 	CustomModel        *string `json:"custom_model"`
 	CustomAPIKey       *string `json:"custom_api_key"` // plaintext write-only; nil/blank = keep existing
@@ -95,6 +97,18 @@ func (s *TenantSystemAgentConfigService) Upsert(ctx context.Context, tenantID, r
 		}
 		in.ProviderName = body.ProviderName
 		in.KeyID = body.KeyID
+
+		if body.GeneralModel != nil && *body.GeneralModel != "" {
+			provider, err := s.dal.GetProviderByNameForTenant(ctx, *body.ProviderName, tenantID)
+			if err != nil {
+				return TenantSystemAgentConfigOut{}, validation("unknown provider_name")
+			}
+			allowed := dal.AllowedModelsOrEmpty(provider.AllowedModelsRaw)
+			if len(allowed) > 0 && !stringInSlice(*body.GeneralModel, allowed) {
+				return TenantSystemAgentConfigOut{}, validation("general_model is not in this provider's allowed models")
+			}
+			in.GeneralModel = body.GeneralModel
+		}
 	} else {
 		if body.CustomProvider == nil || *body.CustomProvider == "" ||
 			body.CustomModel == nil || *body.CustomModel == "" {
@@ -194,6 +208,7 @@ func (s *TenantSystemAgentConfigService) toOut(row dal.TenantSystemAgentConfig) 
 		Mode:               row.Mode,
 		ProviderName:       row.ProviderName,
 		KeyID:              row.KeyID,
+		GeneralModel:       row.GeneralModel,
 		CustomProvider:     row.CustomProvider,
 		CustomModel:        row.CustomModel,
 		CustomBaseURL:      row.CustomBaseURL,
@@ -204,6 +219,16 @@ func (s *TenantSystemAgentConfigService) toOut(row dal.TenantSystemAgentConfig) 
 		out.CustomAPIKeyMasked = &hint
 	}
 	return out
+}
+
+// stringInSlice reports whether needle is present in haystack.
+func stringInSlice(needle string, haystack []string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // keyHintFor decrypts the stored key and returns a masked representation:

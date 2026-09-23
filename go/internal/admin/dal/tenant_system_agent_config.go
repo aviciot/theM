@@ -5,7 +5,7 @@ import "context"
 // tenantSystemAgentConfigSelectCols is the column list shared by all
 // tenant_system_agent_config queries.
 const tenantSystemAgentConfigSelectCols = `
-	SELECT tenant_id, role, mode, provider_name, key_id,
+	SELECT tenant_id, role, mode, provider_name, key_id, general_model,
 	       custom_provider, custom_model, custom_api_key_encrypted,
 	       custom_base_url, custom_system_prompt
 	FROM them.tenant_system_agent_config`
@@ -14,7 +14,7 @@ const tenantSystemAgentConfigSelectCols = `
 func scanTenantSystemAgentConfig(r RowScanner) (TenantSystemAgentConfig, error) {
 	var c TenantSystemAgentConfig
 	if err := r.Scan(
-		&c.TenantID, &c.Role, &c.Mode, &c.ProviderName, &c.KeyID,
+		&c.TenantID, &c.Role, &c.Mode, &c.ProviderName, &c.KeyID, &c.GeneralModel,
 		&c.CustomProvider, &c.CustomModel, &c.CustomAPIKeyEncrypted,
 		&c.CustomBaseURL, &c.CustomSystemPrompt,
 	); err != nil {
@@ -37,26 +37,27 @@ func (d *DB) GetTenantSystemAgentConfig(ctx context.Context, tenantID, role stri
 func (d *DB) UpsertTenantSystemAgentConfig(ctx context.Context, in TenantSystemAgentConfigInput) (TenantSystemAgentConfig, error) {
 	const q = `
 		INSERT INTO them.tenant_system_agent_config
-		  (tenant_id, role, mode, provider_name, key_id,
+		  (tenant_id, role, mode, provider_name, key_id, general_model,
 		   custom_provider, custom_model, custom_api_key_encrypted,
 		   custom_base_url, custom_system_prompt)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (tenant_id, role) DO UPDATE SET
 		  mode                     = EXCLUDED.mode,
 		  provider_name            = EXCLUDED.provider_name,
 		  key_id                   = EXCLUDED.key_id,
+		  general_model            = EXCLUDED.general_model,
 		  custom_provider          = EXCLUDED.custom_provider,
 		  custom_model             = EXCLUDED.custom_model,
 		  custom_api_key_encrypted = EXCLUDED.custom_api_key_encrypted,
 		  custom_base_url          = EXCLUDED.custom_base_url,
 		  custom_system_prompt     = EXCLUDED.custom_system_prompt,
 		  updated_at               = now()
-		RETURNING tenant_id, role, mode, provider_name, key_id,
+		RETURNING tenant_id, role, mode, provider_name, key_id, general_model,
 		          custom_provider, custom_model, custom_api_key_encrypted,
 		          custom_base_url, custom_system_prompt`
 
 	row := d.q.ExecReturning(ctx, q,
-		in.TenantID, in.Role, in.Mode, in.ProviderName, in.KeyID,
+		in.TenantID, in.Role, in.Mode, in.ProviderName, in.KeyID, in.GeneralModel,
 		in.CustomProvider, in.CustomModel, in.CustomAPIKeyEncrypted,
 		in.CustomBaseURL, in.CustomSystemPrompt,
 	)
@@ -75,6 +76,7 @@ type TenantSystemAgentConfig struct {
 	Mode                  string
 	ProviderName          *string
 	KeyID                 *int64
+	GeneralModel          *string
 	CustomProvider        *string
 	CustomModel           *string
 	CustomAPIKeyEncrypted *string
@@ -89,6 +91,7 @@ type TenantSystemAgentConfigInput struct {
 	Mode                  string
 	ProviderName          *string
 	KeyID                 *int64
+	GeneralModel          *string
 	CustomProvider        *string
 	CustomModel           *string
 	CustomAPIKeyEncrypted *string

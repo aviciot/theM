@@ -25,19 +25,12 @@ function ModelRow({ label, checked, onChange }: { label: string; checked: boolea
 function ProviderCard({
   prov,
   isSuperAdmin,
-  onSaveKey,
   onToggleEnabled,
-  saving,
-  saveMsg,
 }: {
   prov: LLMProviderOut;
   isSuperAdmin: boolean;
-  onSaveKey: (apiKey: string) => void;
   onToggleEnabled: (enabled: boolean) => void;
-  saving: boolean;
-  saveMsg: { ok: boolean; text: string } | null;
 }) {
-  const [apiKey, setApiKey] = useState('');
   const [allowedModels, setAllowedModels] = useState<string[]>(prov.allowed_models ?? []);
   const [modelOptions, setModelOptions] = useState<string[]>(PROVIDER_MODELS[prov.name]?.map((m) => m.value) ?? []);
   const [savingModels, setSavingModels] = useState(false);
@@ -122,50 +115,13 @@ function ProviderCard({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <div>
           <span style={{ fontWeight: 700, fontSize: '15px', color: '#fff' }}>{prov.display_name || prov.name}</span>
-          {isSuperAdmin && (
-            <span style={{ marginLeft: '10px', fontSize: '12px', padding: '2px 8px', borderRadius: '20px', background: prov.enabled ? 'rgba(74,192,136,0.12)' : 'rgba(132,157,188,0.1)', color: prov.enabled ? '#4ac088' : 'var(--tm-text-muted)' }}>
-              {prov.enabled ? 'enabled' : 'disabled'}
-            </span>
-          )}
         </div>
-        {isSuperAdmin ? (
-          <span style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>
-            {prov.api_key_set
-              ? (prov.api_key_masked ? `Key: ${prov.api_key_masked}` : 'Key set')
-              : 'No key set'}
-          </span>
-        ) : (
-          <Toggle value={prov.enabled} onChange={onToggleEnabled} />
-        )}
+        <Toggle value={prov.enabled} onChange={onToggleEnabled} />
       </div>
 
-      {isSuperAdmin && (
-        <>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '14px' }}>
-            <input
-              type="password"
-              placeholder="New API key (leave blank to keep current)"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              style={{ flex: 1, background: 'var(--tm-input-bg, rgba(0,0,0,0.3))', border: '1px solid rgba(132,157,188,0.2)', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '13px' }}
-            />
-            <button
-              onClick={() => { onSaveKey(apiKey); setApiKey(''); }}
-              disabled={saving}
-              style={{ padding: '8px 16px', background: 'var(--tm-accent)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-          {saveMsg && (
-            <p style={{ margin: '6px 0 0', fontSize: '12px', color: saveMsg.ok ? '#4ac088' : '#e05252' }}>{saveMsg.text}</p>
-          )}
-        </>
-      )}
-
-      {!isSuperAdmin && !prov.enabled && (
+      {!prov.enabled && (
         <p style={{ margin: '10px 0 0', fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>
-          Turn this on to choose which models are allowed and manage your own API keys.
+          Turn this on to choose which models are allowed and manage named API keys.
         </p>
       )}
 
@@ -221,8 +177,6 @@ function ProviderCard({
 export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [providers, setProviders] = useState<LLMProviderOut[]>([]);
   const [provLoading, setProvLoading] = useState(false);
-  const [provSaving, setProvSaving] = useState<Record<string, boolean>>({});
-  const [provSaveMsgs, setProvSaveMsgs] = useState<Record<string, { ok: boolean; text: string } | null>>({});
 
   async function loadProviders() {
     setProvLoading(true);
@@ -243,42 +197,20 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin]);
 
-  async function handleSaveProvider(name: string, apiKey: string) {
-    setProvSaving((p) => ({ ...p, [name]: true }));
-    setProvSaveMsgs((p) => ({ ...p, [name]: null }));
-    try {
-      const prov = providers.find((p) => p.name === name);
-      if (isSuperAdmin) {
-        if (!prov?.id) throw new Error('provider id missing');
-        await themApi.patchPlatformProvider(prov.id, {
-          ...(apiKey ? { api_key: apiKey } : {}),
-        });
-      } else {
-        const body: LLMProviderUpsertInput = {
-          default_model: prov?.default_model ?? '',
-          ...(apiKey ? { api_key: apiKey } : {}),
-          enabled: prov?.enabled ?? true,
-        };
-        await themApi.upsertMyLLMProvider(name, body);
-      }
-      setProvSaveMsgs((p) => ({ ...p, [name]: { ok: true, text: 'Saved' } }));
-      await loadProviders();
-    } catch (e: unknown) {
-      setProvSaveMsgs((p) => ({ ...p, [name]: { ok: false, text: e instanceof Error ? e.message : 'Save failed' } }));
-    } finally {
-      setProvSaving((p) => ({ ...p, [name]: false }));
-    }
-  }
-
   async function handleToggleEnabled(name: string, enabled: boolean) {
     const prov = providers.find((p) => p.name === name);
     // Optimistic update so the toggle feels instant.
     setProviders((prev) => prev.map((p) => p.name === name ? { ...p, enabled } : p));
     try {
-      await themApi.upsertMyLLMProvider(name, {
-        default_model: prov?.default_model ?? '',
-        enabled,
-      });
+      if (isSuperAdmin) {
+        if (!prov?.id) throw new Error('provider id missing');
+        await themApi.patchPlatformProvider(prov.id, { enabled });
+      } else {
+        await themApi.upsertMyLLMProvider(name, {
+          default_model: prov?.default_model ?? '',
+          enabled,
+        });
+      }
     } catch {
       // Revert on failure.
       setProviders((prev) => prev.map((p) => p.name === name ? { ...p, enabled: !enabled } : p));
@@ -289,8 +221,8 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     <>
       <p style={{ fontSize: '13px', color: 'var(--tm-text-muted)', margin: '0 0 24px 0', lineHeight: 1.5 }}>
         {isSuperAdmin
-          ? 'Platform-level LLM provider keys used by the-M itself for internal system operations.'
-          : 'Your organisation\'s LLM provider keys. The-M never uses platform keys for your tenant calls — you must supply your own.'}
+          ? 'Platform-level LLM providers used by the-M\'s own internal helpers (classifier, card synthesizer, security scanner).'
+          : 'Your organisation\'s LLM providers. The-M never uses platform keys for your tenant calls — you must supply your own.'}
       </p>
       {provLoading && <div style={{ padding: '40px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>Loading…</div>}
       {!provLoading && providers.length === 0 && (
@@ -303,10 +235,7 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           key={prov.name}
           prov={prov}
           isSuperAdmin={isSuperAdmin}
-          onSaveKey={(apiKey) => handleSaveProvider(prov.name, apiKey)}
           onToggleEnabled={(enabled) => handleToggleEnabled(prov.name, enabled)}
-          saving={!!provSaving[prov.name]}
-          saveMsg={provSaveMsgs[prov.name] ?? null}
         />
       ))}
     </>

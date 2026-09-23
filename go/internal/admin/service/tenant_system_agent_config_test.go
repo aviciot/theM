@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -131,6 +132,53 @@ func TestTenantSACService_Upsert_GeneralMode_PersistsProviderAndKeyID(t *testing
 	}
 	if call.CustomProvider != nil || call.CustomAPIKeyEncrypted != nil {
 		t.Errorf("general mode must not populate any custom_* field: %+v", call)
+	}
+}
+
+func TestTenantSACService_Upsert_GeneralMode_ModelInAllowedList_Persists(t *testing.T) {
+	allowed, _ := json.Marshal([]string{"claude-haiku-4-5", "claude-sonnet-4-6"})
+	d := &fakeDal{
+		tenantProviderByName: dal.LLMProvider{Name: "anthropic", AllowedModelsRaw: allowed},
+		upsertedTenantSystemAgentConfig: dal.TenantSystemAgentConfig{
+			Role: "classifier", Mode: "general", ProviderName: strp("anthropic"), GeneralModel: strp("claude-haiku-4-5"),
+		},
+	}
+	svc := newTenantSACSvc(d)
+	out, err := svc.Upsert(context.Background(), "tid", "classifier", service.TenantSystemAgentConfigIn{
+		Mode: "general", ProviderName: strp("anthropic"), GeneralModel: strp("claude-haiku-4-5"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.GeneralModel == nil || *out.GeneralModel != "claude-haiku-4-5" {
+		t.Errorf("unexpected out: %+v", out)
+	}
+	call := d.upsertTenantSystemAgentConfigCalls[0]
+	if call.GeneralModel == nil || *call.GeneralModel != "claude-haiku-4-5" {
+		t.Errorf("general_model not passed through to DAL: %+v", call)
+	}
+}
+
+func TestTenantSACService_Upsert_GeneralMode_ModelNotInAllowedList_ReturnsValidation(t *testing.T) {
+	allowed, _ := json.Marshal([]string{"claude-haiku-4-5"})
+	d := &fakeDal{tenantProviderByName: dal.LLMProvider{Name: "anthropic", AllowedModelsRaw: allowed}}
+	svc := newTenantSACSvc(d)
+	_, err := svc.Upsert(context.Background(), "tid", "classifier", service.TenantSystemAgentConfigIn{
+		Mode: "general", ProviderName: strp("anthropic"), GeneralModel: strp("not-allowed-model"),
+	})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation when general_model is outside the provider's allowed_models, got %v", err)
+	}
+}
+
+func TestTenantSACService_Upsert_GeneralMode_UnknownProvider_ReturnsValidation(t *testing.T) {
+	d := &fakeDal{tenantProviderNotFound: true}
+	svc := newTenantSACSvc(d)
+	_, err := svc.Upsert(context.Background(), "tid", "classifier", service.TenantSystemAgentConfigIn{
+		Mode: "general", ProviderName: strp("bogus"), GeneralModel: strp("some-model"),
+	})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation when provider_name doesn't resolve, got %v", err)
 	}
 }
 

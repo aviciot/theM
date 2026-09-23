@@ -113,6 +113,56 @@ func TestSystemAgents_Put_CustomMode_EncryptsKeyAndMasksOnRead(t *testing.T) {
 	assert.Contains(t, rr2.Body.String(), `"mode":"custom"`)
 }
 
+// TestSystemAgents_Put_GeneralMode_ModelOutsideAllowedList_Rejected proves the
+// Put handler validates general_model against the selected platform
+// provider's allowed_models instead of silently accepting anything.
+func TestSystemAgents_Put_GeneralMode_ModelOutsideAllowedList_Rejected(t *testing.T) {
+	pool := systemAgentsIntegrationPool(t)
+	cleanSystemAgentsConfig(t, pool)
+	r := buildSystemAgentsRouter(pool)
+
+	ctx := context.Background()
+	var prevAllowed []byte
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT allowed_models FROM them.llm_providers WHERE name='anthropic' AND tenant_id IS NULL`,
+	).Scan(&prevAllowed))
+	_, err := pool.Exec(ctx,
+		`UPDATE them.llm_providers SET allowed_models='["claude-haiku-4-5-20251001"]' WHERE name='anthropic' AND tenant_id IS NULL`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		pool.Exec(ctx, //nolint:errcheck
+			`UPDATE them.llm_providers SET allowed_models=$1 WHERE name='anthropic' AND tenant_id IS NULL`, prevAllowed)
+	})
+
+	rr := doJSON(t, r, http.MethodPut, "/system-agents", map[string]any{
+		"roles": map[string]any{
+			"classifier": map[string]any{
+				"enabled":       true,
+				"mode":          "general",
+				"provider":      "anthropic",
+				"general_model": "not-an-allowed-model",
+			},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+
+	rrOK := doJSON(t, r, http.MethodPut, "/system-agents", map[string]any{
+		"roles": map[string]any{
+			"classifier": map[string]any{
+				"enabled":       true,
+				"mode":          "general",
+				"provider":      "anthropic",
+				"general_model": "claude-haiku-4-5-20251001",
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, rrOK.Code)
+
+	rrGet := doJSON(t, r, http.MethodGet, "/system-agents", nil)
+	require.Equal(t, http.StatusOK, rrGet.Code)
+	assert.Contains(t, rrGet.Body.String(), `"general_model":"claude-haiku-4-5-20251001"`)
+}
+
 func doJSON(t *testing.T, r http.Handler, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
