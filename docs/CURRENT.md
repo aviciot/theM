@@ -1,7 +1,6 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 4 COMPLETE + tenant-isolation security fix
-# COMPLETE, both pushed. Tenant LLM provider keys DAL/service layer COMPLETE, not yet finished.
-# Phase 5 (App Canvas Debug UI) NEXT. HEAD cc81978d)
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 3 — test-key/list-models endpoints —
+# COMPLETE. App Canvas Debug Mode Phase 5 still NEXT for that thread. HEAD 6a6be2ca)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -9,14 +8,22 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `cc81978d` — committed and **pushed to `origin/main`**.
+HEAD: `6a6be2ca` — committed locally, **not yet pushed** (push after rebase-merging with any
+parallel session's work per the note below).
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
 update the remote when convenient: `git remote set-url origin https://github.com/aviciot/theM.git`.
 
+**Note:** a parallel session may have been working on App Canvas Debug Mode Phase 5 at the same
+time as this one. Before pushing, `git pull --rebase origin main` — if it conflicts in
+`go/TEST_INDEX.md` (running test-count totals) or this file's header/recent-commits list, resolve by
+hand: both sides are append-only edits, keep both sets of additions and fix up the running
+totals/headers to be consistent. Do not discard the other session's entries.
+
 Recent commits (newest first):
 ```
+6a6be2ca  feat(admin): tenant LLM provider key test/list-models endpoints (step 3)
 cc81978d  fix(admin): close cross-tenant IDOR on app_debug_config and app_temporal_config
 465ffe93  feat(admin): tenant LLM provider keys — multi-key + allowed_models (db/105)
 cda25d0c  feat(app-canvas): per-app AppFlow trace log-verbosity setting (Phase 4)
@@ -41,17 +48,70 @@ Two independent threads are in flight. Pick based on what you're asked to contin
    mirroring the agent builder's `buildDebugParamSpecs()` dynamic scan pattern). Read
    `docs/APP_CANVAS_DEBUG_PLAN.md` first — Phases 1–4 are COMPLETE. One phase per session — do not
    start Phase 6 in the same session as Phase 5.
-2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). DAL + service layers landed
-   in `465ffe93` (multi-key-per-provider support, `db/105_llm_provider_keys.sql`, allowed_models on
-   `them.llm_providers`). **Not yet built:** test-key/list-models endpoints, the
-   classifier/card_synthesizer general-vs-custom picker wiring, and the frontend UI. Read the plan
-   doc's "Why the model changes" and "Hard rule" sections before touching this — no platform-key
-   fallback for tenants, ever.
+2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-3 of 7 COMPLETE as of
+   `6a6be2ca`: migration, DAL/service layers (`465ffe93`), and now test-key/list-models HTTP
+   endpoints (tenant self-service only — `/admin/my/llm-providers/{name}/keys...` and
+   `.../models?key_id=...`). **Not yet built:** the frontend UI (step 4), the
+   platform-admin-on-tenant route mirror (optional, not yet needed), and the
+   classifier/card_synthesizer general-vs-custom picker wiring (`them.tenant_system_agent_config`,
+   steps 5-6). Read the plan doc's "Why the model changes" and "Hard rule" sections before touching
+   this — no platform-key fallback for tenants, ever. A pre-existing test-count reconciliation gap
+   from `465ffe93` was flagged (not fixed) in `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
 
 **Before starting either:** if you're auditing this session's work, note the tenant-isolation
 security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
 new per-app admin config table/route, check ownership (`tenant_id` join to `them.applications`) is
 enforced from the start, not retrofitted after a review catches it.
+
+---
+
+## Tenant LLM Provider Keys — step 3: test-key + list-models endpoints — COMPLETE (2026-09-23)
+
+Commit `6a6be2ca`. See `docs/TENANT_LLM_PROVIDERS_PLAN.md` for full detail. Summary:
+
+New `LLMProviderKeysHandler` (`go/internal/admin/llm_provider_keys.go`) mounts 6 routes under
+`/admin/my/llm-providers/{name}/keys...` (tenant self-service only, no platform-admin-on-tenant
+mirror yet — not needed by anything today): list, create, patch (rename/rotate), delete,
+set-default, test, plus `GET .../models?key_id=...` to refresh the live model list.
+
+Every route resolves `{name}` to the caller's own tenant-scoped `them.llm_providers` row first, via
+new `LLMProviderService.GetOwnProviderRow` — wraps the existing `GetProviderByNameForTenant` DAL
+call (already tenant-scoped, already existed), translating `pgx.ErrNoRows` into a 404. **Never**
+falls back to the platform row's id: a tenant that hasn't yet `PUT /my/llm-providers/{name}`'d to
+create its own row gets 404 on every key route, not a key silently attached to the platform's row.
+This is the concrete enforcement point for the "no platform-key fallback for tenants, ever" hard
+rule, at the provider-resolution layer rather than only at LLM-call time.
+
+New `go/internal/admin/llm_provider_models.go`: `fetchAnthropicModels`, `fetchOpenAICompatModels`
+(covers openai/groq/any custom base_url), `fetchGeminiModels` — real `GET /v1/models`-equivalent
+calls to each provider's actual API, dispatched by `listAvailableModels` the same way
+`probeLLMWithBase` already dispatches test-key probes. The Test route reuses `probeLLMWithBase`
+directly against the named key's own decrypted secret and the provider's `default_model`/`base_url`,
+then records the outcome via the already-existing `LLMProviderKeyService.RecordTestResult`.
+
+Tests: 2 new (`GetOwnProviderRow` — not-found and found-returns-tenant-row-not-platform-id), 6 new
+for the models-fetch helpers (`httptest.Server`-backed, no real provider network calls), 6 new
+handler tests (`LPK-01..06`, HTTP-layer 400/404 paths including the "unknown provider → 404, not a
+misattributed key" case). All in `go/TEST_INDEX.md` as S1-135..137. `go test ./...` — 0 failures,
+full suite (58 packages).
+
+**Found but not fixed this session:** commit `465ffe93` (the prior session's DAL+service layer for
+this same feature) added roughly 64 tests without a corresponding `go/TEST_INDEX.md` update — the S1
+total stayed at 1349 across that commit despite `llm_provider_keys_test.go` (18 tests),
+`llm_provider_keys_integration_test.go` (9 integration tests), and `allowed_models` cases folded into
+`llm_providers_test.go`'s growth all landing in it. Flagged as an explicit "gap (465ffe93)" row in
+`go/TEST_INDEX.md` rather than silently backfilled — reconstructing precise per-commit attribution
+for a prior session's untracked additions was out of scope here. Worth a dedicated cleanup pass
+before the running total is trusted as exact.
+
+**Not done / deferred (per the plan's own sequencing, not a regression):** frontend UI (step 4 —
+model checklist + refresh button + keys sub-section with add/rename/rotate/delete/set-default/test),
+the platform-admin-on-tenant route mirror (optional; add later by mirroring
+`LLMProviderKeysHandler.TenantScopedRoutes` the way `LLMProvidersHandler.TenantProviderRoutes`
+already mirrors `TenantScopedRoutes`), and `them.tenant_system_agent_config` +
+classifier/card_synthesizer general-vs-custom wiring (steps 5-6). Not deployed/rebuilt on this local
+dev box this session — no container restart needed yet since nothing calls these new routes until
+the frontend (step 4) exists.
 
 ---
 
