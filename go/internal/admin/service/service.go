@@ -201,6 +201,10 @@ type Dal interface {
 	SetDefaultLLMProviderKey(ctx context.Context, id int64, tenantID string) (dal.LLMProviderKey, error)
 	DeleteLLMProviderKey(ctx context.Context, id int64, tenantID string) error
 
+	// Tenant system-agent role config — general/custom mode per (tenant, role), db/106
+	GetTenantSystemAgentConfig(ctx context.Context, tenantID, role string) (dal.TenantSystemAgentConfig, error)
+	UpsertTenantSystemAgentConfig(ctx context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error)
+
 	// MCP servers — tenant-scoped
 	ListMCPServers(ctx context.Context, tenantID string) ([]dal.MCPServer, error)
 	GetMCPServer(ctx context.Context, id, tenantID string) (dal.MCPServer, error)

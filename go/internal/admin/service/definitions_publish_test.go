@@ -388,6 +388,12 @@ func (f *publishFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ 
 func (f *publishFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
 	return nil
 }
+func (f *publishFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (dal.TenantSystemAgentConfig, error) {
+	return dal.TenantSystemAgentConfig{}, pgx.ErrNoRows
+}
+func (f *publishFakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
+	return dal.TenantSystemAgentConfig{}, nil
+}
 func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return []dal.ComponentDefinitionSummary{}, nil
 }

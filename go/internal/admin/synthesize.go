@@ -40,6 +40,7 @@ import (
 // synthesizerDAL is the minimal DAL surface synthesizeAppCard needs.
 type synthesizerDAL interface {
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
+	systemAgentRoleResolverDAL
 }
 
 // subAgentSummary is the subset of an agent row that the synthesizer sees.
@@ -72,55 +73,56 @@ Return ONLY valid JSON in this exact shape (no markdown, no explanation):
 
 // synthesizeAppCard calls the card_synthesizer LLM role and returns the
 // synthesized card as a raw JSON object. Returns nil on any failure so callers
-// can degrade gracefully.
+// can degrade gracefully. tenantID selects the caller's own general/custom
+// mode via resolveSystemAgentRole — see docs/TENANT_LLM_PROVIDERS_PLAN.md step
+// 5. No platform-key fallback is ever used for a tenant's "general" mode
+// resolution.
 func synthesizeAppCard(
 	ctx context.Context,
 	d synthesizerDAL,
 	fernetKey []byte,
+	tenantID string,
 	orchDisplayName string,
 	orchSystemPrompt string,
 	agents []subAgentSummary,
 ) map[string]any {
-	row, err := d.GetConfig(ctx, "system_agents")
-	if err != nil || row == nil {
-		return nil
-	}
-
-	var cfg saConfigStored
-	if err := json.Unmarshal(row.Value, &cfg); err != nil {
-		return nil
-	}
-	role := cfg.Roles["card_synthesizer"]
-	if !role.Enabled || role.Provider == nil || role.Model == nil {
-		return nil
-	}
-
-	apiKey := ""
-	if role.APIKeyEncrypted != nil {
-		decrypted, err := crypto.DecryptStored(fernetKey, *role.APIKeyEncrypted)
-		if err != nil || decrypted == "" {
-			return nil
+	// Load platform-global config first — used as the fallback when the tenant
+	// has no row / mode="custom" with unset fields (unchanged prior behavior).
+	var platformProvider, platformModel, platformAPIKey, platformBaseURL, platformSystemPrompt string
+	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
+		var cfg saConfigStored
+		if err := json.Unmarshal(row.Value, &cfg); err == nil {
+			role := cfg.Roles["card_synthesizer"]
+			if role.Enabled && role.Provider != nil && role.Model != nil && role.APIKeyEncrypted != nil {
+				if apiKey, err := crypto.DecryptStored(fernetKey, *role.APIKeyEncrypted); err == nil && apiKey != "" {
+					platformProvider = *role.Provider
+					platformModel = *role.Model
+					platformAPIKey = apiKey
+					if role.BaseURL != nil {
+						platformBaseURL = *role.BaseURL
+					}
+					if role.SystemPrompt != nil && *role.SystemPrompt != "" {
+						platformSystemPrompt = *role.SystemPrompt
+					}
+				}
+			}
 		}
-		apiKey = decrypted
 	}
-	if apiKey == "" {
+
+	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "card_synthesizer",
+		platformProvider, platformModel, platformAPIKey, platformBaseURL, platformSystemPrompt)
+	if !ok {
 		return nil
 	}
 
 	systemPrompt := defaultSynthesizerPrompt
-	if role.SystemPrompt != nil && *role.SystemPrompt != "" {
-		systemPrompt = *role.SystemPrompt
-	}
-
-	baseURL := ""
-	if role.BaseURL != nil {
-		baseURL = *role.BaseURL
+	if resolved.SystemPrompt != "" {
+		systemPrompt = resolved.SystemPrompt
 	}
 
 	userMsg := buildSynthesizerPrompt(orchDisplayName, orchSystemPrompt, agents)
 
-	result := callSynthesizerLLM(ctx, *role.Provider, *role.Model, apiKey, baseURL, systemPrompt, userMsg)
-	return result
+	return callSynthesizerLLM(ctx, resolved.Provider, resolved.Model, resolved.APIKey, resolved.BaseURL, systemPrompt, userMsg)
 }
 
 // buildSynthesizerPrompt assembles the user message sent to the LLM.
@@ -159,29 +161,36 @@ func buildSynthesizerPrompt(orchDisplayName, orchSystemPrompt string, agents []s
 	return sb.String()
 }
 
-// callSynthesizerLLM dispatches to the right provider and returns the parsed
-// card JSON. Returns nil on any network/parse failure.
-func callSynthesizerLLM(ctx context.Context, provider, model, apiKey, baseURL, systemPrompt, userMsg string) map[string]any {
-	var respText string
-	var err error
-
+// dispatchLLMText dispatches to the right provider and returns the raw
+// completion text. Returns ("", err) on any network failure. Shared by
+// callSynthesizerLLM (card_synthesizer, expects a JSON object back) and
+// classifyAgent (classifier, expects a small JSON object back) — both roles
+// can resolve to any provider via "general" mode (see resolveSystemAgentRole),
+// not just Anthropic.
+func dispatchLLMText(ctx context.Context, provider, model, apiKey, baseURL, systemPrompt, userMsg string) (string, error) {
 	switch provider {
 	case "anthropic":
-		respText, err = callAnthropicSynth(ctx, model, apiKey, systemPrompt, userMsg)
+		return callAnthropicSynth(ctx, model, apiKey, systemPrompt, userMsg)
 	case "openai":
 		url := "https://api.openai.com/v1/chat/completions"
 		if baseURL != "" {
 			url = baseURL
 		}
-		respText, err = callOpenAICompatSynth(ctx, model, apiKey, url, systemPrompt, userMsg)
+		return callOpenAICompatSynth(ctx, model, apiKey, url, systemPrompt, userMsg)
 	case "groq":
-		respText, err = callOpenAICompatSynth(ctx, model, apiKey, "https://api.groq.com/openai/v1/chat/completions", systemPrompt, userMsg)
+		return callOpenAICompatSynth(ctx, model, apiKey, "https://api.groq.com/openai/v1/chat/completions", systemPrompt, userMsg)
 	default:
 		if baseURL != "" {
-			respText, err = callOpenAICompatSynth(ctx, model, apiKey, baseURL, systemPrompt, userMsg)
+			return callOpenAICompatSynth(ctx, model, apiKey, baseURL, systemPrompt, userMsg)
 		}
+		return "", fmt.Errorf("unsupported provider %q with no base_url", provider)
 	}
+}
 
+// callSynthesizerLLM dispatches to the right provider and returns the parsed
+// card JSON. Returns nil on any network/parse failure.
+func callSynthesizerLLM(ctx context.Context, provider, model, apiKey, baseURL, systemPrompt, userMsg string) map[string]any {
+	respText, err := dispatchLLMText(ctx, provider, model, apiKey, baseURL, systemPrompt, userMsg)
 	if err != nil || respText == "" {
 		return nil
 	}

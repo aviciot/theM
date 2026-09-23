@@ -56,12 +56,50 @@ present for defense-in-depth only.
 ---
 
 ## them.config
-Key→JSONB config store. Key rows: `llm_routing`.
+Key→JSONB config store. Key rows: `llm_routing`, `system_agents` (platform-global classifier/
+card_synthesizer config — see `them.tenant_system_agent_config` below for the per-tenant override).
 
 | Column | Type | Purpose |
 |---|---|---|
 | config_key | TEXT PK | e.g. `"llm_routing"` |
 | config_value | JSONB | e.g. `{"provider":"anthropic","model":"claude-sonnet-4-6"}` |
+
+---
+
+## them.tenant_system_agent_config (migration 106)
+Per-tenant mode (general/custom) for system-agent roles (`classifier`, `card_synthesizer`). Added
+because `them.config` has no `tenant_id` column at all — the platform-global `system_agents` row
+above is shared by every tenant. This table lets a tenant opt each role into either:
+- `mode='general'` — resolve through the tenant's own `them.llm_providers` +
+  `them.llm_provider_keys` config (the same screen from step 4), via `provider_name` + `key_id`
+  (`key_id` NULL = that provider's default key).
+- `mode='custom'` — its own standalone provider/model/key/base_url/system_prompt, same shape as
+  the platform-global row.
+
+No row (or `mode='custom'` with unset custom fields) falls back to the platform-global
+`them.config['system_agents']` row — unchanged prior behavior. **Hard rule:** `mode='general'`
+with no usable tenant key never falls back to a platform key — resolution simply fails and the
+caller degrades exactly like "role disabled" (see `resolveSystemAgentRole`,
+`go/internal/admin/system_agent_resolve.go`).
+
+Same admin-pool / application-level tenant-isolation posture as `them.llm_providers` /
+`them.llm_provider_keys` (RLS present for defense-in-depth only).
+
+| Column | Type | Purpose |
+|---|---|---|
+| tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE | part of PK |
+| role | TEXT | `"classifier"` or `"card_synthesizer"` — part of PK |
+| mode | TEXT CHECK IN ('general','custom') | default `'custom'` |
+| provider_name | TEXT | `mode='general'` — which of the tenant's `them.llm_providers` rows |
+| key_id | BIGINT FK→them.llm_provider_keys(id) ON DELETE SET NULL | `mode='general'`; NULL = use that provider's default key |
+| custom_provider | TEXT | `mode='custom'` |
+| custom_model | TEXT | `mode='custom'` |
+| custom_api_key_encrypted | TEXT | `mode='custom'` — `enc:` Fernet ciphertext |
+| custom_base_url | TEXT | `mode='custom'` |
+| custom_system_prompt | TEXT | `mode='custom'` — empty = caller's own built-in default prompt |
+
+Admin routes: `GET`/`PUT /admin/my/system-agents/{role}/config` (tenant self-service only, mirrors
+the `/admin/my/llm-providers` naming pattern — `go/internal/admin/tenant_system_agent_config.go`).
 
 ---
 

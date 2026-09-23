@@ -267,19 +267,20 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Discover is mounted in the tenantScoped route group (RequireTenantAdmin +
+	// AdminTenantMiddleware), so a tenant ID is always present in context here.
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+
 	// Resolve auth token — tenant-scoped to prevent cross-tenant token extraction.
 	// A caller may supply an agent_id they don't own; the tenant_id filter ensures
 	// we never decrypt and forward a token belonging to a different tenant.
 	authToken := req.AuthToken
 	if authToken == "" && req.AgentID != "" {
-		tenantID, tenantErr := tenantctx.TenantIDFromCtx(r.Context())
-		if tenantErr == nil {
-			encrypted, err2 := h.legacyDAL.GetAgentTokenEncryptedForTenant(r.Context(), req.AgentID, tenantID)
-			if err2 == nil && encrypted != "" {
-				decrypted, err3 := crypto.DecryptStored(h.fernetKey, encrypted)
-				if err3 == nil {
-					authToken = decrypted
-				}
+		encrypted, err2 := h.legacyDAL.GetAgentTokenEncryptedForTenant(r.Context(), req.AgentID, tenantID)
+		if err2 == nil && encrypted != "" {
+			decrypted, err3 := crypto.DecryptStored(h.fernetKey, encrypted)
+			if err3 == nil {
+				authToken = decrypted
 			}
 		}
 	}
@@ -393,7 +394,7 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// LLM classifier (best-effort).
-	category, classifierIcon := classifyAgent(r.Context(), h.legacyDAL, h.fernetKey, displayName, fullDescription, skills)
+	category, classifierIcon := classifyAgent(r.Context(), h.legacyDAL, h.fernetKey, tenantID, displayName, fullDescription, skills)
 
 	// Use classifier icon only if no icon was found in the card.
 	if iconVal == "" && classifierIcon != "" {

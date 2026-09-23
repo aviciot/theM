@@ -19,15 +19,11 @@ package admin
 //	}
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/crypto"
@@ -36,6 +32,7 @@ import (
 // classifierDAL is the minimal DAL surface classifyAgent needs.
 type classifierDAL interface {
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
+	systemAgentRoleResolverDAL
 }
 
 var (
@@ -59,31 +56,38 @@ type classifierConfig struct {
 }
 
 // classifyAgent returns (category, icon) using the Anthropic classifier.
-// Any failure silently returns ("", "").
+// Any failure silently returns ("", ""). tenantID selects the caller's own
+// general/custom mode via resolveSystemAgentRole — see
+// docs/TENANT_LLM_PROVIDERS_PLAN.md step 5. No platform-key fallback is ever
+// used for a tenant's "general" mode resolution.
 func classifyAgent(
 	ctx context.Context,
 	d classifierDAL,
 	fernetKey []byte,
+	tenantID string,
 	displayName, description string,
 	skills []any,
 ) (category, icon string) {
-	// Load config — failure is silent.
-	row, err := d.GetConfig(ctx, "system_agents")
-	if err != nil || row == nil {
-		return "", ""
+	// Load platform-global config first — used as the fallback when the tenant
+	// has no row / mode="custom" with unset fields (unchanged prior behavior).
+	var platformProvider, platformModel, platformAPIKey, platformBaseURL string
+	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
+		var cfg classifierConfig
+		if err := json.Unmarshal(row.Value, &cfg); err == nil && cfg.Roles.Classifier.Enabled {
+			if apiKey, err := crypto.DecryptStored(fernetKey, cfg.Roles.Classifier.APIKeyEncrypted); err == nil && apiKey != "" {
+				platformProvider = "anthropic" // classifier has always been Anthropic-only
+				platformModel = cfg.Roles.Classifier.Model
+				if platformModel == "" {
+					platformModel = "claude-haiku-4-5-20251001"
+				}
+				platformAPIKey = apiKey
+			}
+		}
 	}
 
-	var cfg classifierConfig
-	if err := json.Unmarshal(row.Value, &cfg); err != nil {
-		return "", ""
-	}
-	if !cfg.Roles.Classifier.Enabled {
-		return "", ""
-	}
-
-	// Decrypt API key.
-	apiKey, err := crypto.DecryptStored(fernetKey, cfg.Roles.Classifier.APIKeyEncrypted)
-	if err != nil || apiKey == "" {
+	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "classifier",
+		platformProvider, platformModel, platformAPIKey, platformBaseURL, "")
+	if !ok {
 		return "", ""
 	}
 
@@ -97,82 +101,25 @@ func classifyAgent(
 		}
 	}
 
-	model := cfg.Roles.Classifier.Model
-	if model == "" {
-		model = "claude-haiku-4-5-20251001"
-	}
-
 	systemPrompt := "You are an agent classifier. Given an agent's name, description, and skills, return ONLY valid JSON:\n{\"category\": \"<one of: Research|Coding|Vision|Security|A2A|Data|Communication|Agent>\", \"icon\": \"<Material Symbols name, e.g. hub, code, search, visibility>\"}\nNo explanation, no markdown, just JSON."
 	userMsg := fmt.Sprintf("Name: %s\nDescription: %s\nSkills: %s",
 		displayName, description, strings.Join(skillNames, ", "))
 
-	// Call Anthropic Messages API.
-	type anthropicMsg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	type anthropicReq struct {
-		Model     string         `json:"model"`
-		MaxTokens int            `json:"max_tokens"`
-		Messages  []anthropicMsg `json:"messages"`
-		System    string         `json:"system"`
-	}
-	reqBody := anthropicReq{
-		Model:     model,
-		MaxTokens: 60,
-		Messages:  []anthropicMsg{{Role: "user", Content: userMsg}},
-		System:    systemPrompt,
-	}
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
+	// Dispatch to the resolved provider — "general" mode may resolve to any
+	// provider the tenant has configured, not just Anthropic (platform-global
+	// fallback has always been Anthropic-only, so that path is unaffected).
+	respText, err := dispatchLLMText(ctx, resolved.Provider, resolved.Model, resolved.APIKey, resolved.BaseURL, systemPrompt, userMsg)
+	if err != nil || respText == "" {
 		return "", ""
 	}
 
-	httpCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(httpCtx, http.MethodPost,
-		"https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return "", ""
+	// Strip markdown fences if the model wrapped the JSON.
+	text := strings.TrimSpace(respText)
+	if idx := strings.Index(text, "{"); idx > 0 {
+		text = text[idx:]
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", ""
-	}
-
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if err != nil {
-		return "", ""
-	}
-
-	// Extract text from response.
-	var anthropicResp struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(respBytes, &anthropicResp); err != nil {
-		return "", ""
-	}
-	var text string
-	for _, c := range anthropicResp.Content {
-		if c.Type == "text" {
-			text = c.Text
-			break
-		}
-	}
-	if text == "" {
-		return "", ""
+	if idx := strings.LastIndex(text, "}"); idx >= 0 && idx < len(text)-1 {
+		text = text[:idx+1]
 	}
 
 	// Parse the JSON result.

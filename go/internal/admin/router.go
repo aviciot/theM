@@ -104,6 +104,8 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 //	GET    /admin/system-agents
 //	PUT    /admin/system-agents
 //	POST   /admin/system-agents/{role}/test-llm
+//	GET    /admin/my/system-agents/{role}/config
+//	PUT    /admin/my/system-agents/{role}/config
 //	GET    /runs
 //	GET    /runs/stats
 //	POST   /runs/bulk-delete
@@ -146,6 +148,7 @@ func BuildRouter(
 	llmRouting := NewLLMRoutingHandler(dbq)
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
 	llmProviderKeys := NewLLMProviderKeysHandler(dbq, secretKey)
+	tenantSystemAgentConfig := NewTenantSystemAgentConfigHandler(dbq, secretKey)
 	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
 	tenants := NewTenantsHandler(dbq, auditWriter, idpKey, logoDir)
 	// Admin + runs routes — all require JWT. Within /admin, routes are split into
@@ -233,6 +236,7 @@ func BuildRouter(
 				// Tenant-admin self-service LLM provider key management.
 				llmProviders.TenantScopedRoutes(tenantScoped)
 				llmProviderKeys.TenantScopedRoutes(tenantScoped)
+				tenantSystemAgentConfig.TenantScopedRoutes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

@@ -82,6 +82,7 @@ func (h *ApplicationsHandler) DiscoverEP(w http.ResponseWriter, r *http.Request)
 		r.Context(),
 		h.legacyDAL,
 		h.fernetKey,
+		tenantID,
 		orch.DisplayName,
 		orch.SystemPrompt,
 		agents,

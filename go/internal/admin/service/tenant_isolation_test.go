@@ -425,6 +425,12 @@ func (f *isolationFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, 
 func (f *isolationFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
 	return nil
 }
+func (f *isolationFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (dal.TenantSystemAgentConfig, error) {
+	return dal.TenantSystemAgentConfig{}, errors.New("not found")
+}
+func (f *isolationFakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
+	return dal.TenantSystemAgentConfig{}, nil
+}
 
 // Runtime config + bulk delete stubs — no isolation-specific behavior needed.
 func (f *isolationFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {

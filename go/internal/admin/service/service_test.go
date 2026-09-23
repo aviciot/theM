@@ -145,6 +145,13 @@ type fakeDal struct {
 	clearDefaultKeysCalls     int
 	setTestResultCalls        []bool
 
+	// Tenant system-agent config fields (db/106)
+	tenantSystemAgentConfig      dal.TenantSystemAgentConfig
+	getTenantSystemAgentConfigErr error
+	upsertedTenantSystemAgentConfig dal.TenantSystemAgentConfig
+	upsertTenantSystemAgentConfigErr error
+	upsertTenantSystemAgentConfigCalls []dal.TenantSystemAgentConfigInput
+
 	// token fields
 	tokens            []dal.Token
 	token             dal.Token
@@ -515,6 +522,15 @@ func (f *fakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string)
 }
 func (f *fakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
 	return f.deleteProviderKeyErr
+}
+
+// Tenant system-agent config fakes (db/106).
+func (f *fakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (dal.TenantSystemAgentConfig, error) {
+	return f.tenantSystemAgentConfig, f.getTenantSystemAgentConfigErr
+}
+func (f *fakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
+	f.upsertTenantSystemAgentConfigCalls = append(f.upsertTenantSystemAgentConfigCalls, in)
+	return f.upsertedTenantSystemAgentConfig, f.upsertTenantSystemAgentConfigErr
 }
 
 // Component definitions registry stub.
