@@ -484,3 +484,81 @@ trusting the UI layer specifically.
 **Explicitly still deferred, unchanged from the plan:** Runtime settings screen migration
 (`flow-llm-nodes` reading from the same `RuntimeParams` declaration) — a separate future phase, not
 started.
+
+---
+
+## Review follow-up — 4 issues found and fixed (2026-09-23)
+
+A review of commit `d941aca3` found four gaps, all fixed in the same session, before Step Debug
+work began:
+
+**1. BaseURL stored but never passed into provider creation.** `debugcred.Override.BaseURL` was
+populated and stored correctly, but `dbLLMCaller.Complete` (`cmd/dag-worker/main.go`) called
+`multiLLMFactory.NewProvider`, which only ever reads a base URL from its own static
+`baseURLs map[string]string` (populated once at worker startup) — the per-node override was
+silently discarded. **Fix:** new `multiLLMFactory.NewProviderWithBaseURL` method, used only by the
+debug branch of `Complete`, with an explicit `baseURL` param that takes precedence over the static
+map when non-empty. **Known pre-existing limitation, not fixed (out of scope):**
+`llm.AnthropicProvider` has no base URL parameter at all in this codebase — a `BaseURL` override
+for an `anthropic`-provider node is structurally unusable, not just unwired. Only matters for
+`openai`/`groq`/`ollama`/`vllm`/`lmstudio` today.
+
+**2. General mode's `key_id` never checked against the selected provider.**
+`dal.GetLLMProviderKey(ctx, id, tenantID)` scopes a key lookup by `(id, tenant)` only — it never
+checks `llm_provider_id`. A request-supplied `key_id` belonging to a *different* provider than
+the one selected would be silently accepted and its (mismatched) key decrypted and used against
+the wrong provider's API. **Fix:** `resolveLLMOverride`
+(`go/internal/admin/service/appflow_debug_credentials.go`) now compares `key.LLMProviderID` against
+the resolved provider's own `ID` and rejects the request with 422 on any mismatch, before the run
+is ever admitted.
+
+**3. No per-node model selection in General mode.** `LLMOverrideInput.Model` existed but was
+custom-mode-only; General mode always used `provider.DefaultModel` unconditionally. **Fix:**
+General mode now accepts an optional `Model`, validated against the provider's own
+`allowed_models` list (`dal.AllowedModelsOrEmpty(provider.AllowedModelsRaw)`) when that list is
+non-empty — a model not on the list is rejected with 422, never silently substituted. A provider
+with no allowed-models list configured accepts any model (the pre-existing, unconstrained default).
+
+**4. Fixed 10-minute TTL was the only cleanup mechanism.** Sized from first principles instead of
+a round number: `InlineLLMActivity` runs under a 120s `StartToCloseTimeout` with up to `retryMax`
+(default 2) attempts and capped 10s backoff (`go/internal/appflow/workflow.go`'s `ao`) — worst case
+≈241s per node; a 5-10 node debug canvas where every node exhausts every retry totals ~20-40
+minutes. **`debugcred.TTL` is now 30 minutes** (was 10). More importantly, **TTL is no longer the
+only cleanup path**: new `Store.DeleteAllForRun` (cursor-based `SCAN`+`DEL`, never `KEYS`) is called
+from `AppFlowActivities.FinalizeRunActivity` — the single hook every AppFlow run's `defer` already
+calls on every exit path — gated on the run's own `Debug` flag (also newly added to
+`FinalizeRunActivityInput`, an ID-shaped/non-secret field, safe in Temporal history). Best-effort:
+a cleanup failure is logged and swallowed, never fails the otherwise-idempotent finalize activity —
+an orphaned entry still expires via its own TTL, so nothing leaks permanently either way. A missing
+credential (TTL-expired or otherwise) still fails the run loudly, unchanged from before — cleanup
+timing was never the mechanism enforcing "fail clearly," it only affects how long a credential
+*could* linger if the primary path is skipped.
+
+**Tests added:** 6 in `internal/admin/service` (key/provider mismatch — reject and accept paths,
+default-key path unaffected, model allow-list — reject/accept/empty/unconfigured, BaseURL
+round-trips through both modes), 1 in `cmd/dag-worker` (two nodes, two different fake HTTP servers,
+proves each node's request lands on its own configured base URL), 4 in `internal/appflow`
+(`FinalizeRunActivity`'s cleanup call — fires on debug, never fires on production, nil-safe,
+cleanup errors don't fail the activity), 3 new integration tests in `internal/debugcred`
+(`DeleteAllForRun` removes every node's entry / never touches a different run / no-op on an empty
+run) — run for real against live Redis this session. `go test ./...` 0 failures, full suite.
+`go vet`/`gofmt` clean on every touched file.
+
+**Verified live, browser-equivalent:** no browser-automation tool was available in this environment
+(same limitation as every prior session on this plan — headless Chromium's shared-library
+dependencies need `apt-get`/sudo, which needs a password not available here). Instead: a Node
+script run inside the live `them-frontend` container drove the exact HTTP + WebSocket sequence the
+browser's Debug button triggers — created a real throwaway app with **two independent LLM nodes**,
+started a debug run with **Custom mode overrides pointing each node at its own fake HTTP
+server** (different provider name, different model, different API key, different base URL per
+node), and confirmed: node A's request landed only on server A with model `model-A-4o` and
+`Authorization: Bearer sk-node-a-key`; node B's request landed only on server B with model
+`model-B-mixtral` and `Authorization: Bearer sk-node-b-key`; neither server ever saw the other's
+traffic; the run completed (`done`); the app's saved Runtime settings were never touched. Throwaway
+app deleted after testing.
+
+**Not done — no actual logged-in browser click-through of the picker UI itself**, still, for the
+same environment reason as every prior verification on this plan. The full backend contract
+(per-node isolation across different providers, model/key validation, base URL routing, cleanup) is
+now proven live end-to-end; only the picker component's own visual rendering/interaction remains
+unconfirmed in a real browser.
