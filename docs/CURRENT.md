@@ -1,9 +1,8 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys thread: the-M admin (super_admin) given full
-# General/Custom LLM key parity with tenants — them.llm_provider_keys.tenant_id made nullable
-# (db/108, NULL = platform-owned), new platform-scoped key routes, resolvePlatformSystemAgentRole,
-# RoleCard.tsx gained the same switch TenantRoleCard.tsx already had. HEAD 857034c1, on top of App
-# Canvas Debug Mode Phase 5 FRONTEND work (7cb2728d) from earlier the same day.)
+# Last updated: 2026-09-23 (AppFlow Runtime Params: per-node LLM credential overrides for App
+# Canvas Debug Mode, plus two real bugs found and fixed while live-testing — a cross-tenant IDOR on
+# /ws/dashboard's run:* channels, and the Phase 5 debug hook silently dropping every real WS event
+# since it first shipped. HEAD 03133ca8, pushed.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -11,8 +10,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `857034c1` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
-before pushing — see the conflict-resolution note below, which still applies.
+HEAD: `03133ca8` — **pushed to origin/main.**
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -26,6 +24,9 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+03133ca8  docs: AppFlow runtime-params plan complete + two lessons from this session
+04e9f4ee  feat(app-canvas): per-node LLM credential picker in the debug panel
+9a19aab4  feat(app-canvas): per-node debug LLM credential overrides + tenant-ownership fix
 857034c1  feat(admin): the-M admin gets General/Custom LLM key parity with tenants
 21569888  feat(admin): security_scanner as a third tenant_system_agent_config role
 7cb2728d  feat(app-canvas): debug mode frontend — setup panel, Run All, real WS consumer (Phase 5)
@@ -36,12 +37,6 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 220adc05  feat(admin): tenant General/Custom switch for classifier & card_synthesizer (step 6)
 283db880  feat(admin): tenant system-agent role config — general/custom mode (step 5)
 8269eae2  feat(app-canvas): debug run backend — draft execution, no publish required (Phase 5 slice 1)
-99434bb9  feat(admin): tenant LLM provider keys frontend UI (step 4)
-4a40ca21  docs(current): record 6a6be2ca — tenant LLM provider keys step 3 complete
-6a6be2ca  feat(admin): tenant LLM provider key test/list-models endpoints (step 3)
-cc81978d  fix(admin): close cross-tenant IDOR on app_debug_config and app_temporal_config
-465ffe93  feat(admin): tenant LLM provider keys — multi-key + allowed_models (db/105)
-cda25d0c  feat(app-canvas): per-app AppFlow trace log-verbosity setting (Phase 4)
 ```
 
 ---
@@ -52,30 +47,85 @@ cda25d0c  feat(app-canvas): per-app AppFlow trace log-verbosity setting (Phase 4
 each node, lockstep multi-branch stepping per the "Decisions confirmed (round 2)" section of
 `docs/APP_CANVAS_DEBUG_PLAN.md`), plus canvas node click-to-inspect for a debug session's
 input/output. Phase 5 (setup panel + Run All + real WS consumer) is now **fully complete and
-live-verified** — see `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 5 frontend section for full detail.
-One phase per session — do not start Phase 6 and Phase 5 follow-ups in the same session as
-whatever comes next.
+live-verified**, and its follow-on plan `docs/APPFLOW_RUNTIME_PARAMS_PLAN.md` (per-node LLM
+credential overrides for debug runs) is also **complete and live-verified** — see that doc's
+"Implementation — COMPLETE" section for full detail. One phase per session — do not start Phase 6
+in the same session as whatever comes next.
 
 **Known limitation carried over, not fixed this session:** a draft canvas containing agent nodes
 still cannot be debugged until it has been published at least once (`unresolved_agent` — see the
-Phase 5 backend-slice section of the plan doc). Flows made entirely of inline nodes are unaffected.
-Worth fixing before Phase 6 if agent-node debugging is a priority — candidate approaches are
-noted in the plan doc.
+Phase 5 backend-slice section of `docs/APP_CANVAS_DEBUG_PLAN.md`). Flows made entirely of inline
+nodes are unaffected. Worth fixing before Phase 6 if agent-node debugging is a priority.
+
+**Deferred, not this session's job:** `docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`'s Runtime settings
+screen migration (`flow-llm-nodes` reading from the same `RuntimeParams` declaration the debug
+panel now uses) — a separate future phase, explicitly not started. Also: debug credential Redis
+entries aren't deleted proactively on run completion yet, only via their 10-minute TTL — flagged
+as a possible follow-up in that plan doc, not a regression.
 
 **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete, plus
-three follow-ups this session: LLM Providers tab UI/UX redesign + missing gemini/groq seed rows,
-`security_scanner` promoted to a third general/custom role, and the-M admin (super_admin) given
-full General/Custom parity with tenants (its own multi-key system, `db/108`) — see the dated
-sections further below for full detail on each. Nothing further planned on this thread unless new
-requirements surface. **Still never verified in a live browser** — recommend a real logged-in
-click-through before trusting it in front of actual tenants or the platform admin, including a
-real Security Scan run in general mode for both.
+three follow-ups from an earlier session: LLM Providers tab UI/UX redesign + missing gemini/groq
+seed rows, `security_scanner` promoted to a third general/custom role, and the-M admin
+(super_admin) given full General/Custom parity with tenants (its own multi-key system, `db/108`)
+— see the dated sections further below for full detail on each. Nothing further planned on this
+thread unless new requirements surface. **Still never verified in a live browser** — recommend a
+real logged-in click-through before trusting it in front of actual tenants or the platform admin.
 
-**Before starting Phase 6:** read the new lesson in `docs/LESSONS.md` ("`/ws/dashboard`'s `run:*`
-channels never delivered live events") before touching anything that publishes or consumes
-per-run trace events — it explains a real, non-obvious gap between `XADD`-only writes and
-pub/sub-only consumers that this session found and fixed, and the same class of bug could recur
-if a new event type is ever added without checking which mechanism actually delivers it live.
+**Before touching anything that publishes or consumes per-run trace events, or any WS/SSE
+message-parsing code:** read `docs/LESSONS.md`'s three entries from this session and the prior
+one — (1) `/ws/dashboard`'s `run:*` channels never delivered live events (an `XADD`-only write
+vs. a pub/sub-only consumer), (2) that same channel type had no tenant-ownership check at all (a
+real cross-tenant IDOR), and (3) the Phase 5 debug hook's `ws.onmessage` was silently dropping
+every real event since it first shipped, because it gated on a field (`msg.type`) that real
+events never carry. All three are the same class of "the wire contract wasn't actually verified
+end-to-end" bug — worth re-reading before adding any new WS/SSE consumer or producer.
+
+---
+
+## AppFlow Runtime Params — per-node debug LLM credentials — COMPLETE (2026-09-23)
+
+Commits `9a19aab4` (backend), `04e9f4ee` (frontend), `03133ca8` (docs), all pushed. Full detail in
+`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`'s "Implementation — COMPLETE" section. Summary:
+
+Follow-on to Phase 5: the debug setup panel now scans the canvas for nodes that declare a runtime
+parameter (today, every `llm`-kind node declares a required `llm_credential`) and renders **one
+independent provider/key picker per node** — never merged into one shared selection. General mode
+picks a saved tenant key (reuses the existing `them.llm_provider_keys` lookup); Custom mode is a
+one-off key for that debug run only, never persisted anywhere. A required param with no override
+supplied fails the whole `debug/start` call with 422 before a run is ever admitted — proven live
+against a 3-LLM-node draft. Storage is a new `debugcred.Store` (Redis, key
+`them:debug:{tenant}:{run}:{node}:llm_override`, 10-min TTL) — never through Temporal, since
+`run_id` is already a fresh UUIDv4 per call so no locking is needed for the concurrency
+requirement. A missing/expired credential fails loudly in `dbLLMCaller.Complete`, never silently
+substitutes another key; a real bug where a nil credential store fell through to normal
+resolution and nil-panicked was caught by this session's own tests before shipping.
+
+**Two more real bugs found and fixed while live-testing this** (same live-testing method as
+Phase 5 — a Node script run inside `them-frontend`, no browser-automation tool available):
+1. **Cross-tenant IDOR**: `/ws/dashboard`'s `run:*` subscribe path never checked that the caller's
+   tenant actually owned the run UUID — any tenant could read any other tenant's live trace. Fixed
+   with a new `dashboard.RunOwnershipChecker`, fails closed.
+2. **The Phase 5 debug hook had never actually worked in a browser**: `ws.onmessage` gated on a
+   top-level `msg.type`, but real trace events carry no such field (only `ping`/`subscribed`/a
+   WS-protocol error do) — every live `node_start`/`node_done` event was being silently dropped
+   since the hook first shipped earlier the same day. Fixed.
+
+18 new tests total (13 unit across 4 packages, 5 integration against live Redis). `go test ./...`
+0 failures. One pre-existing, unrelated flaky race found under `-race`
+(`internal/appflow.TestForkJoin_EmitsTraceForAllNodes`, inside the Temporal SDK's own test harness)
+— flagged in `TEST_INDEX.md`, not fixed. `npx tsc --noEmit` 0 errors.
+
+**Verified live end-to-end:** rebuilt + restarted `them-go-bridge`/`them-dag-worker`/
+`them-dag-worker-2`/`them-dag-worker-debug` (all healthy); `them-frontend` hot-reloaded clean.
+Created a real throwaway app + 3-LLM-node draft, confirmed `debug/start` with no overrides → 422
+(no run admitted), then with 3 distinct per-node custom keys → 200, real run executed, and
+`redis-cli GET` confirmed 3 separate Redis entries with 3 distinct `api_key` values correctly
+scoped by tenant+run+node. Throwaway app deleted after testing.
+
+**Not done — no actual logged-in browser click-through of the picker UI itself** (no
+browser-automation tool available in this environment; Playwright's Chromium downloaded but its
+shared-library deps couldn't be installed without interactive sudo). The full backend contract is
+proven live; the picker component's own rendering/interaction has not been visually confirmed.
 
 ---
 
