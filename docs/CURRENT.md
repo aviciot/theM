@@ -1,9 +1,8 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 5 — backend slice (draft-run endpoint +
-# trace wire-protocol fix) COMPLETE, pushed pending rebase check. Frontend consumer is a separate
-# follow-up session — see APP_CANVAS_DEBUG_PLAN.md. Tenant LLM Provider Keys step 4 (frontend UI)
-# COMPLETE per that thread's own commit, HEAD 99434bb9 before this session's commit landed on top.
-# HEAD now 8269eae2.)
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 5 — them.tenant_system_agent_config +
+# classifier/card_synthesizer general-vs-custom wiring — COMPLETE. HEAD 283db880, on top of the
+# App Canvas Debug Mode Phase 5 backend slice (8269eae2) from earlier the same day — see that
+# thread's own section below for its own state, unaffected by this one.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -11,7 +10,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `8269eae2` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
+HEAD: `283db880` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
 before pushing — see the conflict-resolution note below, which still applies.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
@@ -26,6 +25,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+283db880  feat(admin): tenant system-agent role config — general/custom mode (step 5)
 8269eae2  feat(app-canvas): debug run backend — draft execution, no publish required (Phase 5 slice 1)
 99434bb9  feat(admin): tenant LLM provider keys frontend UI (step 4)
 4a40ca21  docs(current): record 6a6be2ca — tenant LLM provider keys step 3 complete
@@ -57,18 +57,21 @@ Two independent threads are in flight. Pick based on what you're asked to contin
    research found (two prerequisite gaps neither the original plan nor Phases 1-4 anticipated) and
    the two design decisions made to close them. One phase per session — do not start Phase 6 in the
    same session as Phase 5's remaining frontend work.
-2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-4 of 7 done: migration,
-   DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`), and now the
-   frontend UI (step 4, this session, **not yet committed** — see the dated section below). **Not
-   yet built:** the platform-admin-on-tenant route mirror (optional, not yet needed), and the
-   classifier/card_synthesizer general-vs-custom picker wiring (`them.tenant_system_agent_config`,
-   steps 5-6). Read the plan doc's "Why the model changes" and "Hard rule" sections before touching
-   this — no platform-key fallback for tenants, ever. A pre-existing test-count reconciliation gap
-   from `465ffe93` was flagged (not fixed) in `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
-   Step 4 was **not verified in a live browser** — no browser-automation tool was available this
-   session; only `tsc --noEmit` (0 errors) and a manual read-through against the Go response
-   shapes. Recommend a real logged-in-browser pass (both as a tenant admin and as super_admin)
-   before starting step 5, especially the Refresh-from-provider live model-list round trip.
+2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-5 of 7 done: migration,
+   DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`), frontend UI
+   (`99434bb9`), and now `them.tenant_system_agent_config` + classifier/card_synthesizer
+   general-vs-custom resolution wiring (step 5, `283db880` — see the dated section below). **Not
+   yet built:** the frontend General/Custom switch on the classifier/card_synthesizer role cards
+   (step 6 — the step 5 backend route has no UI consumer yet), and the platform-admin-on-tenant
+   route mirror for keys (optional, still not needed). Read the plan doc's "Why the model changes"
+   and "Hard rule" sections before touching this — no platform-key fallback for tenants, ever, and
+   step 5 is the sharpest concrete enforcement point so far (`resolveSystemAgentRole`). A
+   pre-existing test-count reconciliation gap from `465ffe93` was flagged (not fixed) in
+   `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
+   Step 4's frontend was **still not verified in a live browser** as of step 5 — no
+   browser-automation tool has been available in any session so far. Recommend a real
+   logged-in-browser pass (tenant admin AND super_admin) covering both step 4's UI and step 5's new
+   route before starting step 6.
 
 **Before starting either:** if you're auditing this session's work, note the tenant-isolation
 security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
@@ -77,9 +80,52 @@ enforced from the start, not retrofitted after a review catches it.
 
 ---
 
-## Tenant LLM Provider Keys — step 4: frontend UI — COMPLETE, NOT YET COMMITTED (2026-09-23)
+## Tenant LLM Provider Keys — step 5: tenant_system_agent_config + resolution wiring — COMPLETE (2026-09-23)
 
-See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 4 write-up for full detail. Summary:
+Commit `283db880`, not yet pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 5 write-up for
+full detail. Summary:
+
+New migration `db/106_tenant_system_agent_config.sql`, applied live to this box's `them-postgres`
+this session: one row per `(tenant_id, role)` for the `classifier`/`card_synthesizer` system-agent
+roles, `mode` CHECK IN ('general','custom'). RLS + grants match the `db/105` pattern; `key_id` FK
+to `them.llm_provider_keys` is `ON DELETE SET NULL` — verified live via a dedicated integration
+test that deleting a key a config row points at nulls the column rather than leaving a dangling
+reference.
+
+New `go/internal/admin/system_agent_resolve.go` (`resolveSystemAgentRole`) is the single resolution
+point both `classifyAgent` and `synthesizeAppCard` now call: no row / custom-with-unset-fields
+falls back to the platform-global `them.config['system_agents']` row unchanged; `mode="general"`
+resolves through the tenant's own `them.llm_providers`/`them.llm_provider_keys`
+(step 4's tables) and **never** falls back to a platform key when the tenant has none — the
+concrete enforcement point for the plan's hard rule at this layer, proven by a dedicated test and
+again through both call sites directly, not just the resolver in isolation.
+
+**Bug fixed as part of this, not scope creep:** `classifyAgent` was hardcoded to call the Anthropic
+Messages API directly — broken by construction for any tenant whose "general" mode resolves to a
+non-Anthropic provider. Extracted `dispatchLLMText` out of `synthesize.go`'s existing multi-provider
+dispatch logic (which `card_synthesizer` already had and `classifier` never did) so both roles share
+one dispatch path now.
+
+New tenant self-service route `GET`/`PUT /admin/my/system-agents/{role}/config`
+(`go/internal/admin/tenant_system_agent_config.go`), mirroring the `/admin/my/llm-providers` naming
+pattern from step 3/4. No frontend consumer yet (step 6).
+
+**Found and closed a pre-existing test gap, not introduced here:** neither `classifyAgent` nor
+`synthesizeAppCard` had a single direct test before this session (confirmed by grep, not assumed).
+41 new tests total across DAL/service/handler/resolver/both call sites — `go/TEST_INDEX.md`
+S1-142..146, S2-13. `go test ./...` 0 failures full suite; `go test -race ./internal/admin/...`
+clean; 6 integration tests run for real against this box's live `them-postgres`.
+
+**Not done / deferred (per the plan's own sequencing, not a regression):** step 6 (frontend
+General/Custom switch on the role cards) — the new route has no UI yet. Not live-verified via
+`curl`/browser against the running `them-go-bridge` — only exercised through Go handler tests with
+a fake DB this session, same limitation as step 4 (no browser-automation tool available).
+
+---
+
+## Tenant LLM Provider Keys — step 4: frontend UI — COMPLETE (2026-09-23)
+
+Commit `99434bb9`, pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 4 write-up for full detail. Summary:
 
 `frontend/src/app/admin/settings/page.tsx`'s `llm_providers` tab (previously ~150 lines inlined in
 the page component) was extracted into two new components, per the file-size rule — `page.tsx`
@@ -111,16 +157,15 @@ outside the UI). Recommend a manual logged-in pass before trusting this fully, i
 tenant-admin and super_admin views, especially the Refresh-from-provider round trip against a real
 provider key (no automated test in this repo exercises that live).
 
-**Not committed.** Files changed: `frontend/src/app/admin/settings/page.tsx`,
+**Committed as `99434bb9`, pushed.** Files changed: `frontend/src/app/admin/settings/page.tsx`,
 `frontend/src/app/admin/settings/LLMProvidersPanel.tsx` (new),
 `frontend/src/app/admin/settings/LLMProviderKeysPanel.tsx` (new), `frontend/src/lib/api.ts`,
-`frontend/src/lib/apiTypes.ts`. Recommend reviewing + committing these five before starting step 5,
-separately from the other unrelated uncommitted files already sitting in this working tree (see
-the HEAD section's note above — those predate this session and weren't touched by it).
+`frontend/src/lib/apiTypes.ts`.
 
 **Not done / deferred (per the plan's own sequencing, not a regression):**
-`them.tenant_system_agent_config` + classifier/card_synthesizer general/custom wiring (steps 5-6),
-and their own frontend switch on the role cards. The platform-admin-on-tenant route mirror for keys
+`them.tenant_system_agent_config` + classifier/card_synthesizer general/custom wiring — step 5,
+now COMPLETE, see its own section above — and step 6's frontend switch on the role cards, still
+not built. The platform-admin-on-tenant route mirror for keys
 remains unbuilt (still not needed by anything).
 
 ---

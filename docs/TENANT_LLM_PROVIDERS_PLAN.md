@@ -1,5 +1,5 @@
 # Tenant-Level LLM Provider Configuration — Plan
-# Status: approved design, implementing — steps 1-4 of 7 complete
+# Status: approved design, implementing — steps 1-5 of 7 complete
 # Owner: platform
 # Last updated: 2026-09-23
 
@@ -350,7 +350,58 @@ allowed models" call never hits the `default_model is required` 400). Recommend 
 logged-in-browser pass before trusting this fully — in particular the Refresh-from-provider round
 trip against a real provider API key, which no test in this repo exercises end-to-end.
 
-**Not yet built (steps 5-6 remain):** `them.tenant_system_agent_config` table +
-classifier/card_synthesizer general-vs-custom wiring, and its own frontend switch on the role
-cards. The platform-admin-on-tenant route mirror for keys (`/admin/tenants/{id}/llm-providers/{name}/keys...`)
-remains not built — still not needed by anything.
+**Step 5 — COMPLETE (2026-09-23).** `them.tenant_system_agent_config` table +
+classifier/card_synthesizer general-vs-custom wiring. Commit `283db880`.
+
+New migration `db/106_tenant_system_agent_config.sql` (applied live this session): one row per
+`(tenant_id, role)`, `mode` CHECK IN ('general','custom'), `provider_name`/`key_id` for general
+mode, `custom_provider`/`custom_model`/`custom_api_key_encrypted`/`custom_base_url`/
+`custom_system_prompt` for custom mode. RLS + grants + FK `ON DELETE SET NULL` from `key_id` to
+`them.llm_provider_keys` (verified live: deleting a key the config points at nulls `key_id` rather
+than leaving a dangling reference or blocking the delete).
+
+**Resolution logic** — new `go/internal/admin/system_agent_resolve.go`, `resolveSystemAgentRole`:
+- No row, or a `mode='custom'` row with unset custom fields → falls back to the platform-global
+  `them.config['system_agents']` row, unchanged prior behavior.
+- `mode='general'` → resolves through the tenant's own `them.llm_providers` (`provider_name`) +
+  `them.llm_provider_keys` (`key_id`, or that provider's default key when `key_id` is nil).
+  **Hard rule enforced here, concretely:** no usable tenant key → resolution fails outright: this
+  function never falls back to a platform key for a "general" mode resolution, even when one is
+  configured and would otherwise work. Proven by a dedicated test
+  (`TestResolveSystemAgentRole_GeneralMode_NoUsableKey_NeverFallsBackToPlatform`) and again through
+  `classifyAgent`/`synthesizeAppCard` directly, not just the resolver in isolation.
+- `mode='custom'` → decrypts and uses its own stored fields directly.
+
+**`classifyAgent` was hardcoded to call the Anthropic Messages API directly** — a real gap, since
+"general" mode can resolve to any provider the tenant has configured (OpenAI, Groq, a custom
+base_url), not just Anthropic. Fixed by extracting `dispatchLLMText` out of `synthesize.go`'s
+existing multi-provider dispatch (`callSynthesizerLLM` already had this logic for
+`card_synthesizer`; `classify.go` just never had it) — both roles now share one dispatch path.
+Both `classifyAgent` and `synthesizeAppCard` gained a `tenantID` parameter; both call sites already
+had a tenant ID one line away or unconditionally in scope (confirmed by the original research —
+`ep_discover.go` had it unconditionally; `agents.go`'s `Discover` handler had it gated inside an
+`if authToken == ""` block, hoisted to the top since the route is always tenant-scoped).
+
+**New tenant self-service route:** `GET`/`PUT /admin/my/system-agents/{role}/config`
+(`go/internal/admin/tenant_system_agent_config.go`), mirroring the `/admin/my/llm-providers` naming
+pattern. `GET` with no row returns 200 with `mode: "custom"` (the implicit default), not 404 — a
+tenant that never opts in sees the same shape as one that explicitly chose custom with nothing set.
+
+**Found and closed a pre-existing test-coverage gap, not introduced by this change:** neither
+`classifyAgent` nor `synthesizeAppCard` had any direct test before this session — confirmed by grep
+before writing new tests, not assumed. Both now do (4 tests each), on top of 8 resolver tests, 11
+service tests, 8 handler tests, and 6 DAL integration tests against live Postgres — 41 new tests
+total, all passing, `go test ./...` 0 failures full suite, `go test -race ./internal/admin/...`
+clean.
+
+**Not yet built (step 6 remains):** the frontend General/Custom switch on the classifier and
+card_synthesizer role cards (`RoleCard.tsx` + `page.tsx`'s `system_agents` tab) — the backend route
+this step built has no UI consumer yet. The platform-admin-on-tenant route mirror for keys
+(`/admin/tenants/{id}/llm-providers/{name}/keys...`, from step 3) remains not built — still not
+needed by anything.
+
+**Not live-verified against a running instance this session** — no browser-automation tool was
+available, and the new route was only exercised via Go handler tests with a fake DB, not a real
+HTTP round trip through the live stack. Recommend a manual `curl`/browser check of
+`GET /admin/my/system-agents/classifier/config` against the live `them-go-bridge` before trusting
+the wiring fully, once step 6's frontend gives a natural reason to do so.
