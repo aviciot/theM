@@ -91,17 +91,32 @@ Key properties:
 
 ```
 go/cmd/mcp-service/
-  main.go            — wire DB, Redis, HTTP server, start background loops
+  main.go            — binary entrypoint: wire config, DB, Redis, router
 
 go/internal/mcp/
-  client.go          — HTTP/SSE MCP protocol client (initialize, tools/list, tools/call)
-  registry.go        — in-process cache of mcp_servers rows (TTL + Redis pub/sub invalidation)
-  health.go          — background health-check loop
-  discovery.go       — tools/list probe → writes tools_manifest back to DB
-  resolver.go        — resolves (slug, application_id) → (url, authed http.Client)
-  executor.go        — handles POST /internal/execute (called by orchestrator)
-  server.go          — chi HTTP router: /health/*, /internal/*
+  config.go          — Config struct + LoadConfig; env parsing only, no I/O
+  dal.go             — all SQL for them.mcp_servers + them.app_mcp_credentials
+  client.go          — stateless MCP JSON-RPC HTTP client (initialize / tools/list / tools/call)
+  registry.go         — in-process server cache + Redis manifest/health keys + pub/sub
+                        (them:mcp:manifest:changed)
+  leader.go          — Redis SET NX PX leader election (them:mcp:leader, 30s TTL);
+                        only the leader replica runs the Supervisor
+  supervisor.go      — reconciles DB server list vs. running workers every 30s;
+                        spawns/stops a worker goroutine per server (leader-only)
+  health.go          — per-server worker: own ticker, exponential backoff, panic
+                        recovery, independent health state machine, persistent MCP session
+  executor.go        — handles POST /internal/execute: credential resolution (Fernet)
+                        + MCP tool dispatch; enforces tenant_id match before credential lookup
+  server.go          — chi router: /health/live, /health/ready,
+                        /internal/probe/{server_id}, /internal/execute
+  health_test.go     — tests for the health worker
+  doc.go             — package doc: file responsibilities, scaling model, security invariants
 ```
+
+Discovery (tools/list probing) lives inside `health.go`'s per-server worker loop rather
+than a separate `discovery.go` — each health tick both probes liveness and refreshes the
+tool manifest. Credential resolution lives directly in `executor.go`; the doc comment there
+notes it should split into a `resolver.go` if/when OAuth2 support is added.
 
 New Dockerfile: `Dockerfile.mcp-service` (mirrors `Dockerfile.auth-go` pattern):
 
