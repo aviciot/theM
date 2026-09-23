@@ -4,6 +4,15 @@
 // message naming one or more logical channels, the server maps them to
 // them:dash:{channel} Redis pub/sub keys and relays events as they arrive.
 //
+// run:{runID} channels are the one exception — nothing ever PUBLISHes
+// AppFlow/orchestrator trace events (they're only XADDed to the run's Redis
+// Stream, per internal/runstream's write side), so a plain pub/sub SUBSCRIBE
+// on a run:* channel never receives anything live. Those channels are tailed
+// via internal/runstream.StreamFromRedis instead — the same replay+live-poll
+// primitive internal/ws and internal/sse already use for the production
+// WS/SSE routes — so a run:* subscriber gets both history-so-far and every
+// event published after subscribing, not just a one-shot snapshot.
+//
 // Protocol:
 //
 //	Client → Server (first message):
@@ -30,6 +39,7 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/gorilla/websocket"
 	"github.com/redis/rueidis"
 )
@@ -65,6 +75,7 @@ type StreamEntry struct {
 // Handler is the /ws/dashboard WebSocket handler.
 type Handler struct {
 	redis     dashRedis
+	streamer  runstream.RedisStreamer // nil-safe: falls back to a one-shot XRevRange snapshot for run:* channels
 	jwtSecret []byte
 	logger    *slog.Logger
 	upgrader  websocket.Upgrader
@@ -120,21 +131,25 @@ func (a *rueidisAdapter) XRevRange(ctx context.Context, key, end, start string, 
 	return out, nil
 }
 
-// New creates a Handler wrapping a rueidis.Client.
-func New(redisClient rueidis.Client, jwtSecret []byte, logger *slog.Logger) *Handler {
-	return newWithDashRedis(&rueidisAdapter{redisClient}, jwtSecret, logger)
+// New creates a Handler wrapping a rueidis.Client. streamer drives live
+// tailing of run:* channels (see the package doc) — pass the same
+// runstream.RedisStreamer instance internal/ws/internal/sse already use.
+func New(redisClient rueidis.Client, streamer runstream.RedisStreamer, jwtSecret []byte, logger *slog.Logger) *Handler {
+	return newWithDashRedis(&rueidisAdapter{redisClient}, streamer, jwtSecret, logger)
 }
 
 // NewForTest creates a Handler with a custom dashRedis implementation.
-// Exported so tests in the dashboard_test package can inject fakes.
-func NewForTest(rc dashRedis, jwtSecret []byte, logger *slog.Logger) *Handler {
-	return newWithDashRedis(rc, jwtSecret, logger)
+// Exported so tests in the dashboard_test package can inject fakes. streamer
+// may be nil to test the legacy one-shot-snapshot fallback path.
+func NewForTest(rc dashRedis, streamer runstream.RedisStreamer, jwtSecret []byte, logger *slog.Logger) *Handler {
+	return newWithDashRedis(rc, streamer, jwtSecret, logger)
 }
 
 // newWithDashRedis creates a Handler with a custom dashRedis implementation (for testing).
-func newWithDashRedis(rc dashRedis, jwtSecret []byte, logger *slog.Logger) *Handler {
+func newWithDashRedis(rc dashRedis, streamer runstream.RedisStreamer, jwtSecret []byte, logger *slog.Logger) *Handler {
 	return &Handler{
 		redis:     rc,
+		streamer:  streamer,
 		jwtSecret: jwtSecret,
 		logger:    logger,
 		upgrader: websocket.Upgrader{
@@ -201,9 +216,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 5. Ack ────────────────────────────────────────────────────────────────
 	_ = cw.writeJSON(map[string]any{"type": "subscribed", "channels": channels})
 
+	// ── 5b. Split run:* channels out — they're tailed via runstream.StreamFromRedis
+	// (see package doc), not plain pub/sub, since nothing ever PUBLISHes to them.
+	var pubsubChannels, runChannels []string
+	for _, ch := range channels {
+		if strings.HasPrefix(ch, "run:") && h.streamer != nil {
+			runChannels = append(runChannels, ch)
+		} else {
+			pubsubChannels = append(pubsubChannels, ch)
+		}
+	}
+
 	// ── 6. Build Redis channel list ───────────────────────────────────────────
-	redisChannels := make([]string, len(channels))
-	for i, ch := range channels {
+	redisChannels := make([]string, len(pubsubChannels))
+	for i, ch := range pubsubChannels {
 		redisChannels[i] = dashPrefix + ch
 	}
 
@@ -222,8 +248,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 9. Send snapshots ─────────────────────────────────────────────────────
-	h.sendSnapshots(ctx, cw, channels, tenantID)
+	// ── 9. Send snapshots (non-run channels) ─────────────────────────────────
+	h.sendSnapshots(ctx, cw, pubsubChannels, tenantID)
+
+	// ── 9b. Tail run:* channels live (replay history + block for new entries) ─
+	for _, ch := range runChannels {
+		runID := ch[len("run:"):]
+		go h.tailRunChannel(ctx, cw, ch, runID)
+	}
 
 	// ── 10. Ping loop ─────────────────────────────────────────────────────────
 	go h.pingLoop(ctx, cw)
@@ -346,8 +378,10 @@ func (h *Handler) sendSessionsSnapshot(ctx context.Context, cw *connWriter, ch, 
 	_ = cw.writeJSON(map[string]any{"channel": ch, "event": json.RawMessage(snapshotJSON)})
 }
 
-// sendRunSnapshot replays the last 100 events from the run's Redis Stream so
-// late subscribers (e.g. the Monitor tab opened mid-run) catch up immediately.
+// sendRunSnapshot is the fallback path when no streamer is configured
+// (h.streamer == nil, test-only) — a one-shot replay of the last 100 events
+// from the run's Redis Stream with no live tail after. Production always
+// takes the tailRunChannel path below instead.
 // Source: XREVRANGE them:dash:run:{runID}:stream + - COUNT 100
 // Events are reversed back to chronological order before sending.
 func (h *Handler) sendRunSnapshot(ctx context.Context, cw *connWriter, ch, runID string) {
@@ -365,6 +399,25 @@ func (h *Handler) sendRunSnapshot(ctx context.Context, cw *connWriter, ch, runID
 			continue
 		}
 		_ = cw.writeJSON(map[string]any{"channel": ch, "event": json.RawMessage(e.Data)})
+	}
+}
+
+// tailRunChannel replays history and then blocks tailing new entries on the
+// run's Redis Stream, forwarding each as {"channel": ch, "event": ...} —
+// the live-delivery path for run:* channels (see package doc for why plain
+// pub/sub can't do this). Reuses runstream.StreamFromRedis, the same
+// replay+live-poll primitive internal/ws and internal/sse use for the
+// production WS/SSE routes, so this is not a second implementation of that
+// logic. Returns when ctx is cancelled (WS disconnect) or a terminal event
+// (done/error/canceled/terminated/timed_out) is received.
+func (h *Handler) tailRunChannel(ctx context.Context, cw *connWriter, ch, runID string) {
+	events, err := runstream.StreamFromRedis(ctx, h.streamer, runID, runstream.StreamerOptions{})
+	if err != nil {
+		h.logger.Warn("dashboard: tailRunChannel failed to start", "run_id", runID, "error", err)
+		return
+	}
+	for ev := range events {
+		_ = cw.writeJSON(map[string]any{"channel": ch, "event": json.RawMessage(ev.Payload)})
 	}
 }
 

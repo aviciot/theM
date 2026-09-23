@@ -309,7 +309,7 @@ func run() error {
 	if len(dashJWTSecret) == 0 {
 		dashJWTSecret = []byte(cfg.SecretKey)
 	}
-	dashHandler := dashboard.New(redisCache.Client(), dashJWTSecret, log)
+	dashHandler := dashboard.New(redisCache.Client(), rsStreamer, dashJWTSecret, log)
 	srv.MountDashboardWS(dashHandler)
 	log.Info("dashboard WebSocket handler mounted", "path", "/ws/dashboard")
 

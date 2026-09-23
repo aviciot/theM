@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/dashboard"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/gorilla/websocket"
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/assert"
@@ -110,8 +111,13 @@ func makeHS256JWT(secret []byte, subject string) string {
 
 func newTestServer(t *testing.T, rc *fakeRedis) (*httptest.Server, []byte) {
 	t.Helper()
+	return newTestServerWithStreamer(t, rc, nil)
+}
+
+func newTestServerWithStreamer(t *testing.T, rc *fakeRedis, streamer runstream.RedisStreamer) (*httptest.Server, []byte) {
+	t.Helper()
 	secret := []byte("test-secret-key")
-	h := dashboard.NewForTest(rc, secret, slog.Default())
+	h := dashboard.NewForTest(rc, streamer, secret, slog.Default())
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, secret
@@ -352,4 +358,84 @@ func TestDashboard_AppsSnapshot(t *testing.T) {
 	event, ok := msg["event"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "app_status", event["type"])
+}
+
+// ── fake RedisStreamer (run:* live-tailing path) ────────────────────────────
+//
+// Verifies the fix for the gap this session found: nothing ever PUBLISHes
+// node_start/node_done/etc — they're only XADDed to the run's Redis Stream —
+// so a plain pub/sub SUBSCRIBE on run:* never receives anything live. run:*
+// channels must be tailed via runstream.StreamFromRedis instead (see package
+// doc + tailRunChannel).
+
+type fakeStreamer struct {
+	entries []runstream.StreamEntry // full pre-seeded history, served via XRange
+}
+
+func (f *fakeStreamer) XRange(_ context.Context, _, start, _ string) ([]runstream.StreamEntry, error) {
+	if start == "-" && len(f.entries) > 0 {
+		return f.entries, nil // first replay call: return everything
+	}
+	return nil, nil // subsequent calls: replay exhausted
+}
+
+func (f *fakeStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil // not resuming from a cursor in these tests
+}
+
+func (f *fakeStreamer) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]runstream.StreamMessage, error) {
+	// No live entries queued in these tests — block until ctx is cancelled,
+	// mirroring a real XREAD BLOCK with nothing new to deliver.
+	<-ctx.Done()
+	return nil, nil
+}
+
+func streamEntry(id, jsonPayload string) runstream.StreamEntry {
+	return runstream.StreamEntry{ID: id, Values: map[string]interface{}{"data": jsonPayload}}
+}
+
+func TestDashboard_RunChannel_TailsLiveInsteadOfPubSub(t *testing.T) {
+	runID := "11111111-0000-0000-0000-000000000001"
+	streamer := &fakeStreamer{
+		entries: []runstream.StreamEntry{
+			streamEntry("1-0", `{"type":"node_start","run_id":"`+runID+`","node_id":"llm_1","kind":"llm"}`),
+			streamEntry("1-1", `{"type":"node_done","run_id":"`+runID+`","node_id":"llm_1","kind":"llm","detail":"ok"}`),
+			streamEntry("1-2", `{"type":"done","run_id":"`+runID+`"}`),
+		},
+	}
+	rc := newFakeRedis() // no messages queued — proves delivery does NOT come from pub/sub
+	srv, secret := newTestServerWithStreamer(t, rc, streamer)
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"run:" + runID})
+
+	readJSON(t, conn) // drain ack
+
+	var types []string
+	for i := 0; i < 3; i++ {
+		msg := readJSON(t, conn)
+		assert.Equal(t, "run:"+runID, msg["channel"])
+		ev, ok := msg["event"].(map[string]any)
+		require.True(t, ok)
+		types = append(types, ev["type"].(string))
+	}
+	assert.Equal(t, []string{"node_start", "node_done", "done"}, types)
+}
+
+func TestDashboard_RunChannel_NoStreamerFallsBackToOneShotSnapshot(t *testing.T) {
+	// streamer == nil (as passed by newTestServer) must not panic — falls back
+	// to the legacy one-shot sendRunSnapshot path via plain pub/sub channels.
+	runID := "22222222-0000-0000-0000-000000000001"
+	rc := newFakeRedis()
+	srv, secret := newTestServer(t, rc)
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"run:" + runID})
+
+	msg := readJSON(t, conn) // ack only — no snapshot data queued, no panic
+	assert.Equal(t, "subscribed", msg["type"])
 }

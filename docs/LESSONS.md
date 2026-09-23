@@ -983,3 +983,60 @@ not have.
 **Watch for:** any new migration that creates a table with a `SERIAL`/`BIGSERIAL` PK. Grant the
 sequence in the same migration as the table, and verify with a real INSERT via an integration test
 — not just `\dp` on the table — before considering the migration done.
+
+## `/ws/dashboard`'s `run:*` channels never delivered live events, only a one-shot snapshot (found 2026-09-23)
+
+While building App Canvas Debug Mode Phase 5's frontend (`docs/APP_CANVAS_DEBUG_PLAN.md`), a real
+debug run against the live stack consistently produced `{"type":"subscribed",...}` and then
+**nothing** over `/ws/dashboard` for a `run:{id}` channel — despite the run completing successfully
+and its Redis Stream (`them:dash:run:{id}:stream`) containing the full, correct
+`node_start`/`node_done`/`done` sequence, confirmed via direct `XRANGE`.
+
+**Why:** `internal/runstream.PublishEvent` — called by every AppFlow node's `emitTrace`, the single
+choke point all trace events flow through — only ever calls `XAdd` (a Redis Stream write). Nothing
+in this codebase ever `PUBLISH`es these events to a pub/sub channel. `/ws/dashboard`'s `run:*`
+handling (`sendRunSnapshot`) was a **one-shot** `XRevRange` taken exactly once, at subscribe time —
+there was no live delivery mechanism for `run:*` at all, only ever a snapshot of whatever already
+existed in the Stream the instant you subscribed. Any run fast enough to finish before that single
+Redis round-trip landed — every mock-LLM AppFlow debug run tested this session completed in well
+under 1 second end-to-end — delivered **zero** events to the client, live or otherwise.
+
+**Why it wasn't caught earlier:** the real live-tailing primitive
+(`internal/runstream.StreamFromRedis`, replay-then-`XREAD BLOCK`) has existed since Phase 11c-B and
+is used correctly by the production `internal/ws`/`internal/sse` routes — so anyone reading just
+those two packages would reasonably assume the pattern was applied everywhere trace events need to
+reach a browser. `/ws/dashboard` is a separate, generic pub/sub multiplexer (`runs`, `agent:*`,
+`sessions:*`, `scan:*`, `run:*`) built for channels that mostly *are* genuinely published to
+(`dashboard.SessionPublisher` does real `PUBLISH` calls for session lifecycle events) — `run:*` was
+the one channel type that looked like it fit the same pattern but never actually had a publisher.
+The playground's own `run:*` trace pane (`useChatConnection.ts`'s `openDashWs`) has had this exact
+same latent gap the whole time; it went unnoticed there because that pane is secondary (the primary
+chat response streams over a different, correctly-wired WS) and orchestrator-mode runs are usually
+slow enough that a human clicking around happens to subscribe after some entries already exist by
+chance.
+
+**Fix (`go/internal/dashboard/handler.go`):** `run:*` channels are no longer handed to the generic
+pub/sub `Subscribe` call. Each is tailed by a new `tailRunChannel` method using
+`internal/runstream.StreamFromRedis` directly — the exact same primitive `internal/ws`/`internal/sse`
+already use — so a `run:*` subscriber gets full history-so-far plus every event published after
+subscribing, with no gap. `Handler` gained a `streamer runstream.RedisStreamer` field (threaded from
+`cmd/them/main.go`'s existing `rsStreamer`, already built for the WS/SSE handlers — no new Redis
+client instance needed), nil-safe so old tests constructing a `Handler` without one still exercise
+the legacy one-shot path unchanged.
+
+**How this was found without a browser:** no browser-automation tool was available in this
+environment (confirmed: Playwright's Chromium downloaded, but its shared-library dependencies
+couldn't be installed without interactive `sudo`). Root-caused instead via a Node script run inside
+the already-running `them-frontend` container (same Docker network as `them-go-bridge`/
+`them-auth-go`) that logged in, created a real throwaway app + draft + entry point, called
+`debug/start`, and drove the exact `/ws/dashboard` subscribe flow the new frontend hook uses —
+combined with a temporary `slog.Warn` dropped into `sendRunSnapshot` (rebuilt, restarted, observed,
+then reverted before the real fix) to prove the snapshot code path was reached with `n_entries: 0`
+at exactly the right moment, ruling out a channel-name or tenant-scoping bug before concluding the
+delivery mechanism itself was missing.
+
+**Watch for:** any new per-run or per-entity event type that needs to reach a browser live. Check
+whether the write side actually `PUBLISH`es to the channel a WS/SSE consumer subscribes to — an
+`XADD`-only write (or any Stream-only write) will pass every "does the data exist in Redis" check
+while still delivering nothing live to a plain pub/sub subscriber. If a channel needs both replay
+and live delivery, reuse `internal/runstream.StreamFromRedis` rather than a bespoke snapshot.

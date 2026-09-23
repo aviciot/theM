@@ -2247,6 +2247,8 @@ shutdown on client disconnect. Uses a fakeRedis adapter (no real Redis) so all t
 | `TestDashboard_CleanShutdownOnDisconnect` | Client closes → server goroutines exit without panic |
 | `TestDashboard_ScanSnapshot` | `scan:<artifact_id>` channel + pre-populated Redis state key → snapshot delivered with `artifact_scan` event |
 | `TestDashboard_AppsSnapshot` | `apps` channel + pre-populated Redis cache → app_status snapshot delivered |
+| `TestDashboard_RunChannel_TailsLiveInsteadOfPubSub` | `run:<id>` channel with a fake `runstream.RedisStreamer` (no pub/sub messages queued) → all 3 seeded stream entries (`node_start`/`node_done`/`done`) delivered via `tailRunChannel`, proving delivery comes from the Stream tail, not pub/sub — the fix for the gap found while building App Canvas Debug Mode Phase 5's frontend (see `docs/APP_CANVAS_DEBUG_PLAN.md`, `docs/REDIS.md`'s `them:dash:run:{run_id}:stream` entry): nothing ever `PUBLISH`es these events, only `XADD`s, so plain pub/sub subscribe on `run:*` previously delivered zero live events for any run fast enough to finish before the old one-shot `XRevRange` snapshot ran |
+| `TestDashboard_RunChannel_NoStreamerFallsBackToOneShotSnapshot` | `streamer == nil` (as `NewForTest` passes today for every other test) → no panic, falls back to the legacy one-shot `sendRunSnapshot` path |
 
 **Trigger:** any change to `internal/dashboard/handler.go`
 
@@ -3540,7 +3542,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
 | S1-50 | agent definition compiler (BuildValidator: Issue type, Validate/CompileForPublish, severity split) | 20 |
 | S1-51 | agent definition publish service | 11 |
-| S1-52 | dashboard WebSocket handler | 13 |
+| S1-52 | dashboard WebSocket handler | 15 |
 | S1-53 | agent-runtime spec cache + skill routing + policy enforcement | 12 |
 | S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 18 |
 | S1-60 | admin/service provider key encryption | 9 |
@@ -3632,7 +3634,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-146 | Tenant LLM Provider Keys step 5 — new `TenantSystemAgentConfigHandler` HTTP routes under `/admin/my/system-agents/{role}/config` (`internal/admin/tenant_system_agent_config_test.go`, SAC-01..08): `TestSAC_Get_NoRow_Returns200Default` (200 with mode="custom" default, not 404 — matches pre-feature behavior for a tenant that never opted in), `TestSAC_Get_UnknownRole_Returns400`, `TestSAC_Put_InvalidJSON_Returns400`, `TestSAC_Put_InvalidMode_Returns400`, `TestSAC_Put_GeneralMode_MissingProviderName_Returns400`, `TestSAC_Put_GeneralMode_Succeeds`, `TestSAC_Put_CustomMode_NoKeyFirstTime_Returns400`, `TestSAC_Put_CustomMode_NeverReturnsPlaintextKey` | 8 |
 | S1-147 | Tenant LLM Provider Keys step 6 — `TenantSystemAgentConfigService.ResolveCustomTestInputs` (`internal/admin/service/tenant_system_agent_config_test.go`, SAC-* continued): `TestTenantSACService_ResolveCustomTestInputs_UnknownRole_ReturnsValidation`, `TestTenantSACService_ResolveCustomTestInputs_BodyOverridesStored`, `TestTenantSACService_ResolveCustomTestInputs_NoProviderAnywhere_ReturnsValidation`, `TestTenantSACService_ResolveCustomTestInputs_NoKeyAnywhere_ReturnsValidation` — gap-filling from the tenant's own stored `custom_*` fields, never the platform-global config (there is no tenant-scoped equivalent of `/admin/system-agents/{role}/test-llm`'s platform fallback) | 4 |
 | S1-148 | Tenant LLM Provider Keys step 6 — new `TenantSystemAgentConfigHandler.Test` route, `POST /admin/my/system-agents/{role}/test-llm` (`internal/admin/tenant_system_agent_config_test.go`, SAC-09..11): `TestSAC_Test_InvalidJSON_Returns400`, `TestSAC_Test_NoProviderAnywhere_Returns400`, `TestSAC_Test_UnknownRole_Returns400` | 3 |
-| **S1 total** | | **1417** |
+| S1-149 | App Canvas Debug Mode Phase 5 — `/ws/dashboard` `run:*` live-tailing fix (`internal/dashboard/handler_test.go`, extends S1-52): `TestDashboard_RunChannel_TailsLiveInsteadOfPubSub`, `TestDashboard_RunChannel_NoStreamerFallsBackToOneShotSnapshot`. Counted separately from S1-52's row above since S1-52's own count was bumped 13→15 in place; this row exists so the "what/why" for these two tests has its own entry rather than only a bullet in S1-52's list. | 2 (already included in S1-52's 13→15 bump — not double-counted in the total below) |
+| **S1 total** | | **1419** |
 | **flaky (pre-existing)** | `internal/llmgateway.TestHandler_Stream_200` (`gateway_test.go`) fails intermittently under `go test -race` (reproduced 1-of-3 runs in isolation with `-count=3`) — a data race in `Service.Stream`'s goroutine (`service.go:271`) launched from `Handler.handleStream` (`handler.go:184`). Confirmed pre-existing: last touched by commit `936ae696` (LLM Gateway Phase 2, well before the Tenant LLM Provider Keys plan started) — not introduced or touched by any commit in that plan (`465ffe93` through `220adc05`). Found while running the mandatory `go test -race ./...` pass at that plan's step 7 sign-off. Not fixed here — out of scope for the plan this session closed out; flagged for a dedicated fix. | not counted above |
 
 ### E2E — AppFlow canvas (`scripts/tests/test_40_appflow_canvas_e2e.py`)
