@@ -55,10 +55,8 @@ func TestGetMonitoringConfig_NoRow_ReturnsDefaults(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, float64(1), body["heatmap_low"])
 	assert.Equal(t, float64(10), body["heatmap_medium"])
 	assert.Equal(t, float64(50), body["heatmap_high"])
-	assert.Equal(t, float64(300), body["stats_window_seconds"])
 }
 
 // MC-2: PUT monitoring-config with valid body — returns 200 and stored value.
@@ -69,9 +67,8 @@ func TestPutMonitoringConfig_Valid_Returns200(t *testing.T) {
 	h.Routes(r)
 
 	body, _ := json.Marshal(map[string]any{
-		"heatmap_low": 2, "heatmap_medium": 15, "heatmap_high": 60,
+		"heatmap_medium": 15, "heatmap_high": 60,
 		"edge_thin": 3, "edge_medium": 20, "edge_thick": 80,
-		"panel_max_sessions": 100, "stats_window_seconds": 600,
 	})
 	req := httptest.NewRequest(http.MethodPut, "/monitoring-config", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -81,7 +78,6 @@ func TestPutMonitoringConfig_Valid_Returns200(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, float64(2), resp["heatmap_low"])
 	assert.Equal(t, float64(15), resp["heatmap_medium"])
 }
 
@@ -93,9 +89,8 @@ func TestPutMonitoringConfig_BadThresholds_Returns422(t *testing.T) {
 	h.Routes(r)
 
 	body, _ := json.Marshal(map[string]any{
-		"heatmap_low": 50, "heatmap_medium": 10, "heatmap_high": 1, // wrong order
+		"heatmap_medium": 50, "heatmap_high": 1, // wrong order
 		"edge_thin": 1, "edge_medium": 10, "edge_thick": 50,
-		"panel_max_sessions": 50, "stats_window_seconds": 300,
 	})
 	req := httptest.NewRequest(http.MethodPut, "/monitoring-config", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -500,14 +500,11 @@ export interface BridgeHealth {
 }
 
 export interface MonitoringConfig {
-  heatmap_low:           number;
   heatmap_medium:        number;
   heatmap_high:          number;
   edge_thin:             number;
   edge_medium:           number;
   edge_thick:            number;
-  panel_max_sessions:    number;
-  stats_window_seconds:  number;
 }
 
 export interface SessionInfo {

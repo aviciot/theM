@@ -12,35 +12,31 @@ import (
 
 const monitoringConfigKey = "monitoring"
 
-// MonitoringConfig mirrors Python's MonitoringConfig pydantic model.
-// All fields have the same defaults as the Python _DEFAULTS dict.
+// MonitoringConfig controls the App Monitor topology view's heatmap glow and
+// edge-thickness thresholds. Fields removed 2026-09-23 (heatmap_low,
+// panel_max_sessions, stats_window_seconds) were never read by any consumer —
+// see docs/LESSONS.md.
 type MonitoringConfig struct {
-	HeatmapLow          int `json:"heatmap_low"`
-	HeatmapMedium       int `json:"heatmap_medium"`
-	HeatmapHigh         int `json:"heatmap_high"`
-	EdgeThin            int `json:"edge_thin"`
-	EdgeMedium          int `json:"edge_medium"`
-	EdgeThick           int `json:"edge_thick"`
-	PanelMaxSessions    int `json:"panel_max_sessions"`
-	StatsWindowSeconds  int `json:"stats_window_seconds"`
+	HeatmapMedium int `json:"heatmap_medium"`
+	HeatmapHigh   int `json:"heatmap_high"`
+	EdgeThin      int `json:"edge_thin"`
+	EdgeMedium    int `json:"edge_medium"`
+	EdgeThick     int `json:"edge_thick"`
 }
 
 func monitoringDefaults() MonitoringConfig {
 	return MonitoringConfig{
-		HeatmapLow:         1,
-		HeatmapMedium:      10,
-		HeatmapHigh:        50,
-		EdgeThin:           1,
-		EdgeMedium:         10,
-		EdgeThick:          50,
-		PanelMaxSessions:   50,
-		StatsWindowSeconds: 300,
+		HeatmapMedium: 10,
+		HeatmapHigh:   50,
+		EdgeThin:      1,
+		EdgeMedium:    10,
+		EdgeThick:     50,
 	}
 }
 
 func validateMonitoring(c MonitoringConfig) error {
-	if !(c.HeatmapLow < c.HeatmapMedium && c.HeatmapMedium < c.HeatmapHigh) {
-		return unprocessable("heatmap thresholds must satisfy low < medium < high")
+	if !(c.HeatmapMedium < c.HeatmapHigh) {
+		return unprocessable("heatmap thresholds must satisfy medium < high")
 	}
 	if !(c.EdgeThin < c.EdgeMedium && c.EdgeMedium < c.EdgeThick) {
 		return unprocessable("edge thresholds must satisfy thin < medium < thick")

@@ -71,14 +71,11 @@ export function getRoleWhereUsed(role: string) {
 }
 
 export const MONITORING_DEFAULTS: MonitoringConfig = {
-  heatmap_low:           1,
   heatmap_medium:        10,
   heatmap_high:          50,
   edge_thin:             1,
   edge_medium:           10,
   edge_thick:            50,
-  panel_max_sessions:    50,
-  stats_window_seconds:  300,
 };
 
 export const inputStyle: React.CSSProperties = {

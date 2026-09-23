@@ -1126,3 +1126,33 @@ live-stack E2E job can be reintroduced deliberately later with the current servi
 `.github/workflows/*.yml` for the old name before considering the rename complete — CI can silently
 reference stale container names for a long time since a failing "live stack" job doesn't block
 anything locally and is easy to miss if notifications aren't watched.
+
+## Dead UI component + 3 dead config fields survived a view merge unnoticed (found 2026-09-23)
+
+`frontend/src/app/admin/applications/components/SessionsView.tsx` (528 lines) had zero imports
+anywhere in the repo — a code comment in `AppCard.tsx` line 331 read "Monitor (unified — replaces
+separate Sessions + Monitor)", confirming `MonitorView.tsx` absorbed its functionality at some
+point, but the old file itself was never deleted. Tracing its only real dependency —
+`MonitoringConfig` (the "Settings → Monitoring" panel's 8-field JSONB blob in `them.config`) —
+found `heatmap_low`, `panel_max_sessions`, and `stats_window_seconds` were only ever read by the
+now-dead `SessionsView.tsx`; `MonitorView.tsx` (the surviving, actually-mounted view) never
+consumed them, despite all three still having live sliders in the Settings UI and full backend
+plumbing (Go struct fields, DB round-trip, `go/internal/admin/service/config_test.go` coverage).
+
+**Why it wasn't caught earlier:** deleting the losing side of a UI merge is easy to skip — the app
+still builds and works with the dead file present, so nothing forces cleanup. Once the file was
+orphaned, the config fields it alone consumed kept looking "used" to anyone grepping only within
+`MonitoringConfig`'s own type/defaults/handler chain — you have to trace forward to the actual
+runtime consumer(s), not just confirm the field is threaded through the type system end-to-end.
+
+**Fix:** deleted `SessionsView.tsx`; removed `heatmap_low`, `panel_max_sessions`,
+`stats_window_seconds` from the Go `MonitoringConfig` struct/defaults/validation, the TS
+`MonitoringConfig` type, both default-value constants (`MONITORING_DEFAULTS`, `MON_DEFAULTS`), and
+their 3 sliders in `MonitoringPanel.tsx`; updated the now-medium<high-only heatmap validation and
+all affected Go tests + `TEST_INDEX.md`.
+
+**Watch for:** after any "component A absorbs component B" refactor, grep the repo for imports of
+B before considering the merge done — an unimported `.tsx`/`.go` file left behind will keep its
+own dependencies (config fields, API params, feature flags) looking falsely alive to anyone tracing
+usage only as far as "is this threaded through the type/schema," rather than "does any mounted
+component actually read it at runtime."

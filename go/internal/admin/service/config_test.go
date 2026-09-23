@@ -18,20 +18,16 @@ func TestGetMonitoring_NoRow_ReturnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.HeatmapLow != 1 || cfg.HeatmapMedium != 10 || cfg.HeatmapHigh != 50 {
+	if cfg.HeatmapMedium != 10 || cfg.HeatmapHigh != 50 {
 		t.Errorf("unexpected heatmap defaults: %+v", cfg)
 	}
 	if cfg.EdgeThin != 1 || cfg.EdgeMedium != 10 || cfg.EdgeThick != 50 {
 		t.Errorf("unexpected edge defaults: %+v", cfg)
 	}
-	if cfg.PanelMaxSessions != 50 || cfg.StatsWindowSeconds != 300 {
-		t.Errorf("unexpected panel defaults: %+v", cfg)
-	}
 }
 
 func TestGetMonitoring_StoredRow_MergesOverDefaults(t *testing.T) {
 	stored := map[string]any{
-		"heatmap_low":    5,
 		"heatmap_medium": 20,
 		"heatmap_high":   100,
 	}
@@ -41,15 +37,12 @@ func TestGetMonitoring_StoredRow_MergesOverDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.HeatmapLow != 5 || cfg.HeatmapMedium != 20 || cfg.HeatmapHigh != 100 {
+	if cfg.HeatmapMedium != 20 || cfg.HeatmapHigh != 100 {
 		t.Errorf("stored values not applied: %+v", cfg)
 	}
 	// Fields not in stored JSON must remain at defaults.
 	if cfg.EdgeThin != 1 || cfg.EdgeMedium != 10 || cfg.EdgeThick != 50 {
 		t.Errorf("edge defaults overwritten unexpectedly: %+v", cfg)
-	}
-	if cfg.StatsWindowSeconds != 300 {
-		t.Errorf("stats_window_seconds default overwritten: %+v", cfg)
 	}
 }
 
@@ -68,9 +61,8 @@ func TestPutMonitoring_ValidInput_Upserts(t *testing.T) {
 	fd := &fakeDal{}
 	svc := service.NewConfigService(fd)
 	in := service.MonitoringConfig{
-		HeatmapLow: 2, HeatmapMedium: 15, HeatmapHigh: 60,
+		HeatmapMedium: 15, HeatmapHigh: 60,
 		EdgeThin: 3, EdgeMedium: 20, EdgeThick: 80,
-		PanelMaxSessions: 100, StatsWindowSeconds: 600,
 	}
 	out, err := svc.PutMonitoring(context.Background(), in)
 	if err != nil {
@@ -94,9 +86,8 @@ func TestPutMonitoring_ValidInput_Upserts(t *testing.T) {
 func TestPutMonitoring_InvalidHeatmapOrder_ReturnsValidationError(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{})
 	bad := service.MonitoringConfig{
-		HeatmapLow: 50, HeatmapMedium: 10, HeatmapHigh: 1, // wrong order
+		HeatmapMedium: 50, HeatmapHigh: 1, // wrong order
 		EdgeThin: 1, EdgeMedium: 10, EdgeThick: 50,
-		PanelMaxSessions: 50, StatsWindowSeconds: 300,
 	}
 	_, err := svc.PutMonitoring(context.Background(), bad)
 	if err == nil {
@@ -107,9 +98,8 @@ func TestPutMonitoring_InvalidHeatmapOrder_ReturnsValidationError(t *testing.T) 
 func TestPutMonitoring_InvalidEdgeOrder_ReturnsValidationError(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{})
 	bad := service.MonitoringConfig{
-		HeatmapLow: 1, HeatmapMedium: 10, HeatmapHigh: 50,
+		HeatmapMedium: 10, HeatmapHigh: 50,
 		EdgeThin: 50, EdgeMedium: 10, EdgeThick: 1, // wrong order
-		PanelMaxSessions: 50, StatsWindowSeconds: 300,
 	}
 	_, err := svc.PutMonitoring(context.Background(), bad)
 	if err == nil {

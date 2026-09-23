@@ -74,8 +74,7 @@ export function MonitoringPanel({
         <SectionHeader icon="heat_map" color="#00d1ff" title="Node Heatmap" subtitle="Sessions per node to trigger each glow intensity" />
         <div style={{ height: 1, background: 'rgba(132,157,188,.1)', marginBottom: 22 }} />
 
-        <SliderField label="Low threshold" hint="Soft glow starts at this many active sessions on a node" value={monConfig.heatmap_low} min={1} max={50} step={1} onChange={(v) => setMonConfig(c => ({ ...c, heatmap_low: Math.min(v, c.heatmap_medium - 1) }))} unit=" sessions" color="#4ade80" />
-        <SliderField label="Medium threshold" hint="Medium intensity glow" value={monConfig.heatmap_medium} min={2} max={200} step={1} onChange={(v) => setMonConfig(c => ({ ...c, heatmap_medium: Math.max(v, c.heatmap_low + 1) }))} unit=" sessions" color="#f59e0b" />
+        <SliderField label="Medium threshold" hint="Medium intensity glow" value={monConfig.heatmap_medium} min={2} max={200} step={1} onChange={(v) => setMonConfig(c => ({ ...c, heatmap_medium: Math.min(v, c.heatmap_high - 1) }))} unit=" sessions" color="#f59e0b" />
         <SliderField label="High threshold" hint="Full bright + strong glow — maximum intensity" value={monConfig.heatmap_high} min={3} max={500} step={1} onChange={(v) => setMonConfig(c => ({ ...c, heatmap_high: Math.max(v, c.heatmap_medium + 1) }))} unit=" sessions" color="#f87171" />
 
         {divider}
@@ -84,12 +83,6 @@ export function MonitoringPanel({
         <SliderField label="Thin edge threshold" hint="1.5px stroke when sessions reach this count" value={monConfig.edge_thin} min={1} max={50} step={1} onChange={(v) => setMonConfig(c => ({ ...c, edge_thin: Math.min(v, c.edge_medium - 1) }))} unit=" sessions" color="#4ade80" />
         <SliderField label="Medium edge threshold" hint="3px stroke" value={monConfig.edge_medium} min={2} max={200} step={1} onChange={(v) => setMonConfig(c => ({ ...c, edge_medium: Math.max(v, c.edge_thin + 1) }))} unit=" sessions" color="#f59e0b" />
         <SliderField label="Thick edge threshold" hint="5px stroke — maximum edge width" value={monConfig.edge_thick} min={3} max={500} step={1} onChange={(v) => setMonConfig(c => ({ ...c, edge_thick: Math.max(v, c.edge_medium + 1) }))} unit=" sessions" color="#f87171" />
-
-        {divider}
-
-        <SectionHeader icon="list_alt" color="#f59e0b" title="Display Limits" subtitle="Caps for UI performance under high load" />
-        <SliderField label="Max sessions in panel" hint="Sessions beyond this cap are not shown in the right panel list (heatmap still reflects all)" value={monConfig.panel_max_sessions} min={10} max={500} step={10} onChange={(v) => setMonConfig(c => ({ ...c, panel_max_sessions: v }))} unit=" sessions" color="#00d1ff" />
-        <SliderField label="Stats window" hint="Rolling time window used for throughput stats" value={monConfig.stats_window_seconds} min={60} max={3600} step={60} onChange={(v) => setMonConfig(c => ({ ...c, stats_window_seconds: v }))} unit="s" color="#00d1ff" />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
           <div style={{ flex: 1 }} />
