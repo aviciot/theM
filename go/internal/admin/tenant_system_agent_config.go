@@ -10,8 +10,10 @@ package admin
 // which remain the fallback used when a tenant has no row here.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -38,6 +40,7 @@ func NewTenantSystemAgentConfigHandler(db DBQuerier, secretKey string) *TenantSy
 func (h *TenantSystemAgentConfigHandler) TenantScopedRoutes(r chi.Router) {
 	r.Get("/my/system-agents/{role}/config", h.Get)
 	r.Put("/my/system-agents/{role}/config", h.Put)
+	r.Post("/my/system-agents/{role}/test-llm", h.Test)
 }
 
 // Get handles GET /admin/my/system-agents/{role}/config.
@@ -77,4 +80,40 @@ func (h *TenantSystemAgentConfigHandler) Put(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// Test handles POST /admin/my/system-agents/{role}/test-llm — probes a
+// provider/model/key for the tenant's own custom-mode config on role. Any
+// field omitted from the body falls back to the tenant's own stored custom_*
+// value, never the platform-global config (there is no tenant-scoped
+// equivalent of the platform's /admin/system-agents/{role}/test-llm route).
+// The request body is NOT logged — it may contain a plaintext api_key.
+func (h *TenantSystemAgentConfigHandler) Test(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	role := chi.URLParam(r, "role")
+
+	var body service.TenantSystemAgentConfigTest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	provider, model, apiKey, baseURL, err := h.svc.ResolveCustomTestInputs(r.Context(), tenantID, role, body)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	ok, testErr := probeLLMWithBase(ctx, provider, model, apiKey, baseURL)
+	resp := map[string]any{"ok": ok}
+	if !ok {
+		resp["error"] = testErr
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

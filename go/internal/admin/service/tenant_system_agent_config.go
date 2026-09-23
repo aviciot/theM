@@ -131,6 +131,62 @@ func (s *TenantSystemAgentConfigService) Upsert(ctx context.Context, tenantID, r
 	return s.toOut(row), nil
 }
 
+// TenantSystemAgentConfigTest is the POST .../test request body — mirrors the
+// platform-global TestLLM shape. Any field left empty falls back to the
+// tenant's own stored custom_* value for role, never the platform config.
+type TenantSystemAgentConfigTest struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	APIKey   string `json:"api_key"`
+	BaseURL  string `json:"base_url"`
+}
+
+// ResolveCustomTestInputs fills gaps in body from the tenant's own stored
+// custom_* fields for role (decrypting the key when the body omits one).
+// Returns ErrValidation when the resolved provider/model/key are still
+// incomplete after filling gaps — same contract as the platform-global
+// TestLLM handler.
+func (s *TenantSystemAgentConfigService) ResolveCustomTestInputs(ctx context.Context, tenantID, role string, body TenantSystemAgentConfigTest) (provider, model, apiKey, baseURL string, err error) {
+	if !validSystemAgentRoles[role] {
+		return "", "", "", "", validation("unknown role")
+	}
+
+	row, rowErr := s.dal.GetTenantSystemAgentConfig(ctx, tenantID, role)
+	stored := dal.TenantSystemAgentConfig{}
+	if rowErr == nil {
+		stored = row
+	}
+
+	provider = body.Provider
+	if provider == "" && stored.CustomProvider != nil {
+		provider = *stored.CustomProvider
+	}
+	model = body.Model
+	if model == "" && stored.CustomModel != nil {
+		model = *stored.CustomModel
+	}
+	baseURL = body.BaseURL
+	if baseURL == "" && stored.CustomBaseURL != nil {
+		baseURL = *stored.CustomBaseURL
+	}
+
+	apiKey = body.APIKey
+	if apiKey == "" && stored.CustomAPIKeyEncrypted != nil {
+		decrypted, decErr := crypto.DecryptStored(s.fernetKey, *stored.CustomAPIKeyEncrypted)
+		if decErr == nil {
+			apiKey = decrypted
+		}
+	}
+
+	if provider == "" || model == "" {
+		return "", "", "", "", validation("provider and model are required")
+	}
+	if apiKey == "" {
+		return "", "", "", "", validation("no API key provided or stored for this role")
+	}
+	return provider, model, apiKey, baseURL, nil
+}
+
 func (s *TenantSystemAgentConfigService) toOut(row dal.TenantSystemAgentConfig) TenantSystemAgentConfigOut {
 	out := TenantSystemAgentConfigOut{
 		Role:               row.Role,

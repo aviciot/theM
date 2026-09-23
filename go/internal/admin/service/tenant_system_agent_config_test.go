@@ -158,6 +158,57 @@ func TestTenantSACService_Upsert_CustomMode_EncryptsKeyBeforePersist(t *testing.
 	}
 }
 
+// ── ResolveCustomTestInputs ────────────────────────────────────────────────────
+
+func TestTenantSACService_ResolveCustomTestInputs_UnknownRole_ReturnsValidation(t *testing.T) {
+	svc := newTenantSACSvc(&fakeDal{})
+	_, _, _, _, err := svc.ResolveCustomTestInputs(context.Background(), "tid", "not_a_role", service.TenantSystemAgentConfigTest{})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestTenantSACService_ResolveCustomTestInputs_BodyOverridesStored(t *testing.T) {
+	enc := "enc:stored-key" // fakeDal doesn't encrypt/decrypt for real; body values win regardless
+	d := &fakeDal{tenantSystemAgentConfig: dal.TenantSystemAgentConfig{
+		Role: "classifier", Mode: "custom",
+		CustomProvider: strp("stored-provider"), CustomModel: strp("stored-model"),
+		CustomAPIKeyEncrypted: &enc,
+	}}
+	svc := newTenantSACSvc(d)
+	provider, model, apiKey, _, err := svc.ResolveCustomTestInputs(context.Background(), "tid", "classifier", service.TenantSystemAgentConfigTest{
+		Provider: "body-provider", Model: "body-model", APIKey: "body-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider != "body-provider" || model != "body-model" || apiKey != "body-key" {
+		t.Errorf("want body values to win over stored, got (%q, %q, %q)", provider, model, apiKey)
+	}
+}
+
+func TestTenantSACService_ResolveCustomTestInputs_NoProviderAnywhere_ReturnsValidation(t *testing.T) {
+	svc := newTenantSACSvc(&fakeDal{getTenantSystemAgentConfigErr: pgx.ErrNoRows})
+	_, _, _, _, err := svc.ResolveCustomTestInputs(context.Background(), "tid", "classifier", service.TenantSystemAgentConfigTest{})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation when nothing is stored and body is empty, got %v", err)
+	}
+}
+
+func TestTenantSACService_ResolveCustomTestInputs_NoKeyAnywhere_ReturnsValidation(t *testing.T) {
+	svc := newTenantSACSvc(&fakeDal{tenantSystemAgentConfig: dal.TenantSystemAgentConfig{
+		Role: "classifier", Mode: "custom",
+		CustomProvider: strp("p"), CustomModel: strp("m"),
+		// no CustomAPIKeyEncrypted
+	}})
+	_, _, _, _, err := svc.ResolveCustomTestInputs(context.Background(), "tid", "classifier", service.TenantSystemAgentConfigTest{
+		Provider: "p", Model: "m",
+	})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation when no key is stored or supplied, got %v", err)
+	}
+}
+
 func TestTenantSACService_Upsert_CustomMode_NoNewKey_KeepsExistingEncrypted(t *testing.T) {
 	existingEnc := "enc:existing-value"
 	d := &fakeDal{tenantSystemAgentConfig: dal.TenantSystemAgentConfig{

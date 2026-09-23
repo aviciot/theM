@@ -1,5 +1,5 @@
 # Tenant-Level LLM Provider Configuration — Plan
-# Status: approved design, implementing — steps 1-5 of 7 complete
+# Status: approved design, implementing — steps 1-6 of 7 complete
 # Owner: platform
 # Last updated: 2026-09-23
 
@@ -394,14 +394,65 @@ service tests, 8 handler tests, and 6 DAL integration tests against live Postgre
 total, all passing, `go test ./...` 0 failures full suite, `go test -race ./internal/admin/...`
 clean.
 
-**Not yet built (step 6 remains):** the frontend General/Custom switch on the classifier and
-card_synthesizer role cards (`RoleCard.tsx` + `page.tsx`'s `system_agents` tab) — the backend route
-this step built has no UI consumer yet. The platform-admin-on-tenant route mirror for keys
-(`/admin/tenants/{id}/llm-providers/{name}/keys...`, from step 3) remains not built — still not
-needed by anything.
+**Step 6 — COMPLETE (2026-09-23).** Frontend General/Custom switch on the classifier and
+card_synthesizer role cards.
 
-**Not live-verified against a running instance this session** — no browser-automation tool was
-available, and the new route was only exercised via Go handler tests with a fake DB, not a real
-HTTP round trip through the live stack. Recommend a manual `curl`/browser check of
-`GET /admin/my/system-agents/classifier/config` against the live `them-go-bridge` before trusting
-the wiring fully, once step 6's frontend gives a natural reason to do so.
+**Design confirmed with the user before implementing:** the General/Custom switch is inherently
+tenant-scoped (mode "general" means "use *my own* LLM Providers config"), but the existing System
+Agents tab and its `RoleCard.tsx` are wired to the platform-global `/admin/system-agents` route
+(super_admin only). A plain tenant admin opening that tab today gets a failed fetch and an
+"unavailable" banner — confirmed as a pre-existing gap, not something to paper over. Resolved by
+branching the tab's render on role: super_admin keeps today's `RoleCard` unchanged; tenant admin
+now gets a new `TenantRoleCard`, backed entirely by step 5's tenant-scoped route. The
+platform-global `getSystemAgents()` fetch on page load is now skipped entirely for tenant admins
+(previously fired unconditionally and always failed for them) — closes the false "unavailable"
+banner as a side effect, not the main goal.
+
+Confirmed with the user: **classifier and card_synthesizer, when a tenant sets "general" mode, run
+using that tenant's own API key against that tenant's own workspace only** — resolution is
+tenant-scoped end-to-end (step 5's `resolveSystemAgentRole`, keyed by `tenantID` at every DB
+lookup), and results (agent category/icon, synthesized entry-point card) are only ever written to
+that same tenant's own rows. No cross-tenant reads, no shared state between tenants' general-mode
+calls.
+
+**Backend addition needed to keep "Custom" mode fully self-contained:** the plan's step 6 spec
+said Custom mode gets "+ Test button, unchanged" — but the existing test route
+(`POST /admin/system-agents/{role}/test-llm`) is mounted under the super_admin-only group, so a
+tenant admin can't call it for their own custom config. Added a tenant-scoped mirror,
+`POST /admin/my/system-agents/{role}/test-llm` (`TenantSystemAgentConfigHandler.Test`, new service
+method `ResolveCustomTestInputs`) — same `probeLLMWithBase` call, but gap-fills from the tenant's
+own stored `custom_*` fields when the request body omits one, never from the platform config.
+
+**Frontend:**
+- New `frontend/src/app/admin/settings/TenantRoleCard.tsx` — General/Custom segmented switch.
+  General: provider dropdown (from `listMyLLMProviders()`, filtered to `enabled`) → key dropdown
+  (from `listProviderKeys(provider)`, "use default key" as the no-selection option) — no free-text
+  fields, no test button (testing happens at the key level in the LLM Providers tab, per the plan).
+  Custom: provider/model/api_key/base_url/system_prompt form + Test button, same shape as the
+  platform's `RoleCard`, wired to the new tenant-scoped test route and the masked-key display from
+  `TenantSystemAgentConfigOut.custom_api_key_masked`.
+- `frontend/src/app/admin/settings/page.tsx`: `system_agents` tab now renders `RoleCard` for
+  super_admin, `TenantRoleCard` for everyone else; the platform-global config fetch on mount is
+  gated behind `isSuperAdmin`.
+- `apiTypes.ts`/`api.ts`: `TenantSystemAgentConfigOut`/`In`/`TestInput` types, `themApi.
+  getTenantSystemAgentConfig`/`putTenantSystemAgentConfig`/`testTenantSystemAgentLlm`.
+
+Tests: 4 new service tests (`ResolveCustomTestInputs`), 3 new handler tests (the `Test` route) —
+`go/TEST_INDEX.md` S1-147, S1-148. `go test ./...` 0 failures full suite. `npx tsc --noEmit` 0
+errors. `them-go-bridge` rebuilt (Dockerfile runs the full suite at build time — 0 failures
+confirmed again in-image) and force-recreated; confirmed healthy startup via logs, no crash loop.
+`them-frontend` picked up the new component via its existing bind-mount + `npm run dev` hot reload
+— confirmed compiling with 0 errors via container logs, and `/admin/settings` already served a 200
+in those logs before this write-up (a live user request, not a check I ran).
+
+**Not live-verified end-to-end this session** — no browser-automation tool was available, and per
+the user's earlier standing preference this session did not probe the live API directly with
+`curl` either. The new tenant route was only exercised through Go handler tests with a fake DB.
+Recommend an actual logged-in tenant-admin click-through (switch to General, pick a provider/key,
+save, reload and confirm it persisted; switch to Custom, test a key, save) before trusting this
+fully — nothing in this repo's test suite drives that real round trip yet.
+
+**Not yet built:** the platform-admin-on-tenant route mirror for keys
+(`/admin/tenants/{id}/llm-providers/{name}/keys...`, from step 3) remains not built — still not
+needed by anything. Step 7 (final full-suite pass + docs sign-off) is effectively just this
+write-up plus the test runs already recorded above.

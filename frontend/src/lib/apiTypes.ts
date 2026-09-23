@@ -50,6 +50,39 @@ export interface SystemAgentRoleIn {
   api_key?: string | null;
 }
 
+// Tenant self-service system-agent role config (general/custom mode) — step 5/6
+// of docs/TENANT_LLM_PROVIDERS_PLAN.md. Distinct from SystemAgentRoleOut/In
+// above, which are the platform-global (super_admin-only) config.
+export interface TenantSystemAgentConfigOut {
+  role: string;
+  mode: 'general' | 'custom';
+  provider_name: string | null;
+  key_id: number | null;
+  custom_provider: string | null;
+  custom_model: string | null;
+  custom_api_key_masked: string | null;
+  custom_base_url: string | null;
+  custom_system_prompt: string | null;
+}
+
+export interface TenantSystemAgentConfigIn {
+  mode: 'general' | 'custom';
+  provider_name?: string | null;
+  key_id?: number | null;
+  custom_provider?: string | null;
+  custom_model?: string | null;
+  custom_api_key?: string | null;
+  custom_base_url?: string | null;
+  custom_system_prompt?: string | null;
+}
+
+export interface TenantSystemAgentConfigTestInput {
+  provider?: string;
+  model?: string;
+  api_key?: string;
+  base_url?: string;
+}
+
 export interface Agent {
   id: string;
   slug: string;

@@ -106,6 +106,7 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 //	POST   /admin/system-agents/{role}/test-llm
 //	GET    /admin/my/system-agents/{role}/config
 //	PUT    /admin/my/system-agents/{role}/config
+//	POST   /admin/my/system-agents/{role}/test-llm
 //	GET    /runs
 //	GET    /runs/stats
 //	POST   /runs/bulk-delete

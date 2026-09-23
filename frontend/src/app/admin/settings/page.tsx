@@ -6,6 +6,7 @@ import { themApi, type SystemAgentRoleOut, type SystemAgentRoleIn, type Monitori
 import { useAuthStore } from '@/stores/authStore';
 import { ROLE_DEFAULTS, MONITORING_DEFAULTS } from './settingsConstants';
 import { RoleCard, type RoleForm } from './RoleCard';
+import { TenantRoleCard } from './TenantRoleCard';
 import { MonitoringPanel } from './MonitoringPanel';
 import { LLMProvidersPanel } from './LLMProvidersPanel';
 function roleToForm(r: SystemAgentRoleOut): RoleForm {
@@ -38,39 +39,45 @@ export default function AdminSettingsPage() {
   const [monSaveMsg, setMonSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    const agentsFetch = themApi.getSystemAgents()
-      .then((data) => {
-        const order = Object.keys(data.roles);
-        const merged = Array.from(new Set([...order, ...Object.keys(ROLE_DEFAULTS)]));
-        setRoleOrder(merged);
-        const newForms: Record<string, RoleForm> = {};
-        const newHints: Record<string, string | null> = {};
-        for (const role of merged) {
-          const srv = data.roles[role];
-          newForms[role] = srv ? roleToForm(srv) : { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' };
-          newHints[role] = srv?.api_key_hint ?? null;
-        }
-        setForms(newForms);
-        setHints(newHints);
-      })
-      .catch(() => {
-        setUnavailable(true);
-        const order = Object.keys(ROLE_DEFAULTS);
-        setRoleOrder(order);
-        const newForms: Record<string, RoleForm> = {};
-        for (const role of order) {
-          newForms[role] = { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' };
-        }
-        setForms(newForms);
-        setHints({});
-      });
+    // The platform-global /admin/system-agents route is super_admin-only —
+    // tenant admins get their own tenant-scoped config via TenantRoleCard,
+    // which loads its own data. Skip this fetch entirely for tenant admins
+    // rather than firing a call that will always fail.
+    const agentsFetch = isSuperAdmin
+      ? themApi.getSystemAgents()
+        .then((data) => {
+          const order = Object.keys(data.roles);
+          const merged = Array.from(new Set([...order, ...Object.keys(ROLE_DEFAULTS)]));
+          setRoleOrder(merged);
+          const newForms: Record<string, RoleForm> = {};
+          const newHints: Record<string, string | null> = {};
+          for (const role of merged) {
+            const srv = data.roles[role];
+            newForms[role] = srv ? roleToForm(srv) : { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' };
+            newHints[role] = srv?.api_key_hint ?? null;
+          }
+          setForms(newForms);
+          setHints(newHints);
+        })
+        .catch(() => {
+          setUnavailable(true);
+          const order = Object.keys(ROLE_DEFAULTS);
+          setRoleOrder(order);
+          const newForms: Record<string, RoleForm> = {};
+          for (const role of order) {
+            newForms[role] = { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' };
+          }
+          setForms(newForms);
+          setHints({});
+        })
+      : Promise.resolve(setRoleOrder(Object.keys(ROLE_DEFAULTS)));
 
     const monFetch = themApi.getMonitoringConfig()
       .then((cfg) => setMonConfig(cfg))
       .catch(() => setMonConfig(MONITORING_DEFAULTS));
 
     Promise.all([agentsFetch, monFetch]).finally(() => setLoading(false));
-  }, []);
+  }, [isSuperAdmin]);
 
   function patchForm(role: string, patch: Partial<RoleForm>) {
     setForms((prev) => ({ ...prev, [role]: { ...prev[role], ...patch } }));
@@ -163,9 +170,11 @@ export default function AdminSettingsPage() {
             {activeTab === 'system_agents' && (
               <>
                 <p style={{ fontSize: '13px', color: 'var(--tm-text-muted)', margin: '0 0 24px 0', lineHeight: 1.5 }}>
-                  Internal LLM roles used by the platform. Each role has its own provider, model, and credentials.
+                  {isSuperAdmin
+                    ? 'Internal LLM roles used by the platform. Each role has its own provider, model, and credentials.'
+                    : 'Choose how each role calls an LLM: General settings uses your own saved LLM Providers key; Custom lets you set a separate one just for this role.'}
                 </p>
-                {unavailable && !loading && (
+                {isSuperAdmin && unavailable && !loading && (
                   <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '20px', background: 'rgba(230,184,92,0.08)', border: '1px solid rgba(230,184,92,0.22)', color: '#e6b85c', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span className="material-symbols-outlined" style={{ fontSize: '16px', flexShrink: 0 }}>info</span>
                     Settings backend not available yet — changes will be saved once the backend is deployed.
@@ -175,16 +184,20 @@ export default function AdminSettingsPage() {
                 {!loading && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     {roleOrder.map((role) => (
-                      <RoleCard
-                        key={role}
-                        role={role}
-                        apiKeyHint={hints[role] ?? null}
-                        form={forms[role] ?? { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' }}
-                        onChange={(patch) => patchForm(role, patch)}
-                        onSave={() => handleSave(role)}
-                        saving={!!saving[role]}
-                        saveMsg={saveMsgs[role] ?? null}
-                      />
+                      isSuperAdmin ? (
+                        <RoleCard
+                          key={role}
+                          role={role}
+                          apiKeyHint={hints[role] ?? null}
+                          form={forms[role] ?? { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' }}
+                          onChange={(patch) => patchForm(role, patch)}
+                          onSave={() => handleSave(role)}
+                          saving={!!saving[role]}
+                          saveMsg={saveMsgs[role] ?? null}
+                        />
+                      ) : (
+                        <TenantRoleCard key={role} role={role} />
+                      )
                     ))}
                   </div>
                 )}

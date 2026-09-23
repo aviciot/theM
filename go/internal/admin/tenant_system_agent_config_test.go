@@ -92,3 +92,30 @@ func TestSAC_Put_CustomMode_NeverReturnsPlaintextKey(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.NotContains(t, rr.Body.String(), "sk-super-secret-plaintext")
 }
+
+// SAC-09: POST test-llm with invalid JSON returns 400.
+func TestSAC_Test_InvalidJSON_Returns400(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	r := buildTenantSACRouter(db)
+	req := httptest.NewRequest(http.MethodPost, "/my/system-agents/classifier/test-llm", bytes.NewBufferString("not-json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+// SAC-10: POST test-llm with no provider/model anywhere (no stored row, none
+// in the body) returns 400, not a panic or a probe attempt with empty values.
+func TestSAC_Test_NoProviderAnywhere_Returns400(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	rr := do(t, buildTenantSACRouter(db), http.MethodPost, "/my/system-agents/classifier/test-llm", map[string]any{})
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+// SAC-11: POST test-llm for an unknown role returns 400.
+func TestSAC_Test_UnknownRole_Returns400(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	rr := do(t, buildTenantSACRouter(db), http.MethodPost, "/my/system-agents/not_a_role/test-llm",
+		map[string]any{"provider": "anthropic", "model": "m", "api_key": "sk-x"})
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}

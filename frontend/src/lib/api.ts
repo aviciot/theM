@@ -122,6 +122,9 @@ export type {
   LLMProviderKeyPatchInput,
   LLMProviderKeyTestResult,
   LLMProviderModelsResult,
+  TenantSystemAgentConfigOut,
+  TenantSystemAgentConfigIn,
+  TenantSystemAgentConfigTestInput,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -215,6 +218,9 @@ import type {
   LLMProviderKeyPatchInput,
   LLMProviderKeyTestResult,
   LLMProviderModelsResult,
+  TenantSystemAgentConfigOut,
+  TenantSystemAgentConfigIn,
+  TenantSystemAgentConfigTestInput,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -800,4 +806,12 @@ export const themApi = {
     api.post<LLMProviderKeyTestResult>(`/admin/my/llm-providers/${providerName}/keys/${keyId}/test`, {}),
   listAvailableModels: (providerName: string, keyId: number) =>
     api.get<LLMProviderModelsResult>(`/admin/my/llm-providers/${providerName}/models?key_id=${keyId}`),
+
+  // Self-service system-agent role config (general/custom mode) — tenant admin only
+  getTenantSystemAgentConfig: (role: string) =>
+    api.get<TenantSystemAgentConfigOut>(`/admin/my/system-agents/${role}/config`),
+  putTenantSystemAgentConfig: (role: string, body: TenantSystemAgentConfigIn) =>
+    api.put<TenantSystemAgentConfigOut>(`/admin/my/system-agents/${role}/config`, body),
+  testTenantSystemAgentLlm: (role: string, body: TenantSystemAgentConfigTestInput) =>
+    api.post<{ ok: boolean; error?: string }>(`/admin/my/system-agents/${role}/test-llm`, body),
 };
