@@ -20,9 +20,12 @@ func NewPgxLogVerbosityLoader(pools *db.Pools) *PgxLogVerbosityLoader {
 }
 
 // Load returns the effective log-verbosity string ("off"|"status"|"full") for
-// the given applicationID. Returns dal.DefaultLogVerbosity, error on DB failure
-// — caller falls back to the default (fail-open).
-func (l *PgxLogVerbosityLoader) Load(ctx context.Context, applicationID string) (string, error) {
+// the given applicationID, which the caller (Lifecycle.StartAppFlow) has
+// already resolved via a trusted, server-side lookup (h.EPConfig), not a
+// user-supplied per-request path — tenantID is passed through only to satisfy
+// GetAppLogVerbosity's ownership check. Returns dal.DefaultLogVerbosity, error
+// on DB failure — caller falls back to the default (fail-open).
+func (l *PgxLogVerbosityLoader) Load(ctx context.Context, tenantID, applicationID string) (string, error) {
 	d := dal.NewDBFromAdminQuerier(l.pools.NewAdminQuerier())
-	return d.GetAppLogVerbosity(ctx, applicationID)
+	return d.GetAppLogVerbosity(ctx, tenantID, applicationID)
 }

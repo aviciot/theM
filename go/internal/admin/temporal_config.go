@@ -5,9 +5,11 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // TemporalConfigHandler handles platform-level and per-app Temporal execution config routes.
@@ -66,8 +68,16 @@ func (h *TemporalConfigHandler) PutPlatform(w http.ResponseWriter, r *http.Reque
 // Returns the effective merged config (app override → platform → hardcoded defaults).
 func (h *TemporalConfigHandler) GetApp(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
-	cfg, err := h.svc.GetTemporalEffectiveConfig(r.Context(), appID)
+	if _, err := uuid.Parse(appID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	cfg, err := h.svc.GetTemporalEffectiveConfig(r.Context(), tenantID, appID)
 	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
@@ -78,12 +88,17 @@ func (h *TemporalConfigHandler) GetApp(w http.ResponseWriter, r *http.Request) {
 // Stores per-app overrides and returns the effective merged config.
 func (h *TemporalConfigHandler) PutApp(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
+	if _, err := uuid.Parse(appID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
 	var body dal.TemporalConfig
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	out, err := h.svc.PutTemporalAppConfig(r.Context(), appID, body)
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	out, err := h.svc.PutTemporalAppConfig(r.Context(), tenantID, appID, body)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return

@@ -2,9 +2,11 @@ package admin_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -13,7 +15,28 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/admin/dal"
 )
+
+// testAppID is a fixed well-formed UUID used as the {id} route param by the
+// tenant-scoped per-app handler tests below (LogVerbosityHandler,
+// TemporalConfigHandler.AppRoutes) — both handlers now validate {id} as a
+// UUID and read the caller's tenant from context (testTenantID, defined in
+// admin_test.go), per the docs/APP_CANVAS_DEBUG_PLAN.md Phase 4
+// tenant-isolation fix.
+const testAppID = "00000000-0000-0000-0000-0000000000b1"
+
+// mountAppRoute builds a chi router with {id} as the route param, injecting
+// testTenantID via withTestTenant (admin_test.go) so
+// tenantctx.MustTenantIDFromCtx does not panic.
+func mountAppRoute(mount func(r chi.Router)) http.Handler {
+	r := chi.NewRouter()
+	r.Route("/applications/{id}", func(sub chi.Router) {
+		sub.Use(withTestTenant)
+		mount(sub)
+	})
+	return r
+}
 
 // ── MonitoringConfigHandler tests ─────────────────────────────────────────
 
@@ -233,14 +256,17 @@ func TestPutTemporalPlatformConfig_BadJSON_Returns400(t *testing.T) {
 
 // ── LogVerbosityHandler tests (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4) ──────
 
-// LV-1: GET log-verbosity with no stored row — returns 200 with the default.
+// LV-1: GET log-verbosity for an owned application with no stored row —
+// returns 200 with the default. The DAL's tenant-scoped join resolves
+// "no app_debug_config row" server-side via COALESCE, so the query succeeds
+// and scans the default string directly — it does not surface as
+// pgx.ErrNoRows (that now means "app not found or not owned", see LV-7).
 func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {
-	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	db := &fakeDB{queryRowStr: dal.DefaultLogVerbosity}
 	h := admin.NewLogVerbosityHandler(db)
-	r := chi.NewRouter()
-	h.AppRoutes(r)
+	r := mountAppRoute(h.AppRoutes)
 
-	req := httptest.NewRequest(http.MethodGet, "/log-verbosity", nil)
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/log-verbosity", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -254,10 +280,9 @@ func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {
 func TestGetLogVerbosity_StoredRow_ReturnsValue(t *testing.T) {
 	db := &fakeDB{queryRowStr: "full"}
 	h := admin.NewLogVerbosityHandler(db)
-	r := chi.NewRouter()
-	h.AppRoutes(r)
+	r := mountAppRoute(h.AppRoutes)
 
-	req := httptest.NewRequest(http.MethodGet, "/log-verbosity", nil)
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/log-verbosity", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -271,11 +296,10 @@ func TestGetLogVerbosity_StoredRow_ReturnsValue(t *testing.T) {
 func TestPutLogVerbosity_Valid_Returns200(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewLogVerbosityHandler(db)
-	r := chi.NewRouter()
-	h.AppRoutes(r)
+	r := mountAppRoute(h.AppRoutes)
 
 	body, _ := json.Marshal(map[string]any{"log_verbosity": "off"})
-	req := httptest.NewRequest(http.MethodPut, "/log-verbosity", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/applications/"+testAppID+"/log-verbosity", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -290,11 +314,10 @@ func TestPutLogVerbosity_Valid_Returns200(t *testing.T) {
 func TestPutLogVerbosity_InvalidValue_Returns422(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewLogVerbosityHandler(db)
-	r := chi.NewRouter()
-	h.AppRoutes(r)
+	r := mountAppRoute(h.AppRoutes)
 
 	body, _ := json.Marshal(map[string]any{"log_verbosity": "verbose"})
-	req := httptest.NewRequest(http.MethodPut, "/log-verbosity", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/applications/"+testAppID+"/log-verbosity", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -306,13 +329,160 @@ func TestPutLogVerbosity_InvalidValue_Returns422(t *testing.T) {
 func TestPutLogVerbosity_BadJSON_Returns400(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewLogVerbosityHandler(db)
-	r := chi.NewRouter()
-	h.AppRoutes(r)
+	r := mountAppRoute(h.AppRoutes)
 
-	req := httptest.NewRequest(http.MethodPut, "/log-verbosity", bytes.NewReader([]byte(`not json`)))
+	req := httptest.NewRequest(http.MethodPut, "/applications/"+testAppID+"/log-verbosity", bytes.NewReader([]byte(`not json`)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// LV-6: GET log-verbosity for an application id that is malformed (not a
+// UUID) — returns 400, never reaches the DAL.
+func TestGetLogVerbosity_MalformedAppID_Returns400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewLogVerbosityHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/not-a-uuid/log-verbosity", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// LV-7 (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4 tenant-isolation fix): GET
+// log-verbosity for an application id that exists but does not belong to the
+// caller's tenant (simulated by the DAL's tenant-scoped join finding no row,
+// i.e. pgx.ErrNoRows) — returns 404, not 200 with a stored/default value.
+// This is the regression test for the cross-tenant IDOR the code review found:
+// before the fix, the handler never checked ownership at all and would have
+// returned 200 with DefaultLogVerbosity or another tenant's stored setting.
+func TestGetLogVerbosity_AppNotOwnedByTenant_Returns404(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	h := admin.NewLogVerbosityHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/log-verbosity", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// LV-8: PUT log-verbosity for an application id that does not belong to the
+// caller's tenant — returns 404, and must not silently succeed in writing a
+// row for an application the caller does not own.
+func TestPutLogVerbosity_AppNotOwnedByTenant_Returns404(t *testing.T) {
+	db := &fakeDB{execRetErr: pgx.ErrNoRows}
+	h := admin.NewLogVerbosityHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	body, _ := json.Marshal(map[string]any{"log_verbosity": "off"})
+	req := httptest.NewRequest(http.MethodPut, "/applications/"+testAppID+"/log-verbosity", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── TemporalConfigHandler.AppRoutes tests (per-app, tenant-scoped) ─────────
+//
+// TemporalConfigHandler.PlatformRoutes is covered above; AppRoutes shares the
+// same ownership-check pattern added to LogVerbosityHandler in the same fix
+// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4 tenant-isolation fix) and had no
+// dedicated test before this fix.
+
+// ownedAppNoOverrideDB is a QueryRow fake that distinguishes the two SELECTs
+// GetTemporalEffectiveConfig issues: the them.config lookup (no row → use
+// hardcoded defaults, same as every other *_test.go platform-config case)
+// and the them.applications/app_temporal_config join added by the
+// tenant-isolation fix (app is owned, just has no override row, so the
+// COALESCE-free int columns all scan as NULL). fakeDB's QueryRow ignores the
+// sql argument entirely, so it can't express "two different queries, two
+// different outcomes" — this small local fake exists only for that reason.
+type ownedAppNoOverrideDB struct{ fakeDB }
+
+func (d *ownedAppNoOverrideDB) QueryRow(_ context.Context, sql string, _ ...any) admin.SingleRowScanner {
+	if strings.Contains(sql, "them.applications") {
+		return &fakeRow{err: nil} // Scan succeeds, leaves all four *int dest nil.
+	}
+	return &fakeRow{err: pgx.ErrNoRows} // them.config: no platform override row.
+}
+
+// TC-APP-1: GET temporal-config for an owned application with no override
+// row — returns 200 with merged (hardcoded) defaults.
+func TestGetTemporalAppConfig_NoRow_ReturnsMergedDefaults(t *testing.T) {
+	db := &ownedAppNoOverrideDB{}
+	h := admin.NewTemporalConfigHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/temporal-config", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, float64(10), body["max_concurrent_workflows"])
+}
+
+// TC-APP-2: GET temporal-config with a malformed application id — returns
+// 400, never reaches the DAL.
+func TestGetTemporalAppConfig_MalformedAppID_Returns400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewTemporalConfigHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/not-a-uuid/temporal-config", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TC-APP-3 (tenant-isolation fix regression test): GET temporal-config for an
+// application id that does not belong to the caller's tenant — returns 404,
+// not 200 with hardcoded defaults or another tenant's stored override. Before
+// the fix, GetTemporalAppConfig took no tenantID and would have returned
+// (nil, nil) — i.e. "no override, use defaults" — for ANY application id,
+// owned or not.
+func TestGetTemporalAppConfig_AppNotOwnedByTenant_Returns404(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	h := admin.NewTemporalConfigHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/temporal-config", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// fakeDB's QueryRow always returns pgx.ErrNoRows here regardless of which
+	// query ran, so this test alone can't distinguish "no override row" from
+	// "app not owned" at the fake layer — the DAL-level distinction (join
+	// finds zero rows at all vs. finds the app row with a null override) is
+	// exercised by go/internal/admin/dal's own tests. This handler-level test
+	// instead documents and locks in the intended contract: once the DAL
+	// signals pgx.ErrNoRows, the handler must map it to 404, never to a
+	// silent "defaults" 200.
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TC-APP-4: PUT temporal-config for an application id that does not belong
+// to the caller's tenant — returns 404, and must not silently write an
+// override row for an application the caller does not own.
+func TestPutTemporalAppConfig_AppNotOwnedByTenant_Returns404(t *testing.T) {
+	db := &fakeDB{execRetErr: pgx.ErrNoRows}
+	h := admin.NewTemporalConfigHandler(db)
+	r := mountAppRoute(h.AppRoutes)
+
+	body, _ := json.Marshal(map[string]any{"max_concurrent_workflows": 5})
+	req := httptest.NewRequest(http.MethodPut, "/applications/"+testAppID+"/temporal-config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

@@ -1075,7 +1075,7 @@ type fakeLogVerbosityLoader struct {
 	err       error
 }
 
-func (f *fakeLogVerbosityLoader) Load(_ context.Context, _ string) (string, error) {
+func (f *fakeLogVerbosityLoader) Load(_ context.Context, _, _ string) (string, error) {
 	return f.verbosity, f.err
 }
 

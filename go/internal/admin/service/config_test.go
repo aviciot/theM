@@ -280,7 +280,7 @@ func TestPutTemporalPlatformConfig_ZeroMaxConcurrent_ReturnsValidationError(t *t
 // LV-SVC-1: no stored row → default "status".
 func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{})
-	v, err := svc.GetLogVerbosity(context.Background(), "app-1")
+	v, err := svc.GetLogVerbosity(context.Background(), "tenant-1", "app-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {
 // LV-SVC-2: stored row is returned as-is.
 func TestGetLogVerbosity_StoredRow_Returned(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{logVerbosity: dal.LogVerbosityOff})
-	v, err := svc.GetLogVerbosity(context.Background(), "app-1")
+	v, err := svc.GetLogVerbosity(context.Background(), "tenant-1", "app-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestGetLogVerbosity_StoredRow_Returned(t *testing.T) {
 // LV-SVC-3: DAL error propagates.
 func TestGetLogVerbosity_DALError_Propagates(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{logVerbosityErr: errors.New("db down")})
-	_, err := svc.GetLogVerbosity(context.Background(), "app-1")
+	_, err := svc.GetLogVerbosity(context.Background(), "tenant-1", "app-1")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -313,7 +313,7 @@ func TestGetLogVerbosity_DALError_Propagates(t *testing.T) {
 // LV-SVC-4: valid value upserts and is echoed back.
 func TestPutLogVerbosity_ValidValue_Upserts(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{})
-	v, err := svc.PutLogVerbosity(context.Background(), "app-1", dal.LogVerbosityFull)
+	v, err := svc.PutLogVerbosity(context.Background(), "tenant-1", "app-1", dal.LogVerbosityFull)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestPutLogVerbosity_ValidValue_Upserts(t *testing.T) {
 // LV-SVC-5: invalid value → validation error, no DAL write attempted.
 func TestPutLogVerbosity_InvalidValue_ReturnsValidationError(t *testing.T) {
 	svc := service.NewConfigService(&fakeDal{})
-	_, err := svc.PutLogVerbosity(context.Background(), "app-1", "verbose")
+	_, err := svc.PutLogVerbosity(context.Background(), "tenant-1", "app-1", "verbose")
 	if err == nil {
 		t.Fatal("expected validation error for invalid log_verbosity, got nil")
 	}

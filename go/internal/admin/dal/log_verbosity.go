@@ -24,14 +24,18 @@ func IsValidLogVerbosity(v string) bool {
 }
 
 // GetAppLogVerbosity reads the per-app trace log-verbosity setting.
-// Returns DefaultLogVerbosity if no row exists yet.
-func (d *DB) GetAppLogVerbosity(ctx context.Context, appID string) (string, error) {
-	const q = `SELECT log_verbosity FROM them.app_debug_config WHERE application_id = $1::uuid`
+// Returns DefaultLogVerbosity if the application has no app_debug_config row yet.
+// Returns pgx.ErrNoRows when the application does not exist or does not belong
+// to tenantID — app_debug_config has no tenant_id column of its own, so
+// ownership is checked via a join to them.applications on every call.
+func (d *DB) GetAppLogVerbosity(ctx context.Context, tenantID, appID string) (string, error) {
+	const q = `
+		SELECT COALESCE(c.log_verbosity, $3)
+		  FROM them.applications a
+		  LEFT JOIN them.app_debug_config c ON c.application_id = a.id
+		 WHERE a.id = $1::uuid AND a.tenant_id = $2::uuid`
 	var v string
-	err := d.q.QueryRow(ctx, q, appID).Scan(&v)
-	if IsNoRows(err) {
-		return DefaultLogVerbosity, nil
-	}
+	err := d.q.QueryRow(ctx, q, appID, tenantID, DefaultLogVerbosity).Scan(&v)
 	if err != nil {
 		return "", err
 	}
@@ -39,12 +43,17 @@ func (d *DB) GetAppLogVerbosity(ctx context.Context, appID string) (string, erro
 }
 
 // UpsertAppLogVerbosity writes the per-app trace log-verbosity setting.
-func (d *DB) UpsertAppLogVerbosity(ctx context.Context, appID, verbosity string) error {
+// Returns pgx.ErrNoRows when the application does not exist or does not
+// belong to tenantID — the INSERT ... SELECT ... RETURNING matches zero rows
+// in that case, same signal GetAppLogVerbosity uses.
+func (d *DB) UpsertAppLogVerbosity(ctx context.Context, tenantID, appID, verbosity string) error {
 	const q = `
 		INSERT INTO them.app_debug_config (application_id, log_verbosity, updated_at)
-		VALUES ($1::uuid, $2, now())
+		SELECT id, $3, now() FROM them.applications WHERE id = $1::uuid AND tenant_id = $2::uuid
 		ON CONFLICT (application_id) DO UPDATE
 		  SET log_verbosity = EXCLUDED.log_verbosity,
-		      updated_at    = now()`
-	return d.q.Exec(ctx, q, appID, verbosity)
+		      updated_at    = now()
+		RETURNING application_id`
+	var returnedID string
+	return d.q.ExecReturning(ctx, q, appID, tenantID, verbosity).Scan(&returnedID)
 }

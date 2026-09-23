@@ -163,8 +163,9 @@ func (lc *Lifecycle) WithRoleChecker(rc RoleChecker) *Lifecycle {
 // TemporalConfigLoader resolves the effective Temporal execution config for an application.
 // If nil or if Load returns an error, StartAppFlow falls back to hardcoded defaults (fail-open).
 type TemporalConfigLoader interface {
-	// Load returns the merged effective Temporal config for the given applicationID.
-	Load(ctx context.Context, applicationID string) (*appflow.TemporalExecCfg, error)
+	// Load returns the merged effective Temporal config for the given applicationID,
+	// scoped to tenantID (the app's already-resolved owning tenant, from h.EPConfig).
+	Load(ctx context.Context, tenantID, applicationID string) (*appflow.TemporalExecCfg, error)
 }
 
 // WithTemporalConfigLoader attaches a TemporalConfigLoader.
@@ -193,8 +194,10 @@ func (lc *Lifecycle) WithAppFlowLLMOverrideLoader(l AppFlowLLMOverrideLoader) *L
 // (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4). If nil or if Load returns an error,
 // StartAppFlow falls back to dal.DefaultLogVerbosity (fail-open).
 type LogVerbosityLoader interface {
-	// Load returns the effective log-verbosity ("off"|"status"|"full") for the given applicationID.
-	Load(ctx context.Context, applicationID string) (string, error)
+	// Load returns the effective log-verbosity ("off"|"status"|"full") for the given
+	// applicationID, scoped to tenantID (the app's already-resolved owning tenant,
+	// from h.EPConfig).
+	Load(ctx context.Context, tenantID, applicationID string) (string, error)
 }
 
 // WithLogVerbosityLoader attaches a LogVerbosityLoader.
@@ -679,7 +682,7 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 
 	// Resolve Temporal execution controls (fail-open: hardcoded defaults on error or nil loader).
 	if lc.temporalCfgLoader != nil {
-		if cfg, err := lc.temporalCfgLoader.Load(ctx, h.EPConfig.AppID); err == nil {
+		if cfg, err := lc.temporalCfgLoader.Load(ctx, h.EPConfig.TenantID, h.EPConfig.AppID); err == nil {
 			input.TemporalCfg = cfg
 		}
 		// On error: leave TemporalCfg nil so the workflow uses its own hardcoded defaults.
@@ -700,7 +703,7 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 	// of what the app owner set for production traffic.
 	input.LogVerbosity = dal.DefaultLogVerbosity
 	if lc.logVerbosityLoader != nil {
-		if v, err := lc.logVerbosityLoader.Load(ctx, h.EPConfig.AppID); err == nil {
+		if v, err := lc.logVerbosityLoader.Load(ctx, h.EPConfig.TenantID, h.EPConfig.AppID); err == nil {
 			input.LogVerbosity = v
 		}
 		// On error: leave LogVerbosity at the default (fail-open).

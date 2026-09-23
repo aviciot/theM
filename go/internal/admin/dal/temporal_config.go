@@ -43,20 +43,25 @@ func (d *DB) UpsertTemporalPlatformConfig(ctx context.Context, cfg TemporalConfi
 }
 
 // GetTemporalAppConfig reads the per-app Temporal config override.
-// Returns nil if no row exists (caller falls back to platform defaults).
-func (d *DB) GetTemporalAppConfig(ctx context.Context, appID string) (*TemporalConfig, error) {
+// Returns nil, nil if the application exists (and belongs to tenantID) but has
+// no app_temporal_config row yet (caller falls back to platform defaults).
+// Returns pgx.ErrNoRows when the application does not exist or does not
+// belong to tenantID — app_temporal_config has no tenant_id column of its
+// own, so ownership is checked via a join to them.applications on every call.
+func (d *DB) GetTemporalAppConfig(ctx context.Context, tenantID, appID string) (*TemporalConfig, error) {
 	const q = `
-		SELECT max_concurrent_workflows, workflow_timeout_s,
-		       activity_timeout_s, retry_max_attempts
-		  FROM them.app_temporal_config
-		 WHERE application_id = $1::uuid`
+		SELECT c.max_concurrent_workflows, c.workflow_timeout_s,
+		       c.activity_timeout_s, c.retry_max_attempts
+		  FROM them.applications a
+		  LEFT JOIN them.app_temporal_config c ON c.application_id = a.id
+		 WHERE a.id = $1::uuid AND a.tenant_id = $2::uuid`
 	var mc, wt, at, ra *int
-	err := d.q.QueryRow(ctx, q, appID).Scan(&mc, &wt, &at, &ra)
-	if IsNoRows(err) {
-		return nil, nil
-	}
+	err := d.q.QueryRow(ctx, q, appID, tenantID).Scan(&mc, &wt, &at, &ra)
 	if err != nil {
 		return nil, err
+	}
+	if mc == nil && wt == nil && at == nil && ra == nil {
+		return nil, nil
 	}
 	return &TemporalConfig{
 		MaxConcurrentWorkflows: mc,
@@ -67,19 +72,25 @@ func (d *DB) GetTemporalAppConfig(ctx context.Context, appID string) (*TemporalC
 }
 
 // UpsertTemporalAppConfig writes per-app Temporal config (NULL fields inherit the platform default).
-func (d *DB) UpsertTemporalAppConfig(ctx context.Context, appID string, cfg TemporalConfig) error {
+// Returns pgx.ErrNoRows when the application does not exist or does not
+// belong to tenantID.
+func (d *DB) UpsertTemporalAppConfig(ctx context.Context, tenantID, appID string, cfg TemporalConfig) error {
 	const q = `
 		INSERT INTO them.app_temporal_config
 		    (application_id, max_concurrent_workflows, workflow_timeout_s,
 		     activity_timeout_s, retry_max_attempts, updated_at)
-		VALUES ($1::uuid, $2, $3, $4, $5, now())
+		SELECT id, $3, $4, $5, $6, now() FROM them.applications WHERE id = $1::uuid AND tenant_id = $2::uuid
 		ON CONFLICT (application_id) DO UPDATE
 		  SET max_concurrent_workflows = EXCLUDED.max_concurrent_workflows,
 		      workflow_timeout_s       = EXCLUDED.workflow_timeout_s,
 		      activity_timeout_s       = EXCLUDED.activity_timeout_s,
 		      retry_max_attempts       = EXCLUDED.retry_max_attempts,
-		      updated_at               = now()`
-	return d.q.Exec(ctx, q, appID, cfg.MaxConcurrentWorkflows, cfg.WorkflowTimeoutS, cfg.ActivityTimeoutS, cfg.RetryMaxAttempts)
+		      updated_at               = now()
+		RETURNING application_id`
+	var returnedID string
+	return d.q.ExecReturning(ctx, q, appID, tenantID,
+		cfg.MaxConcurrentWorkflows, cfg.WorkflowTimeoutS, cfg.ActivityTimeoutS, cfg.RetryMaxAttempts,
+	).Scan(&returnedID)
 }
 
 // MergeTemporalConfigs returns the effective config. App overrides take precedence

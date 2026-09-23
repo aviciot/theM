@@ -160,47 +160,63 @@ func (s *ConfigService) PutTemporalPlatformConfig(ctx context.Context, cfg dal.T
 }
 
 // GetTemporalEffectiveConfig returns the merged config: app override → platform → hardcoded defaults.
-func (s *ConfigService) GetTemporalEffectiveConfig(ctx context.Context, appID string) (dal.TemporalConfig, error) {
+// Returns ErrNotFound when appID does not exist or does not belong to tenantID.
+func (s *ConfigService) GetTemporalEffectiveConfig(ctx context.Context, tenantID, appID string) (dal.TemporalConfig, error) {
 	platform, err := s.dal.GetTemporalPlatformConfig(ctx)
 	if err != nil {
 		return dal.TemporalConfig{}, fmt.Errorf("get temporal platform config: %w", err)
 	}
-	app, err := s.dal.GetTemporalAppConfig(ctx, appID)
+	app, err := s.dal.GetTemporalAppConfig(ctx, tenantID, appID)
 	if err != nil {
+		if dal.IsNoRows(err) {
+			return dal.TemporalConfig{}, ErrNotFound
+		}
 		return dal.TemporalConfig{}, fmt.Errorf("get temporal app config: %w", err)
 	}
 	return dal.MergeTemporalConfigs(platform, app), nil
 }
 
 // PutTemporalAppConfig validates and stores per-app Temporal config override, returning the effective config.
-func (s *ConfigService) PutTemporalAppConfig(ctx context.Context, appID string, cfg dal.TemporalConfig) (dal.TemporalConfig, error) {
+// Returns ErrNotFound when appID does not exist or does not belong to tenantID.
+func (s *ConfigService) PutTemporalAppConfig(ctx context.Context, tenantID, appID string, cfg dal.TemporalConfig) (dal.TemporalConfig, error) {
 	if err := validateTemporalConfig(cfg); err != nil {
 		return dal.TemporalConfig{}, err
 	}
-	if err := s.dal.UpsertTemporalAppConfig(ctx, appID, cfg); err != nil {
+	if err := s.dal.UpsertTemporalAppConfig(ctx, tenantID, appID, cfg); err != nil {
+		if dal.IsNoRows(err) {
+			return dal.TemporalConfig{}, ErrNotFound
+		}
 		return dal.TemporalConfig{}, fmt.Errorf("upsert temporal app config: %w", err)
 	}
-	return s.GetTemporalEffectiveConfig(ctx, appID)
+	return s.GetTemporalEffectiveConfig(ctx, tenantID, appID)
 }
 
 // ── AppFlow trace log-verbosity ─────────────────────────────────────────────
 
 // GetLogVerbosity returns the effective per-app trace log-verbosity setting
-// (DefaultLogVerbosity when no row exists).
-func (s *ConfigService) GetLogVerbosity(ctx context.Context, appID string) (string, error) {
-	v, err := s.dal.GetAppLogVerbosity(ctx, appID)
+// (DefaultLogVerbosity when no row exists). Returns ErrNotFound when appID
+// does not exist or does not belong to tenantID.
+func (s *ConfigService) GetLogVerbosity(ctx context.Context, tenantID, appID string) (string, error) {
+	v, err := s.dal.GetAppLogVerbosity(ctx, tenantID, appID)
 	if err != nil {
+		if dal.IsNoRows(err) {
+			return "", ErrNotFound
+		}
 		return "", fmt.Errorf("get app log verbosity: %w", err)
 	}
 	return v, nil
 }
 
 // PutLogVerbosity validates and stores the per-app trace log-verbosity setting.
-func (s *ConfigService) PutLogVerbosity(ctx context.Context, appID, verbosity string) (string, error) {
+// Returns ErrNotFound when appID does not exist or does not belong to tenantID.
+func (s *ConfigService) PutLogVerbosity(ctx context.Context, tenantID, appID, verbosity string) (string, error) {
 	if !dal.IsValidLogVerbosity(verbosity) {
 		return "", unprocessable(`log_verbosity must be one of "off", "status", "full"`)
 	}
-	if err := s.dal.UpsertAppLogVerbosity(ctx, appID, verbosity); err != nil {
+	if err := s.dal.UpsertAppLogVerbosity(ctx, tenantID, appID, verbosity); err != nil {
+		if dal.IsNoRows(err) {
+			return "", ErrNotFound
+		}
 		return "", fmt.Errorf("upsert app log verbosity: %w", err)
 	}
 	return verbosity, nil
