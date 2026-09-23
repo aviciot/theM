@@ -1,8 +1,8 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (AppFlow Runtime Params review follow-up: 4 issues fixed — BaseURL now
-# reaches the provider, General-mode key/provider mismatch rejected, per-node model selection with
-# allowed_models validation, TTL resized + proactive cleanup on run completion. HEAD 962ddb62,
-# pushed, on top of the same-day per-node LLM credential overrides work (03133ca8).)
+# Last updated: 2026-09-23 (AppFlow Runtime Params review follow-up round 2: 2 gaps fixed — General
+# mode model selector + Custom mode Base URL field wired into the UI, and debug-run lifetime now
+# actually bounded (WorkflowRunTimeout=3h30m) with credential TTL derived from that same bound
+# (3h40m). HEAD 950a587f, pushed, on top of the 4-issue review follow-up (962ddb62).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,7 +10,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `962ddb62` — **pushed to origin/main.**
+HEAD: `950a587f` — **pushed to origin/main.**
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -24,6 +24,9 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+950a587f  docs: record c1f01aa2 review follow-up — bounded debug lifetime + UI wiring
+79ec09ef  feat(app-canvas): wire model selector + Base URL field into debug credential picker
+f0adfecc  fix(appflow): bound debug-run lifetime and derive credential TTL from it
 962ddb62  docs: record the 4-issue review follow-up for AppFlow runtime params
 b715373b  fix(app-canvas): 4 review issues in per-node debug LLM credentials (d941aca3)
 03133ca8  docs: AppFlow runtime-params plan complete + two lessons from this session
@@ -59,11 +62,20 @@ each node, lockstep multi-branch stepping per the "Decisions confirmed (round 2)
 `docs/APP_CANVAS_DEBUG_PLAN.md`), plus canvas node click-to-inspect for a debug session's
 input/output. Phase 5 (setup panel + Run All + real WS consumer) and its follow-on plan
 `docs/APPFLOW_RUNTIME_PARAMS_PLAN.md` (per-node LLM credential overrides for debug runs,
-**including a 4-issue review follow-up this session** — BaseURL now actually reaches the
-provider, General-mode key/provider mismatches rejected, per-node model selection with
-`allowed_models` validation, and proactive Redis cleanup on run completion instead of TTL-only) are
-now both **complete and live-verified** — see that doc's two completion sections for full detail.
-One phase per session — do not start Phase 6 in the same session as whatever comes next.
+**including two rounds of review follow-up this session**) are now both **complete and
+live-verified** — see that doc's three completion sections for full detail. Round 2 (most recent):
+General-mode model selector + Custom-mode Base URL field wired into the picker UI, and debug runs
+now have an actually-enforced wall-clock ceiling (`appflow.DebugRunMaxLifetime` = 3h30m, set as
+`WorkflowRunTimeout` — previously unset entirely for debug runs) with `debugcred.TTL` derived from
+that same ceiling (3h40m = 3h30m + 10min cleanup margin) instead of an independently-guessed flat
+30 minutes. The bound is surfaced to the user via `expires_at`/a panel badge, not just silently
+enforced. One phase per session — do not start Phase 6 in the same session as whatever comes next.
+
+**Manual browser verification still outstanding for round 2** (no headless browser available in
+this environment all session — see the plan doc's round-2 completion section for the exact 7-step
+walkthrough): confirm the model dropdown/free-text field renders correctly in General mode, the
+Base URL input renders in Custom mode, and the `⏱ expires in 3h 30m` badge + upfront description
+text render correctly in a real logged-in session.
 
 **Known limitation carried over, not fixed this session:** a draft canvas containing agent nodes
 still cannot be debugged until it has been published at least once (`unresolved_agent` — see the
