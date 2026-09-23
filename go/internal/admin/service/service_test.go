@@ -125,6 +125,25 @@ type fakeDal struct {
 	upsertedTenantProvider  dal.LLMProvider
 	tenantProviderNotFound  bool
 	upsertTenantProviderErr error
+	upsertTenantProviderCalls []dal.LLMProviderInput
+
+	// LLM provider key fields (db/105)
+	providerKeys              []dal.LLMProviderKey
+	providerKey               dal.LLMProviderKey
+	createdProviderKey        dal.LLMProviderKey
+	updatedProviderKey        dal.LLMProviderKey
+	setDefaultProviderKey     dal.LLMProviderKey
+	getProviderKeyErr         error
+	createProviderKeyErr      error
+	updateProviderKeyErr      error
+	deleteProviderKeyErr      error
+	setDefaultProviderKeyErr  error
+	clearDefaultKeysErr       error
+	setTestResultErr          error
+	createProviderKeyCalls    []dal.LLMProviderKeyInput
+	updateProviderKeyCalls    []dal.LLMProviderKeyInput
+	clearDefaultKeysCalls     int
+	setTestResultCalls        []bool
 
 	// token fields
 	tokens            []dal.Token
@@ -389,13 +408,13 @@ func (f *fakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.TemporalCon
 func (f *fakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
 	return f.temporalCfgErr
 }
-func (f *fakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+func (f *fakeDal) GetTemporalAppConfig(_ context.Context, _, _ string) (*dal.TemporalConfig, error) {
 	return nil, nil
 }
-func (f *fakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+func (f *fakeDal) UpsertTemporalAppConfig(_ context.Context, _, _ string, _ dal.TemporalConfig) error {
 	return f.temporalCfgErr
 }
-func (f *fakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+func (f *fakeDal) GetAppLogVerbosity(_ context.Context, _, _ string) (string, error) {
 	if f.logVerbosityErr != nil {
 		return "", f.logVerbosityErr
 	}
@@ -404,7 +423,7 @@ func (f *fakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error
 	}
 	return f.logVerbosity, nil
 }
-func (f *fakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, v string) error {
+func (f *fakeDal) UpsertAppLogVerbosity(_ context.Context, _, _ string, v string) error {
 	if f.logVerbosityErr != nil {
 		return f.logVerbosityErr
 	}
@@ -460,8 +479,42 @@ func (f *fakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LL
 	}
 	return f.platformProviderByName, nil
 }
-func (f *fakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+func (f *fakeDal) UpsertTenantProvider(_ context.Context, _ string, in dal.LLMProviderInput) (dal.LLMProvider, error) {
+	f.upsertTenantProviderCalls = append(f.upsertTenantProviderCalls, in)
 	return f.upsertedTenantProvider, f.upsertTenantProviderErr
+}
+
+// LLM provider key fakes (db/105).
+func (f *fakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+	return f.providerKeys, nil
+}
+func (f *fakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return f.providerKey, f.getProviderKeyErr
+}
+func (f *fakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return f.providerKey, f.getProviderKeyErr
+}
+func (f *fakeDal) CreateLLMProviderKey(_ context.Context, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+	f.createProviderKeyCalls = append(f.createProviderKeyCalls, in)
+	return f.createdProviderKey, f.createProviderKeyErr
+}
+func (f *fakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+	f.updateProviderKeyCalls = append(f.updateProviderKeyCalls, in)
+	return f.updatedProviderKey, f.updateProviderKeyErr
+}
+func (f *fakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, ok bool) error {
+	f.setTestResultCalls = append(f.setTestResultCalls, ok)
+	return f.setTestResultErr
+}
+func (f *fakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+	f.clearDefaultKeysCalls++
+	return f.clearDefaultKeysErr
+}
+func (f *fakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return f.setDefaultProviderKey, f.setDefaultProviderKeyErr
+}
+func (f *fakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+	return f.deleteProviderKeyErr
 }
 
 // Component definitions registry stub.

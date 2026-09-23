@@ -9,20 +9,22 @@ import (
 // tenant_id is nullable (NULL = platform default, UUID = tenant override).
 const llmProviderSelectCols = `
 	SELECT id, name, display_name, api_key_encrypted, base_url,
-	       default_model, model_pricing, enabled, tenant_id
+	       default_model, model_pricing, enabled, tenant_id, allowed_models
 	FROM them.llm_providers`
 
 // scanProvider scans one llm_providers row from r into an LLMProvider value.
 func scanProvider(r RowScanner) (LLMProvider, error) {
 	var p LLMProvider
 	var modelPricing []byte
+	var allowedModels []byte
 	if err := r.Scan(
 		&p.ID, &p.Name, &p.DisplayName, &p.APIKeyEncrypted, &p.BaseURL,
-		&p.DefaultModel, &modelPricing, &p.Enabled, &p.TenantID,
+		&p.DefaultModel, &modelPricing, &p.Enabled, &p.TenantID, &allowedModels,
 	); err != nil {
 		return p, err
 	}
 	p.ModelPricingRaw = modelPricing
+	p.AllowedModelsRaw = allowedModels
 	return p, nil
 }
 
@@ -51,7 +53,7 @@ func (d *DB) ListProviders(ctx context.Context) ([]LLMProvider, error) {
 func (d *DB) ListProvidersForTenant(ctx context.Context, tenantID string) ([]LLMProvider, error) {
 	const q = `
 		SELECT id, name, display_name, api_key_encrypted, base_url,
-		       default_model, model_pricing, enabled, tenant_id
+		       default_model, model_pricing, enabled, tenant_id, allowed_models
 		FROM them.llm_providers
 		WHERE tenant_id = $1::uuid
 		   OR (tenant_id IS NULL AND name NOT IN (
@@ -100,19 +102,23 @@ func (d *DB) GetProviderByNamePlatform(ctx context.Context, name string) (LLMPro
 func (d *DB) CreateProvider(ctx context.Context, in LLMProviderInput) (LLMProvider, error) {
 	const q = `
 		INSERT INTO them.llm_providers
-		  (name, display_name, api_key_encrypted, base_url, default_model, model_pricing, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		  (name, display_name, api_key_encrypted, base_url, default_model, model_pricing, enabled, allowed_models)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, name, display_name, api_key_encrypted, base_url,
-		          default_model, model_pricing, enabled, tenant_id`
+		          default_model, model_pricing, enabled, tenant_id, allowed_models`
 
 	modelPricingJSON := in.ModelPricingRaw
 	if modelPricingJSON == nil {
 		modelPricingJSON = []byte("{}")
 	}
+	allowedModelsJSON := in.AllowedModelsRaw
+	if allowedModelsJSON == nil {
+		allowedModelsJSON = []byte("[]")
+	}
 
 	row := d.q.ExecReturning(ctx, q,
 		in.Name, in.DisplayName, in.APIKeyEncrypted, in.BaseURL,
-		in.DefaultModel, modelPricingJSON, in.Enabled,
+		in.DefaultModel, modelPricingJSON, in.Enabled, allowedModelsJSON,
 	)
 	return scanProvider(&singleToRow{s: row})
 }
@@ -123,8 +129,8 @@ func (d *DB) CreateProvider(ctx context.Context, in LLMProviderInput) (LLMProvid
 func (d *DB) UpsertTenantProvider(ctx context.Context, tenantID string, in LLMProviderInput) (LLMProvider, error) {
 	const q = `
 		INSERT INTO them.llm_providers
-		  (name, display_name, api_key_encrypted, base_url, default_model, model_pricing, enabled, tenant_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid)
+		  (name, display_name, api_key_encrypted, base_url, default_model, model_pricing, enabled, tenant_id, allowed_models)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9)
 		ON CONFLICT (name, tenant_id) WHERE tenant_id IS NOT NULL
 		DO UPDATE SET
 		  display_name     = EXCLUDED.display_name,
@@ -133,18 +139,23 @@ func (d *DB) UpsertTenantProvider(ctx context.Context, tenantID string, in LLMPr
 		  default_model    = EXCLUDED.default_model,
 		  model_pricing    = EXCLUDED.model_pricing,
 		  enabled          = EXCLUDED.enabled,
+		  allowed_models   = EXCLUDED.allowed_models,
 		  updated_at       = now()
 		RETURNING id, name, display_name, api_key_encrypted, base_url,
-		          default_model, model_pricing, enabled, tenant_id`
+		          default_model, model_pricing, enabled, tenant_id, allowed_models`
 
 	modelPricingJSON := in.ModelPricingRaw
 	if modelPricingJSON == nil {
 		modelPricingJSON = []byte("{}")
 	}
+	allowedModelsJSON := in.AllowedModelsRaw
+	if allowedModelsJSON == nil {
+		allowedModelsJSON = []byte("[]")
+	}
 
 	row := d.q.ExecReturning(ctx, q,
 		in.Name, in.DisplayName, in.APIKeyEncrypted, in.BaseURL,
-		in.DefaultModel, modelPricingJSON, in.Enabled, tenantID,
+		in.DefaultModel, modelPricingJSON, in.Enabled, tenantID, allowedModelsJSON,
 	)
 	return scanProvider(&singleToRow{s: row})
 }
@@ -156,19 +167,23 @@ func (d *DB) UpdateProvider(ctx context.Context, id int64, in LLMProviderInput) 
 	const q = `
 		UPDATE them.llm_providers
 		SET name=$2, display_name=$3, api_key_encrypted=$4, base_url=$5,
-		    default_model=$6, model_pricing=$7, enabled=$8, updated_at=now()
+		    default_model=$6, model_pricing=$7, enabled=$8, allowed_models=$9, updated_at=now()
 		WHERE id=$1
 		RETURNING id, name, display_name, api_key_encrypted, base_url,
-		          default_model, model_pricing, enabled, tenant_id`
+		          default_model, model_pricing, enabled, tenant_id, allowed_models`
 
 	modelPricingJSON := in.ModelPricingRaw
 	if modelPricingJSON == nil {
 		modelPricingJSON = []byte("{}")
 	}
+	allowedModelsJSON := in.AllowedModelsRaw
+	if allowedModelsJSON == nil {
+		allowedModelsJSON = []byte("[]")
+	}
 
 	row := d.q.ExecReturning(ctx, q,
 		id, in.Name, in.DisplayName, in.APIKeyEncrypted, in.BaseURL,
-		in.DefaultModel, modelPricingJSON, in.Enabled,
+		in.DefaultModel, modelPricingJSON, in.Enabled, allowedModelsJSON,
 	)
 	return scanProvider(&singleToRow{s: row})
 }
@@ -189,39 +204,42 @@ func (d *DB) DeleteProvider(ctx context.Context, id int64) error {
 // Masking and decryption happen exclusively in the service layer.
 // TenantID is nil for platform-default rows; non-nil for tenant overrides.
 type LLMProvider struct {
-	ID              int64
-	Name            string
-	DisplayName     string
-	APIKeyEncrypted *string // nil when no key is set
-	BaseURL         *string
-	DefaultModel    string
-	ModelPricingRaw []byte  // raw JSONB bytes; may be nil or "{}"
-	Enabled         bool
-	TenantID        *string // nil = platform default; non-nil = tenant UUID
+	ID               int64
+	Name             string
+	DisplayName      string
+	APIKeyEncrypted  *string // nil when no key is set
+	BaseURL          *string
+	DefaultModel     string
+	ModelPricingRaw  []byte  // raw JSONB bytes; may be nil or "{}"
+	Enabled          bool
+	TenantID         *string // nil = platform default; non-nil = tenant UUID
+	AllowedModelsRaw []byte  // raw JSONB array bytes; may be nil or "[]"
 }
 
 // LLMProviderInput is used for both CREATE and the full-UPDATE (fetch-then-modify).
 // The api_key_encrypted field must be pre-encrypted by the service layer.
 type LLMProviderInput struct {
-	Name            string
-	DisplayName     string
-	APIKeyEncrypted *string // nil = no key; non-nil = "enc:..." value
-	BaseURL         *string
-	DefaultModel    string
-	ModelPricingRaw []byte // raw JSONB; nil treated as "{}"
-	Enabled         bool
+	Name             string
+	DisplayName      string
+	APIKeyEncrypted  *string // nil = no key; non-nil = "enc:..." value
+	BaseURL          *string
+	DefaultModel     string
+	ModelPricingRaw  []byte // raw JSONB; nil treated as "{}"
+	Enabled          bool
+	AllowedModelsRaw []byte // raw JSONB array; nil treated as "[]"
 }
 
 // LLMProviderToInput converts an LLMProvider row to an LLMProviderInput for update.
 func LLMProviderToInput(p LLMProvider) LLMProviderInput {
 	return LLMProviderInput{
-		Name:            p.Name,
-		DisplayName:     p.DisplayName,
-		APIKeyEncrypted: p.APIKeyEncrypted,
-		BaseURL:         p.BaseURL,
-		DefaultModel:    p.DefaultModel,
-		ModelPricingRaw: p.ModelPricingRaw,
-		Enabled:         p.Enabled,
+		Name:             p.Name,
+		DisplayName:      p.DisplayName,
+		APIKeyEncrypted:  p.APIKeyEncrypted,
+		BaseURL:          p.BaseURL,
+		DefaultModel:     p.DefaultModel,
+		ModelPricingRaw:  p.ModelPricingRaw,
+		Enabled:          p.Enabled,
+		AllowedModelsRaw: p.AllowedModelsRaw,
 	}
 }
 
@@ -235,4 +253,17 @@ func ModelPricingOrEmpty(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// AllowedModelsOrEmpty unmarshals raw JSONB into a string slice, returning []
+// (non-nil, empty) on failure so JSON responses serialize as [] not null.
+func AllowedModelsOrEmpty(raw []byte) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var s []string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return []string{}
+	}
+	return s
 }

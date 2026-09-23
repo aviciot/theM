@@ -265,16 +265,16 @@ func (f *agentDefFakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.Tem
 func (f *agentDefFakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
 	return nil
 }
-func (f *agentDefFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+func (f *agentDefFakeDal) GetTemporalAppConfig(_ context.Context, _, _ string) (*dal.TemporalConfig, error) {
 	return nil, nil
 }
-func (f *agentDefFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+func (f *agentDefFakeDal) UpsertTemporalAppConfig(_ context.Context, _, _ string, _ dal.TemporalConfig) error {
 	return nil
 }
-func (f *agentDefFakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+func (f *agentDefFakeDal) GetAppLogVerbosity(_ context.Context, _, _ string) (string, error) {
 	return dal.DefaultLogVerbosity, nil
 }
-func (f *agentDefFakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, _ string) error {
+func (f *agentDefFakeDal) UpsertAppLogVerbosity(_ context.Context, _, _, _ string) error {
 	return nil
 }
 func (f *agentDefFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
@@ -377,6 +377,35 @@ func (f *agentDefFakeDal) GetProviderByNamePlatform(_ context.Context, _ string)
 }
 func (f *agentDefFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
+}
+
+// LLM provider key stubs (db/105) — not exercised by agent-definition tests.
+func (f *agentDefFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *agentDefFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *agentDefFakeDal) CreateLLMProviderKey(_ context.Context, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *agentDefFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *agentDefFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, _ bool) error {
+	return nil
+}
+func (f *agentDefFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+func (f *agentDefFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *agentDefFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+	return nil
 }
 func (f *agentDefFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota, error) {
 	return dal.TenantQuota{}, nil

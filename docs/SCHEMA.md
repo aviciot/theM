@@ -7,22 +7,51 @@ Auth schema: `auth_service` (owned by them-auth-service — never access directl
 
 ---
 
-## them.llm_providers
-LLM provider credentials and config. Encrypted API keys via `crypto.py`.
+## them.llm_providers ⭐
+LLM provider-level config per tenant (or platform default). Encrypted API keys via `crypto.py`/`internal/crypto`.
 Migration 057 adds per-tenant override support: `tenant_id IS NULL` = platform default; non-NULL = tenant override.
+Migration 105 adds `allowed_models` — the tenant's own key management moves to the child table
+`them.llm_provider_keys` (multiple named keys per provider); `api_key_encrypted` on this table is frozen to
+legacy/platform-row use going forward.
 Unique constraints: `llm_providers_name_platform_uq` (name WHERE tenant_id IS NULL) and `llm_providers_name_tenant_uq` (name, tenant_id WHERE tenant_id IS NOT NULL).
+Queried exclusively via the admin pool (`them_admin`, BYPASSRLS) — tenant isolation is enforced by an
+application-level `WHERE tenant_id = $1` predicate (`tenantctx.MustTenantIDFromCtx`), not by RLS/GUC. RLS
+policies below exist for defense-in-depth only.
 
 | Column | Type | Purpose |
 |---|---|---|
-| id | SERIAL PK | |
+| id | SERIAL PK | referenced by `them.llm_provider_keys.llm_provider_id` |
 | name | TEXT | provider slug: `"anthropic"`, `"openai"` |
 | display_name | TEXT | UI label |
-| api_key_encrypted | TEXT | `enc:` Fernet ciphertext |
+| api_key_encrypted | TEXT | `enc:` Fernet ciphertext — legacy/platform-row key only (added 057) |
 | base_url | TEXT | for openai_compat providers |
 | default_model | TEXT | e.g. `"claude-sonnet-4-6"` |
 | model_pricing | JSONB | `{model: {input: float, output: float}}` per million tokens |
-| enabled | BOOL | |
+| enabled | BOOL | provider on/off for this tenant — independent of whether any key exists |
 | tenant_id | UUID FK→them.tenants(id) | NULL = platform default; non-NULL = per-tenant override (added 057) |
+| allowed_models | JSONB | array of model ID strings the tenant permits for this provider, e.g. `["claude-sonnet-4-6"]` (added 105) |
+
+---
+
+## them.llm_provider_keys ⭐
+Multiple named API keys per `(llm_provider_id, tenant_id)` — added 105 because `llm_providers` can only
+hold one key per provider per tenant. A tenant can save several keys under one provider (e.g.
+"Key_for_april", "Key_for_QA") and mark one as the default used by "general settings" consumers
+(classifier, card_synthesizer, and future LLM-consuming features). Usage/cost per key is *not* stored here —
+it's computed from `them.run_usage` grouped by `llm_provider_key_id`, to avoid double bookkeeping.
+Same admin-pool / application-level tenant-isolation posture as `them.llm_providers` (see above); RLS
+present for defense-in-depth only.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | BIGSERIAL PK | referenced by `them.run_usage.llm_provider_key_id` |
+| llm_provider_id | INTEGER FK→them.llm_providers(id) ON DELETE CASCADE | which provider this key belongs to |
+| tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE | owning tenant |
+| name | TEXT | user-chosen label, e.g. `"Key_for_april"` — unique per (provider, tenant) |
+| api_key_encrypted | TEXT | `enc:` Fernet ciphertext |
+| is_default | BOOL | the key used by "general settings" mode for this provider+tenant; at most one true per (provider, tenant) — enforced by partial unique index `llm_provider_keys_one_default_uq` |
+| last_tested_at | TIMESTAMPTZ | set by the Test button's real probe call |
+| last_test_ok | BOOL | result of the last test |
 
 ---
 
@@ -237,19 +266,21 @@ DB. No reader depended on it for anything beyond a always-empty display field.
 ---
 
 ## them.run_usage
-Per-LLM-call token and cost tracking.
+Per-LLM-call token and cost tracking. (Corrected 2026-09-23 — previous version of this section did not
+match `db/001_schema.sql`.)
 
 | Column | Type | Purpose |
 |---|---|---|
-| id | UUID PK | |
-| run_id | UUID FK→runs | |
-| iteration | INT | which loop iteration |
-| provider | TEXT | e.g. `"anthropic"` |
+| id | BIGSERIAL PK | |
+| run_id | UUID FK→them.runs(id) ON DELETE CASCADE | |
+| user_id | INTEGER | |
+| provider | TEXT | e.g. `"anthropic"` — free text, no FK |
 | model | TEXT | e.g. `"claude-haiku-4-5-20251001"` |
-| input_tokens | INT | |
-| output_tokens | INT | |
-| cost_usd | NUMERIC | |
+| tokens_input | INTEGER | |
+| tokens_output | INTEGER | |
+| cost_usd | NUMERIC(12,8) | |
 | created_at | TIMESTAMPTZ | |
+| llm_provider_key_id | BIGINT FK→them.llm_provider_keys(id) ON DELETE SET NULL | which named key backed this call, nullable (added 105) |
 
 ---
 

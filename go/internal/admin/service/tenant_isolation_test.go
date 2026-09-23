@@ -359,16 +359,16 @@ func (f *isolationFakeDal) GetTemporalPlatformConfig(_ context.Context) (*dal.Te
 func (f *isolationFakeDal) UpsertTemporalPlatformConfig(_ context.Context, _ dal.TemporalConfig) error {
 	return nil
 }
-func (f *isolationFakeDal) GetTemporalAppConfig(_ context.Context, _ string) (*dal.TemporalConfig, error) {
+func (f *isolationFakeDal) GetTemporalAppConfig(_ context.Context, _, _ string) (*dal.TemporalConfig, error) {
 	return nil, nil
 }
-func (f *isolationFakeDal) UpsertTemporalAppConfig(_ context.Context, _ string, _ dal.TemporalConfig) error {
+func (f *isolationFakeDal) UpsertTemporalAppConfig(_ context.Context, _, _ string, _ dal.TemporalConfig) error {
 	return nil
 }
-func (f *isolationFakeDal) GetAppLogVerbosity(_ context.Context, _ string) (string, error) {
+func (f *isolationFakeDal) GetAppLogVerbosity(_ context.Context, _, _ string) (string, error) {
 	return dal.DefaultLogVerbosity, nil
 }
-func (f *isolationFakeDal) UpsertAppLogVerbosity(_ context.Context, _ string, _ string) error {
+func (f *isolationFakeDal) UpsertAppLogVerbosity(_ context.Context, _, _, _ string) error {
 	return nil
 }
 func (f *isolationFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
@@ -397,6 +397,33 @@ func (f *isolationFakeDal) GetProviderByNamePlatform(_ context.Context, _ string
 }
 func (f *isolationFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
+}
+func (f *isolationFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *isolationFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *isolationFakeDal) CreateLLMProviderKey(_ context.Context, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *isolationFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *isolationFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, _ bool) error {
+	return nil
+}
+func (f *isolationFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+func (f *isolationFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+	return dal.LLMProviderKey{}, nil
+}
+func (f *isolationFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+	return nil
 }
 
 // Runtime config + bulk delete stubs — no isolation-specific behavior needed.

@@ -958,3 +958,28 @@ live DB, to ever surface. Consider this a standing reason to spot-check "does ev
 in a hot-path table actually get written" before trusting a table's shape from migrations alone —
 this repo already has a documented precedent (docs/CURRENT.md's `them-agent-runtime` crash-loop
 entry, 2026-09-22) of exactly this class of drift going unnoticed for a long time.
+
+## New SERIAL/BIGSERIAL table: table GRANT is not enough, the sequence needs its own GRANT (found 2026-09-23)
+
+`db/105_llm_provider_keys.sql` created `them.llm_provider_keys` (BIGSERIAL PK) and granted
+`them_admin`/`them_app` access on the table itself — but every `INSERT` still failed with
+`permission denied for sequence llm_provider_keys_id_seq (SQLSTATE 42501)`.
+
+**Why:** `db/070_rls_roles.sql` has `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA them TO
+them_admin/them_app` — but that statement only affects sequences that existed in the schema *at
+the moment it ran*. It is not a standing default privilege applied to sequences created later.
+Every migration since 070 that adds a `SERIAL`/`BIGSERIAL` column has needed (and — audit this if
+touching an older one — may be missing) its own explicit
+`GRANT USAGE, SELECT ON SEQUENCE them.<table>_id_seq TO <role>;` alongside the table grant.
+
+**Why it wasn't caught by inspection:** `\dp them.llm_provider_keys` showed the table grants as
+correct. Sequences carry a completely separate ACL (`\dp them.llm_provider_keys_id_seq`) that
+nothing checks by default — the failure only appears at actual INSERT time, which is exactly why
+the integration test (real Postgres, not a mock) caught it and a table-grant read-through would
+not have.
+
+**Fix:** added the explicit sequence grant to the migration and re-ran it against the live DB.
+
+**Watch for:** any new migration that creates a table with a `SERIAL`/`BIGSERIAL` PK. Grant the
+sequence in the same migration as the table, and verify with a real INSERT via an integration test
+— not just `\dp` on the table — before considering the migration done.

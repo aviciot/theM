@@ -163,15 +163,19 @@ type Dal interface {
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error
 
-	// Temporal execution controls — platform and per-app
+	// Temporal execution controls — platform and per-app.
+	// GetTemporalAppConfig/UpsertTemporalAppConfig return dal-level pgx.ErrNoRows
+	// (via IsNoRows) when appID does not exist or does not belong to tenantID.
 	GetTemporalPlatformConfig(ctx context.Context) (*dal.TemporalConfig, error)
 	UpsertTemporalPlatformConfig(ctx context.Context, cfg dal.TemporalConfig) error
-	GetTemporalAppConfig(ctx context.Context, appID string) (*dal.TemporalConfig, error)
-	UpsertTemporalAppConfig(ctx context.Context, appID string, cfg dal.TemporalConfig) error
+	GetTemporalAppConfig(ctx context.Context, tenantID, appID string) (*dal.TemporalConfig, error)
+	UpsertTemporalAppConfig(ctx context.Context, tenantID, appID string, cfg dal.TemporalConfig) error
 
-	// AppFlow trace log-verbosity — per-app only (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4)
-	GetAppLogVerbosity(ctx context.Context, appID string) (string, error)
-	UpsertAppLogVerbosity(ctx context.Context, appID, verbosity string) error
+	// AppFlow trace log-verbosity — per-app only (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+	// Return dal-level pgx.ErrNoRows (via IsNoRows) when appID does not exist or
+	// does not belong to tenantID.
+	GetAppLogVerbosity(ctx context.Context, tenantID, appID string) (string, error)
+	UpsertAppLogVerbosity(ctx context.Context, tenantID, appID, verbosity string) error
 
 	// LLM providers — platform-global, no tenant
 	ListProviders(ctx context.Context) ([]dal.LLMProvider, error)
@@ -185,6 +189,17 @@ type Dal interface {
 	GetProviderByNameForTenant(ctx context.Context, name, tenantID string) (dal.LLMProvider, error)
 	GetProviderByNamePlatform(ctx context.Context, name string) (dal.LLMProvider, error)
 	UpsertTenantProvider(ctx context.Context, tenantID string, in dal.LLMProviderInput) (dal.LLMProvider, error)
+
+	// LLM provider keys — multiple named keys per (provider, tenant), db/105
+	ListLLMProviderKeys(ctx context.Context, llmProviderID int64, tenantID string) ([]dal.LLMProviderKey, error)
+	GetLLMProviderKey(ctx context.Context, id int64, tenantID string) (dal.LLMProviderKey, error)
+	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID string) (dal.LLMProviderKey, error)
+	CreateLLMProviderKey(ctx context.Context, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error)
+	UpdateLLMProviderKey(ctx context.Context, id int64, tenantID string, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error)
+	SetLLMProviderKeyTestResult(ctx context.Context, id int64, tenantID string, ok bool) error
+	ClearDefaultLLMProviderKeys(ctx context.Context, llmProviderID int64, tenantID string) error
+	SetDefaultLLMProviderKey(ctx context.Context, id int64, tenantID string) (dal.LLMProviderKey, error)
+	DeleteLLMProviderKey(ctx context.Context, id int64, tenantID string) error
 
 	// MCP servers — tenant-scoped
 	ListMCPServers(ctx context.Context, tenantID string) ([]dal.MCPServer, error)

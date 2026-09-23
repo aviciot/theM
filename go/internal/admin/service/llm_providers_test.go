@@ -554,3 +554,122 @@ func TestTenantProvider_Upsert_InheritsDisplayNameFromPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ── allowed_models tests ──────────────────────────────────────────────────────
+
+func TestProviderService_Create_AllowedModels_RoundTrip(t *testing.T) {
+	d := &fakeDal{createdProvider: dal.LLMProvider{
+		ID: 1, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-sonnet-4-6",
+		AllowedModelsRaw: []byte(`["claude-sonnet-4-6","claude-haiku-4-5-20251001"]`),
+	}}
+	svc := newProviderSvc(d)
+	out, err := svc.Create(context.Background(), service.LLMProviderCreate{
+		Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-sonnet-4-6",
+		AllowedModels: []string{"claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.AllowedModels) != 2 {
+		t.Errorf("want 2 allowed models, got %v", out.AllowedModels)
+	}
+	if len(d.createProviderCalls) == 0 {
+		t.Fatal("CreateProvider not called")
+	}
+	if string(d.createProviderCalls[0].AllowedModelsRaw) != `["claude-sonnet-4-6","claude-haiku-4-5-20251001"]` {
+		t.Errorf("unexpected allowed_models_raw sent to DAL: %s", d.createProviderCalls[0].AllowedModelsRaw)
+	}
+}
+
+func TestProviderService_Create_NilAllowedModels_DefaultsToEmptyArray(t *testing.T) {
+	d := &fakeDal{createdProvider: dal.LLMProvider{ID: 1, Name: "n", DisplayName: "D", DefaultModel: "m"}}
+	svc := newProviderSvc(d)
+	_, err := svc.Create(context.Background(), service.LLMProviderCreate{
+		Name: "n", DisplayName: "D", DefaultModel: "m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(d.createProviderCalls[0].AllowedModelsRaw) != "[]" {
+		t.Errorf("want allowed_models_raw=[], got %q", d.createProviderCalls[0].AllowedModelsRaw)
+	}
+}
+
+func TestProviderService_List_AllowedModels_DefaultsToEmptySlice(t *testing.T) {
+	d := &fakeDal{providers: []dal.LLMProvider{{
+		ID: 1, Name: "p", DisplayName: "P", DefaultModel: "m", AllowedModelsRaw: nil,
+	}}}
+	svc := newProviderSvc(d)
+	list, _ := svc.List(context.Background())
+	if list[0].AllowedModels == nil {
+		t.Error("allowed_models must be [] not null")
+	}
+}
+
+func TestProviderService_Update_AllowedModels_Absent_LeavesUnchanged(t *testing.T) {
+	d := &fakeDal{
+		provider: dal.LLMProvider{
+			ID: 1, Name: "anthropic", DisplayName: "A", DefaultModel: "m",
+			AllowedModelsRaw: []byte(`["claude-sonnet-4-6"]`), Enabled: true,
+		},
+		updatedProvider: dal.LLMProvider{
+			ID: 1, Name: "anthropic", DisplayName: "A", DefaultModel: "m",
+			AllowedModelsRaw: []byte(`["claude-sonnet-4-6"]`), Enabled: true,
+		},
+	}
+	svc := newProviderSvc(d)
+	// AllowedModels absent from patch — must preserve existing value.
+	_, err := svc.Update(context.Background(), 1, service.LLMProviderPatch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(d.updateProviderCalls[0].AllowedModelsRaw) != `["claude-sonnet-4-6"]` {
+		t.Errorf("allowed_models must be preserved when absent from patch, got %q", d.updateProviderCalls[0].AllowedModelsRaw)
+	}
+}
+
+func TestProviderService_Update_AllowedModels_Present_Replaces(t *testing.T) {
+	d := &fakeDal{
+		provider: dal.LLMProvider{
+			ID: 1, Name: "anthropic", DisplayName: "A", DefaultModel: "m",
+			AllowedModelsRaw: []byte(`["claude-sonnet-4-6"]`), Enabled: true,
+		},
+		updatedProvider: dal.LLMProvider{ID: 1, Name: "anthropic", DisplayName: "A", DefaultModel: "m", Enabled: true},
+	}
+	svc := newProviderSvc(d)
+	newModels := []string{"gpt-4o"}
+	_, err := svc.Update(context.Background(), 1, service.LLMProviderPatch{AllowedModels: &newModels})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(d.updateProviderCalls[0].AllowedModelsRaw) != `["gpt-4o"]` {
+		t.Errorf("want allowed_models replaced with [\"gpt-4o\"], got %q", d.updateProviderCalls[0].AllowedModelsRaw)
+	}
+}
+
+func TestTenantProvider_Upsert_AllowedModels_PreservedWhenAbsent(t *testing.T) {
+	platform := dal.LLMProvider{ID: 1, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-sonnet-4-6"}
+	tid := "00000000-0000-0000-0000-000000000001"
+	d := &fakeDal{
+		platformProviderByName: platform,
+		tenantProviderByName: dal.LLMProvider{
+			ID: 20, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "m",
+			AllowedModelsRaw: []byte(`["claude-sonnet-4-6"]`), TenantID: &tid,
+		},
+		upsertedTenantProvider: dal.LLMProvider{ID: 20, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "m", Enabled: true},
+	}
+	svc := newProviderSvc(d)
+	// Body omits AllowedModels — a key-only save must not wipe the tenant's existing selection.
+	_, err := svc.UpsertForTenant(context.Background(), tid, "anthropic", service.LLMProviderCreate{
+		DefaultModel: "m", APIKey: "sk-new-key-12345678",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.upsertTenantProviderCalls) == 0 {
+		t.Fatal("UpsertTenantProvider not called")
+	}
+	if string(d.upsertTenantProviderCalls[0].AllowedModelsRaw) != `["claude-sonnet-4-6"]` {
+		t.Errorf("want existing tenant allowed_models preserved, got %q", d.upsertTenantProviderCalls[0].AllowedModelsRaw)
+	}
+}

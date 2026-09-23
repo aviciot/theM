@@ -13,40 +13,43 @@ import (
 // LLMProviderOut is the HTTP response shape for LLM provider endpoints.
 // TenantID is null for platform-default rows and non-null for tenant overrides.
 type LLMProviderOut struct {
-	ID           int64          `json:"id"`
-	Name         string         `json:"name"`
-	DisplayName  string         `json:"display_name"`
-	APIKeySet    bool           `json:"api_key_set"`
-	APIKeyMasked *string        `json:"api_key_masked"` // null in JSON when no key
-	BaseURL      *string        `json:"base_url"`
-	DefaultModel string         `json:"default_model"`
-	ModelPricing map[string]any `json:"model_pricing"`
-	Enabled      bool           `json:"enabled"`
-	TenantID     *string        `json:"tenant_id"` // null = platform default
+	ID            int64          `json:"id"`
+	Name          string         `json:"name"`
+	DisplayName   string         `json:"display_name"`
+	APIKeySet     bool           `json:"api_key_set"`
+	APIKeyMasked  *string        `json:"api_key_masked"` // null in JSON when no key
+	BaseURL       *string        `json:"base_url"`
+	DefaultModel  string         `json:"default_model"`
+	ModelPricing  map[string]any `json:"model_pricing"`
+	Enabled       bool           `json:"enabled"`
+	TenantID      *string        `json:"tenant_id"` // null = platform default
+	AllowedModels []string       `json:"allowed_models"`
 }
 
 // LLMProviderCreate is the request body for POST /admin/llm-providers.
 type LLMProviderCreate struct {
-	Name         string         `json:"name"`
-	DisplayName  string         `json:"display_name"`
-	APIKey       string         `json:"api_key"` // plaintext; empty = no key
-	BaseURL      *string        `json:"base_url"`
-	DefaultModel string         `json:"default_model"`
-	ModelPricing map[string]any `json:"model_pricing"`
-	Enabled      *bool          `json:"enabled"`
+	Name          string         `json:"name"`
+	DisplayName   string         `json:"display_name"`
+	APIKey        string         `json:"api_key"` // plaintext; empty = no key
+	BaseURL       *string        `json:"base_url"`
+	DefaultModel  string         `json:"default_model"`
+	ModelPricing  map[string]any `json:"model_pricing"`
+	Enabled       *bool          `json:"enabled"`
+	AllowedModels []string       `json:"allowed_models"`
 }
 
 // LLMProviderPatch is the PATCH request body. Nil pointer = field absent (leave unchanged).
 // api_key uses a dedicated present/value pair because "present but empty" is distinct from
 // "absent" — an explicit empty api_key clears the stored key; absence preserves it.
 type LLMProviderPatch struct {
-	DisplayName     *string        `json:"display_name"`
-	APIKey          *string        `json:"api_key"`   // nil=absent, ""=clear key, non-empty=rotate
-	BaseURL         **string       `json:"base_url"`  // nil=absent; non-nil ptr = set (may point to nil to clear)
-	DefaultModel    *string        `json:"default_model"`
-	ModelPricing    map[string]any `json:"model_pricing"` // nil=absent
-	Enabled         *bool          `json:"enabled"`
-	APIKeyPresent   bool           `json:"-"` // set by handler when api_key appears in JSON
+	DisplayName   *string        `json:"display_name"`
+	APIKey        *string        `json:"api_key"`  // nil=absent, ""=clear key, non-empty=rotate
+	BaseURL       **string       `json:"base_url"` // nil=absent; non-nil ptr = set (may point to nil to clear)
+	DefaultModel  *string        `json:"default_model"`
+	ModelPricing  map[string]any `json:"model_pricing"` // nil=absent
+	Enabled       *bool          `json:"enabled"`
+	AllowedModels *[]string      `json:"allowed_models"` // nil=absent
+	APIKeyPresent bool           `json:"-"`               // set by handler when api_key appears in JSON
 }
 
 // LLMProviderService owns the business logic for LLM provider CRUD.
@@ -116,15 +119,20 @@ func (s *LLMProviderService) Create(ctx context.Context, body LLMProviderCreate)
 	if err != nil {
 		return LLMProviderOut{}, validation("model_pricing must be a JSON object")
 	}
+	allowedModelsRaw, err := marshalAllowedModels(body.AllowedModels)
+	if err != nil {
+		return LLMProviderOut{}, validation("allowed_models must be a JSON array of strings")
+	}
 
 	in := dal.LLMProviderInput{
-		Name:            body.Name,
-		DisplayName:     body.DisplayName,
-		APIKeyEncrypted: encryptedKey,
-		BaseURL:         body.BaseURL,
-		DefaultModel:    body.DefaultModel,
-		ModelPricingRaw: modelPricingRaw,
-		Enabled:         enabledOrDefault(body.Enabled),
+		Name:             body.Name,
+		DisplayName:      body.DisplayName,
+		APIKeyEncrypted:  encryptedKey,
+		BaseURL:          body.BaseURL,
+		DefaultModel:     body.DefaultModel,
+		ModelPricingRaw:  modelPricingRaw,
+		Enabled:          enabledOrDefault(body.Enabled),
+		AllowedModelsRaw: allowedModelsRaw,
 	}
 
 	row, err := s.dal.CreateProvider(ctx, in)
@@ -184,6 +192,13 @@ func (s *LLMProviderService) Update(ctx context.Context, id int64, patch LLMProv
 	}
 	if patch.Enabled != nil {
 		row.Enabled = *patch.Enabled
+	}
+	if patch.AllowedModels != nil {
+		raw, err := marshalAllowedModels(*patch.AllowedModels)
+		if err != nil {
+			return LLMProviderOut{}, validation("allowed_models must be a JSON array of strings")
+		}
+		row.AllowedModelsRaw = raw
 	}
 
 	updated, err := s.dal.UpdateProvider(ctx, id, dal.LLMProviderToInput(row))
@@ -255,14 +270,28 @@ func (s *LLMProviderService) UpsertForTenant(ctx context.Context, tenantID, name
 		}
 	}
 
+	// allowed_models is tenant-owned config, not platform-seeded: when the body omits it,
+	// preserve whatever the tenant already has (full-replace upsert would otherwise wipe it
+	// on e.g. a key-only save). No existing tenant row → empty (nothing chosen yet).
+	allowedModelsRaw := []byte("[]")
+	if body.AllowedModels != nil {
+		allowedModelsRaw, err = marshalAllowedModels(body.AllowedModels)
+		if err != nil {
+			return LLMProviderOut{}, validation("allowed_models must be a JSON array of strings")
+		}
+	} else if existing, err := s.dal.GetProviderByNameForTenant(ctx, name, tenantID); err == nil {
+		allowedModelsRaw = existing.AllowedModelsRaw
+	}
+
 	in := dal.LLMProviderInput{
-		Name:            name,
-		DisplayName:     displayName,
-		APIKeyEncrypted: encryptedKey,
-		BaseURL:         body.BaseURL,
-		DefaultModel:    body.DefaultModel,
-		ModelPricingRaw: modelPricingRaw,
-		Enabled:         enabledOrDefault(body.Enabled),
+		Name:             name,
+		DisplayName:      displayName,
+		APIKeyEncrypted:  encryptedKey,
+		BaseURL:          body.BaseURL,
+		DefaultModel:     body.DefaultModel,
+		ModelPricingRaw:  modelPricingRaw,
+		Enabled:          enabledOrDefault(body.Enabled),
+		AllowedModelsRaw: allowedModelsRaw,
 	}
 
 	row, err := s.dal.UpsertTenantProvider(ctx, tenantID, in)
@@ -291,16 +320,17 @@ func (s *LLMProviderService) Delete(ctx context.Context, id int64) error {
 func (s *LLMProviderService) toOut(row dal.LLMProvider) LLMProviderOut {
 	keySet, masked := s.maskKey(row.APIKeyEncrypted)
 	return LLMProviderOut{
-		ID:           row.ID,
-		Name:         row.Name,
-		DisplayName:  row.DisplayName,
-		APIKeySet:    keySet,
-		APIKeyMasked: masked,
-		BaseURL:      row.BaseURL,
-		DefaultModel: row.DefaultModel,
-		ModelPricing: dal.ModelPricingOrEmpty(row.ModelPricingRaw),
-		Enabled:      row.Enabled,
-		TenantID:     row.TenantID,
+		ID:            row.ID,
+		Name:          row.Name,
+		DisplayName:   row.DisplayName,
+		APIKeySet:     keySet,
+		APIKeyMasked:  masked,
+		BaseURL:       row.BaseURL,
+		DefaultModel:  row.DefaultModel,
+		ModelPricing:  dal.ModelPricingOrEmpty(row.ModelPricingRaw),
+		Enabled:       row.Enabled,
+		TenantID:      row.TenantID,
+		AllowedModels: dal.AllowedModelsOrEmpty(row.AllowedModelsRaw),
 	}
 }
 
@@ -312,6 +342,15 @@ func marshalPricing(m map[string]any) ([]byte, error) {
 		return []byte("{}"), nil
 	}
 	return json.Marshal(m)
+}
+
+// marshalAllowedModels encodes an allowed-models slice to JSONB-compatible bytes.
+// A nil slice is treated as [] (default).
+func marshalAllowedModels(models []string) ([]byte, error) {
+	if models == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(models)
 }
 
 // maskKey mirrors Python's _mask_key:
