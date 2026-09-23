@@ -1,5 +1,7 @@
 # Current Session State — the-M
-# Last updated: 2026-09-22 (App Canvas Debug Mode — Phase 1 + 2 + 3 + 4 COMPLETE, Phase 5 NEXT, HEAD pending commit)
+# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 4 COMPLETE + tenant-isolation security fix
+# COMPLETE, both pushed. Tenant LLM provider keys DAL/service layer COMPLETE, not yet finished.
+# Phase 5 (App Canvas Debug UI) NEXT. HEAD cc81978d)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,21 +9,18 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `85a436bb` plus this session's Phase 4 changes, **not yet committed**. Files changed this
-session: `db/104_app_log_verbosity.sql`; `go/internal/admin/dal/log_verbosity.go`;
-`go/internal/admin/log_verbosity.go`; `go/internal/admin/router.go`;
-`go/internal/admin/service/config.go`; `go/internal/admin/service/service.go`;
-`go/internal/appflow/log_verbosity_loader.go`; `go/internal/appflow/activities.go`;
-`go/internal/appflow/workflow.go`; `go/internal/appflow/graph.go`; `go/internal/appflow/nodes.go`;
-`go/internal/execution/lifecycle.go`; `go/cmd/them/main.go`; test files (`config_test.go`,
-`config_handler_test.go`, `lifecycle_test.go`, `service_test.go` + 3 other fake-DAL test files,
-`trace_persist_integration_test.go`); `go/TEST_INDEX.md`; `docs/SCHEMA.md`;
-`docs/APP_CANVAS_DEBUG_PLAN.md`; frontend: `apiTypes.ts`, `api.ts`, new
-`RuntimeLogVerbosityTab.tsx`, `RuntimeView.tsx`. **Not yet committed or pushed** — commit these
-together with a clear message before starting Phase 5.
+HEAD: `cc81978d` — committed and **pushed to `origin/main`**.
+
+**Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
+(capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
+update the remote when convenient: `git remote set-url origin https://github.com/aviciot/theM.git`.
 
 Recent commits (newest first):
 ```
+cc81978d  fix(admin): close cross-tenant IDOR on app_debug_config and app_temporal_config
+465ffe93  feat(admin): tenant LLM provider keys — multi-key + allowed_models (db/105)
+cda25d0c  feat(app-canvas): per-app AppFlow trace log-verbosity setting (Phase 4)
+ac39697a  docs(current): record Phase 3 commit hash 85a436bb
 85a436bb  feat(app-canvas): durable trace storage for Graph-mode runs (Phase 3)
 6104b349  feat(app-canvas): live per-node trace events for Graph-mode runs (Phase 2)
 865ad388  feat(app-canvas): debug worker pool + task-queue routing (Phase 1)
@@ -30,26 +29,100 @@ Recent commits (newest first):
 b1323abb  fix(compose): add missing RLS DSN env vars to them-agent-runtime
 5bda4ad4  fix(deploy): add them-dag-worker + them-dag-worker-2 to Hetzner overlay
 996b5dae  feat(app-canvas): rename Local/Temporal DAG to Simple/Graph; add them-dag-worker-2
-394c16c5  feat(app-canvas): export/import JSON, split CanvasBuilderView.tsx first
-e5fec91d  docs(current): Tenant LLM self-service COMPLETE, HEAD 970b0cfb
-970b0cfb  feat(settings): tenant-admin LLM provider self-service + platform admin LLM key management
 ```
 
 ---
 
 ## START HERE — next session
 
-**Read `docs/APP_CANVAS_DEBUG_PLAN.md` first.** Phases 1–4 are COMPLETE — start **Phase 5** (Debug
-UI: setup panel + Run All button + WS/SSE consumer, mirroring the agent builder's
-`buildDebugParamSpecs()` dynamic scan pattern). One phase per session — do not start Phase 6 in the
-same session as Phase 5. Before starting Phase 5: commit this session's uncommitted Phase 4 changes
-(see HEAD above) and confirm push credentials.
+Two independent threads are in flight. Pick based on what you're asked to continue:
+
+1. **App Canvas Debug Mode — Phase 5** (Debug UI: setup panel + Run All button + WS/SSE consumer,
+   mirroring the agent builder's `buildDebugParamSpecs()` dynamic scan pattern). Read
+   `docs/APP_CANVAS_DEBUG_PLAN.md` first — Phases 1–4 are COMPLETE. One phase per session — do not
+   start Phase 6 in the same session as Phase 5.
+2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). DAL + service layers landed
+   in `465ffe93` (multi-key-per-provider support, `db/105_llm_provider_keys.sql`, allowed_models on
+   `them.llm_providers`). **Not yet built:** test-key/list-models endpoints, the
+   classifier/card_synthesizer general-vs-custom picker wiring, and the frontend UI. Read the plan
+   doc's "Why the model changes" and "Hard rule" sections before touching this — no platform-key
+   fallback for tenants, ever.
+
+**Before starting either:** if you're auditing this session's work, note the tenant-isolation
+security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
+new per-app admin config table/route, check ownership (`tenant_id` join to `them.applications`) is
+enforced from the start, not retrofitted after a review catches it.
+
+---
+
+## Security fix: cross-tenant IDOR on per-app config tables — COMPLETE (2026-09-23)
+
+Commit `cc81978d`, pushed. Found during code review of Phase 4 below (not exploited in the wild,
+caught before any real-world exposure was confirmed either way).
+
+**The bug:** `GetAppLogVerbosity`/`UpsertAppLogVerbosity` (`them.app_debug_config`, new in Phase 4)
+and `GetTemporalAppConfig`/`UpsertTemporalAppConfig` (`them.app_temporal_config`, older, the pattern
+Phase 4 copied) took no tenant scoping at all. Neither table stores its own `tenant_id`, and no
+ownership check existed anywhere in the handler → service → DAL chain — any authenticated tenant
+admin could read or overwrite **another tenant's** trace-verbosity or Temporal execution settings
+by guessing or knowing the target application's UUID. `RequireTenantAdmin` only checks the caller
+has *some* tenant-admin role; it never constrained the `{id}` URL param to the caller's own tenant.
+
+**The fix:**
+- Both DAL methods now join to `them.applications` and require a `tenant_id` match. A cross-tenant
+  call surfaces as `pgx.ErrNoRows` — mapped by the service layer (`ErrNotFound`) to HTTP 404, never
+  data or a silent successful write.
+- Handlers (`log_verbosity.go`, `temporal_config.go`) now read the caller's tenant from
+  `tenantctx.MustTenantIDFromCtx(r.Context())` instead of trusting the URL alone, and validate `{id}`
+  as a UUID up front via `uuid.Parse` — this also fixes a pre-existing bug where a malformed `{id}`
+  returned 500 instead of 400 on the same code path.
+- The one internal, non-HTTP caller (`Lifecycle.StartAppFlow`, via `TemporalConfigLoader` and
+  `LogVerbosityLoader`) threads through the already-resolved, trusted tenant ID from
+  `h.EPConfig.TenantID` — no new attack surface there since that path never took user input
+  directly.
+- **Verified against live Postgres, not just mocks:** 6 new integration tests
+  (`go/internal/admin/dal/app_scoped_config_tenant_isolation_integration_test.go`) prove a genuine
+  cross-tenant read and write are both rejected, including confirming an attacker's write attempt
+  does not leak through and silently succeed. New handler-level tests
+  (`go/internal/admin/config_handler_test.go`) cover the same 404 behavior over HTTP, plus the
+  malformed-UUID-returns-400 fix.
+- `go test ./...` — 0 failures, full suite, run twice for stability (one unrelated flaky timeout in
+  `internal/a2a` under parallel-suite resource contention, reproduced as a one-off, confirmed clean
+  in isolation and on a clean re-run — not caused by this change).
+
+**Not done / not needed:** the same "no ownership check" class of gap may exist on other per-app
+single-field config tables not touched here — this fix covered the two tables actually in scope
+(the one just shipped in Phase 4, and the one it copied from). Worth a grep for other
+`them.app_*_config`-shaped tables if a broader audit is ever wanted; not done as part of this fix.
+
+---
+
+## Tenant LLM Provider Keys — DAL + service layer — COMPLETE (2026-09-23)
+
+Commit `465ffe93`, pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md` for the full design — summary:
+
+Adds `them.llm_provider_keys` (migration `db/105_llm_provider_keys.sql`) so a tenant can save
+**multiple named API keys** per provider (not just the single `api_key_encrypted` column
+`them.llm_providers` had room for), plus an `allowed_models` list on `them.llm_providers` so a
+tenant can enable specific models independent of having a key saved yet. **Hard rule: no
+platform-key fallback for tenants, ever** — if a tenant has no usable key, the feature simply
+doesn't work for them.
+
+**What landed:** DAL (`go/internal/admin/dal/llm_provider_keys.go`, `llm_providers.go` extended),
+service layer (`go/internal/admin/service/llm_provider_keys.go`, `llm_providers.go` extended) — CRUD,
+key masking, default-key swap, `run_usage` gets a new nullable FK column for per-key attribution.
+
+**Not yet built (next steps per the plan doc):** test-key/list-models HTTP endpoints, the
+classifier/card_synthesizer system-agent roles' general-vs-custom key picker wiring, frontend UI.
 
 ---
 
 ## App Canvas Debug Mode — Phase 4 (runtime log-verbosity setting) — COMPLETE (2026-09-22)
 
-Not yet committed. See `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 4 section for full detail. Summary:
+Commit `cda25d0c`, pushed. **Note:** this phase's own tenant-isolation gap was found and fixed
+separately — see "Security fix" above; the `off`/`status`/`full` semantics described below are
+unaffected by that fix, only the ownership-checking around them changed. See
+`docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 4 section for full detail. Summary:
 
 - **Open question resolved:** `off` = zero `them.run_steps` writes (full revert to Phase 2's
   live-Redis-only behavior for that run) — not a second "cheap" tier that still writes a row.
@@ -84,8 +157,7 @@ Not yet committed. See `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 4 section for ful
 **Not done / deferred (not a regression):** no live end-to-end Temporal-workflow run was started
 this session to watch a real `off`/`status` run's rows (or lack thereof) land through the full
 stack live — verification was via the integration test calling `persistTrace` directly (the same
-function `emitTrace` calls internally) plus the full unit suite. Not committed to git yet — do
-that before starting Phase 5.
+function `emitTrace` calls internally) plus the full unit suite. Committed as `cda25d0c`, pushed.
 
 ---
 
