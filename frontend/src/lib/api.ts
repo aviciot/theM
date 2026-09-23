@@ -117,6 +117,11 @@ export type {
   GatewayRequest,
   LLMProviderOut,
   LLMProviderUpsertInput,
+  LLMProviderKeyOut,
+  LLMProviderKeyCreateInput,
+  LLMProviderKeyPatchInput,
+  LLMProviderKeyTestResult,
+  LLMProviderModelsResult,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -205,6 +210,11 @@ import type {
   GatewayRequest,
   LLMProviderOut,
   LLMProviderUpsertInput,
+  LLMProviderKeyOut,
+  LLMProviderKeyCreateInput,
+  LLMProviderKeyPatchInput,
+  LLMProviderKeyTestResult,
+  LLMProviderModelsResult,
 } from './apiTypes';
 
 // ── auth-admin proxy client (routes to them-auth-go via /api/auth-admin/*) ───
@@ -774,4 +784,20 @@ export const themApi = {
     api.get<LLMProviderOut[]>('/admin/my/llm-providers'),
   upsertMyLLMProvider: (name: string, body: LLMProviderUpsertInput) =>
     api.put<LLMProviderOut>(`/admin/my/llm-providers/${name}`, body),
+
+  // Self-service LLM provider named keys (tenant admin only — no platform-admin-on-tenant mirror yet)
+  listProviderKeys: (providerName: string) =>
+    api.get<LLMProviderKeyOut[]>(`/admin/my/llm-providers/${providerName}/keys`),
+  createProviderKey: (providerName: string, body: LLMProviderKeyCreateInput) =>
+    api.post<LLMProviderKeyOut>(`/admin/my/llm-providers/${providerName}/keys`, body),
+  updateProviderKey: (providerName: string, keyId: number, body: LLMProviderKeyPatchInput) =>
+    api.patch<LLMProviderKeyOut>(`/admin/my/llm-providers/${providerName}/keys/${keyId}`, body),
+  deleteProviderNamedKey: (providerName: string, keyId: number) =>
+    api.delete<void>(`/admin/my/llm-providers/${providerName}/keys/${keyId}`),
+  setDefaultProviderKey: (providerName: string, keyId: number) =>
+    api.post<LLMProviderKeyOut>(`/admin/my/llm-providers/${providerName}/keys/${keyId}/default`, {}),
+  testProviderKey: (providerName: string, keyId: number) =>
+    api.post<LLMProviderKeyTestResult>(`/admin/my/llm-providers/${providerName}/keys/${keyId}/test`, {}),
+  listAvailableModels: (providerName: string, keyId: number) =>
+    api.get<LLMProviderModelsResult>(`/admin/my/llm-providers/${providerName}/models?key_id=${keyId}`),
 };

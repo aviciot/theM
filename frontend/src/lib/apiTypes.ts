@@ -1166,6 +1166,7 @@ export interface LLMProviderOut {
   model_pricing: Record<string, unknown>;
   enabled: boolean;
   tenant_id?: string | null;
+  allowed_models: string[];
 }
 
 export interface LLMProviderUpsertInput {
@@ -1173,4 +1174,34 @@ export interface LLMProviderUpsertInput {
   base_url?: string | null;
   default_model: string;
   enabled?: boolean;
+  allowed_models?: string[];
+}
+
+export interface LLMProviderKeyOut {
+  id: number;
+  name: string;
+  masked: string;
+  is_default: boolean;
+  last_test_ok?: boolean | null;
+  last_tested_at?: string | null;
+}
+
+export interface LLMProviderKeyCreateInput {
+  name: string;
+  api_key: string;
+  is_default?: boolean;
+}
+
+export interface LLMProviderKeyPatchInput {
+  name?: string;
+  api_key?: string;
+}
+
+export interface LLMProviderKeyTestResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface LLMProviderModelsResult {
+  models: string[];
 }

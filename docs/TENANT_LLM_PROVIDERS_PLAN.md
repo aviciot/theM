@@ -1,5 +1,5 @@
 # Tenant-Level LLM Provider Configuration — Plan
-# Status: approved design, implementing — steps 1-3 of 7 complete
+# Status: approved design, implementing — steps 1-4 of 7 complete
 # Owner: platform
 # Last updated: 2026-09-23
 
@@ -305,6 +305,52 @@ gap row in `go/TEST_INDEX.md` rather than silently backfilled, since reconstruct
 per-commit attribution for a prior session's untracked test additions was out of scope for this
 step. Worth a dedicated cleanup pass before the count is trusted as precise.
 
-**Not yet built (steps 4-6 remain):** frontend UI (model checklist + refresh button + keys
-sub-section), the platform-admin-on-tenant route mirror (if ever needed),
-`them.tenant_system_agent_config` table + classifier/card_synthesizer general-vs-custom wiring.
+**Step 4 — COMPLETE (2026-09-23).** Frontend LLM Providers tab built.
+
+`frontend/src/app/admin/settings/page.tsx` (300 → 199 lines) had its entire `llm_providers` tab
+body extracted into two new components, per the file-size rule (adding the model checklist + full
+keys sub-section in-line would have pushed `page.tsx` well past the split threshold):
+
+- `frontend/src/app/admin/settings/LLMProvidersPanel.tsx` (new) — the per-provider card. For
+  super_admin (platform rows): unchanged single API-key input + Save, exactly as before. For tenant
+  admin (own rows): unchanged single-key path replaced with an **Allowed models** checklist
+  (seeded from `PROVIDER_MODELS[name]`, `settingsConstants.ts`) with a **Refresh from provider**
+  button — disabled until the provider has at least one named key — that calls
+  `GET .../models?key_id=...` and replaces the checklist options with the live result; a **Save
+  allowed models** button PUTs `allowed_models` via the existing `upsertMyLLMProvider`. Below that,
+  renders `LLMProviderKeysPanel` for the keys sub-section.
+- `frontend/src/app/admin/settings/LLMProviderKeysPanel.tsx` (new) — per-key row: name, masked
+  value, default badge, last-test-result, **Set default** / **Test** / **Delete** buttons, plus
+  inline rename and rotate-secret inputs, and an **Add key** (name + secret) row at the bottom.
+  Mirrors `RoleCard.tsx`'s test-button UX pattern (loading → ok/error message).
+- `frontend/src/lib/apiTypes.ts` — `LLMProviderOut` gained `allowed_models: string[]`,
+  `LLMProviderUpsertInput` gained optional `allowed_models?: string[]` (both already existed
+  server-side on `service.LLMProviderOut`/`LLMProviderCreate` since step 2/3 — this was a
+  frontend-only gap). New `LLMProviderKeyOut`, `LLMProviderKeyCreateInput`,
+  `LLMProviderKeyPatchInput`, `LLMProviderKeyTestResult`, `LLMProviderModelsResult`.
+- `frontend/src/lib/api.ts` — new `listProviderKeys`, `createProviderKey`, `updateProviderKey`,
+  `deleteProviderNamedKey`, `setDefaultProviderKey`, `testProviderKey`, `listAvailableModels` — all
+  tenant self-service only (`/admin/my/llm-providers/{name}/...`), matching the
+  `LLMProviderKeysHandler` routes that already existed from step 3. **No platform-admin-on-tenant
+  variants added** — the plan's dual-surface pattern for these calls doesn't apply yet since the
+  server-side mirror route doesn't exist either (see step 3's note).
+  **Naming note:** `deleteProviderKey` was already taken by an unrelated, pre-existing
+  application-level single-key feature (`/admin/applications/{id}/provider-keys/{provider}` —
+  a different table, `RuntimeView.tsx`'s per-app LLM override, nothing to do with this plan). Named
+  the new function `deleteProviderNamedKey` to avoid the collision — found as a `tsc` duplicate-key
+  compile error, not by inspection, so worth remembering if extending this surface further.
+
+**Not live-verified in a browser this session** — no browser-automation tool was available in this
+environment. Verified instead via: `npx tsc --noEmit` (0 errors, project-wide, confirmed twice),
+and a manual line-by-line read-through of both new components against the exact request/response
+shapes in `go/internal/admin/service/llm_provider_keys.go` and `llm_providers.go` (field names,
+nullability, the `ListForTenant`/`UpsertForTenant` merge behavior that guarantees `default_model`
+is always non-empty even before a tenant has its own override row, so the checklist's "Save
+allowed models" call never hits the `default_model is required` 400). Recommend an actual
+logged-in-browser pass before trusting this fully — in particular the Refresh-from-provider round
+trip against a real provider API key, which no test in this repo exercises end-to-end.
+
+**Not yet built (steps 5-6 remain):** `them.tenant_system_agent_config` table +
+classifier/card_synthesizer general-vs-custom wiring, and its own frontend switch on the role
+cards. The platform-admin-on-tenant route mirror for keys (`/admin/tenants/{id}/llm-providers/{name}/keys...`)
+remains not built — still not needed by anything.

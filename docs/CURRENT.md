@@ -1,6 +1,6 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 3 — test-key/list-models endpoints —
-# COMPLETE. App Canvas Debug Mode Phase 5 still NEXT for that thread. HEAD 6a6be2ca)
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 4 — frontend UI — COMPLETE, not yet
+# committed. App Canvas Debug Mode Phase 5 still NEXT for that thread. HEAD still 6a6be2ca.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,6 +10,15 @@
 Branch: `main`
 HEAD: `6a6be2ca` — committed locally, **not yet pushed** (push after rebase-merging with any
 parallel session's work per the note below).
+
+**Uncommitted in the working tree right now:** Tenant LLM Provider Keys step 4 (frontend UI —
+`frontend/src/app/admin/settings/page.tsx`, new `LLMProvidersPanel.tsx` + `LLMProviderKeysPanel.tsx`,
+`frontend/src/lib/api.ts` + `apiTypes.ts`) — see the dated section below for full detail. Also
+present in the working tree but **not from this session and not touched by it**:
+`go/internal/sse/handler.go`, `go/internal/ws/handler.go`, `docs/APP_CANVAS_DEBUG_PLAN.md`,
+`docs/INVESTIGATE_PLAYGROUND_EP.md`, `keycloak/payops_ai-realm.json`, and an untracked `data/` dir —
+likely the parallel Phase-5 session's in-progress work per the note below; do not commit or
+discard these, they weren't reviewed as part of the step-4 work.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -48,20 +57,71 @@ Two independent threads are in flight. Pick based on what you're asked to contin
    mirroring the agent builder's `buildDebugParamSpecs()` dynamic scan pattern). Read
    `docs/APP_CANVAS_DEBUG_PLAN.md` first — Phases 1–4 are COMPLETE. One phase per session — do not
    start Phase 6 in the same session as Phase 5.
-2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-3 of 7 COMPLETE as of
-   `6a6be2ca`: migration, DAL/service layers (`465ffe93`), and now test-key/list-models HTTP
-   endpoints (tenant self-service only — `/admin/my/llm-providers/{name}/keys...` and
-   `.../models?key_id=...`). **Not yet built:** the frontend UI (step 4), the
-   platform-admin-on-tenant route mirror (optional, not yet needed), and the
+2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-4 of 7 done: migration,
+   DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`), and now the
+   frontend UI (step 4, this session, **not yet committed** — see the dated section below). **Not
+   yet built:** the platform-admin-on-tenant route mirror (optional, not yet needed), and the
    classifier/card_synthesizer general-vs-custom picker wiring (`them.tenant_system_agent_config`,
    steps 5-6). Read the plan doc's "Why the model changes" and "Hard rule" sections before touching
    this — no platform-key fallback for tenants, ever. A pre-existing test-count reconciliation gap
    from `465ffe93` was flagged (not fixed) in `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
+   Step 4 was **not verified in a live browser** — no browser-automation tool was available this
+   session; only `tsc --noEmit` (0 errors) and a manual read-through against the Go response
+   shapes. Recommend a real logged-in-browser pass (both as a tenant admin and as super_admin)
+   before starting step 5, especially the Refresh-from-provider live model-list round trip.
 
 **Before starting either:** if you're auditing this session's work, note the tenant-isolation
 security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
 new per-app admin config table/route, check ownership (`tenant_id` join to `them.applications`) is
 enforced from the start, not retrofitted after a review catches it.
+
+---
+
+## Tenant LLM Provider Keys — step 4: frontend UI — COMPLETE, NOT YET COMMITTED (2026-09-23)
+
+See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 4 write-up for full detail. Summary:
+
+`frontend/src/app/admin/settings/page.tsx`'s `llm_providers` tab (previously ~150 lines inlined in
+the page component) was extracted into two new components, per the file-size rule — `page.tsx`
+dropped from 300 to 199 lines:
+
+- **`LLMProvidersPanel.tsx`** (new) — per-provider card. super_admin (platform rows) keeps the
+  original single API-key input + Save, unchanged. Tenant admin (own rows) gets a new **Allowed
+  models** checklist seeded from `PROVIDER_MODELS` (`settingsConstants.ts`) with a **Refresh from
+  provider** button (disabled until a key exists) hitting `GET .../models?key_id=...`, plus a
+  **Save allowed models** button using the existing `upsertMyLLMProvider` PUT with the new
+  `allowed_models` field.
+- **`LLMProviderKeysPanel.tsx`** (new) — the keys sub-section: table of named keys (masked value,
+  default badge, last-test-result) with Set default / Test / Delete buttons and inline
+  rename/rotate-secret inputs, plus an Add-key row. Mirrors `RoleCard.tsx`'s existing test-button
+  loading/ok/error UX pattern.
+- `apiTypes.ts` / `api.ts` — `LLMProviderOut`/`LLMProviderUpsertInput` gained `allowed_models`
+  (already existed server-side since steps 2-3; this closed a frontend-only type gap). New
+  `LLMProviderKeyOut`, create/patch/test/models-result types, and 7 new `themApi` functions
+  wired to the tenant-self-service routes `LLMProviderKeysHandler` already exposed in step 3.
+  **Naming collision found via `tsc`:** an unrelated pre-existing app-level single-key feature
+  (`/admin/applications/{id}/provider-keys/{provider}`) already used the name `deleteProviderKey`
+  — the new named-key delete function was named `deleteProviderNamedKey` instead.
+
+**Verification:** `npx tsc --noEmit` — 0 errors, project-wide, run twice to confirm not a fluke.
+**No live browser verification** — no browser-automation tool was available in this environment
+this session. Did not attempt any direct `curl` probing of the live stack either (declined after
+one such command was denied — treated as an implicit preference not to poke the live API directly
+outside the UI). Recommend a manual logged-in pass before trusting this fully, in both the
+tenant-admin and super_admin views, especially the Refresh-from-provider round trip against a real
+provider key (no automated test in this repo exercises that live).
+
+**Not committed.** Files changed: `frontend/src/app/admin/settings/page.tsx`,
+`frontend/src/app/admin/settings/LLMProvidersPanel.tsx` (new),
+`frontend/src/app/admin/settings/LLMProviderKeysPanel.tsx` (new), `frontend/src/lib/api.ts`,
+`frontend/src/lib/apiTypes.ts`. Recommend reviewing + committing these five before starting step 5,
+separately from the other unrelated uncommitted files already sitting in this working tree (see
+the HEAD section's note above — those predate this session and weren't touched by it).
+
+**Not done / deferred (per the plan's own sequencing, not a regression):**
+`them.tenant_system_agent_config` + classifier/card_synthesizer general/custom wiring (steps 5-6),
+and their own frontend switch on the role cards. The platform-admin-on-tenant route mirror for keys
+remains unbuilt (still not needed by anything).
 
 ---
 
