@@ -1,6 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 5 FRONTEND complete + a real
-# /ws/dashboard live-delivery bug found and fixed. HEAD 7cb2728d, pushed.)
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys thread: LLM Providers UI/UX redesign +
+# missing gemini/groq seed rows, then security_scanner promoted to a third
+# tenant_system_agent_config role — moved its LLM analysis step out of the Python
+# them-security-agent container into go-bridge, tenant-key-aware. HEAD 21569888, on top of
+# App Canvas Debug Mode Phase 5 FRONTEND work (7cb2728d) from earlier the same day.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -8,7 +11,8 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `7cb2728d` — **pushed to origin/main.**
+HEAD: `21569888` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
+before pushing — see the conflict-resolution note below, which still applies.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -22,6 +26,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+21569888  feat(admin): security_scanner as a third tenant_system_agent_config role
 7cb2728d  feat(app-canvas): debug mode frontend — setup panel, Run All, real WS consumer (Phase 5)
 b27d0423  fix(dashboard): /ws/dashboard run:* channels never delivered live events
 46c9f9b8  feat(admin): LLM Providers UI/UX cleanup + seed missing gemini/groq rows
@@ -56,10 +61,12 @@ Phase 5 backend-slice section of the plan doc). Flows made entirely of inline no
 Worth fixing before Phase 6 if agent-node debugging is a priority — candidate approaches are
 noted in the plan doc.
 
-**Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete as of
-an earlier session (see the dated section further below for full detail). Nothing further planned
-on this thread unless new requirements surface. **Still never verified in a live browser** —
-recommend a real logged-in click-through before trusting it in front of actual tenants.
+**Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete, plus a
+follow-up this session: LLM Providers tab UI/UX redesign + missing gemini/groq seed rows, and
+`security_scanner` promoted to a third general/custom role (see the dated section further below
+for full detail). Nothing further planned on this thread unless new requirements surface. **Still
+never verified in a live browser** — recommend a real logged-in click-through before trusting it
+in front of actual tenants, including a real Security Scan run in general mode.
 
 **Before starting Phase 6:** read the new lesson in `docs/LESSONS.md` ("`/ws/dashboard`'s `run:*`
 channels never delivered live events") before touching anything that publishes or consumes
@@ -119,6 +126,38 @@ after testing (confirmed with the user first).
 for why, and what was done instead to compensate). The WS/backend contract it depends on is now
 proven live end-to-end; recommend a manual UI pass before fully trusting the button/panel
 rendering itself. Step controls (Phase 6) not built — explicitly out of scope for this phase.
+
+---
+
+## Tenant LLM Provider Keys — follow-up: security_scanner as a third role — COMPLETE (2026-09-23)
+
+Commit `21569888`, not yet pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s "Follow-up" section
+for full detail. Two pieces of post-sign-off work, both reusing the plan's own infrastructure:
+
+**LLM Providers UI/UX redesign + missing gemini/groq seed rows** (commit `46c9f9b8`, already
+pushed) — the user reviewed the live UI and found tenant admins had no enable/disable control
+(only rendered for super_admin) and the allowed-models checklist looked bad; also found gemini and
+groq never appeared despite being fully supported in code, because nobody ever seeded platform
+rows for them (only `anthropic`/`openai` ever were). Fixed the toggle, redesigned the checklist as
+labeled rows, and added `db/107_seed_gemini_groq_providers.sql` (applied live).
+
+**security_scanner promoted to a third role** — the user asked whether the security scanner could
+use a tenant's own key the same way the classifier does. Found the scan's LLM analysis ran inside
+the separate Python `them-security-agent` container with one hardcoded platform-wide Anthropic
+key, never resolved per-tenant. Moved that LLM step into go-bridge (`llmCardAnalysis`, new
+`internal/admin/security_scan_llm.go`) using the exact same `resolveSystemAgentRole` step 5 built,
+rather than passing a decrypted key across the process boundary to Python. Python now does
+HTTP-surface probes only; go-bridge merges both results (`mergeSecurityScanResult`) before
+persisting. `security_scanner` now gets its own General/Custom card for free via the existing
+`TenantRoleCard` machinery — no new frontend component.
+
+7 new tests. `go test ./...` 0 failures full suite. `them-go-bridge` and `them-security-agent`
+both rebuilt and force-recreated, confirmed healthy via logs.
+
+**Not live-verified** — same standing limitation as the whole plan: no browser tool, no direct
+curl probing this session. Recommend running a real Security Scan (both with security_scanner
+left on custom/platform-fallback, and with it set to general mode using a real tenant key) before
+trusting the merged score/findings fully.
 
 ---
 
