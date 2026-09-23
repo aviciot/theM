@@ -562,3 +562,100 @@ same environment reason as every prior verification on this plan. The full backe
 (per-node isolation across different providers, model/key validation, base URL routing, cleanup) is
 now proven live end-to-end; only the picker component's own visual rendering/interaction remains
 unconfirmed in a real browser.
+
+---
+
+## Review follow-up (c1f01aa2) — 2 remaining gaps closed
+
+**1. UI wiring was incomplete: General mode had no model selector, Custom mode had no Base URL
+field.** The backend (`resolveLLMOverride`, `LLMOverrideInput`) already fully supported `Model` in
+General mode and `BaseURL` in Custom mode from the previous round's fixes — this was purely a
+missing-UI-wiring gap, not a data-model one. **Fix:**
+`AppFlowLLMCredentialValue`'s `general` variant gained a `model: string` field
+(`frontend/src/app/admin/applications/types.ts`).
+`AppFlowLLMCredentialField.tsx`'s General-mode block now renders a model selector next to the
+provider/key dropdowns — a `<select>` restricted to `provider.allowed_models` when that list is
+non-empty, else a free-text `<input>` with a placeholder showing the provider's `default_model`.
+Its Custom-mode block now renders a Base URL text input alongside provider/model/API key.
+`useAppFlowDebugSession.ts`'s override-building logic passes `model` through on the `general` branch
+(previously only present on `custom`). The full path — UI component → hook → wire type
+(`AppFlowLLMOverrideInput`) → HTTP handler (`llmOverrideBody`) → service (`LLMOverrideInput`) →
+`resolveLLMOverride` — was traced end-to-end; every layer below the UI already had both fields.
+
+**2. Credentials expired after a fixed 30 minutes regardless of whether the run was active.**
+Two compounding problems: (a) debug runs had **no workflow-level wall-clock bound at all** —
+`Lifecycle.StartAppFlow` never set `WorkflowRunTimeout` for `debug=true` runs (it only read
+`input.TemporalCfg`, which debug runs never populate) — so a stuck/looping debug workflow could run
+indefinitely while its credential silently expired underneath it; (b) the 30-minute TTL from the
+previous round was sized against a **wrong assumption** that `appFlowActivityTimeout` was 120
+seconds — it is actually `10 * time.Minute` (`go/internal/appflow/workflow.go`). The true worst case
+for even a single node exhausting all retries is ≈20.2 minutes
+(`appFlowActivityTimeout` × `retryMax` (2) + negligible backoff), not the ~4 minutes the old 30-minute
+number implicitly assumed covered with margin. **Fix, sized to the corrected true worst case, not a
+smaller "realistic" ceiling (explicit user decision):**
+- New `appflow.DebugRunMaxLifetime = 3h30m` (`go/internal/appflow/workflow.go`) — documented
+  derivation: 10-node canvas worst case (10 × 20.2min ≈ 202min ≈ 3h22m) + a queue-wait allowance
+  (~5min) → rounds up to 3h30m.
+- `Lifecycle.StartAppFlow` now sets `wfOpts.WorkflowRunTimeout = appflow.DebugRunMaxLifetime`
+  whenever `debug=true` (`go/internal/execution/lifecycle.go`) — Temporal now genuinely kills a
+  debug workflow that exceeds this bound. Non-debug runs are unaffected — they still use
+  `input.TemporalCfg.WorkflowTimeoutS` when configured, zero value (no bound) otherwise.
+- `debugcred.TTL` is no longer an independently-guessed number — it's now
+  `appflow.DebugRunMaxLifetime + CleanupMargin` where `CleanupMargin = 10 * time.Minute`
+  (`go/internal/debugcred/store.go`), i.e. **3h40m total**, up from the previous round's flat 30m.
+  This keeps "the run is still legitimately active" and "the credential hasn't expired" from ever
+  disagreeing: the credential now provably outlives the workflow's own enforced kill point by
+  exactly the cleanup margin. Proactive cleanup on completion (`FinalizeRunActivity` →
+  `Store.DeleteAllForRun`, from the previous round) is unchanged and remains the primary path; TTL
+  is strictly the fallback for a run that's abandoned, crashes, or is killed by the timeout before
+  cleanup fires. A missing/expired credential still fails the run loudly — cleanup timing was never
+  the mechanism enforcing "fail clearly."
+- The bound is now surfaced, not just enforced: `AppFlowDebugService.Start` returns a new
+  `DebugStartResult.ExpiresAt` (`startedAt.Add(appflow.DebugRunMaxLifetime)`,
+  `go/internal/admin/service/appflow_debug.go`), threaded through the HTTP response
+  (`debugStartResponse.ExpiresAt`, RFC3339, `go/internal/admin/appflow_debug.go`) and the frontend
+  hook/panel (`expiresAt` in `AppFlowDebugSessionState`, displayed as a `⏱ expires in Xh Ym` badge
+  next to the run-id badge in `AppFlowDebugPanel.tsx`, plus an upfront "bounded to a maximum of
+  3h 30m" sentence in the panel's description so the ceiling is visible before a run even starts,
+  not just discovered after the fact).
+
+**Tests added:** 3 in `internal/execution` (`lifecycle_test.go`) —
+`TestLifecycle_StartAppFlow_Debug_EnforcesMaxLifetimeTimeout`,
+`TestLifecycle_StartAppFlow_NotDebug_NoWorkflowRunTimeoutByDefault`,
+`TestLifecycle_StartAppFlow_NotDebug_UsesConfiguredTimeoutNotDebugConstant`. 1 in `internal/debugcred`
+(new `ttl_test.go`) — `TestTTL_DerivedFromDebugRunMaxLifetimePlusCleanupMargin` (asserts the exact
+3h40m derived value, not just that TTL is "some positive duration"). 1 in
+`internal/admin/service` (`appflow_debug_test.go`) —
+`TestAppFlowDebugService_Start_ExpiresAt_IsStartedAtPlusDebugRunMaxLifetime` (before/after-bounded
+timestamp check). `go build ./...` and `go test ./...` both clean, full suite, zero failures — see
+`go/TEST_INDEX.md` S1-162. `npx tsc --noEmit` clean on the frontend changes.
+
+**Verified live (API-level, not browser):** confirmed via direct HTTP call against the running
+`them-go-bridge` that `POST .../debug/start`'s response now includes `expires_at` as an RFC3339
+timestamp roughly `now + 3h30m`. General-mode-with-model and Custom-mode-with-BaseURL wiring is
+covered by the backend's existing per-node two-fake-provider probe (previous round) plus the new
+unit tests above — the UI's own new form fields were not separately re-probed live this round
+since the backend contract for both fields was already proven end-to-end and `tsc` confirms the
+component compiles/type-checks against the updated `AppFlowLLMCredentialValue` shape.
+
+**Manual browser verification steps (not performed by the assistant — no headless browser available
+in this environment):**
+1. Log in as an admin, go to Admin → Applications, open an application with a saved draft canvas
+   containing at least one `llm`-kind inline node and one entry point.
+2. Open the canvas builder, click the amber **▶ Debug** button, then open the per-node credential
+   picker for an LLM node.
+3. Switch the picker to **General** mode, pick a provider that has an `allowed_models` list
+   configured (Admin → LLM Providers) — confirm a **model dropdown** appears (not a free-text box)
+   restricted to that list; pick a provider with no allowed-models list — confirm the model field
+   becomes a free-text input showing `model (default: <provider's default model>)` as its
+   placeholder.
+4. Switch the picker to **Custom** mode — confirm a **Base URL** text input appears alongside
+   provider/model/API key, with placeholder "base URL (optional)".
+5. Fill in a valid provider/key/model (General) or provider/model/key/base-url (Custom) for every
+   required node, click **▶ Run All**.
+6. Immediately after clicking Run All, confirm an amber **"⏱ expires in 3h 30m"** badge appears next
+   to the run-id badge in the debug status bar (hover it — the tooltip should show the exact local
+   timestamp). Confirm the panel's description text above the credential pickers reads "Debug runs
+   are bounded to a maximum of 3h 30m…".
+7. Let the run finish normally — confirm nodes light up and reach `done`/`error` as before (this
+   round changed no run-execution behavior, only the timeout ceiling and the UI fields).

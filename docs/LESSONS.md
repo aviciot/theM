@@ -1156,3 +1156,34 @@ B before considering the merge done — an unimported `.tsx`/`.go` file left beh
 own dependencies (config fields, API params, feature flags) looking falsely alive to anyone tracing
 usage only as far as "is this threaded through the type/schema," rather than "does any mounted
 component actually read it at runtime."
+
+## A TTL was sized against a remembered constant instead of the constant's actual current value (found 2026-09-23)
+
+While re-deriving `debugcred.TTL` for a bounded debug-run lifetime
+(`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`), the previous round's 30-minute TTL turned out to have been
+sized against an assumption that `appFlowActivityTimeout` (`go/internal/appflow/workflow.go`) was
+120 seconds. Re-reading the actual constant mid-implementation this round found it is
+`10 * time.Minute` — a 5x discrepancy. The true worst case for even one node exhausting all retries
+is ≈20.2 minutes (`appFlowActivityTimeout` × `retryMax` + backoff), not the ~4 minutes the old
+30-minute number implicitly assumed it covered with margin. Nothing tested this — there was no
+assertion anywhere pinning `debugcred.TTL`'s value against `appFlowActivityTimeout`'s actual value,
+so the wrong assumption shipped silently.
+
+**Why it wasn't caught earlier:** the 120s figure was carried forward across several rounds of the
+same multi-round review cycle as a remembered fact rather than re-verified against the source each
+time it was used in a new calculation — easy to do when a constant lives in a different package
+than the one being edited, and the number "sounds right" for an LLM call timeout.
+
+**Fix:** re-read `go/internal/appflow/workflow.go` directly instead of trusting the carried-forward
+number; introduced `appflow.DebugRunMaxLifetime` as the single source of truth for the debug-run
+wall-clock ceiling (documented derivation from the *actual* `appFlowActivityTimeout` value), wired
+it into `Lifecycle.StartAppFlow`'s `WorkflowRunTimeout` (previously unset for debug runs entirely),
+and made `debugcred.TTL = appflow.DebugRunMaxLifetime + CleanupMargin` an explicit derivation rather
+than an independent literal — plus a test (`TestTTL_DerivedFromDebugRunMaxLifetimePlusCleanupMargin`)
+that pins the exact resulting value so a future edit to either constant can't silently desync them.
+
+**Watch for:** before reusing any timeout/limit constant in a new calculation — especially across a
+multi-round review session where the same numbers get carried forward in conversation — re-read the
+constant from its source file rather than trusting a value stated earlier in the same session or a
+prior round's summary.
+component actually read it at runtime."
