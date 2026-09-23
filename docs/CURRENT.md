@@ -1,9 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys thread: LLM Providers UI/UX redesign +
-# missing gemini/groq seed rows, then security_scanner promoted to a third
-# tenant_system_agent_config role — moved its LLM analysis step out of the Python
-# them-security-agent container into go-bridge, tenant-key-aware. HEAD 21569888, on top of
-# App Canvas Debug Mode Phase 5 FRONTEND work (7cb2728d) from earlier the same day.)
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys thread: the-M admin (super_admin) given full
+# General/Custom LLM key parity with tenants — them.llm_provider_keys.tenant_id made nullable
+# (db/108, NULL = platform-owned), new platform-scoped key routes, resolvePlatformSystemAgentRole,
+# RoleCard.tsx gained the same switch TenantRoleCard.tsx already had. HEAD 857034c1, on top of App
+# Canvas Debug Mode Phase 5 FRONTEND work (7cb2728d) from earlier the same day.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -11,7 +11,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `21569888` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
+HEAD: `857034c1` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
 before pushing — see the conflict-resolution note below, which still applies.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
@@ -26,6 +26,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+857034c1  feat(admin): the-M admin gets General/Custom LLM key parity with tenants
 21569888  feat(admin): security_scanner as a third tenant_system_agent_config role
 7cb2728d  feat(app-canvas): debug mode frontend — setup panel, Run All, real WS consumer (Phase 5)
 b27d0423  fix(dashboard): /ws/dashboard run:* channels never delivered live events
@@ -61,12 +62,14 @@ Phase 5 backend-slice section of the plan doc). Flows made entirely of inline no
 Worth fixing before Phase 6 if agent-node debugging is a priority — candidate approaches are
 noted in the plan doc.
 
-**Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete, plus a
-follow-up this session: LLM Providers tab UI/UX redesign + missing gemini/groq seed rows, and
-`security_scanner` promoted to a third general/custom role (see the dated section further below
-for full detail). Nothing further planned on this thread unless new requirements surface. **Still
-never verified in a live browser** — recommend a real logged-in click-through before trusting it
-in front of actual tenants, including a real Security Scan run in general mode.
+**Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete, plus
+three follow-ups this session: LLM Providers tab UI/UX redesign + missing gemini/groq seed rows,
+`security_scanner` promoted to a third general/custom role, and the-M admin (super_admin) given
+full General/Custom parity with tenants (its own multi-key system, `db/108`) — see the dated
+sections further below for full detail on each. Nothing further planned on this thread unless new
+requirements surface. **Still never verified in a live browser** — recommend a real logged-in
+click-through before trusting it in front of actual tenants or the platform admin, including a
+real Security Scan run in general mode for both.
 
 **Before starting Phase 6:** read the new lesson in `docs/LESSONS.md` ("`/ws/dashboard`'s `run:*`
 channels never delivered live events") before touching anything that publishes or consumes
@@ -126,6 +129,51 @@ after testing (confirmed with the user first).
 for why, and what was done instead to compensate). The WS/backend contract it depends on is now
 proven live end-to-end; recommend a manual UI pass before fully trusting the button/panel
 rendering itself. Step controls (Phase 6) not built — explicitly out of scope for this phase.
+
+---
+
+## Tenant LLM Provider Keys — follow-up: the-M admin gets General/Custom parity — COMPLETE (2026-09-23)
+
+Commit `857034c1`, not yet pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s "the-M admin gets the
+same General/Custom parity tenants have" section for full detail. The user asked directly why
+super_admin couldn't have the same multi-key general/custom system tenants just got — the honest
+answer was there was no real reason, the first pass had just only wired it up for tenants.
+
+**Schema:** `them.llm_provider_keys.tenant_id` made nullable (`db/108_platform_llm_provider_keys.sql`,
+applied live) — `NULL` = platform-owned, mirroring `them.llm_providers.tenant_id`'s existing
+convention. Old single unique/default constraints replaced with four indexes split by
+NULL/non-NULL, same pattern `them.llm_providers` already uses.
+
+**Go:** every `LLMProviderKeyService`/DAL method's `tenantID string` widened to `*string` (nil =
+platform) rather than duplicated into parallel methods. New
+`internal/admin/llm_provider_keys_platform.go` mirrors the tenant self-service key routes under
+`/admin/llm-providers/{name}/keys...`. New `resolvePlatformSystemAgentRole` mirrors
+`resolveSystemAgentRole`'s general/custom logic for the platform's own config;
+`classifyAgent`/`synthesizeAppCard`/`llmCardAnalysis` all call it now instead of three separate
+inline platform-fallback blocks. `them.config['system_agents']` roles gained `mode`/`key_id`.
+
+**Frontend:** `RoleCard.tsx` (super_admin) gained the same General/Custom switch
+`TenantRoleCard.tsx` already had. `LLMProvidersPanel`/`LLMProviderKeysPanel` gained the same
+allowed-models + named-keys section for super_admin tenants already had.
+
+**Found and fixed two pre-existing bugs while writing tests** (not introduced this session): a
+service-layer test fake checked the wrong not-found flag (`GetProviderByNamePlatform` incorrectly
+reused `tenantProviderNotFound`); and `tokens_sessions_integration_test.go` had bit-rotted to the
+point of not compiling at all under `-tags=integration` — blocking every integration test in
+`internal/admin`, including this change's own new ones, from running. Fixed by pointing it at the
+already-correct `admin.NewPgxQuerier` instead of a stale hand-rolled copy. **One test in that file
+remains broken at runtime** (`TestIntegration_CreateToken_201` — `TokensHandler.Create` now
+requires tenant context the old test never sets up) — flagged in `go/TEST_INDEX.md`, not fixed,
+pre-existing and unrelated.
+
+20 new tests. `go test ./...` 0 failures full suite. `go build -tags=integration ./...` clean.
+Integration tests run for real against this box's live `them-postgres`. `tsc --noEmit` 0 errors.
+`them-go-bridge` rebuilt and force-recreated, confirmed healthy.
+
+**Not live-verified this session** — same standing limitation as the whole plan: no
+browser-automation tool, no direct curl probing. Recommend a real super_admin walkthrough: enable
+a platform provider, save allowed models and a named key, set classifier to general mode using
+that key, confirm a real classify call actually uses it.
 
 ---
 
