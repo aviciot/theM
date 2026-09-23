@@ -37,6 +37,7 @@ export interface SystemAgentRoleOut {
   system_prompt: string | null;
   api_key_hint: string | null;
   key_id: number | null;
+  general_model: string | null;
 }
 
 export interface SystemAgentsOut {
@@ -52,6 +53,7 @@ export interface SystemAgentRoleIn {
   system_prompt?: string | null;
   api_key?: string | null;
   key_id?: number | null;
+  general_model?: string | null;
 }
 
 // Tenant self-service system-agent role config (general/custom mode) — step 5/6
@@ -62,6 +64,7 @@ export interface TenantSystemAgentConfigOut {
   mode: 'general' | 'custom';
   provider_name: string | null;
   key_id: number | null;
+  general_model: string | null;
   custom_provider: string | null;
   custom_model: string | null;
   custom_api_key_masked: string | null;
@@ -73,6 +76,7 @@ export interface TenantSystemAgentConfigIn {
   mode: 'general' | 'custom';
   provider_name?: string | null;
   key_id?: number | null;
+  general_model?: string | null;
   custom_provider?: string | null;
   custom_model?: string | null;
   custom_api_key?: string | null;
@@ -611,6 +615,9 @@ export interface PublishResult {
 // ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───────────
 export interface AppFlowDebugStartResult {
   run_id: string;
+  // ISO-8601 timestamp — when this run will be forcibly terminated
+  // (enforced WorkflowRunTimeout, docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
+  expires_at: string;
 }
 
 // Per-node LLM credential override for a debug run only

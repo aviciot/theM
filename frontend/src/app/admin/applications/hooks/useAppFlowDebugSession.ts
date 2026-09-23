@@ -18,6 +18,10 @@ export interface AppFlowDebugSessionState {
   active: boolean;
   running: boolean;
   runId: string | null;
+  // ISO-8601 — when this run will be forcibly terminated (enforced
+  // WorkflowRunTimeout, docs/APPFLOW_RUNTIME_PARAMS_PLAN.md). null until a
+  // run has actually started.
+  expiresAt: string | null;
   entryPointSlug: string;
   userMessage: string;
   // Per-node LLM credential picker values, keyed by specKey
@@ -35,6 +39,7 @@ const INITIAL_STATE: AppFlowDebugSessionState = {
   active: false,
   running: false,
   runId: null,
+  expiresAt: null,
   entryPointSlug: '',
   userMessage: '',
   credentials: {},
@@ -127,12 +132,12 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
         continue;
       }
       llmOverrides[spec.nodeId] = val.mode === 'general'
-        ? { mode: 'general', provider: val.provider, key_id: val.keyId }
+        ? { mode: 'general', provider: val.provider, key_id: val.keyId, model: val.model || undefined }
         : { mode: 'custom', provider: val.provider, model: val.model, api_key: val.apiKey, base_url: val.baseUrl };
     }
 
     setDebug(prev => ({
-      ...prev, running: true, error: null, done: false, runId: null,
+      ...prev, running: true, error: null, done: false, runId: null, expiresAt: null,
       nodeStates: {}, nodeDetails: {}, nodeErrors: {},
     }));
 
@@ -144,8 +149,8 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       // Redis Stream from the beginning on subscribe (runstream.StreamFromRedis
       // replay+live), not a snapshot-only read, so no event is missed even if
       // the run has already finished by the time this WS opens.
-      const { run_id } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides);
-      setDebug(prev => ({ ...prev, runId: run_id }));
+      const { run_id, expires_at } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides);
+      setDebug(prev => ({ ...prev, runId: run_id, expiresAt: expires_at }));
 
       const r = await fetch('/api/auth/token');
       if (!r.ok) throw new Error('Could not get auth token for the debug WS connection.');

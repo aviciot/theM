@@ -54,9 +54,16 @@ export function AppFlowLLMCredentialField({
 
   function setMode(next: 'general' | 'custom') {
     onChange(next === 'general'
-      ? { mode: 'general', provider: '', keyId: null }
+      ? { mode: 'general', provider: '', keyId: null, model: '' }
       : { mode: 'custom', provider: '', model: '', apiKey: '', baseUrl: '' });
   }
+
+  // The provider row's own allowed_models (empty = no allow-list configured,
+  // any model is accepted server-side too — resolveLLMOverride's behavior).
+  const selectedProvider = mode === 'general'
+    ? providers.find(p => p.name === generalProvider)
+    : undefined;
+  const allowedModels = selectedProvider?.allowed_models ?? [];
 
   return (
     <div style={{
@@ -74,11 +81,11 @@ export function AppFlowLLMCredentialField({
       </div>
 
       {mode === 'general' ? (
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <select
             value={value?.mode === 'general' ? value.provider : ''}
             disabled={disabled}
-            onChange={e => onChange({ mode: 'general', provider: e.target.value, keyId: null })}
+            onChange={e => onChange({ mode: 'general', provider: e.target.value, keyId: null, model: '' })}
             style={{ ...inputStyle, width: 130 }}
           >
             <option value="">— provider —</option>
@@ -87,12 +94,33 @@ export function AppFlowLLMCredentialField({
           <select
             value={value?.mode === 'general' ? value.keyId ?? '' : ''}
             disabled={disabled || !generalProvider || keysLoading}
-            onChange={e => onChange({ mode: 'general', provider: generalProvider, keyId: e.target.value ? Number(e.target.value) : null })}
+            onChange={e => onChange({ mode: 'general', provider: generalProvider, keyId: e.target.value ? Number(e.target.value) : null, model: value?.mode === 'general' ? value.model : '' })}
             style={{ ...inputStyle, width: 130 }}
           >
             <option value="">— default key —</option>
             {providerKeys.map(k => <option key={k.id} value={k.id}>{k.name}{k.is_default ? ' (default)' : ''}</option>)}
           </select>
+          {allowedModels.length > 0 ? (
+            <select
+              value={value?.mode === 'general' ? value.model : ''}
+              disabled={disabled || !generalProvider}
+              onChange={e => onChange({ mode: 'general', provider: generalProvider, keyId: value?.mode === 'general' ? value.keyId : null, model: e.target.value })}
+              style={{ ...inputStyle, width: 140 }}
+              title="Model — restricted to this provider's allowed models"
+            >
+              <option value="">— default model —</option>
+              {allowedModels.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : (
+            <input
+              placeholder={generalProvider ? 'model (default: ' + (selectedProvider?.default_model ?? '') + ')' : 'model'}
+              disabled={disabled || !generalProvider}
+              value={value?.mode === 'general' ? value.model : ''}
+              onChange={e => onChange({ mode: 'general', provider: generalProvider, keyId: value?.mode === 'general' ? value.keyId : null, model: e.target.value })}
+              style={{ ...inputStyle, width: 140 }}
+              title="No allowed-models list configured for this provider — any model is accepted"
+            />
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -113,6 +141,13 @@ export function AppFlowLLMCredentialField({
             value={value?.mode === 'custom' ? value.apiKey : ''}
             onChange={e => onChange({ mode: 'custom', provider: value?.mode === 'custom' ? value.provider : '', model: value?.mode === 'custom' ? value.model : '', apiKey: e.target.value, baseUrl: value?.mode === 'custom' ? value.baseUrl : '' })}
             style={{ ...inputStyle, width: 110 }}
+          />
+          <input
+            placeholder="base URL (optional)" disabled={disabled}
+            value={value?.mode === 'custom' ? value.baseUrl : ''}
+            onChange={e => onChange({ mode: 'custom', provider: value?.mode === 'custom' ? value.provider : '', model: value?.mode === 'custom' ? value.model : '', apiKey: value?.mode === 'custom' ? value.apiKey : '', baseUrl: e.target.value })}
+            style={{ ...inputStyle, width: 160 }}
+            title="Endpoint URL for this node's request — leave blank to use the provider's default"
           />
         </div>
       )}

@@ -182,9 +182,12 @@ export interface AppFlowRuntimeParamSpec {
 
 // One LLM-credential picker's value — General mode (tenant's saved key) or
 // Custom mode (one-off key for this debug run only, never persisted to the
-// app's saved Runtime settings).
+// app's saved Runtime settings). model is optional in General mode — empty
+// means "use the provider's own default_model," same fallback the backend
+// (resolveLLMOverride) already applies; when set, it's validated server-side
+// against the provider's own allowed_models list.
 export type AppFlowLLMCredentialValue =
-  | { mode: 'general'; provider: string; keyId: number | null }
+  | { mode: 'general'; provider: string; keyId: number | null; model: string }
   | { mode: 'custom'; provider: string; model: string; apiKey: string; baseUrl: string };
 
 // node_type is a string, not a literal union — new appflow node kinds

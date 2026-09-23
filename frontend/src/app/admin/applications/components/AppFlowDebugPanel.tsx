@@ -17,6 +17,20 @@ const inputStyle: React.CSSProperties = {
   color: C.text, padding: '6px 10px', outline: 'none',
 };
 
+// DEBUG_RUN_MAX_LIFETIME_LABEL mirrors go/internal/appflow's
+// DebugRunMaxLifetime (3h30m) — shown before a run starts so the bound is
+// visible up front, not just discovered after the fact via expiresAt.
+const DEBUG_RUN_MAX_LIFETIME_LABEL = '3h 30m';
+
+function formatExpiry(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (Number.isNaN(ms)) return iso;
+  if (ms <= 0) return 'now';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `in ${mins}m`;
+  return `in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
 export function AppFlowDebugPanel({
   debug,
   entryPointOptions,
@@ -111,6 +125,11 @@ export function AppFlowDebugPanel({
             run {debug.runId.slice(0, 8)}…
           </span>
         )}
+        {debug.expiresAt && (
+          <span style={{ color: '#f59e0b', fontSize: '11px' }} title={new Date(debug.expiresAt).toLocaleString()}>
+            ⏱ expires {formatExpiry(debug.expiresAt)}
+          </span>
+        )}
         {debug.error && (
           <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             ✗ {debug.error}
@@ -122,7 +141,10 @@ export function AppFlowDebugPanel({
       </div>
       <div style={{ marginTop: 6, color: '#475569', fontSize: '10px' }}>
         Runs the saved draft directly on the isolated debug worker pool — no publish required.
-        Watch nodes light up on the canvas as they really execute.
+        Watch nodes light up on the canvas as they really execute. Debug runs are bounded to a
+        maximum of {DEBUG_RUN_MAX_LIFETIME_LABEL} (covers node retries and worker queue waits) —
+        the run is terminated and any per-node credentials are cleared after that, or immediately
+        once the run finishes.
       </div>
 
       {credentialSpecs.length > 0 && (
