@@ -3,17 +3,37 @@ import { useEffect, useState } from 'react';
 import { themApi, type LLMProviderOut, type LLMProviderUpsertInput, type LLMProviderKeyOut } from '@/lib/api';
 import { PROVIDER_MODELS } from './settingsConstants';
 import { LLMProviderKeysPanel } from './LLMProviderKeysPanel';
+import { Toggle } from './RoleCard';
+
+function ModelRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
+  return (
+    <label
+      style={{
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '9px 12px', borderRadius: '8px', cursor: 'pointer',
+        background: checked ? 'rgba(0,209,255,0.06)' : 'transparent',
+        border: `1px solid ${checked ? 'rgba(0,209,255,0.25)' : 'transparent'}`,
+        transition: 'background 0.12s, border-color 0.12s',
+      }}
+    >
+      <input type="checkbox" checked={checked} onChange={onChange} style={{ cursor: 'pointer', width: '15px', height: '15px', flexShrink: 0, accentColor: 'var(--tm-accent)' }} />
+      <span style={{ fontSize: '13px', color: checked ? '#fff' : 'var(--tm-text-muted)', fontWeight: checked ? 600 : 400 }}>{label}</span>
+    </label>
+  );
+}
 
 function ProviderCard({
   prov,
   isSuperAdmin,
   onSaveKey,
+  onToggleEnabled,
   saving,
   saveMsg,
 }: {
   prov: LLMProviderOut;
   isSuperAdmin: boolean;
   onSaveKey: (apiKey: string) => void;
+  onToggleEnabled: (enabled: boolean) => void;
   saving: boolean;
   saveMsg: { ok: boolean; text: string } | null;
 }) {
@@ -45,9 +65,9 @@ function ProviderCard({
   }
 
   useEffect(() => {
-    if (!isSuperAdmin) loadKeys();
+    if (!isSuperAdmin && prov.enabled) loadKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prov.name]);
+  }, [prov.name, prov.enabled]);
 
   function toggleModel(model: string) {
     setAllowedModels((prev) => prev.includes(model) ? prev.filter((m) => m !== model) : [...prev, model]);
@@ -86,50 +106,64 @@ function ProviderCard({
     }
   }
 
+  const showTenantBody = !isSuperAdmin && prov.enabled;
+
   return (
     <div style={{ background: 'var(--tm-card-bg)', border: '1px solid var(--tm-card-border)', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <div>
           <span style={{ fontWeight: 700, fontSize: '15px', color: '#fff' }}>{prov.display_name || prov.name}</span>
-          <span style={{ marginLeft: '10px', fontSize: '12px', padding: '2px 8px', borderRadius: '20px', background: prov.enabled ? 'rgba(74,192,136,0.12)' : 'rgba(132,157,188,0.1)', color: prov.enabled ? '#4ac088' : 'var(--tm-text-muted)' }}>
-            {prov.enabled ? 'enabled' : 'disabled'}
-          </span>
+          {isSuperAdmin && (
+            <span style={{ marginLeft: '10px', fontSize: '12px', padding: '2px 8px', borderRadius: '20px', background: prov.enabled ? 'rgba(74,192,136,0.12)' : 'rgba(132,157,188,0.1)', color: prov.enabled ? '#4ac088' : 'var(--tm-text-muted)' }}>
+              {prov.enabled ? 'enabled' : 'disabled'}
+            </span>
+          )}
         </div>
-        {isSuperAdmin && (
+        {isSuperAdmin ? (
           <span style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>
             {prov.api_key_set
               ? (prov.api_key_masked ? `Key: ${prov.api_key_masked}` : 'Key set')
               : 'No key set'}
           </span>
+        ) : (
+          <Toggle value={prov.enabled} onChange={onToggleEnabled} />
         )}
       </div>
 
       {isSuperAdmin && (
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <input
-            type="password"
-            placeholder="New API key (leave blank to keep current)"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            style={{ flex: 1, background: 'var(--tm-input-bg, rgba(0,0,0,0.3))', border: '1px solid rgba(132,157,188,0.2)', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '13px' }}
-          />
-          <button
-            onClick={() => { onSaveKey(apiKey); setApiKey(''); }}
-            disabled={saving}
-            style={{ padding: '8px 16px', background: 'var(--tm-accent)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      )}
-      {saveMsg && (
-        <p style={{ margin: '6px 0 0', fontSize: '12px', color: saveMsg.ok ? '#4ac088' : '#e05252' }}>{saveMsg.text}</p>
+        <>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '14px' }}>
+            <input
+              type="password"
+              placeholder="New API key (leave blank to keep current)"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              style={{ flex: 1, background: 'var(--tm-input-bg, rgba(0,0,0,0.3))', border: '1px solid rgba(132,157,188,0.2)', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '13px' }}
+            />
+            <button
+              onClick={() => { onSaveKey(apiKey); setApiKey(''); }}
+              disabled={saving}
+              style={{ padding: '8px 16px', background: 'var(--tm-accent)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {saveMsg && (
+            <p style={{ margin: '6px 0 0', fontSize: '12px', color: saveMsg.ok ? '#4ac088' : '#e05252' }}>{saveMsg.text}</p>
+          )}
+        </>
       )}
 
-      {!isSuperAdmin && (
+      {!isSuperAdmin && !prov.enabled && (
+        <p style={{ margin: '10px 0 0', fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>
+          Turn this on to choose which models are allowed and manage your own API keys.
+        </p>
+      )}
+
+      {showTenantBody && (
         <>
-          <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid rgba(132,157,188,.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+          <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid rgba(132,157,188,.1)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '10px' }}>
               <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Allowed models
               </div>
@@ -137,23 +171,23 @@ function ProviderCard({
                 onClick={handleRefresh}
                 disabled={refreshing || !defaultKey}
                 title={!defaultKey ? 'Add a key below first' : undefined}
-                style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--tm-border)', background: 'transparent', color: defaultKey ? 'var(--tm-text-muted)' : 'var(--tm-text-muted)', cursor: (refreshing || !defaultKey) ? 'not-allowed' : 'pointer', fontSize: '11px', fontWeight: 600, opacity: defaultKey ? 1 : 0.5 }}
+                style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: (refreshing || !defaultKey) ? 'not-allowed' : 'pointer', fontSize: '11px', fontWeight: 600, opacity: defaultKey ? 1 : 0.5 }}
               >
                 {refreshing ? 'Refreshing…' : 'Refresh from provider'}
               </button>
             </div>
             {refreshErr && <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#e05252' }}>{refreshErr}</p>}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
-              {modelOptions.length === 0 && (
-                <span style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>No known models yet — add a key and refresh.</span>
-              )}
-              {modelOptions.map((m) => (
-                <label key={m} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--tm-text)', padding: '4px 10px', borderRadius: '20px', background: allowedModels.includes(m) ? 'rgba(0,209,255,0.1)' : 'rgba(132,157,188,0.06)', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={allowedModels.includes(m)} onChange={() => toggleModel(m)} style={{ cursor: 'pointer' }} />
-                  {m}
-                </label>
-              ))}
-            </div>
+
+            {modelOptions.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: '0 0 12px' }}>No known models yet — add a key below, then refresh.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '14px' }}>
+                {modelOptions.map((m) => (
+                  <ModelRow key={m} label={m} checked={allowedModels.includes(m)} onChange={() => toggleModel(m)} />
+                ))}
+              </div>
+            )}
+
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <button
                 onClick={handleSaveModels}
@@ -227,6 +261,21 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     }
   }
 
+  async function handleToggleEnabled(name: string, enabled: boolean) {
+    const prov = providers.find((p) => p.name === name);
+    // Optimistic update so the toggle feels instant.
+    setProviders((prev) => prev.map((p) => p.name === name ? { ...p, enabled } : p));
+    try {
+      await themApi.upsertMyLLMProvider(name, {
+        default_model: prov?.default_model ?? '',
+        enabled,
+      });
+    } catch {
+      // Revert on failure.
+      setProviders((prev) => prev.map((p) => p.name === name ? { ...p, enabled: !enabled } : p));
+    }
+  }
+
   return (
     <>
       <p style={{ fontSize: '13px', color: 'var(--tm-text-muted)', margin: '0 0 24px 0', lineHeight: 1.5 }}>
@@ -246,6 +295,7 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           prov={prov}
           isSuperAdmin={isSuperAdmin}
           onSaveKey={(apiKey) => handleSaveProvider(prov.name, apiKey)}
+          onToggleEnabled={(enabled) => handleToggleEnabled(prov.name, enabled)}
           saving={!!provSaving[prov.name]}
           saveMsg={provSaveMsgs[prov.name] ?? null}
         />

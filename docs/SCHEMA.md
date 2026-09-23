@@ -14,6 +14,12 @@ Migration 105 adds `allowed_models` — the tenant's own key management moves to
 `them.llm_provider_keys` (multiple named keys per provider); `api_key_encrypted` on this table is frozen to
 legacy/platform-row use going forward.
 Unique constraints: `llm_providers_name_platform_uq` (name WHERE tenant_id IS NULL) and `llm_providers_name_tenant_uq` (name, tenant_id WHERE tenant_id IS NOT NULL).
+Migration 107 seeds platform-default rows for `gemini` and `groq` (both `enabled=false` by default) —
+they were fully supported in code (dispatch, model lists, probing) since before this table existed in
+its current form, but never had a row, so they never appeared in the LLM Providers tab. Platform-default
+rows today: `anthropic` (enabled), `openai`, `gemini`, `groq` (all three disabled by default — same
+`enabled=false` precedent `openai` set in `003_phase8.sql`), plus the unrelated dev-only `mock` provider
+(instant reply, no API key, enabled — not real-provider config, still shows up in the same list).
 Queried exclusively via the admin pool (`them_admin`, BYPASSRLS) — tenant isolation is enforced by an
 application-level `WHERE tenant_id = $1` predicate (`tenantctx.MustTenantIDFromCtx`), not by RLS/GUC. RLS
 policies below exist for defense-in-depth only.

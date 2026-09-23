@@ -27,6 +27,7 @@ const ORGANIZATION_NAV = [
   { href: '/tenant/members',   icon: 'group',           label: 'Members' },
   { href: '/tenant/settings',  icon: 'manage_accounts', label: 'Organization Settings' },
   { href: '/admin/tokens',     icon: 'key',             label: 'Access Tokens' },
+  { href: '/admin/settings',   icon: 'settings',        label: 'LLM & System Agents' },
 ];
 
 const PLATFORM_ADMIN_NAV = [
@@ -148,9 +149,13 @@ export default function Sidebar() {
               ))}
 
               <SectionLabel text="Organization" />
-              {ORGANIZATION_NAV.map(({ href, icon, label }) => (
-                <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
-              ))}
+              {ORGANIZATION_NAV
+                // /admin/settings already has its own entry under Platform Admin
+                // for super_admin (labeled "System Settings") — don't show it twice.
+                .filter(({ href }) => user?.role === 'super_admin' ? href !== '/admin/settings' : true)
+                .map(({ href, icon, label }) => (
+                  <NavLink key={href} href={href} icon={icon} label={label} active={isActive(href)} />
+                ))}
             </>
           )}
 
