@@ -137,6 +137,7 @@ func BuildRouter(
 	monitoring := NewMonitoringConfigHandler(dbq)
 	llmRouting := NewLLMRoutingHandler(dbq)
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
+	llmProviderKeys := NewLLMProviderKeysHandler(dbq, secretKey)
 	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
 	tenants := NewTenantsHandler(dbq, auditWriter, idpKey, logoDir)
 	// Admin + runs routes — all require JWT. Within /admin, routes are split into
@@ -215,6 +216,7 @@ func BuildRouter(
 
 				// Tenant-admin self-service LLM provider key management.
 				llmProviders.TenantScopedRoutes(tenantScoped)
+				llmProviderKeys.TenantScopedRoutes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

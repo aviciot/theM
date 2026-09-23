@@ -1,5 +1,5 @@
 # Tenant-Level LLM Provider Configuration — Plan
-# Status: approved design, implementing
+# Status: approved design, implementing — steps 1-3 of 7 complete
 # Owner: platform
 # Last updated: 2026-09-23
 
@@ -259,3 +259,52 @@ Add a **General settings / Custom** switch at the top of each role card:
 Steps 1-4 (provider/keys config + testing/refresh UI) are independently useful and shippable before
 tackling step 5-6 (system-agent wiring) — recommend landing them as separate commits/checkpoints
 given the file-size and test-per-change rules in `go/CLAUDE.md`.
+
+**Step 3 — COMPLETE (2026-09-23).** Test-key and list-models HTTP endpoints landed, tenant
+self-service surface only (`/admin/my/llm-providers/{name}/...` — the platform-admin-on-tenant
+mirror `/admin/tenants/{id}/llm-providers/{name}/...` was deliberately not built in this pass, since
+nothing needs it yet; add it later by mirroring `LLMProviderKeysHandler.TenantScopedRoutes` the same
+way `LLMProvidersHandler.TenantProviderRoutes` mirrors `TenantScopedRoutes` today).
+
+New routes, all in `go/internal/admin/llm_provider_keys.go` (`LLMProviderKeysHandler`):
+```
+GET    /admin/my/llm-providers/{name}/keys
+POST   /admin/my/llm-providers/{name}/keys
+PATCH  /admin/my/llm-providers/{name}/keys/{keyID}
+DELETE /admin/my/llm-providers/{name}/keys/{keyID}
+POST   /admin/my/llm-providers/{name}/keys/{keyID}/default
+POST   /admin/my/llm-providers/{name}/keys/{keyID}/test
+GET    /admin/my/llm-providers/{name}/models?key_id=...
+```
+
+Every route resolves `{name}` to the caller's own tenant-scoped `them.llm_providers` row first, via
+new `LLMProviderService.GetOwnProviderRow` (wraps the existing `GetProviderByNameForTenant` DAL
+call, translates `pgx.ErrNoRows` → `ErrNotFound`/404). **This never falls back to the platform row's
+id** — if the tenant hasn't yet called `PUT /my/llm-providers/{name}` to create its own row (e.g. to
+enable the provider), key routes 404 rather than silently attaching a key to the platform's row.
+This is the concrete enforcement point for the hard "no platform-key fallback" rule at the
+provider-resolution level, not just at LLM-call time.
+
+Test fires the existing `probeLLMWithBase` against the key's own decrypted secret and the
+provider's `default_model`/`base_url`, then records the outcome via
+`LLMProviderKeyService.RecordTestResult` (`last_tested_at`/`last_test_ok` columns already existed
+from step 2). List-models is new: `go/internal/admin/llm_provider_models.go` adds
+`fetchAnthropicModels`, `fetchOpenAICompatModels` (openai/groq/custom base_url), `fetchGeminiModels`
+— real `GET /v1/models`-equivalent calls per provider, dispatched by `listAvailableModels` the same
+way `probeLLMWithBase` dispatches probes.
+
+Tests: 2 new service tests (`GetOwnProviderRow`), 6 new tests for the models-fetch helpers (via
+`httptest.Server`, no real provider network calls), 6 new handler tests (`LPK-01..06`) — all in
+`go/TEST_INDEX.md` as S1-135..137. `go test ./...` — 0 failures, full suite.
+
+**Found but not fixed this session:** commit `465ffe93` (step 2, DAL+service layer) added roughly 64
+tests (`llm_provider_keys_test.go` 18, `llm_provider_keys_integration_test.go` 9, plus
+`allowed_models` cases folded into the existing `llm_providers_test.go` growth) without adding
+corresponding `go/TEST_INDEX.md` rows — the S1 total stayed at 1349 across that commit. Flagged as a
+gap row in `go/TEST_INDEX.md` rather than silently backfilled, since reconstructing accurate
+per-commit attribution for a prior session's untracked test additions was out of scope for this
+step. Worth a dedicated cleanup pass before the count is trusted as precise.
+
+**Not yet built (steps 4-6 remain):** frontend UI (model checklist + refresh button + keys
+sub-section), the platform-admin-on-tenant route mirror (if ever needed),
+`them.tenant_system_agent_config` table + classifier/card_synthesizer general-vs-custom wiring.

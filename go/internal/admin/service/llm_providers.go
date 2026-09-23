@@ -301,6 +301,21 @@ func (s *LLMProviderService) UpsertForTenant(ctx context.Context, tenantID, name
 	return s.toOut(row), nil
 }
 
+// GetOwnProviderRow returns the tenant's own them.llm_providers row for name.
+// Returns ErrNotFound when the tenant has no row for this provider name yet —
+// never falls back to the platform-default row's id (a tenant must PUT
+// /my/llm-providers/{name} first to create its own row before it can hold keys).
+func (s *LLMProviderService) GetOwnProviderRow(ctx context.Context, name, tenantID string) (dal.LLMProvider, error) {
+	row, err := s.dal.GetProviderByNameForTenant(ctx, name, tenantID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return dal.LLMProvider{}, ErrNotFound
+		}
+		return dal.LLMProvider{}, err
+	}
+	return row, nil
+}
+
 // Delete hard-deletes a provider. Returns ErrNotFound when the provider does not exist.
 func (s *LLMProviderService) Delete(ctx context.Context, id int64) error {
 	err := s.dal.DeleteProvider(ctx, id)

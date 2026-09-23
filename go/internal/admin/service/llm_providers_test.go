@@ -647,6 +647,33 @@ func TestProviderService_Update_AllowedModels_Present_Replaces(t *testing.T) {
 	}
 }
 
+// ── GetOwnProviderRow tests ────────────────────────────────────────────────────
+
+func TestGetOwnProviderRow_NotFound_ReturnsErrNotFound(t *testing.T) {
+	d := &fakeDal{tenantProviderNotFound: true}
+	svc := newProviderSvc(d)
+	_, err := svc.GetOwnProviderRow(context.Background(), "anthropic", "tid")
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("want ErrNotFound when tenant has no own row, got %v", err)
+	}
+}
+
+func TestGetOwnProviderRow_Found_ReturnsTenantRow_NeverPlatformID(t *testing.T) {
+	tid := "00000000-0000-0000-0000-000000000001"
+	d := &fakeDal{
+		tenantProviderByName:   dal.LLMProvider{ID: 20, Name: "anthropic", DefaultModel: "m", TenantID: &tid},
+		platformProviderByName: dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "m"},
+	}
+	svc := newProviderSvc(d)
+	row, err := svc.GetOwnProviderRow(context.Background(), "anthropic", tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ID != 20 {
+		t.Errorf("want the tenant's own row id=20, got %d (must never resolve to the platform row's id)", row.ID)
+	}
+}
+
 func TestTenantProvider_Upsert_AllowedModels_PreservedWhenAbsent(t *testing.T) {
 	platform := dal.LLMProvider{ID: 1, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-sonnet-4-6"}
 	tid := "00000000-0000-0000-0000-000000000001"
