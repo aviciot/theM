@@ -24,6 +24,11 @@ export interface AppFlowDebugSessionState {
   expiresAt: string | null;
   entryPointSlug: string;
   userMessage: string;
+  // Step controls (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — set before
+  // starting a run; the backend pauses before every node's tick instead of
+  // running straight through. Locked once a run has started (same pattern
+  // as entryPointSlug/userMessage being disabled while debug.running).
+  stepMode: boolean;
   // Per-node LLM credential picker values, keyed by specKey
   // (`${nodeId}:${paramKey}`) — never merged/deduped across nodes, per
   // docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
@@ -42,6 +47,7 @@ const INITIAL_STATE: AppFlowDebugSessionState = {
   expiresAt: null,
   entryPointSlug: '',
   userMessage: '',
+  stepMode: false,
   credentials: {},
   nodeStates: {},
   nodeDetails: {},
@@ -87,6 +93,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       active: true,
       entryPointSlug: prev.entryPointSlug || entryPointOptions[0] || '',
       userMessage: prev.userMessage,
+      stepMode: prev.stepMode,
       credentials: prev.credentials,
     }));
   }
@@ -103,6 +110,10 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
 
   function setCredential(specKey: string, value: AppFlowLLMCredentialValue) {
     setDebug(prev => ({ ...prev, credentials: { ...prev.credentials, [specKey]: value } }));
+  }
+
+  function setStepMode(stepMode: boolean) {
+    setDebug(prev => ({ ...prev, stepMode }));
   }
 
   function setUserMessage(msg: string) {
@@ -149,7 +160,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       // Redis Stream from the beginning on subscribe (runstream.StreamFromRedis
       // replay+live), not a snapshot-only read, so no event is missed even if
       // the run has already finished by the time this WS opens.
-      const { run_id, expires_at } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides);
+      const { run_id, expires_at } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides, debug.stepMode);
       setDebug(prev => ({ ...prev, runId: run_id, expiresAt: expires_at }));
 
       const r = await fetch('/api/auth/token');
@@ -181,6 +192,13 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
         if (evType === 'node_start') {
           const nodeId = ev.node_id as string;
           setDebug(prev => ({ ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' } }));
+        } else if (evType === 'node_paused') {
+          // Step controls (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — the
+          // backend has genuinely stopped at this node, waiting for the next
+          // Step click. Distinct from 'pending': this is an observed state,
+          // not a UI guess about what's next.
+          const nodeId = ev.node_id as string;
+          setDebug(prev => ({ ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'paused' } }));
         } else if (evType === 'node_done') {
           const nodeId = ev.node_id as string;
           const detail = (ev.detail as string) ?? '';
@@ -216,7 +234,23 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       wsRef.current?.close();
       wsRef.current = null;
     }
-  }, [appId, debug.entryPointSlug, debug.userMessage, debug.credentials, runtimeParamSpecs]);
+  }, [appId, debug.entryPointSlug, debug.userMessage, debug.stepMode, debug.credentials, runtimeParamSpecs]);
+
+  // Sends one Step signal (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — releases
+  // every node currently paused, in lockstep, by exactly one tick. No local
+  // state changes here beyond clearing any stale error: the real state
+  // transition arrives asynchronously as node_start/node_done/node_paused
+  // events over the WS, same as every other debug state change.
+  const step = useCallback(async () => {
+    if (!debug.runId) return;
+    try {
+      await themApi.stepAppFlowDebug(appId, debug.runId);
+      setDebug(prev => ({ ...prev, error: null }));
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Step signal failed';
+      setDebug(prev => ({ ...prev, error: message }));
+    }
+  }, [appId, debug.runId]);
 
   const reset = useCallback(() => {
     wsRef.current?.close();
@@ -224,7 +258,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     setDebug(prev => ({
       ...INITIAL_STATE, active: prev.active,
       entryPointSlug: prev.entryPointSlug, userMessage: prev.userMessage,
-      credentials: prev.credentials,
+      stepMode: prev.stepMode, credentials: prev.credentials,
     }));
   }, []);
 
@@ -256,7 +290,9 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     setEntryPointSlug,
     setUserMessage,
     setCredential,
+    setStepMode,
     runAll,
+    step,
     reset,
     decorateNodes,
   };

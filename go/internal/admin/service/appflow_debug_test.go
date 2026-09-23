@@ -162,16 +162,35 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil)
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", result.RunID)
 	assert.True(t, lc.admitCalled)
 	assert.True(t, lc.startCalled)
 	assert.True(t, lc.lastDebug, "must always start with debug=true")
 	assert.Equal(t, "hello", lc.lastInput.UserMessage)
+	assert.False(t, lc.lastInput.StepMode, "stepMode=false must not set StepMode")
 	require.NotNil(t, lc.lastInput.Spec)
 	require.Len(t, lc.lastInput.Spec.EntryPoints, 1)
 	assert.Equal(t, "chat", lc.lastInput.Spec.EntryPoints[0].Slug)
+}
+
+// StepMode=true (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) must propagate
+// through to AppFlowWorkflowInput.StepMode unchanged — this is the only
+// thing distinguishing a Step-controlled debug session from a Run-All one at
+// the point the workflow is started.
+func TestAppFlowDebugService_Start_StepModeTrue_PropagatesToWorkflowInput(t *testing.T) {
+	d := &fakeAppFlowDebugDAL{
+		app:   draftApp("chat"),
+		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
+	}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, true)
+	require.NoError(t, err)
+	assert.True(t, lc.lastInput.StepMode)
 }
 
 // ExpiresAt must be startedAt + appflow.DebugRunMaxLifetime, computed from a
@@ -189,7 +208,7 @@ func TestAppFlowDebugService_Start_ExpiresAt_IsStartedAtPlusDebugRunMaxLifetime(
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
 	before := time.Now()
-	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil)
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
 	after := time.Now()
 	require.NoError(t, err)
 
@@ -206,7 +225,7 @@ func TestAppFlowDebugService_Start_AppNotFound(t *testing.T) {
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 	assert.False(t, lc.admitCalled, "must not admit a run when the app can't be resolved")
@@ -219,7 +238,7 @@ func TestAppFlowDebugService_Start_EPSlugNotFound(t *testing.T) {
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
@@ -231,7 +250,7 @@ func TestAppFlowDebugService_Start_NoDraftSaved(t *testing.T) {
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnprocessable))
 }
@@ -251,7 +270,7 @@ func TestAppFlowDebugService_Start_EPMissingFromCompiledDraft(t *testing.T) {
 	// (draftApp) is stubbed with a matching slug — force a mismatch by asking
 	// for a slug absent from the compiled spec.
 	d.app = dal.Application{ID: "app-1", Slug: "my-app", EntryPoints: []dal.EntryPoint{{Slug: "stale-slug"}}}
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "stale-slug", "hi", 7, nil)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "stale-slug", "hi", 7, nil, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnprocessable))
 	assert.False(t, lc.admitCalled)
@@ -280,7 +299,7 @@ func TestAppFlowDebugService_Start_MissingRequiredOverride_FailsBeforeAdmit(t *t
 	overrides := map[string]LLMOverrideInput{
 		"llm_1": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},
 	}
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnprocessable))
 	assert.False(t, lc.admitCalled, "must not admit a run when a required override is missing")
@@ -299,7 +318,7 @@ func TestAppFlowDebugService_Start_CustomMode_UsesLiteralKey_PerNode(t *testing.
 		"llm_1": {Mode: "custom", Provider: "anthropic", Model: "claude-haiku-4-5-20251001", APIKey: "sk-node-1"},
 		"llm_2": {Mode: "custom", Provider: "openai", Model: "gpt-4o", APIKey: "sk-node-2"},
 	}
-	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides, false)
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", result.RunID)
 
@@ -331,7 +350,7 @@ func TestAppFlowDebugService_Start_GeneralMode_NoUsableKey_FailsClearly(t *testi
 		"llm_1": {Mode: "general", Provider: "anthropic"},
 		"llm_2": {Mode: "general", Provider: "anthropic"},
 	}
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnprocessable))
 	assert.False(t, lc.admitCalled)
@@ -351,7 +370,7 @@ func TestAppFlowDebugService_Start_CredentialStoreWriteFails_SurfacesError(t *te
 		"llm_1": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},
 		"llm_2": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},
 	}
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides, false)
 	require.Error(t, err)
 	assert.False(t, lc.startCalled, "must not start the workflow if a credential write failed")
 }

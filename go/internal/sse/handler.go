@@ -595,8 +595,8 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 			"content_type": contentType,
 			"url":          downloadURL,
 		}
-	case "node_start", "node_done", "node_error":
-		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5).
+	case "node_start", "node_done", "node_error", "node_paused":
+		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5/6).
 		// Wire shape from emitTrace: {type, run_id, node_id, kind, detail?}.
 		var runID, nodeID, kind, detail string
 		if raw, ok := payload["run_id"]; ok {

@@ -148,11 +148,14 @@ export interface EpNodeData {
   _errorMsg?: string;
 }
 
-// ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───────────
+// ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5/6) ─────────
 // Real WS/SSE-driven state, not a client-side simulator — see
 // useAppFlowDebugSession.ts. Mirrors the agent builder's DebugNodeState shape
 // so StepNode.tsx's border/glow styling constants can be reused as-is.
-export type AppFlowDebugNodeState = 'idle' | 'pending' | 'running' | 'done' | 'error';
+// 'paused' (Phase 6) is distinct from 'pending': pending means "not reached
+// yet," paused means "the backend has genuinely stopped here, waiting for a
+// Step click" — a real, observed backend state, not a UI guess.
+export type AppFlowDebugNodeState = 'idle' | 'pending' | 'running' | 'paused' | 'done' | 'error';
 
 export interface AppFlowNodeDebugInfo {
   state: AppFlowDebugNodeState;

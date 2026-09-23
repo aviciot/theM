@@ -3,6 +3,7 @@ package appflow
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	temporalactivity "go.temporal.io/sdk/activity"
@@ -193,4 +194,164 @@ func (s *AppFlowTraceWorkflowTestSuite) TestForkJoin_EmitsTraceForAllNodes() {
 	}
 	s.Require().NotNil(forkDone)
 	s.Equal("branches=2", forkDone["detail"])
+}
+
+// ── Phase 6 — Step controls (docs/APP_CANVAS_DEBUG_PLAN.md) ─────────────────
+
+// twoConditionChainSpec builds a linear 2-node chain (cond1 -> cond2 -> end)
+// with no fork — used to prove sequential stepGate pausing: one
+// AppFlowSignalStep click advances exactly one node, not more.
+func twoConditionChainSpec() *AppFlowSpec {
+	return &AppFlowSpec{
+		EntryPoints: []EPFlow{
+			{
+				Slug:    "test",
+				StartID: "cond1",
+				Nodes: []AppFlowNode{
+					{ID: "cond1", Kind: "condition", Config: mustJSON(InlineConditionConfig{Expression: "true"})},
+					{ID: "cond2", Kind: "condition", Config: mustJSON(InlineConditionConfig{Expression: "true"})},
+					{ID: "end", Kind: "orchestrator"},
+				},
+				Edges: []AppFlowEdge{
+					{Source: "cond1", Target: "cond2", Label: "true"},
+					{Source: "cond2", Target: "end", Label: "true"},
+				},
+			},
+		},
+	}
+}
+
+// AF-STEP-01: with StepMode=true and zero Step signals sent, the workflow
+// never completes within the test environment's mocked clock — it must be
+// genuinely blocked on the first node's stepGate, not running straight
+// through like a Run-All session would.
+func (s *AppFlowTraceWorkflowTestSuite) TestStepMode_NoSignalSent_WorkflowNeverCompletes() {
+	input := AppFlowWorkflowInput{
+		RunID:          "run-step-1",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           twoConditionChainSpec(),
+		UserMessage:    "hi",
+		StepMode:       true,
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	// The test environment's own internal "don't hang forever" background
+	// timer (an SDK-internal default, unrelated to anything this package
+	// sets) eventually fires when nothing else is scheduled, which the SDK
+	// then reports as a completed-with-error workflow — this is the test
+	// environment's mechanism for detecting "nothing will ever happen
+	// again," not evidence the workflow made real progress. The meaningful
+	// assertion is what DID or did NOT execute before that point: cond1 must
+	// have paused and never actually run.
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError(), "must never reach a real completion — only the test env's own stuck-workflow detector")
+
+	starts := tracePayloadsOfType(s.T(), s.streamPub, "node_start")
+	paused := tracePayloadsOfType(s.T(), s.streamPub, "node_paused")
+	s.Len(starts, 0, "node_start must not fire until the node is actually released")
+	s.Require().Len(paused, 1)
+	s.Equal("cond1", paused[0]["node_id"])
+}
+
+// AF-STEP-02: exactly 2 Step signals release cond1 then cond2 in order, one
+// per tick — proving stepGate's per-caller lastSeenGen advances by exactly
+// one tick per signal, not more, on a purely sequential (non-fork) chain.
+func (s *AppFlowTraceWorkflowTestSuite) TestStepMode_TwoSignals_AdvancesOneNodeAtATime() {
+	input := AppFlowWorkflowInput{
+		RunID:          "run-step-2",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           twoConditionChainSpec(),
+		UserMessage:    "hi",
+		StepMode:       true,
+	}
+
+	s.env.RegisterDelayedCallback(func() {
+		// First signal releases cond1 only — cond2 must not have started yet.
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, time.Second)
+	s.env.RegisterDelayedCallback(func() {
+		dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+		s.Require().Len(dones, 1, "cond1 must have finished before cond2 is released")
+		s.Equal("cond1", dones[0]["node_id"])
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, 2*time.Second)
+	s.env.RegisterDelayedCallback(func() {
+		// The chain's 3rd node ("end", an orchestrator pass-through) also
+		// pauses on its own stepGate call — every node kind pauses in Step
+		// mode, not just the ones with interesting business logic. A 3rd
+		// signal releases it so the workflow can actually complete.
+		dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+		s.Require().Len(dones, 2, "cond1 and cond2 must both have finished before end is released")
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, 3*time.Second)
+
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	doneIDs := make([]string, len(dones))
+	for i, d := range dones {
+		doneIDs[i] = d["node_id"].(string)
+	}
+	s.Equal([]string{"cond1", "cond2"}, doneIDs, "both nodes must have run, in order, one per signal")
+}
+
+// AF-STEP-03: lockstep fan-out — with a fork into 2 branches, exactly ONE
+// Step signal (sent once both branches are paused at their first node)
+// releases BOTH branches simultaneously. This is the core Phase 6 guarantee:
+// a single signal, via the shared tick.Gen counter + workflow.Await, wakes
+// every currently-paused node across every active branch, not just one of
+// them (a naive "block on Receive per branch" design would only release one
+// branch per signal — see stepTick's doc comment in workflow.go).
+func (s *AppFlowTraceWorkflowTestSuite) TestStepMode_ForkedBranches_OneSignalReleasesBothInLockstep() {
+	input := AppFlowWorkflowInput{
+		RunID:          "run-step-3",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           forkJoinSpec(),
+		UserMessage:    "hi",
+		StepMode:       true,
+	}
+
+	s.env.RegisterDelayedCallback(func() {
+		// fork1 itself has no stepGate call of its own (it's dispatched
+		// in-line by the main loop's stepGate before the switch, then
+		// immediately spawns branches) — one signal to release fork1.
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, time.Second)
+	s.env.RegisterDelayedCallback(func() {
+		// Both condA and condB must now be paused at their own first tick —
+		// neither has emitted node_done yet.
+		paused := tracePayloadsOfType(s.T(), s.streamPub, "node_paused")
+		pausedIDs := map[string]bool{}
+		for _, p := range paused {
+			pausedIDs[p["node_id"].(string)] = true
+		}
+		s.True(pausedIDs["condA"], "condA must be paused before the second signal")
+		s.True(pausedIDs["condB"], "condB must be paused before the second signal")
+		dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+		for _, d := range dones {
+			s.NotEqual("condA", d["node_id"], "condA must not have run yet")
+			s.NotEqual("condB", d["node_id"], "condB must not have run yet")
+		}
+		// The ONE signal under test: releases both branches at once.
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, 2*time.Second)
+
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	doneIDs := map[string]bool{}
+	for _, d := range dones {
+		doneIDs[d["node_id"].(string)] = true
+	}
+	s.True(doneIDs["condA"], "condA must have completed")
+	s.True(doneIDs["condB"], "condB must have completed")
 }

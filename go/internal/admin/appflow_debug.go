@@ -10,6 +10,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/tenantctx"
 )
@@ -18,22 +19,28 @@ import (
 // canvas (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — a new, dedicated route so
 // production run-start traffic (ws/sse) is never touched by debug concerns.
 type AppFlowDebugHandler struct {
-	svc *service.AppFlowDebugService
+	db       DBQuerier
+	svc      *service.AppFlowDebugService
+	temporal TemporalSignaler
 }
 
 // NewAppFlowDebugHandler creates an AppFlowDebugHandler. credStore persists
 // per-node LLM credential overrides for debug runs
 // (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md); fernetKey decrypts General-mode
 // tenant provider keys — pass the same key used elsewhere in this package
-// (e.g. NewSystemAgentsHandler).
-func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte) *AppFlowDebugHandler {
-	return &AppFlowDebugHandler{svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey)}
+// (e.g. NewSystemAgentsHandler). temporal sends the debug Step signal
+// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — same TemporalSignaler
+// HILApprovalsHandler already uses; nil disables the Step route only (Start
+// still works, since Run-All debug sessions never need a signal).
+func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte, temporal TemporalSignaler) *AppFlowDebugHandler {
+	return &AppFlowDebugHandler{db: db, svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey), temporal: temporal}
 }
 
-// AppRoutes mounts the debug-start route. Must be registered under a
-// RequireTenantAdmin group with {id} = application UUID.
+// AppRoutes mounts the debug-start and debug-step routes. Must be registered
+// under a RequireTenantAdmin group with {id} = application UUID.
 func (h *AppFlowDebugHandler) AppRoutes(r chi.Router) {
 	r.Post("/debug/start", h.Start)
+	r.Post("/debug/{run_id}/step", h.Step)
 }
 
 type debugStartBody struct {
@@ -44,6 +51,11 @@ type debugStartBody struct {
 	// llm-kind node in the compiled draft must have an entry here; the
 	// service validates this server-side before admitting the run.
 	LLMOverrides map[string]llmOverrideBody `json:"llm_overrides,omitempty"`
+	// StepMode starts the run paused before every node's tick, releasing one
+	// tick per POST .../debug/{run_id}/step call instead of running straight
+	// through (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Defaults to false —
+	// today's Run-All behavior, unchanged.
+	StepMode bool `json:"step_mode,omitempty"`
 }
 
 type llmOverrideBody struct {
@@ -97,7 +109,7 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.svc.Start(r.Context(), tenantID, appID, body.EntryPointSlug, body.UserMessage, userID, overrides)
+	result, err := h.svc.Start(r.Context(), tenantID, appID, body.EntryPointSlug, body.UserMessage, userID, overrides, body.StepMode)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -106,4 +118,53 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, debugStartResponse{RunID: result.RunID, ExpiresAt: result.ExpiresAt.UTC().Format(time.RFC3339)})
+}
+
+// Step handles POST /admin/applications/{id}/debug/{run_id}/step — sends one
+// AppFlowSignalStep signal to a running debug workflow
+// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). One call = one tick: every node
+// currently paused in this run (including every node in every currently
+// active fork branch) advances by exactly one node, then pauses again — see
+// appflow.stepTick's doc comment for why one signal is sufficient to release
+// an arbitrary number of paused branches at once, rather than needing one
+// signal per branch.
+//
+// {id} (application UUID) is not otherwise used beyond routing — the
+// signal target is derived entirely from {run_id} + the caller's own tenant,
+// via GetRun's tenant-scoped lookup, so this can never be used to signal a
+// run belonging to another tenant or another application (same cross-tenant
+// IDOR class fixed elsewhere in this plan — never trust a URL param alone).
+func (h *AppFlowDebugHandler) Step(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	if _, err := uuid.Parse(runID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid run id")
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	d := dal.NewDB(h.db)
+	if _, err := d.GetRun(r.Context(), tenantID, runID); err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusNotFound, "run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal signaling not configured")
+		return
+	}
+
+	workflowID := appflow.WorkflowIDForRun(tenantID, runID)
+	if err := h.temporal.SignalNamedWorkflow(r.Context(), workflowID, appflow.AppFlowSignalStep, nil); err != nil {
+		// Best-effort, same as HIL: the run may have already completed, hit
+		// its debug lifetime ceiling, or never been started in step mode —
+		// none of those are a caller error worth surfacing as 4xx.
+		writeError(w, http.StatusConflict, "step signal failed: run may have completed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "status": "stepped"})
 }

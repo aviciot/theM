@@ -38,7 +38,9 @@ export function AppFlowDebugPanel({
   onSetEntryPointSlug,
   onSetUserMessage,
   onSetCredential,
+  onSetStepMode,
   onRunAll,
+  onStep,
   onReset,
   onClose,
 }: {
@@ -48,11 +50,18 @@ export function AppFlowDebugPanel({
   onSetEntryPointSlug: (slug: string) => void;
   onSetUserMessage: (msg: string) => void;
   onSetCredential: (specKey: string, value: AppFlowLLMCredentialValue) => void;
+  onSetStepMode: (stepMode: boolean) => void;
   onRunAll: () => void;
+  onStep: () => void;
   onReset: () => void;
   onClose: () => void;
 }) {
   const credentialSpecs = runtimeParamSpecs.filter(s => s.type === 'llm_credential');
+  // At least one node is genuinely paused, waiting for the next Step click —
+  // derived from nodeStates rather than a separate tracked field, since
+  // "paused" is already an observed backend state (docs/APP_CANVAS_DEBUG_PLAN.md
+  // Phase 6), not something the UI needs to infer independently.
+  const awaitingStep = Object.values(debug.nodeStates).some(s => s === 'paused');
   return (
     <div style={{
       flexShrink: 0, borderBottom: `1px solid ${C.amberBorder}`,
@@ -95,6 +104,16 @@ export function AppFlowDebugPanel({
           />
         </div>
 
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '11px', color: C.textMuted, cursor: debug.running ? 'not-allowed' : 'pointer', alignSelf: 'center' }}>
+          <input
+            type="checkbox"
+            checked={debug.stepMode}
+            disabled={debug.running}
+            onChange={e => onSetStepMode(e.target.checked)}
+          />
+          Step mode
+        </label>
+
         <button
           onClick={onRunAll}
           disabled={debug.running || !debug.entryPointSlug}
@@ -105,8 +124,24 @@ export function AppFlowDebugPanel({
             fontSize: '12px', fontWeight: 700, opacity: debug.running || !debug.entryPointSlug ? 0.6 : 1,
           }}
         >
-          ▶ Run All
+          {debug.stepMode ? '▶ Start' : '▶ Run All'}
         </button>
+
+        {debug.stepMode && debug.runId && (
+          <button
+            onClick={onStep}
+            disabled={!awaitingStep || debug.done}
+            title={awaitingStep ? 'Advance every currently-paused node by one tick' : 'Waiting for the run to reach its next pause point…'}
+            style={{
+              background: 'rgba(192,132,252,0.12)', border: '1px solid rgba(192,132,252,0.5)',
+              color: '#c084fc', padding: '6px 16px', borderRadius: '6px',
+              cursor: !awaitingStep || debug.done ? 'not-allowed' : 'pointer',
+              fontSize: '12px', fontWeight: 700, opacity: !awaitingStep || debug.done ? 0.5 : 1,
+            }}
+          >
+            ⏭ Step
+          </button>
+        )}
 
         {debug.runId && (
           <button onClick={onReset} disabled={debug.running} style={{

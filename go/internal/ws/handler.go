@@ -693,8 +693,8 @@ func (h *Handler) writeEvent(conn *websocket.Conn, ev event.Event) error {
 			_ = json.Unmarshal(raw, &message)
 		}
 		msg = serverMsg{Type: "replay_unavailable", Message: message}
-	case "node_start", "node_done", "node_error":
-		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5).
+	case "node_start", "node_done", "node_error", "node_paused":
+		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5/6).
 		// Wire shape from emitTrace: {type, run_id, node_id, kind, detail?}.
 		var runID, nodeID, kind, detail string
 		if raw, ok := payload["run_id"]; ok {

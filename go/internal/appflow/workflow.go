@@ -55,6 +55,14 @@ const (
 	// AppFlowSignalHILApproval is the signal name for HIL human approval.
 	AppFlowSignalHILApproval = "hil_approval"
 
+	// AppFlowSignalStep is the signal name for the debug "Step" control
+	// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). One signal = one tick: every
+	// currently-paused node (including every node in every currently-active
+	// fork branch) advances by exactly one node, then pauses again. See
+	// stepGate's doc comment for why this is a shared-counter design rather
+	// than one signal per paused branch.
+	AppFlowSignalStep = "appflow_step"
+
 	appFlowActivityTimeout = 10 * time.Minute
 	appFlowHILTimeout      = 24 * time.Hour // HIL can wait up to 24h before fallback
 
@@ -122,6 +130,62 @@ func traceNode(ctx workflow.Context, runID, nodeID, kind, eventType, detail, ver
 	}).Get(ctx, nil)
 }
 
+// stepTick is workflow-local shared state for the debug Step control
+// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Exactly one instance is created per
+// AppFlowWorkflow execution when StepMode is true, and a pointer to it is
+// threaded into every place a node dispatch can pause (the main loop and each
+// fork branch in walkBranch).
+//
+// Design note — why a shared counter instead of one signal per paused node:
+// a Temporal named signal channel is a FIFO mailbox, not a broadcast — one
+// SignalWorkflow call wakes exactly one blocked Receive, never all of them.
+// With N fork branches each blocked on their own Receive for the same signal
+// name, a single Step click would only ever release one branch, silently
+// stranding the rest. Instead, exactly one goroutine (startStepListener)
+// owns the only Receive on AppFlowSignalStep; every paused caller instead
+// blocks on workflow.Await watching this shared Gen counter, which IS
+// broadcast to every blocked Await condition in the same dispatcher tick
+// when it changes. One signal -> one Gen bump -> every waiter wakes together.
+type stepTick struct {
+	Gen int
+}
+
+// startStepListener starts the single goroutine that owns the Receive on
+// AppFlowSignalStep and bumps tick.Gen once per signal. Must be started
+// exactly once per workflow execution, before any stepGate call, only when
+// StepMode is true. Runs for the lifetime of the workflow (no exit condition
+// other than the workflow itself completing) — safe because workflow.Go
+// goroutines are cooperatively scheduled and abandoned harmlessly on
+// workflow completion, the same pattern any long-lived workflow-local
+// listener uses.
+func startStepListener(ctx workflow.Context, tick *stepTick) {
+	workflow.Go(ctx, func(gCtx workflow.Context) {
+		sigCh := workflow.GetSignalChannel(gCtx, AppFlowSignalStep)
+		for {
+			sigCh.Receive(gCtx, nil)
+			tick.Gen++
+		}
+	})
+}
+
+// stepGate blocks the calling node dispatch until the next Step click when
+// StepMode is active, then fires a node_paused trace event before blocking so
+// the UI can distinguish "genuinely running" from "paused, waiting for Step."
+// lastSeenGen is the caller's own cursor into tick.Gen — the main loop and
+// each fork branch each keep their own, since they must each advance exactly
+// one tick per Step click, not skip ahead if they happen to check late.
+// No-op (returns immediately) when tick is nil, i.e. StepMode is false —
+// this is the only call site cost Run-All debug sessions pay: one nil check.
+func stepGate(ctx workflow.Context, tick *stepTick, lastSeenGen *int, input AppFlowWorkflowInput, runID, nodeID, kind string) {
+	if tick == nil {
+		return
+	}
+	traceNode(ctx, runID, nodeID, kind, "node_paused", "", input.LogVerbosity)
+	seenAt := *lastSeenGen
+	_ = workflow.Await(ctx, func() bool { return tick.Gen > seenAt })
+	*lastSeenGen = tick.Gen
+}
+
 // ── Workflow types ─────────────────────────────────────────────────────────────
 
 // AppFlowWorkflowInput is the input to AppFlowWorkflow.
@@ -166,6 +230,13 @@ type AppFlowWorkflowInput struct {
 	// When Debug is true, StartAppFlow always sets this to "full" regardless
 	// of the app's configured setting, overriding whatever was loaded.
 	LogVerbosity string `json:"log_verbosity,omitempty"`
+	// StepMode pauses execution before every node's tick (main path AND every
+	// active fork branch) and waits for an external AppFlowSignalStep signal
+	// before proceeding (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Only
+	// meaningful when Debug is true; Run-All debug sessions leave this false,
+	// in which case stepGate is never called and behavior is identical to
+	// today. Not persisted on the run row — purely an execution-time control.
+	StepMode bool `json:"step_mode,omitempty"`
 }
 
 // TemporalExecCfg carries Temporal execution controls resolved at workflow submit time.
@@ -312,6 +383,17 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
+	// Debug Step control (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — only wired
+	// up when StepMode is set; every other run pays a single nil check per
+	// node (see stepGate). See stepTick's doc comment for why this is a
+	// shared counter rather than a signal per paused branch.
+	var tick *stepTick
+	if input.StepMode {
+		tick = &stepTick{}
+		startStepListener(ctx, tick)
+	}
+	mainLastSeenGen := 0
+
 	currentID := epFlow.StartID
 	accumulated := input.UserMessage
 	// vars is the flow variables bus (§1.3/§2.4 of the inline nodes plan):
@@ -327,6 +409,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			retErr = fmt.Errorf("AppFlowWorkflow: node %q not found", currentID)
 			return
 		}
+		stepGate(ctx, tick, &mainLastSeenGen, input, input.RunID, node.ID, node.Kind)
 
 		switch node.Kind {
 		case "router":
@@ -474,7 +557,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				i, startNodeID := i, branch.Target
 				wg.Add(1)
 				workflow.Go(ctx, func(gCtx workflow.Context) {
-					branchResult, branchErr := walkBranch(gCtx, startNodeID, joinID, nodeByID, outEdgesBySource, input, accumulated, ao, shortAO)
+					branchResult, branchErr := walkBranch(gCtx, startNodeID, joinID, nodeByID, outEdgesBySource, input, accumulated, ao, shortAO, tick, mainLastSeenGen)
 					if branchErr != nil {
 						// Store error text as result; main goroutine will detect via out.Status.
 						branchResults[i] = ""

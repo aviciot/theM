@@ -44,7 +44,16 @@ func walkBranch(
 	input AppFlowWorkflowInput,
 	initialMsg string,
 	ao, shortAO workflow.ActivityOptions,
+	tick *stepTick,
+	seedGen int,
 ) (string, error) {
+	// lastSeenGen is this branch's own cursor into tick.Gen (docs/
+	// APP_CANVAS_DEBUG_PLAN.md Phase 6) — seeded from the fork node's own
+	// cursor at the moment the branches were spawned, since a Step click that
+	// released the fork node itself must not also silently release the first
+	// node of every branch for free; each branch must wait for its own next
+	// tick, same as the main path would.
+	lastSeenGen := seedGen
 	accumulated := initialMsg
 	// Local vars bus for this branch, seeded like the main loop's. Threading a
 	// full vars map through walkBranch's signature (in/out) would touch every
@@ -60,6 +69,7 @@ func walkBranch(
 		if !ok {
 			return accumulated, fmt.Errorf("branch: node %q not found", curID)
 		}
+		stepGate(ctx, tick, &lastSeenGen, input, input.RunID, node.ID, node.Kind)
 		switch node.Kind {
 		case "agent":
 			var agentOut AgentInvokeActivityOutput

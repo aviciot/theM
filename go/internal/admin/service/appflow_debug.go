@@ -75,7 +75,7 @@ type DebugStartResult struct {
 // the app's saved Runtime settings) — see docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
 // Returns ErrNotFound when the application has no draft saved yet, or the
 // entry point slug doesn't exist on it.
-func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug, userMessage string, userID int64, llmOverrides map[string]LLMOverrideInput) (DebugStartResult, error) {
+func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug, userMessage string, userID int64, llmOverrides map[string]LLMOverrideInput, stepMode bool) (DebugStartResult, error) {
 	app, err := s.dal.GetApplication(ctx, tenantID, appID)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -172,6 +172,7 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 	input := appflow.AppFlowWorkflowInput{
 		Spec:        singleEPSpec,
 		UserMessage: userMessage,
+		StepMode:    stepMode,
 	}
 	if _, err := s.lc.StartAppFlow(ctx, handle, input, true); err != nil {
 		return DebugStartResult{}, fmt.Errorf("start appflow workflow: %w", err)

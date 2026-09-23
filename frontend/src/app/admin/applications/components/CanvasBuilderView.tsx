@@ -23,6 +23,7 @@ import { CanvasTopBar } from './CanvasTopBar';
 import { CanvasPalette } from './CanvasPalette';
 import { exportAppDefinition, parseImportedAppDefinition } from './CanvasExportImport';
 import { AppFlowDebugPanel } from './AppFlowDebugPanel';
+import { AppFlowDebugInspector } from './AppFlowDebugInspector';
 import { useAppFlowDebugSession } from '../hooks/useAppFlowDebugSession';
 
 // Which RF node component (and canvas palette section) each appflow node_type
@@ -530,7 +531,9 @@ export function CanvasBuilderView({
           onSetEntryPointSlug={appFlowDebug.setEntryPointSlug}
           onSetUserMessage={appFlowDebug.setUserMessage}
           onSetCredential={appFlowDebug.setCredential}
+          onSetStepMode={appFlowDebug.setStepMode}
           onRunAll={appFlowDebug.runAll}
+          onStep={appFlowDebug.step}
           onReset={appFlowDebug.reset}
           onClose={appFlowDebug.closePanel}
         />
@@ -600,27 +603,33 @@ export function CanvasBuilderView({
             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.06)'; }}
           />
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.15)' }} onKeyDown={e => e.stopPropagation()}>
-            <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>Properties</div>
-            <CanvasNodePropertiesPanel
-              appId={app.id}
-              selectedNode={selectedNode}
-              nodes={nodes}
-              edges={edges}
-              openSections={openSections}
-              setOpenSections={setOpenSections}
-              availableMCPServers={availableMCPServers}
-              mcpExpanded={mcpExpanded}
-              setMcpExpanded={setMcpExpanded}
-              configPanelText={configPanelText}
-              setConfigPanelText={setConfigPanelText}
-              configPanelErr={configPanelErr}
-              setConfigPanelErr={setConfigPanelErr}
-              setNodes={setNodes}
-              setIsDirty={setIsDirty}
-              setLogoResult={setLogoResult}
-              showToast={showToast}
-              setEpConfig={setEpConfig}
-            />
+            <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              {appFlowDebug.debug.active ? 'Debug Inspector' : 'Properties'}
+            </div>
+            {appFlowDebug.debug.active ? (
+              <AppFlowDebugInspector selectedNode={selectedNode} />
+            ) : (
+              <CanvasNodePropertiesPanel
+                appId={app.id}
+                selectedNode={selectedNode}
+                nodes={nodes}
+                edges={edges}
+                openSections={openSections}
+                setOpenSections={setOpenSections}
+                availableMCPServers={availableMCPServers}
+                mcpExpanded={mcpExpanded}
+                setMcpExpanded={setMcpExpanded}
+                configPanelText={configPanelText}
+                setConfigPanelText={setConfigPanelText}
+                configPanelErr={configPanelErr}
+                setConfigPanelErr={setConfigPanelErr}
+                setNodes={setNodes}
+                setIsDirty={setIsDirty}
+                setLogoResult={setLogoResult}
+                showToast={showToast}
+                setEpConfig={setEpConfig}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, phased. Phase 1 + 2 + 3 + 4 + 5 COMPLETE. Phase 6 NEXT.
-# Date: 2026-09-22 (Phase 5 frontend + a real backend bug fix: 2026-09-23)
+# Status: PLANNED, phased. Phase 1 + 2 + 3 + 4 + 5 + 6 COMPLETE. Plan done.
+# Date: 2026-09-22 (Phase 5 frontend + a real backend bug fix: 2026-09-23; Phase 6 Step controls: 2026-09-23)
 
 ---
 
@@ -13,7 +13,7 @@
 | 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ✅ COMPLETE (2026-09-22) |
 | 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ✅ COMPLETE (2026-09-22) |
 | 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ✅ COMPLETE (2026-09-23) |
-| 6 — Debug UI: Step controls | Step button, lockstep multi-branch pause/resume, canvas node highlighting | ⬜ NOT STARTED |
+| 6 — Debug UI: Step controls | Step button, lockstep multi-branch pause/resume, canvas node highlighting | ✅ COMPLETE (2026-09-23) |
 
 **One phase per session** (same discipline as `docs/NODE_REGISTRY_PLAN.md`). Update this table
 at the end of every session. Read `docs/CURRENT.md` for exact HEAD/status before starting.
@@ -633,7 +633,123 @@ first step of whichever session verifies this phase or starts Phase 5.
 
 ---
 
-## Remaining open question
+## Remaining open question (Phase 4)
 
-None. The Phase 4 open question (see above) is resolved. No new open questions raised by this
+None. The Phase 4 open question (see above) is resolved. No new open questions raised by that
 phase.
+
+---
+
+## Phase 6 — Step controls — COMPLETE (2026-09-23)
+
+**The mechanism problem, found before writing any code:** the plan's round-2 decision #5 requires
+"one Step click advances every currently-active node together, in lockstep" — including every node
+in every currently-active fork branch simultaneously. The obvious first design (send one
+`SignalWorkflow` call per currently-paused branch) was checked against the Temporal Go SDK's actual
+source before implementing (`vendor/go.temporal.io/sdk/internal/internal_workflow.go`,
+`sendAsyncImpl`) and confirmed wrong: a named signal channel is a FIFO mailbox — one `SignalWorkflow`
+call wakes exactly the one longest-waiting blocked `Receive`, never all of them. With N branches each
+blocked on their own `Receive` for the same signal name, one signal would silently release only one
+branch, stranding the rest — exactly the bug decision #5 exists to avoid.
+
+**The fix — a shared tick-generation counter + `workflow.Await`, not per-branch signals:**
+- `stepTick` (`go/internal/appflow/workflow.go`): one `Gen int` field, one instance per workflow
+  execution, created only when `AppFlowWorkflowInput.StepMode` is true.
+- `startStepListener`: the ONLY goroutine that ever calls `Receive` on the new `AppFlowSignalStep`
+  signal. Each signal received increments `tick.Gen` by one and loops back to `Receive` again.
+- `stepGate(ctx, tick, lastSeenGen, ...)`: called at the top of every node dispatch point (the main
+  loop in `workflow.go`, and `walkBranch`'s loop in `graph.go`). Fires a new `node_paused` trace event,
+  then blocks on `workflow.Await(ctx, func() bool { return tick.Gen > *lastSeenGen })`. Each caller
+  (the main path, and each fork branch independently) keeps its own `lastSeenGen` cursor, seeded from
+  the fork node's own cursor at the moment branches are spawned — so a signal that released the fork
+  node itself does not also silently free-ride the first node of every branch.
+- Bumping `tick.Gen` once is a real broadcast: every blocked `workflow.Await` condition across every
+  goroutine is re-evaluated by the SDK's dispatcher in the same tick, so N paused branches all wake
+  together from one counter change — this is the actual mechanism, `workflow.Await` conditions are
+  polled on every coroutine yield point, not tied to a single channel consumer. `nil` on `stepTick`
+  (i.e. `StepMode=false`, Run-All) makes `stepGate` a no-op — one nil-check per node, zero behavior
+  change to today's Run-All path.
+- New signal constant `AppFlowSignalStep = "appflow_step"` next to `AppFlowSignalHILApproval`.
+- New route `POST /admin/applications/{id}/debug/{run_id}/step` (`internal/admin/appflow_debug.go`,
+  `AppFlowDebugHandler.Step`) — mirrors `HILApprovalsHandler`'s existing signal-sending pattern
+  exactly: `dal.GetRun(tenantID, runID)` verifies the caller's own tenant actually owns the run before
+  ever signaling (same cross-tenant-IDOR-safe pattern the HIL approval routes and the Phase 5
+  `/ws/dashboard` fix both already established — never trust a URL param alone), then
+  `TemporalSignaler.SignalNamedWorkflow(WorkflowIDForRun(tenant, run), AppFlowSignalStep, nil)`.
+  Best-effort: a run that already completed or hit its debug lifetime ceiling surfaces as 409, not a
+  crash. `debugStartBody.StepMode bool` (`step_mode` in the JSON body) threads through
+  `AppFlowDebugService.Start` into `AppFlowWorkflowInput.StepMode`.
+- New trace event `node_paused` — added to `ws/handler.go`'s and `sse/handler.go`'s existing
+  `node_start`/`node_done`/`node_error` forwarding switch (same `{type, run_id, node_id, kind,
+  detail?}` wire shape, generic `ev.Type` passthrough — no new wire-format work needed). Not
+  persisted to `them.run_steps` — it's a transient "waiting" signal, not a lifecycle state
+  `persistTrace`'s insert-then-update model has a slot for; only the live Redis Stream publish in
+  `emitTrace` fires for it.
+
+**Proven against a real Temporal workflow test environment, not just unit mocks** — the whole point
+of this phase is concurrency behavior that a plain unit test can't exercise. Three new tests in
+`internal/appflow/workflow_temporal_test.go` (extends the existing `AppFlowTraceWorkflowTestSuite`):
+1. `TestStepMode_NoSignalSent_WorkflowNeverCompletes` — with zero signals sent, the workflow is
+   genuinely blocked at the first node (proven via the trace events captured before the test
+   environment's own internal stuck-workflow timeout fires), not running through as Run-All would.
+2. `TestStepMode_TwoSignals_AdvancesOneNodeAtATime` — a 3-node sequential chain, 3 signals sent via
+   `env.RegisterDelayedCallback`, proving each signal advances exactly one node, in order (including
+   the 3rd node, a plain pass-through `orchestrator` kind — every node kind pauses in Step mode, not
+   just the ones with interesting business logic).
+3. `TestStepMode_ForkedBranches_OneSignalReleasesBothInLockstep` — the core Phase 6 guarantee: a fork
+   into 2 branches, first signal releases the fork node, both branches independently reach their own
+   `stepGate` and pause (proven via `node_paused` events for both), then a SECOND signal — sent once,
+   not twice — releases both branches simultaneously. This is the test that would have caught the
+   naive "one signal per branch" design being wrong.
+
+8 new tests total (3 workflow-level above, 1 service-level proving `StepMode` propagates into
+`AppFlowWorkflowInput`, 4 handler-level for the new route's HTTP mechanics including the IDOR-safe
+404 path) — `go/TEST_INDEX.md` S1-163, S1 total 1475→1483. `go test ./...` 0 failures, full suite.
+`go test -race ./internal/appflow/... ./internal/admin/...` — the only race found across 5 repeated
+runs is the same pre-existing, already-documented `TestForkJoin_EmitsTraceForAllNodes` flake (Temporal
+SDK test-harness internals, unrelated to this phase's code — see `TEST_INDEX.md`'s existing "flaky
+(pre-existing)" row); none of the 6 new step-mode/lockstep tests ever appeared as the failing subtest
+across any of the 5 runs.
+
+**Frontend** (`frontend/src/app/admin/applications/`):
+- `hooks/useAppFlowDebugSession.ts` — new `stepMode` setup field (locked once a run starts, same
+  pattern as `entryPointSlug`/`userMessage`), `step()` action (POSTs the new route, all real state
+  transitions arrive asynchronously via WS events same as everything else in this hook), new
+  `'paused'` case in the WS message switch.
+- `types.ts` — `AppFlowDebugNodeState` gains `'paused'`, distinct from `'pending'`: pending means
+  "not reached yet" (a UI guess), paused means "the backend has genuinely stopped here" (an observed
+  state, carried by a real `node_paused` event).
+- `components/AppFlowDebugPanel.tsx` — Step Mode checkbox next to the setup fields; a Step button
+  (only rendered once a step-mode run has started) whose enabled state is derived from
+  `nodeStates` containing at least one `'paused'` entry — not a separately tracked flag, since
+  "paused" is already the real signal.
+- `components/CanvasNodes.tsx` — `paused` added to both node components' debug-accent/glow color
+  maps (violet, distinct from `pending`'s amber) and a "⏸ paused" label line, mirroring the existing
+  `running`/`done` treatment.
+- **New `components/AppFlowDebugInspector.tsx`** — click-to-inspect, per this session's explicit
+  choice of a side panel over a canvas popover (a popover would compete for space with
+  `CanvasNodes.tsx`'s existing per-node Ports popover). Renders in place of
+  `CanvasNodePropertiesPanel` in `CanvasBuilderView.tsx`'s existing right-hand panel slot whenever a
+  debug session is active — the two panels serve mutually exclusive purposes (editing canvas config
+  vs. inspecting a live/finished debug run), so no need to reconcile them into the same space.
+  Reads `_debug` off whichever node `onNodeClick` (pre-existing, `CanvasInner.tsx`) last selected —
+  no new click-handling wiring needed, since `debugDecoratedNodes` (not raw `nodes`) is what's
+  already passed to `<ReactFlow>`, so `_debug` is already present on the clicked node by the time
+  `onNodeClick` fires.
+
+`npx tsc --noEmit` — 0 errors, run twice.
+
+**Not done / known limitation, not a regression:** no live browser click-through was performed (same
+standing limitation as every phase of this plan — no browser-automation tool, no headless Chromium
+system libraries available in this environment without interactive sudo). The Temporal
+signal/lockstep mechanism is proven against a real (non-mocked) Temporal workflow test environment;
+the HTTP route is proven via handler tests with a fake DB/signaler; the frontend is proven via
+`tsc` only. Recommend a manual logged-in walkthrough before trusting the Step button/panel UI
+rendering itself: start a step-mode debug run on a flow with a fork, click Step repeatedly, confirm
+both branches visibly pause and advance together on the canvas, and confirm the inspector panel
+shows the right per-node detail when clicking a paused/done node. Also unchanged from Phase 5: a
+draft canvas containing agent nodes still needs to have been published at least once before it can
+be debugged at all (`unresolved_agent`) — orthogonal to Step controls, not addressed here.
+
+**Plan status: all 6 phases complete.** No further phases planned on this thread unless new
+requirements surface.

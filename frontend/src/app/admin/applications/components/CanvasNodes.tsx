@@ -12,12 +12,13 @@ import type { AppFlowNodeDebugInfo } from '../types';
 // applied to InlineNode/FlowControlNode when a real debug run is active —
 // driven by node_start/node_done/node_error events over WS, not a simulator.
 const debugAccent: Record<AppFlowNodeDebugInfo['state'], string | null> = {
-  idle: null, pending: '#f59e0b', running: '#60a5fa', done: '#4ade80', error: '#f87171',
+  idle: null, pending: '#f59e0b', running: '#60a5fa', paused: '#c084fc', done: '#4ade80', error: '#f87171',
 };
 const debugGlow: Record<AppFlowNodeDebugInfo['state'], string | null> = {
   idle: null,
   pending: '0 0 8px 2px rgba(245,158,11,0.5)',
   running: '0 0 8px 2px rgba(96,165,250,0.5)',
+  paused: '0 0 8px 2px rgba(192,132,252,0.5)',
   done: '0 0 8px 2px rgba(74,222,128,0.4)',
   error: '0 0 8px 2px rgba(248,113,113,0.5)',
 };
@@ -343,6 +344,9 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
         {dbgState === 'running' && (
           <div style={{ fontSize: 9, color: '#60a5fa' }}>running…</div>
         )}
+        {dbgState === 'paused' && (
+          <div style={{ fontSize: 9, color: '#c084fc' }}>⏸ paused</div>
+        )}
       </div>
       <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
@@ -416,6 +420,9 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
         )}
         {dbgState === 'running' && (
           <div style={{ fontSize: 9, color: '#60a5fa' }}>running…</div>
+        )}
+        {dbgState === 'paused' && (
+          <div style={{ fontSize: 9, color: '#c084fc' }}>⏸ paused</div>
         )}
       </div>
       {controlPorts.length > 0 ? (
