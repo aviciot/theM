@@ -1,6 +1,7 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 5 — them.tenant_system_agent_config +
-# classifier/card_synthesizer general-vs-custom wiring — COMPLETE. HEAD 283db880, on top of the
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 6 — frontend General/Custom switch for
+# classifier/card_synthesizer — COMPLETE. Steps 1-6 of 7 now done; only step 7 (final sign-off,
+# effectively already covered by this session's test runs) remains. HEAD 220adc05, on top of the
 # App Canvas Debug Mode Phase 5 backend slice (8269eae2) from earlier the same day — see that
 # thread's own section below for its own state, unaffected by this one.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
@@ -10,7 +11,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `283db880` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
+HEAD: `220adc05` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
 before pushing — see the conflict-resolution note below, which still applies.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
@@ -25,6 +26,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+220adc05  feat(admin): tenant General/Custom switch for classifier & card_synthesizer (step 6)
 283db880  feat(admin): tenant system-agent role config — general/custom mode (step 5)
 8269eae2  feat(app-canvas): debug run backend — draft execution, no publish required (Phase 5 slice 1)
 99434bb9  feat(admin): tenant LLM provider keys frontend UI (step 4)
@@ -57,21 +59,22 @@ Two independent threads are in flight. Pick based on what you're asked to contin
    research found (two prerequisite gaps neither the original plan nor Phases 1-4 anticipated) and
    the two design decisions made to close them. One phase per session — do not start Phase 6 in the
    same session as Phase 5's remaining frontend work.
-2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-5 of 7 done: migration,
-   DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`), frontend UI
-   (`99434bb9`), and now `them.tenant_system_agent_config` + classifier/card_synthesizer
-   general-vs-custom resolution wiring (step 5, `283db880` — see the dated section below). **Not
-   yet built:** the frontend General/Custom switch on the classifier/card_synthesizer role cards
-   (step 6 — the step 5 backend route has no UI consumer yet), and the platform-admin-on-tenant
-   route mirror for keys (optional, still not needed). Read the plan doc's "Why the model changes"
-   and "Hard rule" sections before touching this — no platform-key fallback for tenants, ever, and
-   step 5 is the sharpest concrete enforcement point so far (`resolveSystemAgentRole`). A
-   pre-existing test-count reconciliation gap from `465ffe93` was flagged (not fixed) in
-   `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
-   Step 4's frontend was **still not verified in a live browser** as of step 5 — no
-   browser-automation tool has been available in any session so far. Recommend a real
-   logged-in-browser pass (tenant admin AND super_admin) covering both step 4's UI and step 5's new
-   route before starting step 6.
+2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — **steps 1-6 of 7 now done.**
+   Migration, DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`),
+   frontend UI (`99434bb9`), `them.tenant_system_agent_config` + resolution wiring (step 5,
+   `283db880`), and now the frontend General/Custom switch on the classifier/card_synthesizer role
+   cards (step 6, `220adc05` — see the dated section below). Only **step 7** remains — final
+   full-suite sign-off, which is effectively already covered by this session's test runs; mostly a
+   formality unless new issues surface. The platform-admin-on-tenant route mirror for keys (from
+   step 3) remains optionally unbuilt, still not needed by anything.
+   Read the plan doc's "Why the model changes" and "Hard rule" sections before touching this — no
+   platform-key fallback for tenants, ever. A pre-existing test-count reconciliation gap from
+   `465ffe93` was flagged (not fixed) in `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
+   **Nothing in this entire plan has been verified in a live browser or via direct curl against the
+   running stack across any session so far** — no browser-automation tool has been available, and
+   direct API probing was declined once and not repeated per the user's standing preference.
+   Strongly recommend a real logged-in click-through (both tenant admin and super_admin) before
+   calling step 7 truly done.
 
 **Before starting either:** if you're auditing this session's work, note the tenant-isolation
 security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
@@ -80,9 +83,59 @@ enforced from the start, not retrofitted after a review catches it.
 
 ---
 
+## Tenant LLM Provider Keys — step 6: frontend General/Custom switch — COMPLETE (2026-09-23)
+
+Commit `220adc05`, not yet pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 6 write-up for
+full detail. Summary:
+
+**Design point confirmed with the user before implementing:** the System Agents tab's `RoleCard`
+is wired to the platform-global `/admin/system-agents` route (super_admin only) — a plain tenant
+admin opening this tab today gets a failed fetch and an "unavailable" banner. Since the new
+General/Custom switch is inherently tenant-scoped, the tab now branches on role: super_admin keeps
+`RoleCard` unchanged; tenant admin gets a new `TenantRoleCard`
+(`frontend/src/app/admin/settings/TenantRoleCard.tsx`) backed by step 5's tenant-scoped route. The
+platform-global config fetch on page load is now skipped entirely for tenant admins — this closes
+the pre-existing false "unavailable" banner as a side effect, not the main goal of this change.
+
+Also confirmed with the user: general-mode classifier/card_synthesizer calls run on **that
+tenant's own API key against that tenant's own workspace only** — every DB lookup in step 5's
+`resolveSystemAgentRole` is keyed by `tenantID`, so results never cross tenants.
+
+**Backend addition:** the plan's step 6 spec called for Custom mode to keep "the existing Test
+button, unchanged" — but the existing test route is super_admin-only, so a tenant admin can't call
+it for their own custom config. Added a tenant-scoped mirror,
+`POST /admin/my/system-agents/{role}/test-llm` (`TenantSystemAgentConfigHandler.Test`, new service
+method `ResolveCustomTestInputs`) — same `probeLLMWithBase` probe, gap-fills from the tenant's own
+stored `custom_*` fields, never from the platform config.
+
+**Frontend:** `TenantRoleCard.tsx` (new) — General mode: provider dropdown (from
+`listMyLLMProviders()`, filtered `enabled`) → key dropdown (from `listProviderKeys`, "use default
+key" as the no-selection option), no free-text fields, no test button (testing happens at the key
+level in the LLM Providers tab). Custom mode: provider/model/api_key/base_url/system_prompt form +
+Test button, same shape as `RoleCard`'s, wired to the new tenant-scoped test route.
+`apiTypes.ts`/`api.ts` gained the matching types and three new `themApi` functions.
+
+Tests: 4 new service tests (`ResolveCustomTestInputs`), 3 new handler tests (the `Test` route) —
+`go/TEST_INDEX.md` S1-147, S1-148 (S1 total 1410→1417). `go test ./...` 0 failures full suite.
+`npx tsc --noEmit` 0 errors. `them-go-bridge` rebuilt (Dockerfile runs the full suite in-image, 0
+failures confirmed again there) and force-recreated; logs confirm healthy startup, no crash loop.
+`them-frontend` picked up the new component via its existing bind-mount + `npm run dev` hot
+reload — logs confirm 0 compile errors and a live `GET /admin/settings` 200 (a real user request
+observed in the logs, not a check this session ran itself).
+
+**Not live-verified end-to-end this session** — no browser-automation tool was available, and
+direct `curl` probing of the live API was not attempted (declined once earlier this session,
+treated as a standing preference). The new tenant test route was only exercised through Go handler
+tests with a fake DB. Recommend an actual logged-in tenant-admin click-through — switch to
+General, pick a provider/key, save, reload and confirm persistence; switch to Custom, test a key,
+save — before fully trusting this. Nothing in this repo's automated test suite drives that real
+round trip yet.
+
+---
+
 ## Tenant LLM Provider Keys — step 5: tenant_system_agent_config + resolution wiring — COMPLETE (2026-09-23)
 
-Commit `283db880`, not yet pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 5 write-up for
+Commit `283db880`, pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 5 write-up for
 full detail. Summary:
 
 New migration `db/106_tenant_system_agent_config.sql`, applied live to this box's `them-postgres`
