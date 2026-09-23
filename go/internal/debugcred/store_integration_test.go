@@ -110,3 +110,57 @@ func TestIntegration_Store_Delete_RemovesEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, found)
 }
+
+// TestIntegration_Store_DeleteAllForRun_RemovesEveryNode closes issue #4 from
+// the d941aca3 review: a fixed TTL was the ONLY cleanup mechanism. This is
+// the primary cleanup path (proactive delete on run completion) — proves it
+// removes every node's override for one run in a single call.
+func TestIntegration_Store_DeleteAllForRun_RemovesEveryNode(t *testing.T) {
+	store, _ := newStore(t)
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%d", time.Now().UnixNano())
+
+	require.NoError(t, store.Set(ctx, "tenant-a", runID, "llm_1", debugcred.Override{Provider: "anthropic", APIKey: "key-1"}))
+	require.NoError(t, store.Set(ctx, "tenant-a", runID, "llm_2", debugcred.Override{Provider: "openai", APIKey: "key-2"}))
+	require.NoError(t, store.Set(ctx, "tenant-a", runID, "llm_3", debugcred.Override{Provider: "openai", APIKey: "key-3"}))
+
+	require.NoError(t, store.DeleteAllForRun(ctx, "tenant-a", runID))
+
+	for _, nodeID := range []string{"llm_1", "llm_2", "llm_3"} {
+		_, found, err := store.Get(ctx, "tenant-a", runID, nodeID)
+		require.NoError(t, err)
+		assert.False(t, found, "node %q should have been deleted by DeleteAllForRun", nodeID)
+	}
+}
+
+// TestIntegration_Store_DeleteAllForRun_DoesNotTouchOtherRuns proves the
+// pattern-scoped SCAN is scoped tightly enough to not delete a DIFFERENT
+// run's (or tenant's) entries — a wildcard delete that was too broad would
+// be worse than the bug it's fixing.
+func TestIntegration_Store_DeleteAllForRun_DoesNotTouchOtherRuns(t *testing.T) {
+	store, _ := newStore(t)
+	ctx := context.Background()
+	runA := fmt.Sprintf("run-a-%d", time.Now().UnixNano())
+	runB := fmt.Sprintf("run-b-%d", time.Now().UnixNano())
+
+	require.NoError(t, store.Set(ctx, "tenant-a", runA, "llm_1", debugcred.Override{Provider: "anthropic", APIKey: "key-a"}))
+	require.NoError(t, store.Set(ctx, "tenant-a", runB, "llm_1", debugcred.Override{Provider: "anthropic", APIKey: "key-b"}))
+	t.Cleanup(func() { _ = store.Delete(ctx, "tenant-a", runB, "llm_1") })
+
+	require.NoError(t, store.DeleteAllForRun(ctx, "tenant-a", runA))
+
+	_, foundB, err := store.Get(ctx, "tenant-a", runB, "llm_1")
+	require.NoError(t, err)
+	assert.True(t, foundB, "a different run's entry must survive cleanup of runA")
+}
+
+// TestIntegration_Store_DeleteAllForRun_NoEntries_NoError verifies cleanup
+// of a run with zero stored overrides (e.g. a debug run with no LLM nodes at
+// all) is a harmless no-op, not an error.
+func TestIntegration_Store_DeleteAllForRun_NoEntries_NoError(t *testing.T) {
+	store, _ := newStore(t)
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-empty-%d", time.Now().UnixNano())
+
+	assert.NoError(t, store.DeleteAllForRun(ctx, "tenant-a", runID))
+}

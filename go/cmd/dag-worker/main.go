@@ -158,11 +158,12 @@ func run() error {
 	)
 
 	// ── 10b. AppFlow worker — polls appflow-dag task queue ────────────────────
+	debugCredStore := debugcred.New(redisCache.Client())
 	llmCaller := &dbLLMCaller{
 		resolver:   llmresolve.New(rlsPools.Admin, cryptoKey, log),
 		factory:    &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
 		logger:     log,
-		debugStore: debugcred.New(redisCache.Client()),
+		debugStore: debugCredStore,
 	}
 	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
 	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
@@ -172,12 +173,13 @@ func run() error {
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}
 	appFlowActs := &appflow.AppFlowActivities{
-		LLMCaller:     llmCaller,
-		InlineLLM:     llmCaller,
-		DB:            rlsPools.Admin,
-		StatusUpdater: statusUpdater,
-		StreamPub:     streamPub,
-		AgentInvoker:  agentCaller,
+		LLMCaller:        llmCaller,
+		InlineLLM:        llmCaller,
+		DB:               rlsPools.Admin,
+		StatusUpdater:    statusUpdater,
+		StreamPub:        streamPub,
+		AgentInvoker:     agentCaller,
+		DebugCredCleaner: debugCredStore,
 	}
 	appFlowTaskQueue := appflow.AppFlowTaskQueue
 	if cfg.AppFlowTaskQueueOverride != "" {
@@ -490,12 +492,35 @@ type multiLLMFactory struct {
 }
 
 func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
-	if apiKey == "" && provider != "ollama" && provider != "mock" {
-		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
-	}
 	baseURL := ""
 	if f.baseURLs != nil {
 		baseURL = f.baseURLs[provider]
+	}
+	return f.newProvider(provider, model, maxTokens, apiKey, baseURL)
+}
+
+// NewProviderWithBaseURL is NewProvider but with an explicit baseURL that
+// overrides f.baseURLs' static per-provider map — used for App Canvas Debug
+// Mode's per-node credential override (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md),
+// where a debug run may point a node at a different endpoint than the one
+// configured in them.llm_providers.base_url. An empty baseURL falls back to
+// the static map, same as NewProvider.
+func (f *multiLLMFactory) NewProviderWithBaseURL(provider, model string, maxTokens int, apiKey, baseURL string) (agentgen.LLMProvider, error) {
+	if baseURL == "" && f.baseURLs != nil {
+		baseURL = f.baseURLs[provider]
+	}
+	return f.newProvider(provider, model, maxTokens, apiKey, baseURL)
+}
+
+// newProvider builds the provider adapter. NOTE: llm.AnthropicProvider has no
+// base URL parameter at all in this codebase — a baseURL override for the
+// "anthropic" case is silently unusable structurally (not just unwired), a
+// pre-existing limitation this function does not attempt to fix. It only
+// matters for the "openai"/"groq"/"ollama"/"vllm"/"lmstudio" family, where
+// base_url is the whole point of those provider names existing separately.
+func (f *multiLLMFactory) newProvider(provider, model string, maxTokens int, apiKey, baseURL string) (agentgen.LLMProvider, error) {
+	if apiKey == "" && provider != "ollama" && provider != "mock" {
+		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
 	}
 	switch provider {
 	case "mock":
@@ -710,6 +735,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 	}
 	model := req.Model
 	var apiKey string
+	var baseURL string // debug-run override only; "" uses multiLLMFactory's static per-provider map
 
 	if req.Debug {
 		if c.debugStore == nil {
@@ -742,6 +768,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 			model = ov.Model
 		}
 		apiKey = ov.APIKey
+		baseURL = ov.BaseURL
 	} else {
 		// apiKey may legitimately be "" here (e.g. ollama, mock) — multiLLMFactory.
 		// NewProvider is the single source of truth for which providers require a
@@ -755,7 +782,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 		maxTokens = 1024
 	}
 
-	provider, err := c.factory.NewProvider(providerName, model, maxTokens, apiKey)
+	provider, err := c.factory.NewProviderWithBaseURL(providerName, model, maxTokens, apiKey, baseURL)
 	if err != nil {
 		return "", fmt.Errorf("inline llm: create provider: %w", err)
 	}

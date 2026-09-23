@@ -25,11 +25,21 @@ import (
 	"github.com/redis/rueidis"
 )
 
-// TTL is the override entry's expiry — long enough for any debug run's
-// expected lifetime, short enough that a stale entry from an abandoned debug
-// session can't outlive it by much. Proactive delete-on-terminal-event (see
-// Delete) is the primary cleanup path; this TTL is the fallback.
-const TTL = 10 * time.Minute
+// TTL is the override entry's expiry — sized to cover the worst-case
+// cumulative wall-clock time a debug run's LLM nodes could take under the
+// default activity retry policy, not an arbitrary round number. AppFlow's
+// InlineLLMActivity runs under ActivityOptions with a 120s
+// StartToCloseTimeout and up to retryMax (default 2) attempts, backoff
+// capped at 10s (go/internal/appflow/workflow.go's `ao`) — worst case ≈241s
+// per node. A 5-10 node debug canvas where every node exhausts every retry
+// (the pathological case this TTL must survive, not the common path) totals
+// ~20-40 minutes; 30 minutes covers realistic canvases with margin while
+// still bounding how long a credential lingers if cleanup (see Delete) never
+// fires. Cleanup is now DOUBLE-covered: AppFlowDebugService deletes every
+// node's entry proactively once the debug workflow reaches a terminal state
+// (the primary path), and this TTL is strictly the fallback for a run that's
+// abandoned or crashes before reaching one.
+const TTL = 30 * time.Minute
 
 // Override is the stored credential for one node's llm_credential param.
 // MarkerOnly means "this node needed a credential, the caller left it at the
@@ -58,6 +68,10 @@ func New(client rueidis.Client) *Store {
 
 func key(tenantID, runID, nodeID string) string {
 	return fmt.Sprintf("them:debug:%s:%s:%s:llm_override", tenantID, runID, nodeID)
+}
+
+func keyPattern(tenantID, runID string) string {
+	return fmt.Sprintf("them:debug:%s:%s:*:llm_override", tenantID, runID)
 }
 
 // Set writes ov for (tenantID, runID, nodeID), replacing any existing entry,
@@ -96,10 +110,40 @@ func (s *Store) Get(ctx context.Context, tenantID, runID, nodeID string) (Overri
 	return ov, true, nil
 }
 
-// Delete removes the override for (tenantID, runID, nodeID) — called
-// proactively on run completion (the primary cleanup path; TTL is the
-// fallback for runs that never reach a terminal event).
+// Delete removes the override for (tenantID, runID, nodeID).
 func (s *Store) Delete(ctx context.Context, tenantID, runID, nodeID string) error {
 	cmd := s.client.B().Del().Key(key(tenantID, runID, nodeID)).Build()
 	return s.client.Do(ctx, cmd).Error()
+}
+
+// DeleteAllForRun removes every node's override for (tenantID, runID) via a
+// cursor-based SCAN + DEL (never KEYS, which blocks the whole Redis instance
+// on a large keyspace) — called proactively once a debug run reaches a
+// terminal state (AppFlowActivities.FinalizeRunActivity, gated on
+// input.Debug). This is the primary cleanup path; TTL (see TTL) is strictly
+// the fallback for a run that's abandoned or crashes before reaching one.
+// Best-effort: a scan/delete failure is returned but the caller (the
+// idempotent FinalizeRunActivity) must not fail the whole activity over it —
+// see the call site's own reasoning for why the run's terminal status update
+// takes priority over this cleanup succeeding.
+func (s *Store) DeleteAllForRun(ctx context.Context, tenantID, runID string) error {
+	pattern := keyPattern(tenantID, runID)
+	var cursor uint64
+	for {
+		cmd := s.client.B().Scan().Cursor(cursor).Match(pattern).Count(100).Build()
+		entry, err := s.client.Do(ctx, cmd).AsScanEntry()
+		if err != nil {
+			return fmt.Errorf("debugcred: scan for run cleanup: %w", err)
+		}
+		if len(entry.Elements) > 0 {
+			delCmd := s.client.B().Del().Key(entry.Elements...).Build()
+			if err := s.client.Do(ctx, delCmd).Error(); err != nil {
+				return fmt.Errorf("debugcred: delete during run cleanup: %w", err)
+			}
+		}
+		cursor = entry.Cursor
+		if cursor == 0 {
+			return nil
+		}
+	}
 }

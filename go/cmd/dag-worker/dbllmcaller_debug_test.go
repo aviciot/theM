@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,4 +120,53 @@ func TestDBLLMCaller_Complete_Debug_DifferentNode_DoesNotLeakOverride(t *testing
 		Debug: true,
 	})
 	require.Error(t, err, "llm_2 has no override of its own — must fail, not borrow llm_1's")
+}
+
+// fakeOpenAIServer stands in for a provider's real API endpoint, recording
+// which server actually received the request and replying with a minimal
+// valid SSE stream so llm.OpenAIProvider.Stream completes successfully.
+func fakeOpenAIServer(t *testing.T, hitCount *int32) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(hitCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestDBLLMCaller_Complete_Debug_UsesOverrideBaseURL verifies issue #1 from
+// the d941aca3 review: BaseURL was stored in the debug override but never
+// passed into provider creation, so every debug node silently called
+// whatever endpoint multiLLMFactory's static per-provider map happened to
+// have (or the provider's hardcoded default) instead of the one configured
+// for that node's override. Two nodes, two different fake endpoints, two
+// independent debug overrides — each request must land on ITS OWN server.
+func TestDBLLMCaller_Complete_Debug_UsesOverrideBaseURL(t *testing.T) {
+	var hitsA, hitsB int32
+	srvA := fakeOpenAIServer(t, &hitsA)
+	srvB := fakeOpenAIServer(t, &hitsB)
+
+	store := &fakeDebugStore{overrides: map[string]debugcred.Override{
+		"tenant-1|run-1|llm_a": {Provider: "openai", Model: "gpt-4o-mini", APIKey: "key-a", BaseURL: srvA.URL},
+		"tenant-1|run-1|llm_b": {Provider: "openai", Model: "gpt-4o-mini", APIKey: "key-b", BaseURL: srvB.URL},
+	}}
+	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: store}
+
+	_, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+		SystemPrompt: "sys", UserPrompt: "hi",
+		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_a", Debug: true,
+	})
+	require.NoError(t, err)
+	_, err = caller.Complete(context.Background(), appflow.InlineLLMRequest{
+		SystemPrompt: "sys", UserPrompt: "hi",
+		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_b", Debug: true,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(&hitsA), "llm_a's request must reach srvA, its own configured endpoint")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&hitsB), "llm_b's request must reach srvB, its own configured endpoint")
 }

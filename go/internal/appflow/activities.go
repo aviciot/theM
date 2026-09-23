@@ -78,6 +78,11 @@ type FinalizeRunActivityInput struct {
 	Status    string `json:"status"` // "completed" | "failed" | "rejected"
 	FinalText string `json:"final_text,omitempty"`
 	ErrMsg    string `json:"err_msg,omitempty"`
+	// Debug gates the debug credential cleanup sweep below — see
+	// AppFlowActivities.DebugCredCleaner and docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
+	// Non-secret flag, safe in Temporal history (same reasoning as
+	// InlineLLMActivityInput.Debug).
+	Debug bool `json:"debug,omitempty"`
 }
 
 // AgentInvokeActivityInput is the input to AppFlowInvokeAgentActivity.
@@ -190,6 +195,19 @@ type AppFlowActivities struct {
 	// InlineLLM is used by the inline LLM node activity to call an LLM directly
 	// (as opposed to LLMCaller, which is shaped for Router label classification).
 	InlineLLM InlineLLMCaller
+	// DebugCredCleaner deletes a debug run's per-node LLM credential overrides
+	// once the run reaches a terminal state (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
+	// May be nil — FinalizeRunActivity treats a nil cleaner as a no-op, same as
+	// the other nil-safe dependencies on this struct.
+	DebugCredCleaner DebugCredCleaner
+}
+
+// DebugCredCleaner deletes every per-node debug credential override for one
+// run. Implemented by *debugcred.Store (via its DeleteAllForRun method) —
+// defined as its own interface here so this package doesn't need to import
+// internal/debugcred just for this one method's signature.
+type DebugCredCleaner interface {
+	DeleteAllForRun(ctx context.Context, tenantID, runID string) error
 }
 
 // AgentInvoker calls a specific agent by its DB UUID via A2A.
@@ -582,6 +600,18 @@ func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input Final
 		if err := a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)}); err != nil {
 			return fmt.Errorf("finalize: publish stream event: %w", err)
 		}
+	}
+
+	// Debug credential cleanup — the primary path (see debugcred.TTL's own
+	// doc comment for why this matters: TTL alone is only the fallback for a
+	// run that's abandoned or crashes before reaching a terminal state).
+	// Deliberately best-effort: a cleanup failure must NOT fail this
+	// otherwise-idempotent activity (which would trigger a retry that re-runs
+	// the status update and stream publish above, both already succeeded) —
+	// logged and swallowed instead. An orphaned override still expires via
+	// its own TTL, so this can never leak a credential forever.
+	if input.Debug && a.DebugCredCleaner != nil {
+		_ = a.DebugCredCleaner.DeleteAllForRun(ctx, input.TenantID, input.RunID)
 	}
 	return nil
 }

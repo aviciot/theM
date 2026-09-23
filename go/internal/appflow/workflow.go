@@ -211,6 +211,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			Status:    status,
 			FinalText: out.FinalText,
 			ErrMsg:    errMsg,
+			Debug:     input.Debug,
 		}).Get(fCtx, nil)
 	}()
 

@@ -132,6 +132,114 @@ func TestFinalizeRunActivity_NilDeps_NoOp(t *testing.T) {
 	}
 }
 
+// ── App Canvas Debug Mode credential cleanup (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) ──
+// Closes issue #4 from the d941aca3 review: a fixed TTL was the ONLY cleanup
+// mechanism for debug credentials. FinalizeRunActivity now also triggers a
+// proactive delete on run completion, gated on input.Debug.
+
+type fakeDebugCredCleaner struct {
+	calls  []cleanupCall
+	retErr error
+}
+
+type cleanupCall struct {
+	tenantID, runID string
+}
+
+func (f *fakeDebugCredCleaner) DeleteAllForRun(_ context.Context, tenantID, runID string) error {
+	f.calls = append(f.calls, cleanupCall{tenantID, runID})
+	return f.retErr
+}
+
+// TestFinalizeRunActivity_Debug_CleansUpCredentials verifies a debug run's
+// terminal state triggers the proactive cleanup, with the correct
+// tenant/run scoping.
+func TestFinalizeRunActivity_Debug_CleansUpCredentials(t *testing.T) {
+	cleaner := &fakeDebugCredCleaner{}
+	acts := &AppFlowActivities{
+		StatusUpdater:    &fakeStatusUpdater{},
+		StreamPub:        &fakeStreamPub{},
+		DebugCredCleaner: cleaner,
+	}
+
+	err := acts.FinalizeRunActivity(context.Background(), FinalizeRunActivityInput{
+		RunID: "run-debug-1", TenantID: "tenant-1", Status: "completed", Debug: true,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeRunActivity: %v", err)
+	}
+	if len(cleaner.calls) != 1 {
+		t.Fatalf("want 1 cleanup call, got %d", len(cleaner.calls))
+	}
+	if cleaner.calls[0].tenantID != "tenant-1" || cleaner.calls[0].runID != "run-debug-1" {
+		t.Errorf("cleanup called with wrong scope: %+v", cleaner.calls[0])
+	}
+}
+
+// TestFinalizeRunActivity_NotDebug_NeverCleansUp verifies a production
+// (non-debug) run never triggers the cleanup call at all — there's nothing
+// to clean up for it, and calling DeleteAllForRun unconditionally would be
+// a wasted Redis SCAN on every production run.
+func TestFinalizeRunActivity_NotDebug_NeverCleansUp(t *testing.T) {
+	cleaner := &fakeDebugCredCleaner{}
+	acts := &AppFlowActivities{
+		StatusUpdater:    &fakeStatusUpdater{},
+		StreamPub:        &fakeStreamPub{},
+		DebugCredCleaner: cleaner,
+	}
+
+	err := acts.FinalizeRunActivity(context.Background(), FinalizeRunActivityInput{
+		RunID: "run-prod-1", TenantID: "tenant-1", Status: "completed", Debug: false,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeRunActivity: %v", err)
+	}
+	if len(cleaner.calls) != 0 {
+		t.Fatalf("want 0 cleanup calls for a non-debug run, got %d", len(cleaner.calls))
+	}
+}
+
+// TestFinalizeRunActivity_Debug_NilCleaner_NoOp verifies a nil
+// DebugCredCleaner (not configured) is safe — same nil-safety as every
+// other dependency on AppFlowActivities.
+func TestFinalizeRunActivity_Debug_NilCleaner_NoOp(t *testing.T) {
+	acts := &AppFlowActivities{
+		StatusUpdater: &fakeStatusUpdater{},
+		StreamPub:     &fakeStreamPub{},
+	}
+
+	err := acts.FinalizeRunActivity(context.Background(), FinalizeRunActivityInput{
+		RunID: "run-debug-2", TenantID: "tenant-1", Status: "completed", Debug: true,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeRunActivity: %v", err)
+	}
+}
+
+// TestFinalizeRunActivity_Debug_CleanupErrorDoesNotFailActivity verifies a
+// cleanup failure is swallowed, not returned — FinalizeRunActivity is
+// idempotent and a retry would re-run the (already-succeeded) status update
+// and stream publish above just to retry a Redis cleanup. An orphaned
+// override still expires via its own TTL, so nothing leaks permanently.
+func TestFinalizeRunActivity_Debug_CleanupErrorDoesNotFailActivity(t *testing.T) {
+	cleaner := &fakeDebugCredCleaner{retErr: errors.New("redis: connection refused")}
+	acts := &AppFlowActivities{
+		StatusUpdater:    &fakeStatusUpdater{},
+		StreamPub:        &fakeStreamPub{},
+		DebugCredCleaner: cleaner,
+	}
+
+	err := acts.FinalizeRunActivity(context.Background(), FinalizeRunActivityInput{
+		RunID: "run-debug-3", TenantID: "tenant-1", Status: "completed", Debug: true,
+	})
+	if err != nil {
+		t.Fatalf("cleanup failure must not fail the activity, got: %v", err)
+	}
+	if len(cleaner.calls) != 1 {
+		t.Fatalf("cleanup must still have been attempted, got %d calls", len(cleaner.calls))
+	}
+}
+
 // AF-WF-03: FinalizeRunActivityInput JSON round-trip — status values survive serialization.
 // ── AF-WF-04: InvokeAgentActivity ─────────────────────────────────────────────
 

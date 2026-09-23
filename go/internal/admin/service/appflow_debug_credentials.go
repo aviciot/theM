@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/appflow"
@@ -25,9 +26,13 @@ type LLMOverrideInput struct {
 	Mode     string // "general" | "custom"
 	Provider string // required for both modes
 	KeyID    *int64 // general mode, optional (nil = tenant default key)
-	Model    string // custom mode
-	APIKey   string // custom mode
-	BaseURL  string // custom mode
+	// Model: general mode, optional (empty = provider.DefaultModel). Custom
+	// mode, required. General-mode values are validated against the
+	// provider's own allowed_models list (them.llm_providers.allowed_models)
+	// — a model not on that list is rejected, never silently substituted.
+	Model   string
+	APIKey  string // custom mode
+	BaseURL string // custom mode
 }
 
 // resolveLLMOverride turns one LLMOverrideInput into a plaintext debugcred.Override.
@@ -70,17 +75,35 @@ func resolveLLMOverride(ctx context.Context, d AppFlowDebugCredentialDAL, fernet
 			// a silent substitution.
 			return debugcred.Override{}, unprocessable(fmt.Sprintf("general mode: no usable key for provider %q on this tenant", in.Provider))
 		}
+		// GetLLMProviderKey only scopes by (id, tenant) — it does NOT check
+		// llm_provider_id, so an explicit key_id belonging to a DIFFERENT
+		// provider than in.Provider would otherwise be silently accepted and
+		// its key decrypted for the wrong provider's API. Reject the mismatch
+		// here rather than let a request-supplied key_id override which
+		// provider the request actually queries.
+		if in.KeyID != nil && key.LLMProviderID != provider.ID {
+			return debugcred.Override{}, unprocessable(fmt.Sprintf("general mode: key_id %d does not belong to provider %q", *in.KeyID, in.Provider))
+		}
 
 		apiKey, err := crypto.DecryptStored(fernetKey, key.APIKeyEncrypted)
 		if err != nil || apiKey == "" {
 			return debugcred.Override{}, unprocessable(fmt.Sprintf("general mode: could not decrypt key for provider %q", in.Provider))
 		}
 
+		model := provider.DefaultModel
+		if in.Model != "" {
+			allowed := dal.AllowedModelsOrEmpty(provider.AllowedModelsRaw)
+			if len(allowed) > 0 && !slices.Contains(allowed, in.Model) {
+				return debugcred.Override{}, unprocessable(fmt.Sprintf("general mode: model %q is not in provider %q's allowed models", in.Model, in.Provider))
+			}
+			model = in.Model
+		}
+
 		baseURL := ""
 		if provider.BaseURL != nil {
 			baseURL = *provider.BaseURL
 		}
-		return debugcred.Override{Provider: provider.Name, Model: provider.DefaultModel, APIKey: apiKey, BaseURL: baseURL}, nil
+		return debugcred.Override{Provider: provider.Name, Model: model, APIKey: apiKey, BaseURL: baseURL}, nil
 
 	default:
 		return debugcred.Override{}, unprocessable(fmt.Sprintf("llm_overrides: unknown mode %q (want \"general\" or \"custom\")", in.Mode))
