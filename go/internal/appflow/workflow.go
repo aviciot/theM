@@ -380,6 +380,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				OutputVar:     cfg.OutputVar,
 				Stream:        true,
 				Verbosity:     input.LogVerbosity,
+				Debug:         input.Debug,
 			}).Get(ctx, &llmOut)
 			if err != nil {
 				out.Status = "failed"

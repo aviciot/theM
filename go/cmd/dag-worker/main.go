@@ -44,6 +44,7 @@ import (
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/debugcred"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/llmresolve"
@@ -158,9 +159,10 @@ func run() error {
 
 	// ── 10b. AppFlow worker — polls appflow-dag task queue ────────────────────
 	llmCaller := &dbLLMCaller{
-		resolver: llmresolve.New(rlsPools.Admin, cryptoKey, log),
-		factory:  &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
-		logger:   log,
+		resolver:   llmresolve.New(rlsPools.Admin, cryptoKey, log),
+		factory:    &multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
+		logger:     log,
+		debugStore: debugcred.New(redisCache.Client()),
 	}
 	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
 	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
@@ -603,7 +605,9 @@ type pgxAgentEndpointQueryer struct {
 	pool *pgxpool.Pool
 }
 
-type pgxSingleRow struct{ row interface{ Scan(...any) error } }
+type pgxSingleRow struct {
+	row interface{ Scan(...any) error }
+}
 
 func (r pgxSingleRow) Scan(dest ...any) error { return r.row.Scan(dest...) }
 
@@ -626,16 +630,30 @@ var _ agentgen.AgentEndpointQueryer = (*pgxAgentEndpointQueryer)(nil)
 
 // ── dbLLMCaller ───────────────────────────────────────────────────────────────
 
+// debugCredentialGetter is the minimal debugcred.Store surface dbLLMCaller
+// needs — defined here (not the concrete *debugcred.Store) so tests can
+// inject a fake without a live Redis.
+type debugCredentialGetter interface {
+	Get(ctx context.Context, tenantID, runID, nodeID string) (debugcred.Override, bool, error)
+}
+
 // dbLLMCaller implements both appflow.RouterLLMCaller (label classification for
 // the Router node) and appflow.InlineLLMCaller (direct completion for the
 // inline LLM node). It resolves the API key from the DB at activity execution
 // time via the shared internal/llmresolve precedence chain (app-level
 // provider_keys -> tenant llm_providers -> platform llm_providers) so the key
 // never appears in Temporal workflow history.
+//
+// For debug runs (req.Debug == true, InlineLLMCaller.Complete only —
+// ClassifyIntent/the Router node has no debug-override concept), Complete
+// checks debugStore first — see docs/APPFLOW_RUNTIME_PARAMS_PLAN.md. debugStore
+// may be nil (debug credential overrides not configured); a nil store and a
+// non-debug call both skip the override check identically.
 type dbLLMCaller struct {
-	resolver *llmresolve.Resolver
-	factory  *multiLLMFactory
-	logger   *slog.Logger
+	resolver   *llmresolve.Resolver
+	factory    *multiLLMFactory
+	logger     *slog.Logger
+	debugStore debugCredentialGetter
 }
 
 func (c *dbLLMCaller) ClassifyIntent(
@@ -690,18 +708,54 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 	if providerName == "" {
 		providerName = "anthropic"
 	}
-	// apiKey may legitimately be "" here (e.g. ollama, mock) — multiLLMFactory.
-	// NewProvider is the single source of truth for which providers require a
-	// key, so the empty-key check is not duplicated here; NewProvider errors
-	// for any provider that needs one and didn't get one.
-	apiKey := c.resolveKey(ctx, providerName, req.TenantID, req.ApplicationID)
+	model := req.Model
+	var apiKey string
+
+	if req.Debug {
+		if c.debugStore == nil {
+			// A debug run always requires debugStore to be configured — this
+			// is a server misconfiguration, not "no override was requested,"
+			// so it must fail the same way a missing override does, never
+			// fall through to normal (tenant/platform) key resolution.
+			return "", fmt.Errorf("inline llm %q: debug run but no debug credential store configured on this worker", req.NodeID)
+		}
+		ov, found, err := c.debugStore.Get(ctx, req.TenantID, req.RunID, req.NodeID)
+		if err != nil {
+			// Fail loudly on a lookup error too — this is a debug run, and a
+			// Redis error here is exactly the kind of "credential became
+			// unavailable" case that must not silently fall through to
+			// normal (tenant/platform) key resolution.
+			return "", fmt.Errorf("inline llm %q: debug credential lookup failed: %w", req.NodeID, err)
+		}
+		if !found {
+			// Absence-means-missing for a debug run (see debugcred package
+			// doc): the debug/start request declared this node's llm_credential
+			// param, so an override entry was written for every such node —
+			// its absence now (TTL expired, evicted, etc.) means the
+			// credential is genuinely unavailable, never "no override was
+			// ever requested." Fail clearly rather than resolve a different
+			// key the user never selected for this run.
+			return "", fmt.Errorf("inline llm %q: debug credential unavailable for this run (expired or evicted) — retry the debug run", req.NodeID)
+		}
+		providerName = ov.Provider
+		if ov.Model != "" {
+			model = ov.Model
+		}
+		apiKey = ov.APIKey
+	} else {
+		// apiKey may legitimately be "" here (e.g. ollama, mock) — multiLLMFactory.
+		// NewProvider is the single source of truth for which providers require a
+		// key, so the empty-key check is not duplicated here; NewProvider errors
+		// for any provider that needs one and didn't get one.
+		apiKey = c.resolveKey(ctx, providerName, req.TenantID, req.ApplicationID)
+	}
 
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 1024
 	}
 
-	provider, err := c.factory.NewProvider(providerName, req.Model, maxTokens, apiKey)
+	provider, err := c.factory.NewProvider(providerName, model, maxTokens, apiKey)
 	if err != nil {
 		return "", fmt.Errorf("inline llm: create provider: %w", err)
 	}

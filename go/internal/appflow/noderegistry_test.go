@@ -103,3 +103,33 @@ func TestAllAppCanvasNodeInfos_ReturnsCopyNotSharedSlice(t *testing.T) {
 		t.Fatal("mutating the returned slice affected the shared registry")
 	}
 }
+
+// TestAllAppCanvasNodeInfos_LLMDeclaresCredentialRuntimeParam verifies the
+// llm kind declares a required "llm_credential"-typed runtime param — this is
+// what the App Canvas Debug Mode setup panel scans for
+// (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) to render a per-node provider/model/
+// key picker. Also verifies no other kind unexpectedly gained one.
+func TestAllAppCanvasNodeInfos_LLMDeclaresCredentialRuntimeParam(t *testing.T) {
+	infos := AllAppCanvasNodeInfos()
+	for _, info := range infos {
+		if info.Type != "llm" {
+			if len(info.RuntimeParams) != 0 {
+				t.Errorf("kind %q: expected no RuntimeParams, got %+v", info.Type, info.RuntimeParams)
+			}
+			continue
+		}
+		if len(info.RuntimeParams) != 1 {
+			t.Fatalf("llm: expected exactly 1 RuntimeParams entry, got %d", len(info.RuntimeParams))
+		}
+		p := info.RuntimeParams[0]
+		if p.Key == "" {
+			t.Error("llm: RuntimeParams[0].Key must not be empty")
+		}
+		if p.Type != "llm_credential" {
+			t.Errorf("llm: expected Type=\"llm_credential\", got %q", p.Type)
+		}
+		if !p.Required {
+			t.Error("llm: expected Required=true")
+		}
+	}
+}

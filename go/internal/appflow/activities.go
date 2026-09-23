@@ -130,6 +130,16 @@ type InlineLLMActivityInput struct {
 	// Verbosity is the resolved effective log-verbosity for this run
 	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
 	Verbosity string `json:"verbosity,omitempty"`
+	// Debug marks this run as a debug session — a non-secret flag, safe in
+	// Temporal history (see AF-WF-14 and docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
+	// When true, the credential resolver checks the debugcred.Store override
+	// for (TenantID, RunID, NodeID) first; when absent for a debug run that
+	// declared a required llm_credential param, resolution must fail loudly
+	// rather than silently falling through to normal (tenant/platform) key
+	// resolution — Debug is what lets the resolver distinguish "this is a
+	// production call, no override was ever possible" from "this is a debug
+	// call whose override has gone missing."
+	Debug bool `json:"debug,omitempty"`
 }
 
 // InlineLLMActivityOutput is returned by AppFlowInlineLLMActivity.
@@ -225,6 +235,16 @@ type InlineLLMRequest struct {
 	Temperature   *float64
 	TenantID      string
 	ApplicationID string
+	// RunID/NodeID identify which debug credential override (if any) applies
+	// — see debugcred.Store and Debug below. IDs, not secrets: safe to have
+	// reached this point via InlineLLMActivityInput, which AF-WF-14 already
+	// permits ID-shaped fields on.
+	RunID  string
+	NodeID string
+	// Debug — see InlineLLMActivityInput.Debug's doc comment for why this
+	// flag exists and what "fail loudly, not silently" means for the
+	// resolver that consumes it.
+	Debug bool
 }
 
 // ExecuteRouterActivity calls an LLM to classify the user message and returns
@@ -384,6 +404,9 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		Temperature:   input.Temperature,
 		TenantID:      input.TenantID,
 		ApplicationID: input.ApplicationID,
+		RunID:         input.RunID,
+		NodeID:        input.NodeID,
+		Debug:         input.Debug,
 	})
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", err.Error(), input.Verbosity)

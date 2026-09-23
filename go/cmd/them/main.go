@@ -309,7 +309,8 @@ func run() error {
 	if len(dashJWTSecret) == 0 {
 		dashJWTSecret = []byte(cfg.SecretKey)
 	}
-	dashHandler := dashboard.New(redisCache.Client(), rsStreamer, dashJWTSecret, log)
+	dashRunOwner := dashboard.NewPgxRunOwnershipChecker(rlsPools.Admin)
+	dashHandler := dashboard.New(redisCache.Client(), rsStreamer, dashRunOwner, dashJWTSecret, log)
 	srv.MountDashboardWS(dashHandler)
 	log.Info("dashboard WebSocket handler mounted", "path", "/ws/dashboard")
 

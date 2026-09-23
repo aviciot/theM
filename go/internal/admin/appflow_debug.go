@@ -20,9 +20,13 @@ type AppFlowDebugHandler struct {
 	svc *service.AppFlowDebugService
 }
 
-// NewAppFlowDebugHandler creates an AppFlowDebugHandler.
-func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter) *AppFlowDebugHandler {
-	return &AppFlowDebugHandler{svc: service.NewAppFlowDebugService(dal.NewDB(db), lc)}
+// NewAppFlowDebugHandler creates an AppFlowDebugHandler. credStore persists
+// per-node LLM credential overrides for debug runs
+// (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md); fernetKey decrypts General-mode
+// tenant provider keys — pass the same key used elsewhere in this package
+// (e.g. NewSystemAgentsHandler).
+func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte) *AppFlowDebugHandler {
+	return &AppFlowDebugHandler{svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey)}
 }
 
 // AppRoutes mounts the debug-start route. Must be registered under a
@@ -34,6 +38,20 @@ func (h *AppFlowDebugHandler) AppRoutes(r chi.Router) {
 type debugStartBody struct {
 	EntryPointSlug string `json:"entry_point_slug"`
 	UserMessage    string `json:"user_message"`
+	// LLMOverrides maps canvas node_id -> the per-node LLM credential choice
+	// for THIS debug run only — docs/APPFLOW_RUNTIME_PARAMS_PLAN.md. Every
+	// llm-kind node in the compiled draft must have an entry here; the
+	// service validates this server-side before admitting the run.
+	LLMOverrides map[string]llmOverrideBody `json:"llm_overrides,omitempty"`
+}
+
+type llmOverrideBody struct {
+	Mode     string `json:"mode"` // "general" | "custom"
+	Provider string `json:"provider,omitempty"`
+	KeyID    *int64 `json:"key_id,omitempty"`
+	Model    string `json:"model,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
 }
 
 type debugStartResponse struct {
@@ -65,7 +83,15 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 		userID = claims.UserID
 	}
 
-	result, err := h.svc.Start(r.Context(), tenantID, appID, body.EntryPointSlug, body.UserMessage, userID)
+	overrides := make(map[string]service.LLMOverrideInput, len(body.LLMOverrides))
+	for nodeID, in := range body.LLMOverrides {
+		overrides[nodeID] = service.LLMOverrideInput{
+			Mode: in.Mode, Provider: in.Provider, KeyID: in.KeyID,
+			Model: in.Model, APIKey: in.APIKey, BaseURL: in.BaseURL,
+		}
+	}
+
+	result, err := h.svc.Start(r.Context(), tenantID, appID, body.EntryPointSlug, body.UserMessage, userID, overrides)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return

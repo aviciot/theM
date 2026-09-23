@@ -13,6 +13,7 @@ import (
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/debugcred"
 	"github.com/aviciot/them/internal/registry"
 	"github.com/aviciot/them/internal/temporal"
 )
@@ -210,7 +211,7 @@ func BuildRouter(
 				// (tenant-scoped). Nil when Temporal isn't configured — no route
 				// mounted rather than a handler that always 503s.
 				if appFlowDebugLifecycle != nil {
-					debugApp := NewAppFlowDebugHandler(dbq, appFlowDebugLifecycle)
+					debugApp := NewAppFlowDebugHandler(dbq, appFlowDebugLifecycle, debugcred.New(redis), fernetKey)
 					tenantScoped.Post("/applications/{id}/debug/start", debugApp.Start)
 				}
 

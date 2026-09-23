@@ -72,10 +72,23 @@ type StreamEntry struct {
 	Data string
 }
 
+// RunOwnershipChecker confirms a run belongs to a tenant before that tenant's
+// caller is allowed to tail its trace stream. Implemented by a thin pgx query
+// against them.runs — deliberately not the full internal/admin/dal.DB (this
+// package has no other DB dependency and shouldn't need one just for this).
+type RunOwnershipChecker interface {
+	// RunBelongsToTenant returns true if runID exists and its tenant_id matches
+	// tenantID. Returns (false, nil) for "not found or wrong tenant" — the
+	// caller cannot distinguish the two, which is the point (no tenant should
+	// learn whether a run ID merely exists for a different tenant).
+	RunBelongsToTenant(ctx context.Context, tenantID, runID string) (bool, error)
+}
+
 // Handler is the /ws/dashboard WebSocket handler.
 type Handler struct {
 	redis     dashRedis
 	streamer  runstream.RedisStreamer // nil-safe: falls back to a one-shot XRevRange snapshot for run:* channels
+	runOwner  RunOwnershipChecker     // nil-safe: when nil, run:* tailing is refused entirely (fail closed, not open)
 	jwtSecret []byte
 	logger    *slog.Logger
 	upgrader  websocket.Upgrader
@@ -134,22 +147,25 @@ func (a *rueidisAdapter) XRevRange(ctx context.Context, key, end, start string, 
 // New creates a Handler wrapping a rueidis.Client. streamer drives live
 // tailing of run:* channels (see the package doc) — pass the same
 // runstream.RedisStreamer instance internal/ws/internal/sse already use.
-func New(redisClient rueidis.Client, streamer runstream.RedisStreamer, jwtSecret []byte, logger *slog.Logger) *Handler {
-	return newWithDashRedis(&rueidisAdapter{redisClient}, streamer, jwtSecret, logger)
+// runOwner gates run:* subscriptions to the caller's own tenant — pass nil
+// only if run:* tailing should be refused entirely (fail closed).
+func New(redisClient rueidis.Client, streamer runstream.RedisStreamer, runOwner RunOwnershipChecker, jwtSecret []byte, logger *slog.Logger) *Handler {
+	return newWithDashRedis(&rueidisAdapter{redisClient}, streamer, runOwner, jwtSecret, logger)
 }
 
 // NewForTest creates a Handler with a custom dashRedis implementation.
 // Exported so tests in the dashboard_test package can inject fakes. streamer
-// may be nil to test the legacy one-shot-snapshot fallback path.
-func NewForTest(rc dashRedis, streamer runstream.RedisStreamer, jwtSecret []byte, logger *slog.Logger) *Handler {
-	return newWithDashRedis(rc, streamer, jwtSecret, logger)
+// and runOwner may be nil to test the legacy fallback / fail-closed paths.
+func NewForTest(rc dashRedis, streamer runstream.RedisStreamer, runOwner RunOwnershipChecker, jwtSecret []byte, logger *slog.Logger) *Handler {
+	return newWithDashRedis(rc, streamer, runOwner, jwtSecret, logger)
 }
 
 // newWithDashRedis creates a Handler with a custom dashRedis implementation (for testing).
-func newWithDashRedis(rc dashRedis, streamer runstream.RedisStreamer, jwtSecret []byte, logger *slog.Logger) *Handler {
+func newWithDashRedis(rc dashRedis, streamer runstream.RedisStreamer, runOwner RunOwnershipChecker, jwtSecret []byte, logger *slog.Logger) *Handler {
 	return &Handler{
 		redis:     rc,
 		streamer:  streamer,
+		runOwner:  runOwner,
 		jwtSecret: jwtSecret,
 		logger:    logger,
 		upgrader: websocket.Upgrader{
@@ -252,8 +268,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.sendSnapshots(ctx, cw, pubsubChannels, tenantID)
 
 	// ── 9b. Tail run:* channels live (replay history + block for new entries) ─
+	// Ownership-checked per channel — IsValidChannel only validates shape (a
+	// well-formed "run:{uuid}"), never whether the caller's tenant actually
+	// owns that run. Without this check any authenticated caller of any
+	// tenant could subscribe to any other tenant's run:{uuid} and read its
+	// live trace (prompts, outputs, everything) — a cross-tenant IDOR.
+	// Fails closed: h.runOwner == nil or the ownership check erroring both
+	// refuse the channel rather than tailing it anyway.
 	for _, ch := range runChannels {
 		runID := ch[len("run:"):]
+		if h.runOwner == nil {
+			h.logger.Warn("dashboard: run:* subscription refused, no ownership checker configured", "run_id", runID, "tenant_id", tenantID)
+			continue
+		}
+		owns, err := h.runOwner.RunBelongsToTenant(ctx, tenantID, runID)
+		if err != nil {
+			h.logger.Warn("dashboard: run ownership check failed", "run_id", runID, "tenant_id", tenantID, "error", err)
+			continue
+		}
+		if !owns {
+			h.logger.Warn("dashboard: run:* subscription refused, tenant does not own run", "run_id", runID, "tenant_id", tenantID)
+			continue
+		}
 		go h.tailRunChannel(ctx, cw, ch, runID)
 	}
 

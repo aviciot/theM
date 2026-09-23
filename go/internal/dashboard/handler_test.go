@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,10 +27,10 @@ import (
 // ── fake Redis ────────────────────────────────────────────────────────────────
 
 type fakeRedis struct {
-	mu        sync.Mutex
-	msgs      []rueidis.PubSubMessage
-	hgetalls  map[string]map[string]string // key → field map for HGetAll
-	gets      map[string]string            // key → value for Get
+	mu       sync.Mutex
+	msgs     []rueidis.PubSubMessage
+	hgetalls map[string]map[string]string // key → field map for HGetAll
+	gets     map[string]string            // key → value for Get
 }
 
 func newFakeRedis() *fakeRedis {
@@ -107,6 +108,32 @@ func makeHS256JWT(secret []byte, subject string) string {
 	return data + "." + sig
 }
 
+// ── fake RunOwnershipChecker ─────────────────────────────────────────────────
+
+// allowAllOwner treats every run as owned by every tenant — the permissive
+// default for tests that aren't specifically exercising the ownership gate.
+type allowAllOwner struct{}
+
+func (allowAllOwner) RunBelongsToTenant(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
+
+// denyAllOwner treats every run as NOT owned — used to prove the ownership
+// gate actually refuses tailing, not just that it compiles.
+type denyAllOwner struct{}
+
+func (denyAllOwner) RunBelongsToTenant(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
+// erroringOwner simulates a DB error during the ownership check — must fail
+// closed (refuse), not fail open (tail anyway).
+type erroringOwner struct{}
+
+func (erroringOwner) RunBelongsToTenant(_ context.Context, _, _ string) (bool, error) {
+	return false, errors.New("db unavailable")
+}
+
 // ── test server ───────────────────────────────────────────────────────────────
 
 func newTestServer(t *testing.T, rc *fakeRedis) (*httptest.Server, []byte) {
@@ -116,8 +143,13 @@ func newTestServer(t *testing.T, rc *fakeRedis) (*httptest.Server, []byte) {
 
 func newTestServerWithStreamer(t *testing.T, rc *fakeRedis, streamer runstream.RedisStreamer) (*httptest.Server, []byte) {
 	t.Helper()
+	return newTestServerFull(t, rc, streamer, allowAllOwner{})
+}
+
+func newTestServerFull(t *testing.T, rc *fakeRedis, streamer runstream.RedisStreamer, runOwner dashboard.RunOwnershipChecker) (*httptest.Server, []byte) {
+	t.Helper()
 	secret := []byte("test-secret-key")
-	h := dashboard.NewForTest(rc, streamer, secret, slog.Default())
+	h := dashboard.NewForTest(rc, streamer, runOwner, secret, slog.Default())
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, secret
@@ -438,4 +470,73 @@ func TestDashboard_RunChannel_NoStreamerFallsBackToOneShotSnapshot(t *testing.T)
 
 	msg := readJSON(t, conn) // ack only — no snapshot data queued, no panic
 	assert.Equal(t, "subscribed", msg["type"])
+}
+
+// ── run:* tenant ownership gate ──────────────────────────────────────────────
+//
+// IsValidChannel only validates channel-name SHAPE (a well-formed "run:{id}"),
+// never whether the caller's tenant actually owns that run. Without the
+// ownership check added this session, any authenticated caller of any tenant
+// could subscribe to any other tenant's run:{id} and read its live trace
+// (prompts, outputs, everything) — a cross-tenant IDOR. These tests prove the
+// gate actually refuses tailing rather than just existing in the type system.
+
+func TestDashboard_RunChannel_WrongTenantRefused(t *testing.T) {
+	runID := "33333333-0000-0000-0000-000000000001"
+	streamer := &fakeStreamer{entries: []runstream.StreamEntry{
+		streamEntry("1-0", `{"type":"done","run_id":"`+runID+`"}`),
+	}}
+	rc := newFakeRedis()
+	srv, secret := newTestServerFull(t, rc, streamer, denyAllOwner{})
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"run:" + runID})
+
+	msg := readJSON(t, conn)
+	assert.Equal(t, "subscribed", msg["type"]) // channel name is well-formed, so it's still acked
+
+	// No further message should ever arrive for this channel — the stream
+	// entry above must never be delivered. A short read-with-timeout proves
+	// silence rather than merely "nothing has arrived yet by coincidence."
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _, err := conn.ReadMessage()
+	assert.Error(t, err, "expected a read timeout — no event should ever be delivered for an unowned run")
+}
+
+func TestDashboard_RunChannel_OwnershipCheckErrorRefusesNotTails(t *testing.T) {
+	runID := "44444444-0000-0000-0000-000000000001"
+	streamer := &fakeStreamer{entries: []runstream.StreamEntry{
+		streamEntry("1-0", `{"type":"done","run_id":"`+runID+`"}`),
+	}}
+	rc := newFakeRedis()
+	srv, secret := newTestServerFull(t, rc, streamer, erroringOwner{})
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"run:" + runID})
+
+	readJSON(t, conn) // ack
+
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _, err := conn.ReadMessage()
+	assert.Error(t, err, "an ownership-check error must fail closed (refuse), never fail open (tail anyway)")
+}
+
+func TestDashboard_RunChannel_NilOwnerRefusesEntirely(t *testing.T) {
+	// A Handler built with streamer set but runOwner == nil must still refuse
+	// to tail — nil must not be interpreted as "skip the check."
+	runID := "55555555-0000-0000-0000-000000000001"
+	streamer := &fakeStreamer{entries: []runstream.StreamEntry{
+		streamEntry("1-0", `{"type":"done","run_id":"`+runID+`"}`),
+	}}
+	rc := newFakeRedis()
+	srv, secret := newTestServerFull(t, rc, streamer, nil)
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"run:" + runID})
+
+	readJSON(t, conn) // ack
+
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _, err := conn.ReadMessage()
+	assert.Error(t, err, "nil runOwner must refuse tailing, not skip the check")
 }

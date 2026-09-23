@@ -21,7 +21,7 @@ import (
 // AFD-1: malformed {id} → 400, never reaches the service layer.
 func TestAppFlowDebugHandler_Start_InvalidAppID_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	body, _ := json.Marshal(map[string]any{"entry_point_slug": "chat"})
@@ -36,7 +36,7 @@ func TestAppFlowDebugHandler_Start_InvalidAppID_Returns400(t *testing.T) {
 // AFD-2: missing entry_point_slug → 400.
 func TestAppFlowDebugHandler_Start_MissingEntryPointSlug_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	body, _ := json.Marshal(map[string]any{"user_message": "hi"})
@@ -51,7 +51,7 @@ func TestAppFlowDebugHandler_Start_MissingEntryPointSlug_Returns400(t *testing.T
 // AFD-3: invalid JSON body → 400.
 func TestAppFlowDebugHandler_Start_InvalidJSON_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/start", bytes.NewReader([]byte("{not json")))

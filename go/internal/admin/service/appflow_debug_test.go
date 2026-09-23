@@ -13,6 +13,8 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/appflow"
+	"github.com/aviciot/them/internal/debugcred"
+	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/execution"
 )
 
@@ -41,11 +43,45 @@ const minimalDraftDoc = `{
 	"connections": []
 }`
 
+// twoLLMNodesDraftDoc has two independent inline LLM nodes on one entry point
+// — used to prove docs/APPFLOW_RUNTIME_PARAMS_PLAN.md's per-node requirement:
+// each node needs its own llm_overrides entry, never merged/deduped.
+const twoLLMNodesDraftDoc = `{
+	"schema_version": 2,
+	"components": [
+		{
+			"instance_id": "llm_1",
+			"definition_ref": {"kind":"inline","namespace":"builtin","name":"llm","version":1},
+			"config": {"node_type":"llm","user_prompt":"{{.input}}","output_var":"a"}
+		},
+		{
+			"instance_id": "llm_2",
+			"definition_ref": {"kind":"inline","namespace":"builtin","name":"llm","version":1},
+			"config": {"node_type":"llm","user_prompt":"{{.a}}","output_var":"b"}
+		}
+	],
+	"entry_points": [
+		{"instance_id":"ep1","slug":"chat","protocol":"websocket","root":"llm_1"}
+	],
+	"connections": [
+		{"source":"ep1","target":"llm_1","type":"flow_control"},
+		{"source":"llm_1","target":"llm_2","type":"flow_control"}
+	]
+}`
+
 type fakeAppFlowDebugDAL struct {
 	app      dal.Application
 	appErr   error
 	draft    dal.AppDefinition
 	draftErr error
+
+	// AppFlowDebugCredentialDAL fakes — unused by tests with no llm-kind
+	// nodes in their draft (minimalDraftDoc has none), present so
+	// fakeAppFlowDebugDAL satisfies AppFlowDebugDAL's embedded interface.
+	provider    dal.LLMProvider
+	providerErr error
+	key         dal.LLMProviderKey
+	keyErr      error
 }
 
 func (f *fakeAppFlowDebugDAL) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
@@ -54,6 +90,35 @@ func (f *fakeAppFlowDebugDAL) GetApplication(_ context.Context, _, _ string) (da
 
 func (f *fakeAppFlowDebugDAL) GetLatestDraftDefinition(_ context.Context, _, _ string) (dal.AppDefinition, error) {
 	return f.draft, f.draftErr
+}
+
+func (f *fakeAppFlowDebugDAL) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
+	return f.provider, f.providerErr
+}
+
+func (f *fakeAppFlowDebugDAL) GetLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
+	return f.key, f.keyErr
+}
+
+func (f *fakeAppFlowDebugDAL) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
+	return f.key, f.keyErr
+}
+
+// fakeAppFlowDebugCredentialStore records every Set call — used to assert
+// which nodes got a credential written, and with what values.
+type fakeAppFlowDebugCredentialStore struct {
+	sets []credentialSetCall
+	err  error
+}
+
+type credentialSetCall struct {
+	tenantID, runID, nodeID string
+	override                debugcred.Override
+}
+
+func (f *fakeAppFlowDebugCredentialStore) Set(_ context.Context, tenantID, runID, nodeID string, ov debugcred.Override) error {
+	f.sets = append(f.sets, credentialSetCall{tenantID: tenantID, runID: runID, nodeID: nodeID, override: ov})
+	return f.err
 }
 
 type fakeAppFlowDebugStarter struct {
@@ -93,9 +158,10 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
 	}
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
-	svc := NewAppFlowDebugService(d, lc)
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7)
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", result.RunID)
 	assert.True(t, lc.admitCalled)
@@ -111,9 +177,10 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 func TestAppFlowDebugService_Start_AppNotFound(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{appErr: pgx.ErrNoRows}
 	lc := &fakeAppFlowDebugStarter{}
-	svc := NewAppFlowDebugService(d, lc)
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 	assert.False(t, lc.admitCalled, "must not admit a run when the app can't be resolved")
@@ -123,9 +190,10 @@ func TestAppFlowDebugService_Start_AppNotFound(t *testing.T) {
 func TestAppFlowDebugService_Start_EPSlugNotFound(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{app: draftApp("other-slug")}
 	lc := &fakeAppFlowDebugStarter{}
-	svc := NewAppFlowDebugService(d, lc)
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
@@ -134,9 +202,10 @@ func TestAppFlowDebugService_Start_EPSlugNotFound(t *testing.T) {
 func TestAppFlowDebugService_Start_NoDraftSaved(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{app: draftApp("chat"), draftErr: pgx.ErrNoRows}
 	lc := &fakeAppFlowDebugStarter{}
-	svc := NewAppFlowDebugService(d, lc)
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnprocessable))
 }
@@ -149,14 +218,114 @@ func TestAppFlowDebugService_Start_EPMissingFromCompiledDraft(t *testing.T) {
 		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
 	}
 	lc := &fakeAppFlowDebugStarter{}
-	svc := NewAppFlowDebugService(d, lc)
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
 
 	// minimalDraftDoc only defines entry point "chat", but the application row
 	// (draftApp) is stubbed with a matching slug — force a mismatch by asking
 	// for a slug absent from the compiled spec.
 	d.app = dal.Application{ID: "app-1", Slug: "my-app", EntryPoints: []dal.EntryPoint{{Slug: "stale-slug"}}}
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "stale-slug", "hi", 7)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "stale-slug", "hi", 7, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnprocessable))
 	assert.False(t, lc.admitCalled)
+}
+
+// ── AppFlow Runtime Params (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) ────────────
+
+func twoLLMDraftDAL() *fakeAppFlowDebugDAL {
+	return &fakeAppFlowDebugDAL{
+		app:   draftApp("chat"),
+		draft: dal.AppDefinition{Definition: json.RawMessage(twoLLMNodesDraftDoc), Status: "draft"},
+	}
+}
+
+// A required llm_credential param with NO llm_overrides entry at all must
+// fail validation BEFORE admitting a run — "validate required settings
+// server-side before starting the run," and a validation failure must never
+// consume a debug run slot.
+func TestAppFlowDebugService_Start_MissingRequiredOverride_FailsBeforeAdmit(t *testing.T) {
+	d := twoLLMDraftDAL()
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+
+	// Only llm_1 has an override — llm_2 does not.
+	overrides := map[string]LLMOverrideInput{
+		"llm_1": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},
+	}
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnprocessable))
+	assert.False(t, lc.admitCalled, "must not admit a run when a required override is missing")
+	assert.Empty(t, credStore.sets, "must not write any credential when validation fails")
+}
+
+// Custom mode never touches the DAL — the literal api_key from the request
+// is what gets stored, per node.
+func TestAppFlowDebugService_Start_CustomMode_UsesLiteralKey_PerNode(t *testing.T) {
+	d := twoLLMDraftDAL()
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+
+	overrides := map[string]LLMOverrideInput{
+		"llm_1": {Mode: "custom", Provider: "anthropic", Model: "claude-haiku-4-5-20251001", APIKey: "sk-node-1"},
+		"llm_2": {Mode: "custom", Provider: "openai", Model: "gpt-4o", APIKey: "sk-node-2"},
+	}
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	require.NoError(t, err)
+	assert.Equal(t, "run-1", result.RunID)
+
+	require.Len(t, credStore.sets, 2, "one Set call per node — never merged into one")
+	byNode := map[string]credentialSetCall{}
+	for _, c := range credStore.sets {
+		byNode[c.nodeID] = c
+	}
+	require.Contains(t, byNode, "llm_1")
+	require.Contains(t, byNode, "llm_2")
+	assert.Equal(t, "sk-node-1", byNode["llm_1"].override.APIKey)
+	assert.Equal(t, "sk-node-2", byNode["llm_2"].override.APIKey, "llm_2 must keep its own key, not llm_1's")
+	assert.Equal(t, "anthropic", byNode["llm_1"].override.Provider)
+	assert.Equal(t, "openai", byNode["llm_2"].override.Provider)
+	assert.Equal(t, "tenant-1", byNode["llm_1"].tenantID)
+	assert.Equal(t, "run-1", byNode["llm_1"].runID)
+}
+
+// General mode with an unusable key (no provider configured for this
+// tenant) must fail clearly, not silently proceed with an empty key.
+func TestAppFlowDebugService_Start_GeneralMode_NoUsableKey_FailsClearly(t *testing.T) {
+	d := twoLLMDraftDAL()
+	d.providerErr = pgx.ErrNoRows // "no anthropic provider configured for this tenant"
+	lc := &fakeAppFlowDebugStarter{}
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+
+	overrides := map[string]LLMOverrideInput{
+		"llm_1": {Mode: "general", Provider: "anthropic"},
+		"llm_2": {Mode: "general", Provider: "anthropic"},
+	}
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnprocessable))
+	assert.False(t, lc.admitCalled)
+	assert.Empty(t, credStore.sets)
+}
+
+// Credential store write failure must surface as an error, not be swallowed
+// (a swallowed write would leave the workflow starting with no override the
+// activity can find, silently regressing to normal key resolution).
+func TestAppFlowDebugService_Start_CredentialStoreWriteFails_SurfacesError(t *testing.T) {
+	d := twoLLMDraftDAL()
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
+	credStore := &fakeAppFlowDebugCredentialStore{err: assert.AnError}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+
+	overrides := map[string]LLMOverrideInput{
+		"llm_1": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},
+		"llm_2": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},
+	}
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, overrides)
+	require.Error(t, err)
+	assert.False(t, lc.startCalled, "must not start the workflow if a credential write failed")
 }

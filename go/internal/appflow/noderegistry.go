@@ -12,6 +12,26 @@ package appflow
 
 import "github.com/aviciot/them/internal/nodedefs"
 
+// RuntimeParamDecl declares one runtime parameter a node kind can consume —
+// the appflow-side equivalent of agentgen.AppParamDecl (kept as its own type
+// here rather than hoisted into internal/nodedefs, matching that package's
+// own stated boundary: param-declaration types are typed to each runtime's
+// own compiler/resolution model, not shared metadata). Declared statically per
+// node kind (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — identical for every
+// instance of that kind; the App Canvas Debug Mode setup panel
+// (useAppFlowDebugSession.ts) scans for these and renders one field PER NODE
+// INSTANCE that declares one, not merged/deduped across nodes.
+type RuntimeParamDecl struct {
+	Key         string `json:"key"`         // identifier referenced by the debug panel/backend override lookup
+	Label       string `json:"label"`       // human-readable label for the UI form
+	Description string `json:"description"` // tooltip / help text
+	// Type: "llm_credential" (renders the tenant-key General/Custom picker) |
+	// "secret" | "string" | "url" | "int" | "bool" (render like the agent
+	// builder's existing app_params types).
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+}
+
 // AppCanvasNodeInfo is the JSON-serialisable view of one appflow node kind.
 // Field shape matches agentgen.NodeTypeInfo exactly (same field names/JSON
 // tags) so the two families merge into one array with one shape, per
@@ -29,6 +49,9 @@ type AppCanvasNodeInfo struct {
 	AcceptsDynamicInputs bool   `json:"accepts_dynamic_inputs"`
 	DynamicOutputs       bool   `json:"dynamic_outputs"`
 	Executable           bool   `json:"executable"`
+	// RuntimeParams declares runtime parameters this node kind needs — see
+	// RuntimeParamDecl. Omitted (nil) for kinds that need none.
+	RuntimeParams []RuntimeParamDecl `json:"app_params,omitempty"`
 }
 
 // appCanvasNodeRegistry is the static, ordered list of the 6 app-canvas node
@@ -51,11 +74,15 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 				{Key: "max_tokens", Type: "int", Required: false, Description: "Maximum response tokens. 0 uses the activity default (1024).", Example: "1024"},
 				{Key: "temperature", Type: "number", Required: false, Description: "Sampling temperature. Stored but not yet applied by the LLM call — see docs/NODE_REGISTRY_PLAN.md known gaps.", Example: "0.7"},
 			},
-			UsageNotes: "Provider/model are set once per app in the Runtime screen (GET|PUT /admin/applications/{id}/flow-llm-nodes), not on the canvas node — changing the model does not require a re-publish.",
+			UsageNotes: "Provider/model are set once per app in the Runtime screen (GET|PUT /admin/applications/{id}/flow-llm-nodes), not on the canvas node — changing the model does not require a re-publish. A Debug run may override the credential per-node (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md); production runs always use the Runtime screen's setting.",
 		},
 		OutputArity:          "single",
 		AcceptsDynamicInputs: true,
 		Executable:           true,
+		RuntimeParams: []RuntimeParamDecl{
+			{Key: "llm_key", Label: "LLM API Key", Type: "llm_credential", Required: true,
+				Description: "Provider + key this node uses when debugging — tenant key or a one-off custom key for this run only."},
+		},
 	},
 	{
 		Type:    "condition",

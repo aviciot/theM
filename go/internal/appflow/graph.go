@@ -111,6 +111,7 @@ func walkBranch(
 				OutputVar:     cfg.OutputVar,
 				Stream:        true,
 				Verbosity:     input.LogVerbosity,
+				Debug:         input.Debug,
 			}).Get(llmCtx, &llmOut)
 			if err != nil {
 				return accumulated, fmt.Errorf("branch llm %q: %w", node.ID, err)
