@@ -11,7 +11,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `220adc05` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
+HEAD: `a3fdcc61` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
 before pushing — see the conflict-resolution note below, which still applies.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
@@ -26,6 +26,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps complete
 220adc05  feat(admin): tenant General/Custom switch for classifier & card_synthesizer (step 6)
 283db880  feat(admin): tenant system-agent role config — general/custom mode (step 5)
 8269eae2  feat(app-canvas): debug run backend — draft execution, no publish required (Phase 5 slice 1)
