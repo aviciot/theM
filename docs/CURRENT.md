@@ -1,6 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 4 — frontend UI — COMPLETE, not yet
-# committed. App Canvas Debug Mode Phase 5 still NEXT for that thread. HEAD still 6a6be2ca.)
+# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 5 — backend slice (draft-run endpoint +
+# trace wire-protocol fix) COMPLETE, pushed pending rebase check. Frontend consumer is a separate
+# follow-up session — see APP_CANVAS_DEBUG_PLAN.md. Tenant LLM Provider Keys step 4 (frontend UI)
+# COMPLETE per that thread's own commit, HEAD 99434bb9 before this session's commit landed on top.
+# HEAD now 8269eae2.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -8,30 +11,24 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `6a6be2ca` — committed locally, **not yet pushed** (push after rebase-merging with any
-parallel session's work per the note below).
-
-**Uncommitted in the working tree right now:** Tenant LLM Provider Keys step 4 (frontend UI —
-`frontend/src/app/admin/settings/page.tsx`, new `LLMProvidersPanel.tsx` + `LLMProviderKeysPanel.tsx`,
-`frontend/src/lib/api.ts` + `apiTypes.ts`) — see the dated section below for full detail. Also
-present in the working tree but **not from this session and not touched by it**:
-`go/internal/sse/handler.go`, `go/internal/ws/handler.go`, `docs/APP_CANVAS_DEBUG_PLAN.md`,
-`docs/INVESTIGATE_PLAYGROUND_EP.md`, `keycloak/payops_ai-realm.json`, and an untracked `data/` dir —
-likely the parallel Phase-5 session's in-progress work per the note below; do not commit or
-discard these, they weren't reviewed as part of the step-4 work.
+HEAD: `8269eae2` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
+before pushing — see the conflict-resolution note below, which still applies.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
 update the remote when convenient: `git remote set-url origin https://github.com/aviciot/theM.git`.
 
-**Note:** a parallel session may have been working on App Canvas Debug Mode Phase 5 at the same
-time as this one. Before pushing, `git pull --rebase origin main` — if it conflicts in
-`go/TEST_INDEX.md` (running test-count totals) or this file's header/recent-commits list, resolve by
-hand: both sides are append-only edits, keep both sets of additions and fix up the running
-totals/headers to be consistent. Do not discard the other session's entries.
+**Note:** more than one session may be advancing `main` around the same time. Before pushing,
+`git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
+or this file's header/recent-commits list, resolve by hand: both sides are append-only edits, keep
+both sets of additions and fix up the running totals/headers to be consistent. Do not discard the
+other session's entries.
 
 Recent commits (newest first):
 ```
+8269eae2  feat(app-canvas): debug run backend — draft execution, no publish required (Phase 5 slice 1)
+99434bb9  feat(admin): tenant LLM provider keys frontend UI (step 4)
+4a40ca21  docs(current): record 6a6be2ca — tenant LLM provider keys step 3 complete
 6a6be2ca  feat(admin): tenant LLM provider key test/list-models endpoints (step 3)
 cc81978d  fix(admin): close cross-tenant IDOR on app_debug_config and app_temporal_config
 465ffe93  feat(admin): tenant LLM provider keys — multi-key + allowed_models (db/105)
@@ -53,10 +50,13 @@ b1323abb  fix(compose): add missing RLS DSN env vars to them-agent-runtime
 
 Two independent threads are in flight. Pick based on what you're asked to continue:
 
-1. **App Canvas Debug Mode — Phase 5** (Debug UI: setup panel + Run All button + WS/SSE consumer,
+1. **App Canvas Debug Mode — Phase 5** — backend slice COMPLETE (`8269eae2`, this session).
+   **Not yet built: the frontend UI itself** (setup panel + Run All button + WS/SSE consumer,
    mirroring the agent builder's `buildDebugParamSpecs()` dynamic scan pattern). Read
-   `docs/APP_CANVAS_DEBUG_PLAN.md` first — Phases 1–4 are COMPLETE. One phase per session — do not
-   start Phase 6 in the same session as Phase 5.
+   `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 5 section first — it now documents what backend-slice
+   research found (two prerequisite gaps neither the original plan nor Phases 1-4 anticipated) and
+   the two design decisions made to close them. One phase per session — do not start Phase 6 in the
+   same session as Phase 5's remaining frontend work.
 2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`). Steps 1-4 of 7 done: migration,
    DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`), and now the
    frontend UI (step 4, this session, **not yet committed** — see the dated section below). **Not
@@ -172,6 +172,65 @@ already mirrors `TenantScopedRoutes`), and `them.tenant_system_agent_config` +
 classifier/card_synthesizer general-vs-custom wiring (steps 5-6). Not deployed/rebuilt on this local
 dev box this session — no container restart needed yet since nothing calls these new routes until
 the frontend (step 4) exists.
+
+---
+
+## App Canvas Debug Mode — Phase 5, backend slice — COMPLETE (2026-09-23)
+
+Commit `8269eae2`. Full design detail in `docs/APP_CANVAS_DEBUG_PLAN.md`'s "Phase 5 — design
+decisions" section. Summary:
+
+**Two prerequisite gaps found before any UI work could start** (neither the original plan nor
+Phases 1-4 anticipated them):
+1. Phase 2's `node_start`/`node_done`/`node_error` trace events were published to the run's Redis
+   stream but **never reached a browser** — both `ws/handler.go`'s `writeEvent` and
+   `sse/handler.go`'s `formatSSE` silently dropped (WS) or errored on (SSE) any event type they
+   didn't already recognize.
+2. **No run-trigger of any kind existed in the app-canvas UI**, debug or not — the only existing
+   run-start paths (`ws/handler.go`, `sse/handler.go`) require a **published** entry point
+   (`handle.EPConfig.ActiveDefinitionJSON`), but a canvas being debugged is normally an unpublished
+   **draft**.
+
+**Decisions made (confirmed with user):** debug runs the draft directly, no publish required —
+publishing is a production/deployment step and must stay unrelated to debugging. A brand-new
+dedicated route handles this, rather than adding a flag to the production WS/SSE routes, so
+production request handling stays completely untouched.
+
+**What was built:**
+- `ws/handler.go`'s `writeEvent` and `sse/handler.go`'s `formatSSE` both gained a case for
+  `node_start`/`node_done`/`node_error`, mapping the wire shape `{type, run_id, node_id, kind,
+  detail?}` straight through — the actual production fix, independent of anything debug-specific.
+- `execution.Lifecycle.AdmitDebug` (`internal/execution/lifecycle.go`) — a new sibling to `Admit`
+  for admin-triggered debug runs: resolves `EPConfig` via the same real DB-backed `epLoader` (so
+  tenant/app/EP ownership is still enforced — this is a capacity-admission bypass, not a security
+  bypass), creates a real `them.runs` row via the recorder, but skips `gate.Check`/`Confirm` and
+  `session.Register` entirely, since debug runs must never consume production admission capacity.
+- New route `POST /admin/applications/{id}/debug/start` (`internal/admin/appflow_debug.go` →
+  `internal/admin/service/appflow_debug.go` → `internal/admin/dal/definitions.go`'s new
+  `GetLatestDraftDefinition`). Fetches the application's latest **draft** row (never
+  `active_definition_id`), compiles + validates it via the same `appflow.Compile`/`Validate` calls
+  `ws`/`sse` already use, then calls `AdmitDebug` + `StartAppFlow(debug=true)` — reusing
+  `Lifecycle.StartAppFlow`'s existing debug-queue routing and forced-`full` log verbosity rather
+  than duplicating Temporal dispatch logic.
+- `admin.BuildRouter` gained a new `AppFlowDebugLifecycle` parameter (type alias for
+  `service.AppFlowDebugStarter`) threaded from `cmd/them/main.go`'s existing `execLifecycle` — the
+  admin router previously had no reference to `*execution.Lifecycle` at all.
+- **Known limitation found while writing this slice's tests, documented in the plan doc:** a draft
+  containing agent nodes can't be debugged until it's been **published at least once** —
+  `appflow.ResolveAgentByInstanceID`'s `_resolved_agent_ids` stamp is only written at publish time.
+  Flows made entirely of inline nodes (LLM, Condition, Router, etc.) are unaffected. Not fixed here
+  — flagged for a later session.
+- Tests: 12 new (S1-138..141 in `go/TEST_INDEX.md`, S1 total 1363→1375) — 2 wire-protocol
+  forwarding tests (WS + SSE), 2 `AdmitDebug` tests, 5 `AppFlowDebugService.Start` tests (happy
+  path, app-not-found, EP-slug-not-found, no-draft-saved, EP-missing-from-compiled-draft), 3
+  `AppFlowDebugHandler` HTTP-mechanics tests. `go test ./...` — 0 failures, full suite, run twice.
+
+**Not done — separate follow-up session:** the frontend UI (setup panel, Run All button,
+`useAppFlowDebugSession` WS/SSE consumer hook, canvas node debug-state overlay). No live end-to-end
+Temporal-workflow run was started against this new endpoint this session — verification was via
+the service-layer tests calling `Start` directly with fakes, plus the wire-protocol tests proving
+trace events now reach a WS/SSE client. Recommend a manual live check (same recipe Phases 1-4 used)
+before fully trusting this against a real draft canvas.
 
 ---
 
