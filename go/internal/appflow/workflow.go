@@ -57,6 +57,34 @@ const (
 
 	appFlowActivityTimeout = 10 * time.Minute
 	appFlowHILTimeout      = 24 * time.Hour // HIL can wait up to 24h before fallback
+
+	// DebugRunMaxLifetime is the enforced ceiling on a debug run's total
+	// wall-clock execution time (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — set as
+	// this workflow's WorkflowRunTimeout for debug runs only (production runs
+	// are unaffected; they use the app's own TemporalCfg.WorkflowTimeoutS or
+	// no limit at all). Sized from the actual worst case, not a round number:
+	//
+	//   per-node worst case = appFlowActivityTimeout (10m) × retryMax (2)
+	//                       + backoff (~10s, negligible) ≈ 20.2 min/node
+	//   10-node canvas worst case ≈ 202 min ≈ 3h22m
+	//   + a queue-wait allowance (~5 min, for Temporal scheduling latency
+	//     under a busy debug worker pool — not separately measured, a
+	//     deliberate buffer)
+	//   → rounds up to 3h30m
+	//
+	// "10 nodes" is this package's own assumption for a realistic debug
+	// canvas, not an enforced cap — nothing in appflow/validate.go limits
+	// node count. A canvas with more sequential LLM nodes than that, where
+	// EVERY node also exhausts every retry, could still be killed by this
+	// timeout before finishing — an explicit, documented tradeoff, not an
+	// oversight. HIL nodes are NOT counted here: a debug run parked at a HIL
+	// gate consumes no LLM credential while waiting, so it doesn't factor
+	// into the credential-retention math this bound exists to serve (see
+	// debugcred.TTL, which is derived FROM this constant).
+	//
+	// docs/APPFLOW_RUNTIME_PARAMS_PLAN.md's own review corrected an earlier,
+	// wrong assumption that appFlowActivityTimeout was 120s — it is 10m.
+	DebugRunMaxLifetime = 3*time.Hour + 30*time.Minute
 )
 
 // WorkflowIDForRun returns a deterministic Temporal workflow ID for an AppFlowWorkflow

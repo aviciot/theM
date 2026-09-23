@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
@@ -171,6 +172,31 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 	require.NotNil(t, lc.lastInput.Spec)
 	require.Len(t, lc.lastInput.Spec.EntryPoints, 1)
 	assert.Equal(t, "chat", lc.lastInput.Spec.EntryPoints[0].Slug)
+}
+
+// ExpiresAt must be startedAt + appflow.DebugRunMaxLifetime, computed from a
+// timestamp taken just before StartAppFlow — not an independently guessed
+// duration — so it agrees exactly with the WorkflowRunTimeout Lifecycle sets
+// on the same call. Bound the assertion between timestamps taken immediately
+// before/after Start() to avoid a flaky exact-time comparison.
+func TestAppFlowDebugService_Start_ExpiresAt_IsStartedAtPlusDebugRunMaxLifetime(t *testing.T) {
+	d := &fakeAppFlowDebugDAL{
+		app:   draftApp("chat"),
+		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
+	}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	credStore := &fakeAppFlowDebugCredentialStore{}
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+
+	before := time.Now()
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil)
+	after := time.Now()
+	require.NoError(t, err)
+
+	minExpiry := before.Add(appflow.DebugRunMaxLifetime)
+	maxExpiry := after.Add(appflow.DebugRunMaxLifetime)
+	assert.False(t, result.ExpiresAt.Before(minExpiry), "ExpiresAt too early: %v < %v", result.ExpiresAt, minExpiry)
+	assert.False(t, result.ExpiresAt.After(maxExpiry), "ExpiresAt too late: %v > %v", result.ExpiresAt, maxExpiry)
 }
 
 // Application not found (wrong tenant, or doesn't exist) → ErrNotFound.

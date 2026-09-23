@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	temporalclient "go.temporal.io/sdk/client"
 
@@ -59,6 +60,11 @@ func NewAppFlowDebugService(db AppFlowDebugDAL, lc AppFlowDebugStarter, credStor
 // DebugStartResult is returned to the caller on a successful debug start.
 type DebugStartResult struct {
 	RunID string
+	// ExpiresAt is when this debug run will be forcibly terminated by
+	// Temporal (WorkflowRunTimeout = appflow.DebugRunMaxLifetime, set in
+	// Lifecycle.StartAppFlow) — surfaced so the debug panel can display the
+	// bound to the user, not just enforce it silently.
+	ExpiresAt time.Time
 }
 
 // Start compiles the application's latest draft definition, validates it, and
@@ -162,6 +168,7 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 		}
 	}
 
+	startedAt := time.Now()
 	input := appflow.AppFlowWorkflowInput{
 		Spec:        singleEPSpec,
 		UserMessage: userMessage,
@@ -170,5 +177,5 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 		return DebugStartResult{}, fmt.Errorf("start appflow workflow: %w", err)
 	}
 
-	return DebugStartResult{RunID: handle.RunID}, nil
+	return DebugStartResult{RunID: handle.RunID, ExpiresAt: startedAt.Add(appflow.DebugRunMaxLifetime)}, nil
 }

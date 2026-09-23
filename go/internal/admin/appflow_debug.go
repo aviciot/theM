@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -56,6 +57,11 @@ type llmOverrideBody struct {
 
 type debugStartResponse struct {
 	RunID string `json:"run_id"`
+	// ExpiresAt is when this debug run will be forcibly terminated
+	// (WorkflowRunTimeout enforcement) — the debug panel should display this
+	// so the user knows the bounded lifetime, not just discover it via a
+	// timeout error later.
+	ExpiresAt string `json:"expires_at"`
 }
 
 // Start handles POST /admin/applications/{id}/debug/start. Compiles and runs
@@ -99,5 +105,5 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "debug start failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, debugStartResponse{RunID: result.RunID})
+	writeJSON(w, http.StatusOK, debugStartResponse{RunID: result.RunID, ExpiresAt: result.ExpiresAt.UTC().Format(time.RFC3339)})
 }

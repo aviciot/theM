@@ -125,17 +125,19 @@ func (f *fakeRecorder) UpdateRunStatus(_ context.Context, runID string, status d
 }
 
 type fakeTemporal struct {
-	run           *fakeWorkflowRun
-	err           error
-	called        bool
-	lastInput     temporal.WorkflowInput
-	lastAppFlowIn appflow.AppFlowWorkflowInput
-	lastTaskQueue string
+	run                    *fakeWorkflowRun
+	err                    error
+	called                 bool
+	lastInput              temporal.WorkflowInput
+	lastAppFlowIn          appflow.AppFlowWorkflowInput
+	lastTaskQueue          string
+	lastWorkflowRunTimeout time.Duration
 }
 
 func (f *fakeTemporal) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
 	f.called = true
 	f.lastTaskQueue = opts.TaskQueue
+	f.lastWorkflowRunTimeout = opts.WorkflowRunTimeout
 	if len(args) > 0 {
 		switch inp := args[0].(type) {
 		case temporal.WorkflowInput:
@@ -1114,6 +1116,66 @@ func TestLifecycle_StartAppFlow_Debug_UsesDebugQueue(t *testing.T) {
 	assert.True(t, tmp.called)
 	assert.Equal(t, appflow.AppFlowDebugTaskQueue, tmp.lastTaskQueue)
 	assert.True(t, tmp.lastAppFlowIn.Debug, "workflow input Debug must be true when debug=true, so the workflow's internal activity dispatch also routes to the debug queue")
+}
+
+// docs/APPFLOW_RUNTIME_PARAMS_PLAN.md review follow-up — a debug run had NO
+// workflow-level wall-clock bound at all before this fix (only per-activity
+// timeouts/retries, which don't cap total run duration). StartAppFlow must
+// now set WorkflowRunTimeout to appflow.DebugRunMaxLifetime for debug runs,
+// so "the run is still legitimately active" and "the credential hasn't
+// expired" (debugcred.TTL, derived from this same constant) can never
+// disagree with each other.
+func TestLifecycle_StartAppFlow_Debug_EnforcesMaxLifetimeTimeout(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, true)
+	require.NoError(t, err)
+	assert.Equal(t, appflow.DebugRunMaxLifetime, tmp.lastWorkflowRunTimeout)
+}
+
+// A production (non-debug) run with no TemporalCfg override must NOT get
+// the debug lifetime bound applied — that ceiling is debug-specific.
+func TestLifecycle_StartAppFlow_NotDebug_NoWorkflowRunTimeoutByDefault(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	_, err = lc.StartAppFlow(context.Background(), h, appflow.AppFlowWorkflowInput{}, false)
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), tmp.lastWorkflowRunTimeout, "no TemporalCfg override configured — production run gets no workflow-level timeout, unaffected by the debug ceiling")
+}
+
+// A production run WITH a configured TemporalCfg.WorkflowTimeoutS must still
+// use that value, not the debug constant — debug=false must never pick up
+// appflow.DebugRunMaxLifetime by accident.
+func TestLifecycle_StartAppFlow_NotDebug_UsesConfiguredTimeoutNotDebugConstant(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug", RawToken: "tok", UserMessage: domain.Message{Role: "user"}})
+	require.NoError(t, err)
+
+	configuredSeconds := 600
+	input := appflow.AppFlowWorkflowInput{TemporalCfg: &appflow.TemporalExecCfg{WorkflowTimeoutS: &configuredSeconds}}
+	_, err = lc.StartAppFlow(context.Background(), h, input, false)
+	require.NoError(t, err)
+	assert.Equal(t, 600*time.Second, tmp.lastWorkflowRunTimeout)
+	assert.NotEqual(t, appflow.DebugRunMaxLifetime, tmp.lastWorkflowRunTimeout)
 }
 
 // fakeLogVerbosityLoader is a test double for LogVerbosityLoader.

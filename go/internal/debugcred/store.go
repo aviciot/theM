@@ -23,23 +23,28 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+
+	"github.com/aviciot/them/internal/appflow"
 )
 
-// TTL is the override entry's expiry — sized to cover the worst-case
-// cumulative wall-clock time a debug run's LLM nodes could take under the
-// default activity retry policy, not an arbitrary round number. AppFlow's
-// InlineLLMActivity runs under ActivityOptions with a 120s
-// StartToCloseTimeout and up to retryMax (default 2) attempts, backoff
-// capped at 10s (go/internal/appflow/workflow.go's `ao`) — worst case ≈241s
-// per node. A 5-10 node debug canvas where every node exhausts every retry
-// (the pathological case this TTL must survive, not the common path) totals
-// ~20-40 minutes; 30 minutes covers realistic canvases with margin while
-// still bounding how long a credential lingers if cleanup (see Delete) never
-// fires. Cleanup is now DOUBLE-covered: AppFlowDebugService deletes every
-// node's entry proactively once the debug workflow reaches a terminal state
-// (the primary path), and this TTL is strictly the fallback for a run that's
-// abandoned or crashes before reaching one.
-const TTL = 30 * time.Minute
+// CleanupMargin is added on top of appflow.DebugRunMaxLifetime to compute
+// TTL — headroom for the proactive delete-on-completion path (see
+// Store.DeleteAllForRun) to actually run and for Redis/network latency,
+// after the workflow's own enforced timeout has already fired. Not sized
+// from any specific measurement — a deliberate round buffer.
+const CleanupMargin = 10 * time.Minute
+
+// TTL is the override entry's expiry. Derived FROM appflow.DebugRunMaxLifetime
+// (the same enforced ceiling Lifecycle.StartAppFlow sets as the debug
+// workflow's WorkflowRunTimeout) plus CleanupMargin — never an independently
+// guessed number. This keeps "the run is still legitimately active" and "the
+// credential hasn't expired" from ever disagreeing: Temporal kills the
+// workflow at DebugRunMaxLifetime if it hasn't finished by then, and the
+// credential outlives that boundary by exactly enough for the proactive
+// cleanup (Store.DeleteAllForRun, called from FinalizeRunActivity on every
+// terminal state) to run — TTL is strictly the fallback for a run that's
+// abandoned, crashes, or is killed by the timeout before cleanup fires.
+var TTL = appflow.DebugRunMaxLifetime + CleanupMargin
 
 // Override is the stored credential for one node's llm_credential param.
 // MarkerOnly means "this node needed a credential, the caller left it at the

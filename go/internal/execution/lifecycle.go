@@ -781,7 +781,17 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 		ID:        appflow.WorkflowIDForRun(h.EPConfig.TenantID, h.RunID),
 		TaskQueue: taskQueue,
 	}
-	if input.TemporalCfg != nil && input.TemporalCfg.WorkflowTimeoutS != nil && *input.TemporalCfg.WorkflowTimeoutS > 0 {
+	if debug {
+		// Debug runs never read TemporalCfg (Phase 4's own design — debug
+		// always forces its own settings regardless of the app's configured
+		// values) and had NO workflow-level time bound at all until this
+		// fix — only per-activity timeouts/retries, which don't cap total
+		// wall-clock time. Enforce the same ceiling the credential TTL is
+		// sized against (appflow.DebugRunMaxLifetime) so "the run is still
+		// legitimately active" and "the credential hasn't expired" can never
+		// disagree with each other.
+		wfOpts.WorkflowRunTimeout = appflow.DebugRunMaxLifetime
+	} else if input.TemporalCfg != nil && input.TemporalCfg.WorkflowTimeoutS != nil && *input.TemporalCfg.WorkflowTimeoutS > 0 {
 		wfOpts.WorkflowRunTimeout = time.Duration(*input.TemporalCfg.WorkflowTimeoutS) * time.Second
 	}
 
