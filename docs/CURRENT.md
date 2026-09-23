@@ -1,8 +1,7 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (AppFlow Runtime Params review follow-up round 2: 2 gaps fixed — General
-# mode model selector + Custom mode Base URL field wired into the UI, and debug-run lifetime now
-# actually bounded (WorkflowRunTimeout=3h30m) with credential TTL derived from that same bound
-# (3h40m). HEAD 950a587f, pushed, on top of the 4-issue review follow-up (962ddb62).)
+# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 6 — Step controls with lockstep
+# multi-branch pausing. All 6 phases of docs/APP_CANVAS_DEBUG_PLAN.md now complete. HEAD 557254f2,
+# not yet pushed, on top of the AppFlow Runtime Params review follow-up round 2 (950a587f).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,7 +9,8 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `950a587f` — **pushed to origin/main.**
+HEAD: `557254f2` — **not yet pushed** (no push credentials available/confirmed this session; push
+when convenient with `git push origin main`).
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -24,6 +24,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+557254f2  feat(app-canvas): Debug Mode Phase 6 — Step controls with lockstep multi-branch pausing
 950a587f  docs: record c1f01aa2 review follow-up — bounded debug lifetime + UI wiring
 79ec09ef  feat(app-canvas): wire model selector + Base URL field into debug credential picker
 f0adfecc  fix(appflow): bound debug-run lifetime and derive credential TTL from it
@@ -48,36 +49,35 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Next task: App Canvas Debug Mode — Phase 6 (Step controls). Not started — this is what the next
-session should implement.** Everything it depends on (Phases 1–5, the runtime-params picker UI, the
-bounded debug lifetime) is complete and live. Full requirements, decisions already confirmed with
-the user, and prior-phase implementation detail live in `docs/APP_CANVAS_DEBUG_PLAN.md` — read it
-end to end before writing code, especially:
-- The phase table at the top (line ~16) and "Decisions confirmed with the user (round 2)"
-  (line ~448) — 5 numbered decisions, already settled, do not re-litigate:
-  1. Fix the existing Run History "Flow" tree (`frontend/src/app/runs/`), don't build a second one.
-  2. Per-app verbosity setting already exists (`off`/`status`/`full`) — debug always forces `full`.
-  3. `them.run_steps` already extended with nullable `node_id`/`node_kind` (Phase 3) — reuse it.
-  4. Debug worker pool already supports N replicas — no new design needed there.
-  5. **Step semantics for branching: step ALL currently-active nodes together, one tick at a
-     time** (not one node globally) — if a Fork just split into 2 branches, one Step click runs
-     one node in *each* branch simultaneously, keeping them in lockstep. This was explicitly
-     chosen over "step one branch, auto-run the others."
-- What "Step controls" concretely means (line ~297, ~426): a Step button in the debug toolbar
-  (same interaction model as the agent builder's existing debug bar), pause-after-each-node
-  execution, canvas node highlighting as it steps, plus click-to-inspect a node's input/output
-  mid-session.
-- The existing HIL approval signal (`appflow.AppFlowSignalHILApproval`,
-  `go/internal/appflow/workflow.go`) is the closest existing precedent for "pause a running
-  Temporal workflow node-by-node and resume on an external signal" — read it before designing the
-  Step signal, most of the pause/resume plumbing pattern likely transfers directly.
-- The real WS consumer built in Phase 5 (`frontend/src/app/admin/applications/hooks/
-  useAppFlowDebugSession.ts`, subscribes to `run:{runID}` on `/ws/dashboard`) already delivers
-  `node_start`/`node_done`/`node_error` events live — Phase 6 adds pause/resume control on top of
-  this existing event stream, it does not need to build new event delivery.
+**App Canvas Debug Mode is now fully complete — all 6 phases of `docs/APP_CANVAS_DEBUG_PLAN.md`
+done, most recently Phase 6 (Step controls) this session.** See that doc's "Phase 6 — Step
+controls — COMPLETE (2026-09-23)" section for full implementation detail: a shared tick-generation
+counter + `workflow.Await` (not a signal per paused branch — verified against the Temporal Go SDK's
+source that a named signal channel is FIFO, one `SignalWorkflow` call wakes exactly one blocked
+`Receive`, never all of them), a new `POST /admin/applications/{id}/debug/{run_id}/step` route, a
+new `node_paused` trace event, and a frontend Step button + side-panel inspector
+(`AppFlowDebugInspector.tsx`). Proven against a real Temporal workflow test environment, including a
+2-fork-branch lockstep test. 8 new tests, `go/TEST_INDEX.md` S1-163 (1475→1483). `go test ./...` 0
+failures; `go test -race` on touched packages shows only the pre-existing documented
+`TestForkJoin_EmitsTraceForAllNodes` flake, none of the 6 new tests. `npx tsc --noEmit` 0 errors.
 
-**One phase per session** — do not start anything beyond Phase 6 in the same session. At the end,
-update this file's phase table and HEAD per the usual handover procedure.
+**Not yet pushed this session** (HEAD `557254f2`) — push with `git push origin main` when
+convenient (`git pull --rebase origin main` first per the note above if another session has also
+advanced `main`).
+
+**Not done — no live browser click-through**, same standing limitation as every phase of this plan
+(no browser-automation tool, no headless Chromium system libs without interactive sudo in this
+environment). Recommend, before trusting this fully in front of real users: a manual logged-in
+walkthrough — start a step-mode debug run on a flow with a fork, click Step repeatedly, confirm both
+branches visibly pause and advance together on the canvas (not just one), and confirm the inspector
+panel shows correct per-node detail when clicking a paused/done node.
+
+**No new phase of this plan is planned.** The next task should come from elsewhere in `docs/STATUS.md`
+or a fresh user request — do not invent further App Canvas Debug Mode work without a new requirement.
+Per this session's own discipline (one focused task per session, handover once it's complete and
+tested), this is a good point to close this session and open a new one. Suggested first prompt for
+the next session: **"Read `docs/CURRENT.md`'s START HERE section and `docs/STATUS.md`, then tell me
+what's the highest-priority next task."**
 
 **CI fixed earlier this session (2026-09-23):** `.github/workflows/ci.yml` had been broken since the
 Python→Go migration — it referenced a nonexistent `docker-compose.local.yml` and the removed
