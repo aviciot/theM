@@ -526,8 +526,10 @@ export function CanvasBuilderView({
         <AppFlowDebugPanel
           debug={appFlowDebug.debug}
           entryPointOptions={appFlowDebug.entryPointOptions}
+          runtimeParamSpecs={appFlowDebug.runtimeParamSpecs}
           onSetEntryPointSlug={appFlowDebug.setEntryPointSlug}
           onSetUserMessage={appFlowDebug.setUserMessage}
+          onSetCredential={appFlowDebug.setCredential}
           onRunAll={appFlowDebug.runAll}
           onReset={appFlowDebug.reset}
           onClose={appFlowDebug.closePanel}

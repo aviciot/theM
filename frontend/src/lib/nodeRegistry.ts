@@ -23,7 +23,9 @@ export interface AppParamDecl {
   key: string;
   label: string;
   description: string;
-  type: 'secret' | 'string' | 'url' | 'int' | 'bool';
+  // "llm_credential" (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) renders the tenant-key
+  // General/Custom picker instead of a plain input — see AppFlowLLMCredentialField.
+  type: 'secret' | 'string' | 'url' | 'int' | 'bool' | 'llm_credential';
   required: boolean;
   default_value?: string;
 }

@@ -53,6 +53,7 @@ export type {
   ValidationReport,
   PublishResult,
   AppFlowDebugStartResult,
+  AppFlowLLMOverrideInput,
   AgentRootDoc,
   AgentStepDoc,
   AgentSkillDoc,
@@ -162,6 +163,7 @@ import type {
   ValidationReport,
   PublishResult,
   AppFlowDebugStartResult,
+  AppFlowLLMOverrideInput,
   AgentDefinitionDoc,
   AgentDefinition,
   AgentIssue,
@@ -566,11 +568,15 @@ export const themApi = {
     api.post<PublishResult>(`/admin/applications/${appId}/definitions/${defId}/publish`, {}),
 
   // App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — runs the
-  // latest saved draft directly, no publish required.
-  startAppFlowDebug: (appId: string, entryPointSlug: string, userMessage: string) =>
+  // latest saved draft directly, no publish required. llmOverrides maps
+  // canvas node_id -> the per-node LLM credential choice for THIS debug run
+  // only (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's
+  // saved Runtime settings.
+  startAppFlowDebug: (appId: string, entryPointSlug: string, userMessage: string, llmOverrides?: Record<string, AppFlowLLMOverrideInput>) =>
     api.post<AppFlowDebugStartResult>(`/admin/applications/${appId}/debug/start`, {
       entry_point_slug: entryPointSlug,
       user_message: userMessage,
+      ...(llmOverrides && Object.keys(llmOverrides).length > 0 ? { llm_overrides: llmOverrides } : {}),
     }),
 
   // Canvas A2A Agent Builder (Phase 2)

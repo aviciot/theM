@@ -1,11 +1,16 @@
 'use client';
 import { C } from '../constants';
 import type { AppFlowDebugSessionState } from '../hooks/useAppFlowDebugSession';
+import type { AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
+import { AppFlowLLMCredentialField } from './AppFlowLLMCredentialField';
 
 // AppFlowDebugPanel — App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md
 // Phase 5). Setup panel + Run All + status bar, mirroring the agent builder's
 // DebugPanel.tsx layout/styling, but for a real WS-driven debug run of the
 // draft canvas (not a client-side simulator) — see useAppFlowDebugSession.ts.
+// Per-node LLM credential pickers (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) render
+// below the entry-point/message row — one per node that declares a runtime
+// param, never merged into one shared selection.
 
 const inputStyle: React.CSSProperties = {
   background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.outline}`, borderRadius: 6,
@@ -15,20 +20,25 @@ const inputStyle: React.CSSProperties = {
 export function AppFlowDebugPanel({
   debug,
   entryPointOptions,
+  runtimeParamSpecs,
   onSetEntryPointSlug,
   onSetUserMessage,
+  onSetCredential,
   onRunAll,
   onReset,
   onClose,
 }: {
   debug: AppFlowDebugSessionState;
   entryPointOptions: string[];
+  runtimeParamSpecs: AppFlowRuntimeParamSpec[];
   onSetEntryPointSlug: (slug: string) => void;
   onSetUserMessage: (msg: string) => void;
+  onSetCredential: (specKey: string, value: AppFlowLLMCredentialValue) => void;
   onRunAll: () => void;
   onReset: () => void;
   onClose: () => void;
 }) {
+  const credentialSpecs = runtimeParamSpecs.filter(s => s.type === 'llm_credential');
   return (
     <div style={{
       flexShrink: 0, borderBottom: `1px solid ${C.amberBorder}`,
@@ -114,6 +124,20 @@ export function AppFlowDebugPanel({
         Runs the saved draft directly on the isolated debug worker pool — no publish required.
         Watch nodes light up on the canvas as they really execute.
       </div>
+
+      {credentialSpecs.length > 0 && (
+        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {credentialSpecs.map(spec => (
+            <AppFlowLLMCredentialField
+              key={spec.specKey}
+              spec={spec}
+              value={debug.credentials[spec.specKey]}
+              disabled={debug.running}
+              onChange={value => onSetCredential(spec.specKey, value)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

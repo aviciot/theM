@@ -160,6 +160,33 @@ export interface AppFlowNodeDebugInfo {
   error?: string;
 }
 
+// ── AppFlow Runtime Params (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) ────────────
+// Generic declared-runtime-param scan: a node kind declares (via GET
+// /admin/node-types' app_params, see lib/nodeRegistry.ts's AppParamDecl) what
+// it needs; the debug panel scans the canvas and renders ONE field set PER
+// NODE INSTANCE that declares one — never merged/deduped across nodes, unlike
+// the agent builder's HTTP-node app_param_key dedup (two LLM nodes are two
+// independent choices, not "the same secret used twice").
+export interface AppFlowRuntimeParamSpec {
+  // `${nodeId}:${paramKey}` — unique per node, so two nodes declaring the same
+  // param key (e.g. two llm nodes both declaring "llm_key") never collide.
+  specKey: string;
+  key: string;
+  label: string;
+  description: string;
+  type: string;
+  required: boolean;
+  nodeId: string;
+  nodeLabel?: string;
+}
+
+// One LLM-credential picker's value — General mode (tenant's saved key) or
+// Custom mode (one-off key for this debug run only, never persisted to the
+// app's saved Runtime settings).
+export type AppFlowLLMCredentialValue =
+  | { mode: 'general'; provider: string; keyId: number | null }
+  | { mode: 'custom'; provider: string; model: string; apiKey: string; baseUrl: string };
+
 // node_type is a string, not a literal union — new appflow node kinds
 // (see go/internal/appflow/noderegistry.go) need zero frontend type changes,
 // per docs/NODE_REGISTRY_PLAN.md Phase 4.

@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useRef, useState } from 'react';
 import { themApi } from '@/lib/api';
+import { getNodeDef } from '@/lib/nodeRegistry';
 import { getBridgeWs } from '../../playground/playgroundTypes';
-import type { AppFlowDebugNodeState } from '../types';
+import type { AppFlowDebugNodeState, AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
 import type { Node } from '@xyflow/react';
 
 // useAppFlowDebugSession — App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md
@@ -19,6 +20,10 @@ export interface AppFlowDebugSessionState {
   runId: string | null;
   entryPointSlug: string;
   userMessage: string;
+  // Per-node LLM credential picker values, keyed by specKey
+  // (`${nodeId}:${paramKey}`) — never merged/deduped across nodes, per
+  // docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
+  credentials: Record<string, AppFlowLLMCredentialValue>;
   nodeStates: Record<string, AppFlowDebugNodeState>;
   nodeDetails: Record<string, string>;
   nodeErrors: Record<string, string>;
@@ -32,6 +37,7 @@ const INITIAL_STATE: AppFlowDebugSessionState = {
   runId: null,
   entryPointSlug: '',
   userMessage: '',
+  credentials: {},
   nodeStates: {},
   nodeDetails: {},
   nodeErrors: {},
@@ -48,12 +54,35 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     .map(n => (n.data as unknown as { slug?: string }).slug)
     .filter((slug): slug is string => !!slug);
 
+  // Generic declared-runtime-param scan (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md):
+  // walk every canvas node, and for each one declared runtime param (today
+  // just the "llm" kind's llm_credential), produce one spec per NODE, never
+  // deduped by param key across nodes — two llm nodes are two independent
+  // choices, not "the same secret used twice" the way an HTTP node's shared
+  // app_param_key legitimately is in the agent builder.
+  const runtimeParamSpecs: AppFlowRuntimeParamSpec[] = nodes.flatMap(n => {
+    const nodeType = (n.data as { node_type?: string }).node_type;
+    if (!nodeType) return [];
+    const decl = getNodeDef(nodeType, 'appflow');
+    return (decl.app_params ?? []).map(p => ({
+      specKey: `${n.id}:${p.key}`,
+      key: p.key,
+      label: p.label,
+      description: p.description,
+      type: p.type,
+      required: p.required,
+      nodeId: n.id,
+      nodeLabel: (n.data as { display_name?: string }).display_name,
+    }));
+  });
+
   function openPanel() {
     setDebug(prev => ({
       ...INITIAL_STATE,
       active: true,
       entryPointSlug: prev.entryPointSlug || entryPointOptions[0] || '',
       userMessage: prev.userMessage,
+      credentials: prev.credentials,
     }));
   }
 
@@ -67,6 +96,10 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     setDebug(prev => ({ ...prev, entryPointSlug: slug }));
   }
 
+  function setCredential(specKey: string, value: AppFlowLLMCredentialValue) {
+    setDebug(prev => ({ ...prev, credentials: { ...prev.credentials, [specKey]: value } }));
+  }
+
   function setUserMessage(msg: string) {
     setDebug(prev => ({ ...prev, userMessage: msg }));
   }
@@ -76,6 +109,28 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       setDebug(prev => ({ ...prev, error: 'Select an entry point to debug.' }));
       return;
     }
+
+    // Client-side mirror of the server's own required-param validation
+    // (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md: "validate required settings
+    // server-side before starting the run") — this check is for fast UX
+    // feedback only; the server re-validates and is the actual enforcement
+    // point, so this must never be treated as sufficient on its own.
+    const llmOverrides: Record<string, import('@/lib/api').AppFlowLLMOverrideInput> = {};
+    for (const spec of runtimeParamSpecs) {
+      if (spec.type !== 'llm_credential') continue;
+      const val = debug.credentials[spec.specKey];
+      if (!val) {
+        if (spec.required) {
+          setDebug(prev => ({ ...prev, error: `${spec.nodeLabel || spec.nodeId}: select a provider/key for this node before running.` }));
+          return;
+        }
+        continue;
+      }
+      llmOverrides[spec.nodeId] = val.mode === 'general'
+        ? { mode: 'general', provider: val.provider, key_id: val.keyId }
+        : { mode: 'custom', provider: val.provider, model: val.model, api_key: val.apiKey, base_url: val.baseUrl };
+    }
+
     setDebug(prev => ({
       ...prev, running: true, error: null, done: false, runId: null,
       nodeStates: {}, nodeDetails: {}, nodeErrors: {},
@@ -89,7 +144,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       // Redis Stream from the beginning on subscribe (runstream.StreamFromRedis
       // replay+live), not a snapshot-only read, so no event is missed even if
       // the run has already finished by the time this WS opens.
-      const { run_id } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage);
+      const { run_id } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides);
       setDebug(prev => ({ ...prev, runId: run_id }));
 
       const r = await fetch('/api/auth/token');
@@ -102,9 +157,20 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       ws.onmessage = (e) => {
         let msg: Record<string, unknown>;
         try { msg = JSON.parse(e.data); } catch { return; }
-        const type = msg.type as string | undefined;
-        if (!type || type === 'ping' || type === 'subscribed') return;
-        const ev = (msg.event as Record<string, unknown> | undefined) ?? msg;
+        // Real trace events arrive as {"channel":"run:...","event":{"type":"node_start",...}}
+        // — no top-level "type" field at all (only ping/error/subscribed control messages
+        // have one). Gating on msg.type here previously dropped every real event.
+        if (msg.type === 'ping' || msg.type === 'subscribed') return;
+        if (msg.type === 'error' && !msg.event) {
+          // WS-protocol-level error (malformed subscribe, no valid channels) — has no
+          // "event" wrapper, unlike a run-level error event nested under msg.event below.
+          const message = (msg.message as string) ?? 'Debug WebSocket protocol error';
+          setDebug(prev => ({ ...prev, running: false, error: message }));
+          ws.close();
+          return;
+        }
+        const ev = msg.event as Record<string, unknown> | undefined;
+        if (!ev) return;
         const evType = ev.type as string | undefined;
 
         if (evType === 'node_start') {
@@ -145,7 +211,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       wsRef.current?.close();
       wsRef.current = null;
     }
-  }, [appId, debug.entryPointSlug, debug.userMessage]);
+  }, [appId, debug.entryPointSlug, debug.userMessage, debug.credentials, runtimeParamSpecs]);
 
   const reset = useCallback(() => {
     wsRef.current?.close();
@@ -153,6 +219,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     setDebug(prev => ({
       ...INITIAL_STATE, active: prev.active,
       entryPointSlug: prev.entryPointSlug, userMessage: prev.userMessage,
+      credentials: prev.credentials,
     }));
   }, []);
 
@@ -178,10 +245,12 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
   return {
     debug,
     entryPointOptions,
+    runtimeParamSpecs,
     openPanel,
     closePanel,
     setEntryPointSlug,
     setUserMessage,
+    setCredential,
     runAll,
     reset,
     decorateNodes,

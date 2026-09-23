@@ -616,6 +616,18 @@ export interface AppFlowDebugStartResult {
   run_id: string;
 }
 
+// Per-node LLM credential override for a debug run only
+// (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's saved
+// Runtime settings. Keyed by canvas node_id in the request body.
+export interface AppFlowLLMOverrideInput {
+  mode: 'general' | 'custom';
+  provider?: string;
+  key_id?: number | null;
+  model?: string;
+  api_key?: string;
+  base_url?: string;
+}
+
 // ── Canvas A2A Agent Builder (Phase 2) ───────────────────────────────────────
 
 export interface AgentRootDoc {
