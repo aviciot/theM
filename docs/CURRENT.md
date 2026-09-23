@@ -1,8 +1,8 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (AppFlow Runtime Params: per-node LLM credential overrides for App
-# Canvas Debug Mode, plus two real bugs found and fixed while live-testing — a cross-tenant IDOR on
-# /ws/dashboard's run:* channels, and the Phase 5 debug hook silently dropping every real WS event
-# since it first shipped. HEAD 03133ca8, pushed.)
+# Last updated: 2026-09-23 (AppFlow Runtime Params review follow-up: 4 issues fixed — BaseURL now
+# reaches the provider, General-mode key/provider mismatch rejected, per-node model selection with
+# allowed_models validation, TTL resized + proactive cleanup on run completion. HEAD 962ddb62,
+# pushed, on top of the same-day per-node LLM credential overrides work (03133ca8).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,7 +10,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `03133ca8` — **pushed to origin/main.**
+HEAD: `962ddb62` — **pushed to origin/main.**
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -24,6 +24,8 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+962ddb62  docs: record the 4-issue review follow-up for AppFlow runtime params
+b715373b  fix(app-canvas): 4 review issues in per-node debug LLM credentials (d941aca3)
 03133ca8  docs: AppFlow runtime-params plan complete + two lessons from this session
 04e9f4ee  feat(app-canvas): per-node LLM credential picker in the debug panel
 9a19aab4  feat(app-canvas): per-node debug LLM credential overrides + tenant-ownership fix
@@ -55,22 +57,25 @@ this file's Container Map, not repaired from the old one.
 **App Canvas Debug Mode — Phase 6** is the recommended next task: Step controls (pause after
 each node, lockstep multi-branch stepping per the "Decisions confirmed (round 2)" section of
 `docs/APP_CANVAS_DEBUG_PLAN.md`), plus canvas node click-to-inspect for a debug session's
-input/output. Phase 5 (setup panel + Run All + real WS consumer) is now **fully complete and
-live-verified**, and its follow-on plan `docs/APPFLOW_RUNTIME_PARAMS_PLAN.md` (per-node LLM
-credential overrides for debug runs) is also **complete and live-verified** — see that doc's
-"Implementation — COMPLETE" section for full detail. One phase per session — do not start Phase 6
-in the same session as whatever comes next.
+input/output. Phase 5 (setup panel + Run All + real WS consumer) and its follow-on plan
+`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md` (per-node LLM credential overrides for debug runs,
+**including a 4-issue review follow-up this session** — BaseURL now actually reaches the
+provider, General-mode key/provider mismatches rejected, per-node model selection with
+`allowed_models` validation, and proactive Redis cleanup on run completion instead of TTL-only) are
+now both **complete and live-verified** — see that doc's two completion sections for full detail.
+One phase per session — do not start Phase 6 in the same session as whatever comes next.
 
 **Known limitation carried over, not fixed this session:** a draft canvas containing agent nodes
 still cannot be debugged until it has been published at least once (`unresolved_agent` — see the
 Phase 5 backend-slice section of `docs/APP_CANVAS_DEBUG_PLAN.md`). Flows made entirely of inline
-nodes are unaffected. Worth fixing before Phase 6 if agent-node debugging is a priority.
+nodes are unaffected. Worth fixing before Phase 6 if agent-node debugging is a priority. Also
+still true: `llm.AnthropicProvider` has no base URL parameter in this codebase at all — a debug
+override's `BaseURL` for an `anthropic`-provider node is structurally unusable, not just unwired
+(only matters for `openai`/`groq`/`ollama`/`vllm`/`lmstudio` today).
 
 **Deferred, not this session's job:** `docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`'s Runtime settings
 screen migration (`flow-llm-nodes` reading from the same `RuntimeParams` declaration the debug
-panel now uses) — a separate future phase, explicitly not started. Also: debug credential Redis
-entries aren't deleted proactively on run completion yet, only via their 10-minute TTL — flagged
-as a possible follow-up in that plan doc, not a regression.
+panel now uses) — a separate future phase, explicitly not started.
 
 **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete, plus
 three follow-ups from an earlier session: LLM Providers tab UI/UX redesign + missing gemini/groq
@@ -88,6 +93,40 @@ real cross-tenant IDOR), and (3) the Phase 5 debug hook's `ws.onmessage` was sil
 every real event since it first shipped, because it gated on a field (`msg.type`) that real
 events never carry. All three are the same class of "the wire contract wasn't actually verified
 end-to-end" bug — worth re-reading before adding any new WS/SSE consumer or producer.
+
+---
+
+## AppFlow Runtime Params — review follow-up, 4 issues fixed — COMPLETE (2026-09-23)
+
+Commits `b715373b` (fixes), `962ddb62` (docs), both pushed. Full detail in
+`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`'s "Review follow-up" section. A review of `d941aca3` (the
+per-node debug credential work below) found and this session fixed 4 issues, before Phase 6 /
+Step Debug work begins:
+
+1. **BaseURL silently dropped** — stored in the debug override, never passed into provider
+   creation (`multiLLMFactory.NewProvider` only reads its own static per-provider map). Fixed with
+   a new `NewProviderWithBaseURL` used only by the debug path. Verified live: two nodes, two
+   different fake HTTP servers, each node's request landed on its own configured endpoint with the
+   right model and API key — neither server saw the other's traffic.
+2. **General mode's `key_id` never checked against the selected provider** — a key belonging to a
+   different provider could be silently accepted and used against the wrong API. Now rejected with
+   422 before the run is admitted.
+3. **No per-node model selection in General mode** — added, validated against the provider's own
+   `allowed_models` list when one is configured.
+4. **Fixed 10-minute TTL was the only cleanup mechanism** — resized to 30 minutes (justified from
+   the activity retry policy's actual worst-case timing, not a round number) and made the
+   fallback, not the only path: `FinalizeRunActivity` now proactively deletes every node's override
+   on a debug run's terminal state via a new cursor-based `Store.DeleteAllForRun`.
+
+14 new unit tests, 3 new integration tests against live Redis. `go test ./...` 0 failures.
+**Verified live, browser-equivalent** (no browser-automation tool available in this environment —
+same limitation as every prior session on this plan): a Node script drove the exact HTTP/WS
+sequence the browser's Debug button triggers, with two LLM nodes each pointed at its own fake
+provider endpoint via Custom-mode overrides — confirmed each request reached its intended
+endpoint with the correct model and credential, no cross-contamination, no secrets exposed, and
+the app's saved Runtime settings untouched throughout. **Not done:** an actual browser
+click-through of the picker UI's rendering/interaction — still blocked by the same missing
+headless-Chromium system libraries (need `apt-get`/sudo, no password available).
 
 ---
 
