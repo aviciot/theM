@@ -578,3 +578,89 @@ a real agent, both with security_scanner left on custom/disabled (should degrade
 platform-key fallback if a platform config exists) and with it set to general mode using a real
 tenant key, to confirm the merged score/findings look right end-to-end — nothing in this repo's
 test suite drives that real A2A round trip.
+
+### the-M admin gets the same General/Custom parity tenants have
+
+The user asked directly: since tenants can now choose general/custom mode with multiple named
+keys per provider for classifier/card_synthesizer/security_scanner, why can't the-M admin
+(super_admin) do the same? Answer at the time: it *could*, nothing technical prevented it — the
+first pass had simply only wired the multi-key system up for tenants. Built full parity rather
+than a scaled-down version.
+
+**Schema change — `db/108_platform_llm_provider_keys.sql`:** `them.llm_provider_keys.tenant_id`
+was `NOT NULL` (from db/105) — a named key could not exist without belonging to a tenant, so there
+was no way to represent "the-M's own key." Made it nullable, `NULL` = platform-owned, mirroring
+exactly how `them.llm_providers.tenant_id` already works. Replaced the old single
+`UNIQUE(llm_provider_id, tenant_id, name)` constraint and the single partial default-index with
+four indexes split by NULL/non-NULL (`llm_provider_keys_name_platform_uq`,
+`llm_provider_keys_name_tenant_uq`, `llm_provider_keys_default_platform_uq`,
+`llm_provider_keys_default_tenant_uq`) — same pattern `them.llm_providers` already uses for its
+own platform/tenant split. RLS is unaffected: the existing tenant-isolation policy already compares
+`tenant_id = <GUC>`, which a NULL row can never match, so platform rows were already correctly
+invisible to `them_app` with no policy change needed.
+
+**Go DAL/service widened, not duplicated:** every `LLMProviderKeyService`/DAL method's
+`tenantID string` became `tenantID *string` (nil = platform-owned) rather than adding a parallel
+set of "platform" methods — since every method already just threaded `tenantID` straight through
+to a SQL `WHERE`, widening the type was the smaller, more consistent change. `resolveSystemAgentRole`
+stayed tenant-only (general mode is fundamentally a per-tenant concept); a new sibling
+`resolvePlatformSystemAgentRole` mirrors its logic for the platform's own general/custom mode,
+resolving against `tenant_id IS NULL` rows instead. `classifyAgent`/`synthesizeAppCard`/
+`llmCardAnalysis` all call it now for their "platform fallback" computation, replacing three
+separate ad-hoc inline blocks (one of which, `classify.go`'s old `classifierConfig` type, was
+hardcoded Anthropic-only and duplicated logic already present in `synthesize.go`) with one shared
+function.
+
+**New platform routes** (`internal/admin/llm_provider_keys_platform.go`, split out once
+`llm_provider_keys.go` would have passed ~500 lines with both tenant and platform handlers
+together): `GET/POST/PATCH/DELETE /admin/llm-providers/{name}/keys...`,
+`.../keys/{keyID}/default`, `.../keys/{keyID}/test`, `.../models` — exact mirror of the tenant
+self-service routes from step 3, scoped to platform providers via new
+`LLMProviderService.GetPlatformProviderRow`.
+
+**`them.config['system_agents']`** (the platform-global role config, pre-dating this whole plan)
+gained `mode`/`key_id` fields on `saRoleStored`/`SystemAgentRoleOut`/`SystemAgentRoleIn`. No
+row = `mode=""`, treated identically to `"custom"` — existing rows saved before this feature
+existed keep working unchanged. `key_id` uses the same "nil = leave unchanged" convention as every
+other field on `SystemAgentRoleIn`, not the tri-state present/absent/null pattern
+`LLMProviderPatch.APIKey` uses elsewhere — a real, minor UX gap (no way to explicitly clear
+`key_id` back to "provider's default key" once set) flagged, not fixed, in the code comment.
+
+**Frontend:** `RoleCard.tsx` (super_admin's role card, previously a single flat custom-only form)
+gained the same General/Custom segmented switch `TenantRoleCard.tsx` already had — General mode's
+provider/key dropdowns now call `listPlatformProviders`/`listPlatformProviderKeys` instead of the
+tenant self-service equivalents. `LLMProvidersPanel.tsx`'s `ProviderCard` and
+`LLMProviderKeysPanel.tsx` both gained the same allowed-models + named-keys section for super_admin
+that tenants already had — previously super_admin only saw the old single-key input with no
+models checklist and no way to save more than one key per provider at all.
+
+**Found and fixed a real, pre-existing bug while writing tests, not introduced by this change:**
+`fakeDal.GetProviderByNamePlatform` (the service-layer test fake) checked
+`f.tenantProviderNotFound` instead of its own flag — meaning any test exercising the
+platform-not-found path was silently relying on a coincidence. Added `platformProviderNotFound`
+and fixed the one existing test that depended on the bug
+(`TestTenantProvider_Upsert_PlatformNotFound_ReturnsNotFound`).
+
+**Also found and fixed, blocking this work's own new tests from compiling:**
+`internal/admin/tokens_sessions_integration_test.go` (a `-tags=integration` file, unrelated to this
+plan) had bit-rotted to the point of not compiling at all — its hand-rolled `pgxIntegQuerier`
+never picked up `dal.RowScanner.Close()` gaining an `error` return, and `NewTokensHandler`'s
+signature had grown a `*db.Pools` param it never passed. Since Go compiles a whole test binary per
+package, this blocked every other integration test in `internal/admin` — including the new
+`SystemAgentsHandler` ones this step added — from running at all. Fixed by pointing it at the
+already-correct `admin.NewPgxQuerier` instead of its own stale copy. **One test in that file is
+still broken at runtime, not fixed**: `TestIntegration_CreateToken_201` panics because
+`TokensHandler.Create` now requires tenant context that the test's bare `httptest` request never
+sets up — pre-existing, unrelated, flagged in `go/TEST_INDEX.md` rather than fixed here (needs its
+own tenant-context middleware wired into that test's request, a separate small task).
+
+20 new tests (6 platform key-route handler tests, 6 `resolvePlatformSystemAgentRole`, 2
+`GetPlatformProviderRow`, 2 `SystemAgentsHandler` integration, 4 platform-owned-key DAL
+integration). `go test ./...` 0 failures, full suite. `go build -tags=integration ./...` clean.
+Integration tests run for real against this box's live `them-postgres`. `tsc --noEmit` 0 errors.
+`them-go-bridge` rebuilt and force-recreated, confirmed healthy.
+
+**Not live-verified this session** — same standing limitation as the rest of this plan. Recommend
+a real logged-in super_admin walkthrough: enable a platform provider, save allowed models and a
+named key, set classifier to general mode using that key, and confirm a real classify call
+actually uses it.

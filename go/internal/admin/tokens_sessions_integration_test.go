@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/aviciot/them/internal/admin"
-	"github.com/aviciot/them/internal/admin/dal"
 )
 
 // integrationDSN returns the test DSN from env or a sensible default.
@@ -45,36 +44,19 @@ func newIntegrationDB(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// pgxQuerier wraps pgxpool.Pool to satisfy dal.Querier.
-// This mirrors the production admin.NewPgxQuerier but is inlined here so
-// the integration tests have no runtime dependency on cmd/them.
-type pgxIntegQuerier struct{ pool *pgxpool.Pool }
-
+// newPgxIntegQuerier wraps pool to satisfy admin.DBQuerier, reusing the
+// production wrapper (admin.NewPgxQuerier) instead of a hand-rolled one —
+// this file previously inlined its own copy that bit-rotted (RowScanner's
+// Close() gained an error return that pgx.Rows.Close() doesn't have) once
+// the interface it targets changed elsewhere.
 func newPgxIntegQuerier(pool *pgxpool.Pool) admin.DBQuerier {
-	return &pgxIntegQuerier{pool: pool}
-}
-
-func (q *pgxIntegQuerier) Query(ctx context.Context, sql string, args ...any) (admin.RowScanner, error) {
-	return q.pool.Query(ctx, sql, args...)
-}
-
-func (q *pgxIntegQuerier) QueryRow(ctx context.Context, sql string, args ...any) admin.SingleRowScanner {
-	return q.pool.QueryRow(ctx, sql, args...)
-}
-
-func (q *pgxIntegQuerier) Exec(ctx context.Context, sql string, args ...any) error {
-	_, err := q.pool.Exec(ctx, sql, args...)
-	return err
-}
-
-func (q *pgxIntegQuerier) ExecReturning(ctx context.Context, sql string, args ...any) admin.SingleRowScanner {
-	return q.pool.QueryRow(ctx, sql, args...)
+	return admin.NewPgxQuerier(pool)
 }
 
 // serveTokens mounts a TokensHandler on a fresh chi router.
 func serveTokens(t *testing.T, db admin.DBQuerier, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	h := admin.NewTokensHandler(db, &fakeCache{})
+	h := admin.NewTokensHandler(db, nil, &fakeCache{})
 	r := chi.NewRouter()
 	h.Routes(r)
 	var bodyBytes *bytes.Reader

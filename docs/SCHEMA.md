@@ -43,19 +43,30 @@ policies below exist for defense-in-depth only.
 Multiple named API keys per `(llm_provider_id, tenant_id)` — added 105 because `llm_providers` can only
 hold one key per provider per tenant. A tenant can save several keys under one provider (e.g.
 "Key_for_april", "Key_for_QA") and mark one as the default used by "general settings" consumers
-(classifier, card_synthesizer, and future LLM-consuming features). Usage/cost per key is *not* stored here —
-it's computed from `them.run_usage` grouped by `llm_provider_key_id`, to avoid double bookkeeping.
-Same admin-pool / application-level tenant-isolation posture as `them.llm_providers` (see above); RLS
-present for defense-in-depth only.
+(classifier, card_synthesizer, security_scanner, and future LLM-consuming features). Usage/cost per
+key is *not* stored here — it's computed from `them.run_usage` grouped by `llm_provider_key_id`, to
+avoid double bookkeeping. Same admin-pool / application-level tenant-isolation posture as
+`them.llm_providers` (see above); RLS present for defense-in-depth only.
+
+Migration 108 made `tenant_id` nullable — `NULL` = platform-owned key (the-M's own named keys,
+mirroring `them.llm_providers.tenant_id`'s existing NULL-means-platform convention), non-NULL =
+tenant-owned. Replaced the single `UNIQUE(llm_provider_id, tenant_id, name)` constraint and single
+partial default-index with four indexes split by NULL/non-NULL:
+`llm_provider_keys_name_platform_uq` (name WHERE tenant_id IS NULL),
+`llm_provider_keys_name_tenant_uq` (name, tenant_id WHERE tenant_id IS NOT NULL),
+`llm_provider_keys_default_platform_uq` (WHERE tenant_id IS NULL AND is_default),
+`llm_provider_keys_default_tenant_uq` (tenant_id WHERE tenant_id IS NOT NULL AND is_default). RLS
+policy unaffected — `tenant_id = <GUC>` never matches NULL, so platform rows were already correctly
+invisible to `them_app` without any policy change.
 
 | Column | Type | Purpose |
 |---|---|---|
 | id | BIGSERIAL PK | referenced by `them.run_usage.llm_provider_key_id` |
 | llm_provider_id | INTEGER FK→them.llm_providers(id) ON DELETE CASCADE | which provider this key belongs to |
-| tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE | owning tenant |
-| name | TEXT | user-chosen label, e.g. `"Key_for_april"` — unique per (provider, tenant) |
+| tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE, NULLABLE | NULL = platform-owned (added 108); non-NULL = owning tenant |
+| name | TEXT | user-chosen label, e.g. `"Key_for_april"` — unique per (provider, tenant), separately unique per (provider) among platform-owned rows |
 | api_key_encrypted | TEXT | `enc:` Fernet ciphertext |
-| is_default | BOOL | the key used by "general settings" mode for this provider+tenant; at most one true per (provider, tenant) — enforced by partial unique index `llm_provider_keys_one_default_uq` |
+| is_default | BOOL | the key used by "general settings" mode for this provider+tenant (or provider+platform); at most one true per (provider, tenant) or per (provider) among platform rows |
 | last_tested_at | TIMESTAMPTZ | set by the Test button's real probe call |
 | last_test_ok | BOOL | result of the last test |
 
@@ -63,7 +74,12 @@ present for defense-in-depth only.
 
 ## them.config
 Key→JSONB config store. Key rows: `llm_routing`, `system_agents` (platform-global classifier/
-card_synthesizer config — see `them.tenant_system_agent_config` below for the per-tenant override).
+card_synthesizer/security_scanner config — see `them.tenant_system_agent_config` below for the
+per-tenant override). Each role in `system_agents.roles` now also carries `mode` ("" or "custom" =
+today's provider/model/api_key_encrypted/base_url/system_prompt fields; "general" = `provider` +
+`key_id` resolved against the-M's own platform-owned `them.llm_provider_keys` rows, mirroring the
+per-tenant general/custom pattern — see `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s "the-M admin gets the
+same General/Custom parity" section).
 
 | Column | Type | Purpose |
 |---|---|---|

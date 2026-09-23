@@ -786,7 +786,7 @@ export const themApi = {
   // Platform LLM providers (super-admin)
   listPlatformProviders: () =>
     api.get<LLMProviderOut[]>('/admin/llm-providers'),
-  patchPlatformProvider: (id: number, body: { api_key?: string; enabled?: boolean; default_model?: string }) =>
+  patchPlatformProvider: (id: number, body: { api_key?: string; enabled?: boolean; default_model?: string; allowed_models?: string[] }) =>
     api.patch<LLMProviderOut>(`/admin/llm-providers/${id}`, body),
 
   // Tenant-scoped LLM providers (super-admin managing other tenants)
@@ -824,4 +824,21 @@ export const themApi = {
     api.put<TenantSystemAgentConfigOut>(`/admin/my/system-agents/${role}/config`, body),
   testTenantSystemAgentLlm: (role: string, body: TenantSystemAgentConfigTestInput) =>
     api.post<{ ok: boolean; error?: string }>(`/admin/my/system-agents/${role}/test-llm`, body),
+
+  // Platform-owned LLM provider named keys (super_admin only, db/108 — mirrors
+  // the self-service named-key routes above, scoped to platform providers)
+  listPlatformProviderKeys: (providerName: string) =>
+    api.get<LLMProviderKeyOut[]>(`/admin/llm-providers/${providerName}/keys`),
+  createPlatformProviderKey: (providerName: string, body: LLMProviderKeyCreateInput) =>
+    api.post<LLMProviderKeyOut>(`/admin/llm-providers/${providerName}/keys`, body),
+  updatePlatformProviderKey: (providerName: string, keyId: number, body: LLMProviderKeyPatchInput) =>
+    api.patch<LLMProviderKeyOut>(`/admin/llm-providers/${providerName}/keys/${keyId}`, body),
+  deletePlatformProviderKey: (providerName: string, keyId: number) =>
+    api.delete<void>(`/admin/llm-providers/${providerName}/keys/${keyId}`),
+  setDefaultPlatformProviderKey: (providerName: string, keyId: number) =>
+    api.post<LLMProviderKeyOut>(`/admin/llm-providers/${providerName}/keys/${keyId}/default`, {}),
+  testPlatformProviderKey: (providerName: string, keyId: number) =>
+    api.post<LLMProviderKeyTestResult>(`/admin/llm-providers/${providerName}/keys/${keyId}/test`, {}),
+  listPlatformAvailableModels: (providerName: string, keyId: number) =>
+    api.get<LLMProviderModelsResult>(`/admin/llm-providers/${providerName}/models?key_id=${keyId}`),
 };

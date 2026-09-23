@@ -191,15 +191,16 @@ type Dal interface {
 	UpsertTenantProvider(ctx context.Context, tenantID string, in dal.LLMProviderInput) (dal.LLMProvider, error)
 
 	// LLM provider keys — multiple named keys per (provider, tenant), db/105
-	ListLLMProviderKeys(ctx context.Context, llmProviderID int64, tenantID string) ([]dal.LLMProviderKey, error)
-	GetLLMProviderKey(ctx context.Context, id int64, tenantID string) (dal.LLMProviderKey, error)
-	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID string) (dal.LLMProviderKey, error)
+	// tenantID nil = platform-owned key (added 108); non-nil = tenant-owned key.
+	ListLLMProviderKeys(ctx context.Context, llmProviderID int64, tenantID *string) ([]dal.LLMProviderKey, error)
+	GetLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
+	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID *string) (dal.LLMProviderKey, error)
 	CreateLLMProviderKey(ctx context.Context, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error)
-	UpdateLLMProviderKey(ctx context.Context, id int64, tenantID string, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error)
-	SetLLMProviderKeyTestResult(ctx context.Context, id int64, tenantID string, ok bool) error
-	ClearDefaultLLMProviderKeys(ctx context.Context, llmProviderID int64, tenantID string) error
-	SetDefaultLLMProviderKey(ctx context.Context, id int64, tenantID string) (dal.LLMProviderKey, error)
-	DeleteLLMProviderKey(ctx context.Context, id int64, tenantID string) error
+	UpdateLLMProviderKey(ctx context.Context, id int64, tenantID *string, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error)
+	SetLLMProviderKeyTestResult(ctx context.Context, id int64, tenantID *string, ok bool) error
+	ClearDefaultLLMProviderKeys(ctx context.Context, llmProviderID int64, tenantID *string) error
+	SetDefaultLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
+	DeleteLLMProviderKey(ctx context.Context, id int64, tenantID *string) error
 
 	// Tenant system-agent role config — general/custom mode per (tenant, role), db/106
 	GetTenantSystemAgentConfig(ctx context.Context, tenantID, role string) (dal.TenantSystemAgentConfig, error)

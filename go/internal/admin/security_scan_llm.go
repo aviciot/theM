@@ -19,8 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-
-	"github.com/aviciot/them/internal/crypto"
 )
 
 const securityScanSystemPrompt = `You are a security auditor for an AI agent orchestration platform. You analyze one agent's declared metadata (agent card, description, and skills) for security risk. You do NOT execute anything or call the agent. Judge only what the metadata reveals.
@@ -62,28 +60,18 @@ func llmCardAnalysis(ctx context.Context, d classifierDAL, fernetKey []byte, ten
 
 	// Load platform-global config first — used as the fallback when the
 	// tenant has no row / mode="custom" with unset fields (same pattern as
-	// classifyAgent/synthesizeAppCard).
-	var platformProvider, platformModel, platformAPIKey, platformBaseURL string
-	var scRow saRoleStored
+	// classifyAgent/synthesizeAppCard). resolvePlatformSystemAgentRole also
+	// resolves the platform's own general/custom mode choice (db/108).
+	var platformResolved resolvedSystemAgentRole
 	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
 		var stored saConfigStored
 		if err := json.Unmarshal(row.Value, &stored); err == nil {
-			scRow = stored.Roles["security_scanner"]
-		}
-	}
-	if scRow.Enabled && scRow.Provider != nil && scRow.Model != nil && scRow.APIKeyEncrypted != nil {
-		if apiKey, err := crypto.DecryptStored(fernetKey, *scRow.APIKeyEncrypted); err == nil && apiKey != "" {
-			platformProvider = *scRow.Provider
-			platformModel = *scRow.Model
-			platformAPIKey = apiKey
-			if scRow.BaseURL != nil {
-				platformBaseURL = *scRow.BaseURL
-			}
+			platformResolved, _ = resolvePlatformSystemAgentRole(ctx, d, fernetKey, stored.Roles["security_scanner"])
 		}
 	}
 
 	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "security_scanner",
-		platformProvider, platformModel, platformAPIKey, platformBaseURL, "")
+		platformResolved.Provider, platformResolved.Model, platformResolved.APIKey, platformResolved.BaseURL, "")
 	if !ok {
 		return degraded
 	}

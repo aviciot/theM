@@ -222,7 +222,7 @@ func (f *isolationFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string
 func (f *isolationFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
-func (f *isolationFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return nil }
+func (f *isolationFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error  { return nil }
 func (f *isolationFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return nil }
 func (f *isolationFakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug {
 	return dal.EPTenantSlug{}
@@ -375,7 +375,9 @@ func (f *isolationFakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRo
 	return nil, nil
 }
 func (f *isolationFakeDal) UpsertConfig(_ context.Context, _ string, _ []byte) error { return nil }
-func (f *isolationFakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error) { return nil, nil }
+func (f *isolationFakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error) {
+	return nil, nil
+}
 func (f *isolationFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
@@ -398,31 +400,31 @@ func (f *isolationFakeDal) GetProviderByNamePlatform(_ context.Context, _ string
 func (f *isolationFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
-func (f *isolationFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+func (f *isolationFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ *string) ([]dal.LLMProviderKey, error) {
 	return nil, nil
 }
-func (f *isolationFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *isolationFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *isolationFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *isolationFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
 func (f *isolationFakeDal) CreateLLMProviderKey(_ context.Context, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *isolationFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+func (f *isolationFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ *string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *isolationFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, _ bool) error {
+func (f *isolationFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ *string, _ bool) error {
 	return nil
 }
-func (f *isolationFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+func (f *isolationFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ *string) error {
 	return nil
 }
-func (f *isolationFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *isolationFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *isolationFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+func (f *isolationFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ *string) error {
 	return nil
 }
 func (f *isolationFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (dal.TenantSystemAgentConfig, error) {
@@ -442,16 +444,30 @@ func (f *isolationFakeDal) ListAppOrchestratorNames(_ context.Context, _ string)
 func (f *isolationFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
 	return 0, nil
 }
-func (f *isolationFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error)       { return []byte(`{}`), nil }
-func (f *isolationFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error     { return nil }
-func (f *isolationFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error            { return nil }
-func (f *isolationFakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error        { return nil }
-func (f *isolationFakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) { return map[string]string{}, nil }
-func (f *isolationFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error        { return nil }
-func (f *isolationFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
-func (f *isolationFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error { return nil }
-func (f *isolationFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error    { return nil }
-func (f *isolationFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }
+func (f *isolationFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+func (f *isolationFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error {
+	return nil
+}
+func (f *isolationFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error     { return nil }
+func (f *isolationFakeDal) UpsertProviderBaseURL(_ context.Context, _, _, _ string) error { return nil }
+func (f *isolationFakeDal) GetProviderBaseURLs(_ context.Context, _ string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (f *isolationFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error { return nil }
+func (f *isolationFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error {
+	return nil
+}
+func (f *isolationFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error {
+	return nil
+}
+func (f *isolationFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error {
+	return nil
+}
+func (f *isolationFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error {
+	return nil
+}
 func (f *isolationFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
 	return dal.Run{}, nil
 }
@@ -519,7 +535,9 @@ func (f *isolationFakeDal) ListComponentDefinitions(_ context.Context, _ string)
 }
 
 // Agent definition stubs (no isolation-specific behavior needed for current tests).
-func (f *isolationFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
+func (f *isolationFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) {
+	return 1, nil
+}
 func (f *isolationFakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string, _ int) (string, error) {
 	return "", nil
 }
@@ -535,7 +553,9 @@ func (f *isolationFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ st
 func (f *isolationFakeDal) RevertPublishedToDraft(_ context.Context, _, _ string, _ []byte, _ string) error {
 	return nil
 }
-func (f *isolationFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
+func (f *isolationFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error {
+	return nil
+}
 
 // Phase 3 stubs.
 func (f *isolationFakeDal) GetAgentDefinitionForPublish(_ context.Context, _ string, _ string) (dal.AgentDefinition, error) {

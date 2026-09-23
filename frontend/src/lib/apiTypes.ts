@@ -30,11 +30,13 @@ export interface DiscoverResult {
 
 export interface SystemAgentRoleOut {
   enabled: boolean;
+  mode: 'general' | 'custom' | '';
   provider: string | null;
   model: string | null;
   base_url: string | null;
   system_prompt: string | null;
   api_key_hint: string | null;
+  key_id: number | null;
 }
 
 export interface SystemAgentsOut {
@@ -43,11 +45,13 @@ export interface SystemAgentsOut {
 
 export interface SystemAgentRoleIn {
   enabled?: boolean;
+  mode?: 'general' | 'custom';
   provider?: string | null;
   model?: string | null;
   base_url?: string | null;
   system_prompt?: string | null;
   api_key?: string | null;
+  key_id?: number | null;
 }
 
 // Tenant self-service system-agent role config (general/custom mode) — step 5/6

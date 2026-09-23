@@ -12,13 +12,17 @@ import { LLMProvidersPanel } from './LLMProvidersPanel';
 function roleToForm(r: SystemAgentRoleOut): RoleForm {
   return {
     enabled:       r.enabled,
+    mode:          r.mode === 'general' ? 'general' : 'custom',
     provider:      r.provider ?? '',
     model:         r.model ?? '',
     api_key:       '',
     base_url:      r.base_url ?? '',
     system_prompt: r.system_prompt ?? '',
+    key_id:        r.key_id ?? null,
   };
 }
+
+const emptyRoleForm: RoleForm = { enabled: false, mode: 'custom', provider: '', model: '', api_key: '', base_url: '', system_prompt: '', key_id: null };
 
 type SettingsTab = 'system_agents' | 'monitoring' | 'llm_providers';
 
@@ -53,7 +57,7 @@ export default function AdminSettingsPage() {
           const newHints: Record<string, string | null> = {};
           for (const role of merged) {
             const srv = data.roles[role];
-            newForms[role] = srv ? roleToForm(srv) : { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' };
+            newForms[role] = srv ? roleToForm(srv) : emptyRoleForm;
             newHints[role] = srv?.api_key_hint ?? null;
           }
           setForms(newForms);
@@ -65,7 +69,7 @@ export default function AdminSettingsPage() {
           setRoleOrder(order);
           const newForms: Record<string, RoleForm> = {};
           for (const role of order) {
-            newForms[role] = { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' };
+            newForms[role] = emptyRoleForm;
           }
           setForms(newForms);
           setHints({});
@@ -90,14 +94,23 @@ export default function AdminSettingsPage() {
     setSaving((prev) => ({ ...prev, [role]: true }));
     setSaveMsgs((prev) => ({ ...prev, [role]: null }));
 
-    const payload: SystemAgentRoleIn = {
-      enabled:       f.enabled,
-      provider:      f.provider   || null,
-      model:         f.model      || null,
-      base_url:      f.base_url   || null,
-      system_prompt: f.system_prompt || null,
-      ...(f.api_key ? { api_key: f.api_key } : {}),
-    };
+    const mode = f.mode === 'general' ? 'general' : 'custom';
+    const payload: SystemAgentRoleIn = mode === 'general'
+      ? {
+          enabled: f.enabled,
+          mode,
+          provider: f.provider || null,
+          key_id: f.key_id ?? null,
+        }
+      : {
+          enabled:       f.enabled,
+          mode,
+          provider:      f.provider   || null,
+          model:         f.model      || null,
+          base_url:      f.base_url   || null,
+          system_prompt: f.system_prompt || null,
+          ...(f.api_key ? { api_key: f.api_key } : {}),
+        };
 
     try {
       const updated = await themApi.putSystemAgents({ roles: { [role]: payload } });
@@ -189,7 +202,7 @@ export default function AdminSettingsPage() {
                           key={role}
                           role={role}
                           apiKeyHint={hints[role] ?? null}
-                          form={forms[role] ?? { enabled: false, provider: '', model: '', api_key: '', base_url: '', system_prompt: '' }}
+                          form={forms[role] ?? emptyRoleForm}
                           onChange={(patch) => patchForm(role, patch)}
                           onSave={() => handleSave(role)}
                           saving={!!saving[role]}

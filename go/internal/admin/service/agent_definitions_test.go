@@ -75,7 +75,7 @@ func (f *agentDefFakeDal) CreateAgent(_ context.Context, _ string, _ dal.AgentIn
 func (f *agentDefFakeDal) UpdateAgent(_ context.Context, _, _ string, _ dal.AgentInput, _ bool) error {
 	return nil
 }
-func (f *agentDefFakeDal) DeleteAgent(_ context.Context, _, _ string) error { return nil }
+func (f *agentDefFakeDal) DeleteAgent(_ context.Context, _, _ string) error      { return nil }
 func (f *agentDefFakeDal) AgentExists(_ context.Context, _ string) (bool, error) { return true, nil }
 func (f *agentDefFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
 	return dal.Agent{}, nil
@@ -133,7 +133,7 @@ func (f *agentDefFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string,
 func (f *agentDefFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
-func (f *agentDefFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return nil }
+func (f *agentDefFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error  { return nil }
 func (f *agentDefFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return nil }
 func (f *agentDefFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug {
 	return nil
@@ -157,12 +157,20 @@ func (f *agentDefFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byt
 func (f *agentDefFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error {
 	return nil
 }
-func (f *agentDefFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error { return nil }
+func (f *agentDefFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error     { return nil }
 func (f *agentDefFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error { return nil }
-func (f *agentDefFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
-func (f *agentDefFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error { return nil }
-func (f *agentDefFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error     { return nil }
-func (f *agentDefFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }
+func (f *agentDefFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error {
+	return nil
+}
+func (f *agentDefFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error {
+	return nil
+}
+func (f *agentDefFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error {
+	return nil
+}
+func (f *agentDefFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error {
+	return nil
+}
 func (f *agentDefFakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {
 	return nil, nil
 }
@@ -380,31 +388,31 @@ func (f *agentDefFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ da
 }
 
 // LLM provider key stubs (db/105) — not exercised by agent-definition tests.
-func (f *agentDefFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+func (f *agentDefFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ *string) ([]dal.LLMProviderKey, error) {
 	return nil, nil
 }
-func (f *agentDefFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *agentDefFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *agentDefFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *agentDefFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
 func (f *agentDefFakeDal) CreateLLMProviderKey(_ context.Context, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *agentDefFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+func (f *agentDefFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ *string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *agentDefFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, _ bool) error {
+func (f *agentDefFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ *string, _ bool) error {
 	return nil
 }
-func (f *agentDefFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+func (f *agentDefFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ *string) error {
 	return nil
 }
-func (f *agentDefFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *agentDefFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *agentDefFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+func (f *agentDefFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ *string) error {
 	return nil
 }
 func (f *agentDefFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (dal.TenantSystemAgentConfig, error) {

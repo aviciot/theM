@@ -31,8 +31,8 @@ import (
 type systemAgentRoleResolverDAL interface {
 	GetTenantSystemAgentConfig(ctx context.Context, tenantID, role string) (dal.TenantSystemAgentConfig, error)
 	GetProviderByNameForTenant(ctx context.Context, name, tenantID string) (dal.LLMProvider, error)
-	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID string) (dal.LLMProviderKey, error)
-	GetLLMProviderKey(ctx context.Context, id int64, tenantID string) (dal.LLMProviderKey, error)
+	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID *string) (dal.LLMProviderKey, error)
+	GetLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
 }
 
 // resolvedSystemAgentRole is the effective, decrypted config for one role call.
@@ -74,9 +74,9 @@ func resolveSystemAgentRole(
 
 		var key dal.LLMProviderKey
 		if cfg.KeyID != nil {
-			key, err = d.GetLLMProviderKey(ctx, *cfg.KeyID, tenantID)
+			key, err = d.GetLLMProviderKey(ctx, *cfg.KeyID, &tenantID)
 		} else {
-			key, err = d.GetDefaultLLMProviderKey(ctx, provider.ID, tenantID)
+			key, err = d.GetDefaultLLMProviderKey(ctx, provider.ID, &tenantID)
 		}
 		if err != nil {
 			// No usable key for this tenant+provider — hard rule: never fall
@@ -141,6 +141,95 @@ func platformFallback(provider, model, apiKey, baseURL, systemPrompt string) (re
 	return resolvedSystemAgentRole{
 		Provider:     provider,
 		Model:        model,
+		APIKey:       apiKey,
+		BaseURL:      baseURL,
+		SystemPrompt: systemPrompt,
+	}, true
+}
+
+// platformSystemAgentRoleResolverDAL is the DAL surface
+// resolvePlatformSystemAgentRole needs, in addition to reading the
+// them.config['system_agents'] row (done by the caller via GetConfig,
+// already required by classifierDAL/synthesizerDAL).
+type platformSystemAgentRoleResolverDAL interface {
+	GetProviderByNamePlatform(ctx context.Context, name string) (dal.LLMProvider, error)
+	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID *string) (dal.LLMProviderKey, error)
+	GetLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
+}
+
+// resolvePlatformSystemAgentRole resolves the effective provider/model/apiKey/
+// baseURL/systemPrompt for the platform-global (super_admin) use of a
+// system-agent role, honoring role.Mode the same way resolveSystemAgentRole
+// does for tenants:
+//   - mode="" or "custom": today's behavior — role.Provider/Model/
+//     APIKeyEncrypted/BaseURL/SystemPrompt used directly.
+//   - mode="general": resolves through the platform's OWN them.llm_providers
+//     (tenant_id IS NULL) + them.llm_provider_keys (also tenant_id IS NULL,
+//     added db/108) — role.Provider names which provider, role.KeyID selects
+//     which named platform key (nil = that provider's default key).
+//
+// Returns ok=false when the role is disabled or no usable configuration
+// exists — callers must degrade silently, exactly like today.
+func resolvePlatformSystemAgentRole(ctx context.Context, d platformSystemAgentRoleResolverDAL, fernetKey []byte, role saRoleStored) (resolvedSystemAgentRole, bool) {
+	if !role.Enabled {
+		return resolvedSystemAgentRole{}, false
+	}
+
+	if role.Mode == "general" {
+		if role.Provider == nil || *role.Provider == "" {
+			return resolvedSystemAgentRole{}, false
+		}
+		provider, err := d.GetProviderByNamePlatform(ctx, *role.Provider)
+		if err != nil {
+			return resolvedSystemAgentRole{}, false
+		}
+
+		var key dal.LLMProviderKey
+		if role.KeyID != nil {
+			key, err = d.GetLLMProviderKey(ctx, *role.KeyID, nil)
+		} else {
+			key, err = d.GetDefaultLLMProviderKey(ctx, provider.ID, nil)
+		}
+		if err != nil {
+			return resolvedSystemAgentRole{}, false
+		}
+
+		apiKey, err := crypto.DecryptStored(fernetKey, key.APIKeyEncrypted)
+		if err != nil || apiKey == "" {
+			return resolvedSystemAgentRole{}, false
+		}
+
+		baseURL := ""
+		if provider.BaseURL != nil {
+			baseURL = *provider.BaseURL
+		}
+		return resolvedSystemAgentRole{
+			Provider: provider.Name,
+			Model:    provider.DefaultModel,
+			APIKey:   apiKey,
+			BaseURL:  baseURL,
+		}, true
+	}
+
+	// mode="" or "custom": today's behavior, unchanged.
+	if role.Provider == nil || role.Model == nil || role.APIKeyEncrypted == nil {
+		return resolvedSystemAgentRole{}, false
+	}
+	apiKey, err := crypto.DecryptStored(fernetKey, *role.APIKeyEncrypted)
+	if err != nil || apiKey == "" {
+		return resolvedSystemAgentRole{}, false
+	}
+	baseURL := ""
+	if role.BaseURL != nil {
+		baseURL = *role.BaseURL
+	}
+	systemPrompt := ""
+	if role.SystemPrompt != nil {
+		systemPrompt = *role.SystemPrompt
+	}
+	return resolvedSystemAgentRole{
+		Provider:     *role.Provider,
+		Model:        *role.Model,
 		APIKey:       apiKey,
 		BaseURL:      baseURL,
 		SystemPrompt: systemPrompt,

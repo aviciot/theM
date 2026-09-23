@@ -251,6 +251,7 @@ func BuildRouter(
 				llmRouting.Routes(platformGlobal)
 				llmProviders.Routes(platformGlobal)
 				llmProviders.TenantProviderRoutes(platformGlobal)
+				llmProviderKeys.PlatformRoutes(platformGlobal)
 				systemAgents.Routes(platformGlobal)
 				tenants.Routes(platformGlobal)
 				if pools != nil {

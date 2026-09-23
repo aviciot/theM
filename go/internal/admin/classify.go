@@ -26,13 +26,13 @@ import (
 	"strings"
 
 	"github.com/aviciot/them/internal/admin/dal"
-	"github.com/aviciot/them/internal/crypto"
 )
 
 // classifierDAL is the minimal DAL surface classifyAgent needs.
 type classifierDAL interface {
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	systemAgentRoleResolverDAL
+	platformSystemAgentRoleResolverDAL
 }
 
 var (
@@ -42,18 +42,6 @@ var (
 	}
 	classifierValidIcon = regexp.MustCompile(`^[a-zA-Z0-9_]{1,40}$`)
 )
-
-// classifierConfig is the unmarshalled shape of the 'system_agents' config row.
-type classifierConfig struct {
-	Roles struct {
-		Classifier struct {
-			Enabled          bool   `json:"enabled"`
-			Provider         string `json:"provider"`
-			Model            string `json:"model"`
-			APIKeyEncrypted  string `json:"api_key_encrypted"`
-		} `json:"classifier"`
-	} `json:"roles"`
-}
 
 // classifyAgent returns (category, icon) using the Anthropic classifier.
 // Any failure silently returns ("", ""). tenantID selects the caller's own
@@ -70,23 +58,23 @@ func classifyAgent(
 ) (category, icon string) {
 	// Load platform-global config first — used as the fallback when the tenant
 	// has no row / mode="custom" with unset fields (unchanged prior behavior).
-	var platformProvider, platformModel, platformAPIKey, platformBaseURL string
+	// resolvePlatformSystemAgentRole also resolves the platform's own
+	// general/custom mode choice for this role (db/108).
+	var platformResolved resolvedSystemAgentRole
 	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
-		var cfg classifierConfig
-		if err := json.Unmarshal(row.Value, &cfg); err == nil && cfg.Roles.Classifier.Enabled {
-			if apiKey, err := crypto.DecryptStored(fernetKey, cfg.Roles.Classifier.APIKeyEncrypted); err == nil && apiKey != "" {
-				platformProvider = "anthropic" // classifier has always been Anthropic-only
-				platformModel = cfg.Roles.Classifier.Model
-				if platformModel == "" {
-					platformModel = "claude-haiku-4-5-20251001"
-				}
-				platformAPIKey = apiKey
+		var cfg saConfigStored
+		if err := json.Unmarshal(row.Value, &cfg); err == nil {
+			role := cfg.Roles["classifier"]
+			if role.Mode != "general" && role.Model == nil {
+				defaultModel := "claude-haiku-4-5-20251001" // classifier's historical default, custom mode only
+				role.Model = &defaultModel
 			}
+			platformResolved, _ = resolvePlatformSystemAgentRole(ctx, d, fernetKey, role)
 		}
 	}
 
 	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "classifier",
-		platformProvider, platformModel, platformAPIKey, platformBaseURL, "")
+		platformResolved.Provider, platformResolved.Model, platformResolved.APIKey, platformResolved.BaseURL, "")
 	if !ok {
 		return "", ""
 	}

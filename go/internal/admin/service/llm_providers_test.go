@@ -499,7 +499,7 @@ func TestTenantProvider_ListForTenant_EmptyReturnsEmptySlice(t *testing.T) {
 }
 
 func TestTenantProvider_Upsert_PlatformNotFound_ReturnsNotFound(t *testing.T) {
-	d := &fakeDal{tenantProviderNotFound: true}
+	d := &fakeDal{platformProviderNotFound: true}
 	svc := newProviderSvc(d)
 	_, err := svc.UpsertForTenant(context.Background(), "tid", "anthropic", service.LLMProviderCreate{
 		DefaultModel: "m",
@@ -671,6 +671,29 @@ func TestGetOwnProviderRow_Found_ReturnsTenantRow_NeverPlatformID(t *testing.T) 
 	}
 	if row.ID != 20 {
 		t.Errorf("want the tenant's own row id=20, got %d (must never resolve to the platform row's id)", row.ID)
+	}
+}
+
+// ── GetPlatformProviderRow tests (db/108 — platform-owned named keys) ────────
+
+func TestGetPlatformProviderRow_NotFound_ReturnsErrNotFound(t *testing.T) {
+	d := &fakeDal{platformProviderNotFound: true}
+	svc := newProviderSvc(d)
+	_, err := svc.GetPlatformProviderRow(context.Background(), "gemini")
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("want ErrNotFound when no platform row exists, got %v", err)
+	}
+}
+
+func TestGetPlatformProviderRow_Found_ReturnsPlatformRow(t *testing.T) {
+	d := &fakeDal{platformProviderByName: dal.LLMProvider{ID: 4, Name: "gemini", DefaultModel: "gemini-2.0-flash"}}
+	svc := newProviderSvc(d)
+	row, err := svc.GetPlatformProviderRow(context.Background(), "gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ID != 4 || row.Name != "gemini" {
+		t.Errorf("unexpected row: %+v", row)
 	}
 }
 

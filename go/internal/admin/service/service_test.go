@@ -84,12 +84,12 @@ type fakeDal struct {
 	deleteAppParamCalled bool
 
 	// app-canvas inline LLM node override fields
-	activeDefJSON        []byte
-	getActiveDefErr      error
-	appFlowLLMOverrides  []dal.AppFlowLLMOverride
-	listOverridesErr     error
-	upsertOverrideErr    error
-	lastUpsertOverride   dal.AppFlowLLMOverride
+	activeDefJSON       []byte
+	getActiveDefErr     error
+	appFlowLLMOverrides []dal.AppFlowLLMOverride
+	listOverridesErr    error
+	upsertOverrideErr   error
+	lastUpsertOverride  dal.AppFlowLLMOverride
 
 	// config fields
 	configRow         *dal.ConfigRow
@@ -107,90 +107,91 @@ type fakeDal struct {
 	logVerbosityErr error
 
 	// LLM provider fields
-	providers              []dal.LLMProvider
-	provider               dal.LLMProvider
-	createdProvider        dal.LLMProvider
-	updatedProvider        dal.LLMProvider
-	listProvidersErr       error
-	getProviderErr         error
-	createProviderErr      error
-	updateProviderErr      error
-	deleteProviderErr      error
-	createProviderCalls    []dal.LLMProviderInput
-	updateProviderCalls    []dal.LLMProviderInput
+	providers           []dal.LLMProvider
+	provider            dal.LLMProvider
+	createdProvider     dal.LLMProvider
+	updatedProvider     dal.LLMProvider
+	listProvidersErr    error
+	getProviderErr      error
+	createProviderErr   error
+	updateProviderErr   error
+	deleteProviderErr   error
+	createProviderCalls []dal.LLMProviderInput
+	updateProviderCalls []dal.LLMProviderInput
 	// per-tenant provider fields
-	tenantProviders         []dal.LLMProvider
-	tenantProviderByName    dal.LLMProvider
-	platformProviderByName  dal.LLMProvider
-	upsertedTenantProvider  dal.LLMProvider
-	tenantProviderNotFound  bool
-	upsertTenantProviderErr error
+	tenantProviders           []dal.LLMProvider
+	tenantProviderByName      dal.LLMProvider
+	platformProviderByName    dal.LLMProvider
+	upsertedTenantProvider    dal.LLMProvider
+	tenantProviderNotFound    bool
+	platformProviderNotFound  bool
+	upsertTenantProviderErr   error
 	upsertTenantProviderCalls []dal.LLMProviderInput
 
 	// LLM provider key fields (db/105)
-	providerKeys              []dal.LLMProviderKey
-	providerKey               dal.LLMProviderKey
-	createdProviderKey        dal.LLMProviderKey
-	updatedProviderKey        dal.LLMProviderKey
-	setDefaultProviderKey     dal.LLMProviderKey
-	getProviderKeyErr         error
-	createProviderKeyErr      error
-	updateProviderKeyErr      error
-	deleteProviderKeyErr      error
-	setDefaultProviderKeyErr  error
-	clearDefaultKeysErr       error
-	setTestResultErr          error
-	createProviderKeyCalls    []dal.LLMProviderKeyInput
-	updateProviderKeyCalls    []dal.LLMProviderKeyInput
-	clearDefaultKeysCalls     int
-	setTestResultCalls        []bool
+	providerKeys             []dal.LLMProviderKey
+	providerKey              dal.LLMProviderKey
+	createdProviderKey       dal.LLMProviderKey
+	updatedProviderKey       dal.LLMProviderKey
+	setDefaultProviderKey    dal.LLMProviderKey
+	getProviderKeyErr        error
+	createProviderKeyErr     error
+	updateProviderKeyErr     error
+	deleteProviderKeyErr     error
+	setDefaultProviderKeyErr error
+	clearDefaultKeysErr      error
+	setTestResultErr         error
+	createProviderKeyCalls   []dal.LLMProviderKeyInput
+	updateProviderKeyCalls   []dal.LLMProviderKeyInput
+	clearDefaultKeysCalls    int
+	setTestResultCalls       []bool
 
 	// Tenant system-agent config fields (db/106)
-	tenantSystemAgentConfig      dal.TenantSystemAgentConfig
-	getTenantSystemAgentConfigErr error
-	upsertedTenantSystemAgentConfig dal.TenantSystemAgentConfig
-	upsertTenantSystemAgentConfigErr error
+	tenantSystemAgentConfig            dal.TenantSystemAgentConfig
+	getTenantSystemAgentConfigErr      error
+	upsertedTenantSystemAgentConfig    dal.TenantSystemAgentConfig
+	upsertTenantSystemAgentConfigErr   error
 	upsertTenantSystemAgentConfigCalls []dal.TenantSystemAgentConfigInput
 
 	// token fields
-	tokens            []dal.Token
-	token             dal.Token
-	orchExists        bool
-	orchExistsErr     error
-	createdToken      dal.Token
-	createTokenErr    error
-	updatedTokenHash  string
-	updatedToken      dal.Token
-	updateTokenErr    error
-	deletedTokenHash  string
-	deleteTokenErr    error
-	listTokensErr     error
-	getTokenErr       error
-	createTokenCalls  []dal.TokenCreateRow
-	updateTokenCalls  []dal.TokenPatchRow
+	tokens           []dal.Token
+	token            dal.Token
+	orchExists       bool
+	orchExistsErr    error
+	createdToken     dal.Token
+	createTokenErr   error
+	updatedTokenHash string
+	updatedToken     dal.Token
+	updateTokenErr   error
+	deletedTokenHash string
+	deleteTokenErr   error
+	listTokensErr    error
+	getTokenErr      error
+	createTokenCalls []dal.TokenCreateRow
+	updateTokenCalls []dal.TokenPatchRow
 
 	// MCP server fields
-	mcpServer           dal.MCPServer
-	mcpServers          []dal.MCPServer
-	mcpCreated          dal.MCPServer
-	mcpUpdated          dal.MCPServer
-	getMCPErr           error
-	createMCPErr        error
-	updateMCPErr        error
-	deleteMCPErr        error
-	upsertCredErr       error
-	deleteCredErr       error
-	upsertCredCalled    bool
-	upsertCredHeader    string
-	lastCreateMCPInput  dal.MCPServerInput
-	lastUpdateMCPInput  dal.MCPServerInput
+	mcpServer          dal.MCPServer
+	mcpServers         []dal.MCPServer
+	mcpCreated         dal.MCPServer
+	mcpUpdated         dal.MCPServer
+	getMCPErr          error
+	createMCPErr       error
+	updateMCPErr       error
+	deleteMCPErr       error
+	upsertCredErr      error
+	deleteCredErr      error
+	upsertCredCalled   bool
+	upsertCredHeader   string
+	lastCreateMCPInput dal.MCPServerInput
+	lastUpdateMCPInput dal.MCPServerInput
 
 	// quota + count fields
-	quota           dal.TenantQuota
-	quotaErr        error
-	agentCount      int
-	appCount        int
-	mcpServerCount  int
+	quota          dal.TenantQuota
+	quotaErr       error
+	agentCount     int
+	appCount       int
+	mcpServerCount int
 }
 
 func (f *fakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error) {
@@ -252,8 +253,8 @@ func (f *fakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool)
 	return f.updateEPErr
 }
 func (f *fakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error { return nil }
-func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return f.deleteEPErr }
-func (f *fakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return f.epSlugs }
+func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error             { return f.deleteEPErr }
+func (f *fakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string            { return f.epSlugs }
 func (f *fakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug {
 	return f.epTenantSlug
 }
@@ -286,12 +287,18 @@ func (f *fakeDal) SetProviderKey(_ context.Context, _, _, _ string, value []byte
 	f.setProviderKeyValue = value
 	return nil
 }
-func (f *fakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error { return nil }
+func (f *fakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error     { return nil }
 func (f *fakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error { return nil }
-func (f *fakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
-func (f *fakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error { return nil }
-func (f *fakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error             { return nil }
-func (f *fakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }
+func (f *fakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error {
+	return nil
+}
+func (f *fakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _, _ int, _, _ *string) error {
+	return nil
+}
+func (f *fakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error { return nil }
+func (f *fakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error {
+	return nil
+}
 
 func (f *fakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {
 	return f.runs, f.listRunsErr
@@ -481,7 +488,7 @@ func (f *fakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (da
 	return f.tenantProviderByName, nil
 }
 func (f *fakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
-	if f.tenantProviderNotFound {
+	if f.platformProviderNotFound {
 		return dal.LLMProvider{}, pgx.ErrNoRows
 	}
 	return f.platformProviderByName, nil
@@ -491,36 +498,36 @@ func (f *fakeDal) UpsertTenantProvider(_ context.Context, _ string, in dal.LLMPr
 	return f.upsertedTenantProvider, f.upsertTenantProviderErr
 }
 
-// LLM provider key fakes (db/105).
-func (f *fakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+// LLM provider key fakes (db/105, tenantID *string widened by db/108).
+func (f *fakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ *string) ([]dal.LLMProviderKey, error) {
 	return f.providerKeys, nil
 }
-func (f *fakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *fakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return f.providerKey, f.getProviderKeyErr
 }
-func (f *fakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *fakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return f.providerKey, f.getProviderKeyErr
 }
 func (f *fakeDal) CreateLLMProviderKey(_ context.Context, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	f.createProviderKeyCalls = append(f.createProviderKeyCalls, in)
 	return f.createdProviderKey, f.createProviderKeyErr
 }
-func (f *fakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+func (f *fakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ *string, in dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	f.updateProviderKeyCalls = append(f.updateProviderKeyCalls, in)
 	return f.updatedProviderKey, f.updateProviderKeyErr
 }
-func (f *fakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, ok bool) error {
+func (f *fakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ *string, ok bool) error {
 	f.setTestResultCalls = append(f.setTestResultCalls, ok)
 	return f.setTestResultErr
 }
-func (f *fakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+func (f *fakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ *string) error {
 	f.clearDefaultKeysCalls++
 	return f.clearDefaultKeysErr
 }
-func (f *fakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *fakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return f.setDefaultProviderKey, f.setDefaultProviderKeyErr
 }
-func (f *fakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+func (f *fakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ *string) error {
 	return f.deleteProviderKeyErr
 }
 
@@ -561,7 +568,7 @@ func (f *fakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) err
 func (f *fakeDal) GetAgentDefinitionForPublish(_ context.Context, _ string, _ string) (dal.AgentDefinition, error) {
 	return dal.AgentDefinition{}, nil
 }
-func (f *fakeDal) PublishCanvasAgent(_ context.Context, _ dal.CanvasAgentRow) error { return nil }
+func (f *fakeDal) PublishCanvasAgent(_ context.Context, _ dal.CanvasAgentRow) error  { return nil }
 func (f *fakeDal) MarkAgentDefinitionPublished(_ context.Context, _, _ string) error { return nil }
 func (f *fakeDal) UpsertAgentBinding(_ context.Context, _ dal.AgentBindingRow) error { return nil }
 func (f *fakeDal) GetAgentBindingStatus(_ context.Context, _, _ string) (dal.AgentBindingSlotStatus, error) {
@@ -837,11 +844,11 @@ func TestTokenService_List_ForwardsUserFilter(t *testing.T) {
 // ── fakeSessionReader ─────────────────────────────────────────────────────────
 
 type fakeSessionReader struct {
-	epSessions  []string
-	appSessions []string
-	sessionInfo *session.SessionInfo
-	getErr      error
-	sigErr      error
+	epSessions   []string
+	appSessions  []string
+	sessionInfo  *session.SessionInfo
+	getErr       error
+	sigErr       error
 	sigDelivered bool
 }
 

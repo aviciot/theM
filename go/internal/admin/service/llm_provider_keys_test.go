@@ -19,7 +19,7 @@ func newProviderKeySvc(d *fakeDal) *service.LLMProviderKeyService {
 
 func TestProviderKeyService_Create_MissingName_ReturnsValidation(t *testing.T) {
 	svc := newProviderKeySvc(&fakeDal{})
-	_, err := svc.Create(context.Background(), 1, "tid", service.LLMProviderKeyCreate{
+	_, err := svc.Create(context.Background(), 1, strp("tid"), service.LLMProviderKeyCreate{
 		APIKey: "sk-test-key-12345678",
 	})
 	if !errors.Is(err, service.ErrValidation) {
@@ -29,7 +29,7 @@ func TestProviderKeyService_Create_MissingName_ReturnsValidation(t *testing.T) {
 
 func TestProviderKeyService_Create_MissingAPIKey_ReturnsValidation(t *testing.T) {
 	svc := newProviderKeySvc(&fakeDal{})
-	_, err := svc.Create(context.Background(), 1, "tid", service.LLMProviderKeyCreate{
+	_, err := svc.Create(context.Background(), 1, strp("tid"), service.LLMProviderKeyCreate{
 		Name: "Key_for_april",
 	})
 	if !errors.Is(err, service.ErrValidation) {
@@ -38,9 +38,9 @@ func TestProviderKeyService_Create_MissingAPIKey_ReturnsValidation(t *testing.T)
 }
 
 func TestProviderKeyService_Create_EncryptsBeforePersist(t *testing.T) {
-	d := &fakeDal{createdProviderKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "Key_for_april"}}
+	d := &fakeDal{createdProviderKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "Key_for_april"}}
 	svc := newProviderKeySvc(d)
-	_, err := svc.Create(context.Background(), 1, "tid", service.LLMProviderKeyCreate{
+	_, err := svc.Create(context.Background(), 1, strp("tid"), service.LLMProviderKeyCreate{
 		Name: "Key_for_april", APIKey: "sk-test-key-12345678",
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func TestProviderKeyService_Create_EncryptsBeforePersist(t *testing.T) {
 func TestProviderKeyService_Create_DuplicateName_ReturnsConflict(t *testing.T) {
 	d := &fakeDal{createProviderKeyErr: pgUniqueErr()}
 	svc := newProviderKeySvc(d)
-	_, err := svc.Create(context.Background(), 1, "tid", service.LLMProviderKeyCreate{
+	_, err := svc.Create(context.Background(), 1, strp("tid"), service.LLMProviderKeyCreate{
 		Name: "dup", APIKey: "sk-test-key-12345678",
 	})
 	if !errors.Is(err, service.ErrConflict) {
@@ -70,9 +70,9 @@ func TestProviderKeyService_Create_DuplicateName_ReturnsConflict(t *testing.T) {
 }
 
 func TestProviderKeyService_Create_IsDefault_ClearsExistingDefaultFirst(t *testing.T) {
-	d := &fakeDal{createdProviderKey: dal.LLMProviderKey{ID: 2, LLMProviderID: 1, TenantID: "tid", Name: "k2", IsDefault: true}}
+	d := &fakeDal{createdProviderKey: dal.LLMProviderKey{ID: 2, LLMProviderID: 1, TenantID: strp("tid"), Name: "k2", IsDefault: true}}
 	svc := newProviderKeySvc(d)
-	_, err := svc.Create(context.Background(), 1, "tid", service.LLMProviderKeyCreate{
+	_, err := svc.Create(context.Background(), 1, strp("tid"), service.LLMProviderKeyCreate{
 		Name: "k2", APIKey: "sk-test-key-12345678", IsDefault: true,
 	})
 	if err != nil {
@@ -84,9 +84,9 @@ func TestProviderKeyService_Create_IsDefault_ClearsExistingDefaultFirst(t *testi
 }
 
 func TestProviderKeyService_Create_NotDefault_DoesNotClear(t *testing.T) {
-	d := &fakeDal{createdProviderKey: dal.LLMProviderKey{ID: 2, LLMProviderID: 1, TenantID: "tid", Name: "k2"}}
+	d := &fakeDal{createdProviderKey: dal.LLMProviderKey{ID: 2, LLMProviderID: 1, TenantID: strp("tid"), Name: "k2"}}
 	svc := newProviderKeySvc(d)
-	_, err := svc.Create(context.Background(), 1, "tid", service.LLMProviderKeyCreate{
+	_, err := svc.Create(context.Background(), 1, strp("tid"), service.LLMProviderKeyCreate{
 		Name: "k2", APIKey: "sk-test-key-12345678",
 	})
 	if err != nil {
@@ -103,7 +103,7 @@ func TestProviderKeyService_Update_NotFound(t *testing.T) {
 	d := &fakeDal{getProviderKeyErr: pgx.ErrNoRows}
 	svc := newProviderKeySvc(d)
 	newName := "renamed"
-	_, err := svc.Update(context.Background(), 999, "tid", service.LLMProviderKeyPatch{Name: &newName})
+	_, err := svc.Update(context.Background(), 999, strp("tid"), service.LLMProviderKeyPatch{Name: &newName})
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
@@ -112,12 +112,12 @@ func TestProviderKeyService_Update_NotFound(t *testing.T) {
 func TestProviderKeyService_Update_RenameOnly_PreservesSecret(t *testing.T) {
 	existingEnc := encryptForTest("sk-existing-key-12345678")
 	d := &fakeDal{
-		providerKey:        dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "old", APIKeyEncrypted: existingEnc},
-		updatedProviderKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "new", APIKeyEncrypted: existingEnc},
+		providerKey:        dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "old", APIKeyEncrypted: existingEnc},
+		updatedProviderKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "new", APIKeyEncrypted: existingEnc},
 	}
 	svc := newProviderKeySvc(d)
 	newName := "new"
-	_, err := svc.Update(context.Background(), 1, "tid", service.LLMProviderKeyPatch{Name: &newName})
+	_, err := svc.Update(context.Background(), 1, strp("tid"), service.LLMProviderKeyPatch{Name: &newName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +134,10 @@ func TestProviderKeyService_Update_RenameOnly_PreservesSecret(t *testing.T) {
 }
 
 func TestProviderKeyService_Update_EmptyName_ReturnsValidation(t *testing.T) {
-	d := &fakeDal{providerKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "old"}}
+	d := &fakeDal{providerKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "old"}}
 	svc := newProviderKeySvc(d)
 	empty := ""
-	_, err := svc.Update(context.Background(), 1, "tid", service.LLMProviderKeyPatch{Name: &empty})
+	_, err := svc.Update(context.Background(), 1, strp("tid"), service.LLMProviderKeyPatch{Name: &empty})
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -146,12 +146,12 @@ func TestProviderKeyService_Update_EmptyName_ReturnsValidation(t *testing.T) {
 func TestProviderKeyService_Update_RotateSecret(t *testing.T) {
 	oldEnc := encryptForTest("sk-old-key-12345678")
 	d := &fakeDal{
-		providerKey:        dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "k", APIKeyEncrypted: oldEnc},
-		updatedProviderKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "k"},
+		providerKey:        dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "k", APIKeyEncrypted: oldEnc},
+		updatedProviderKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "k"},
 	}
 	svc := newProviderKeySvc(d)
 	newKey := "sk-new-key-abcdefghij"
-	_, err := svc.Update(context.Background(), 1, "tid", service.LLMProviderKeyPatch{APIKey: &newKey})
+	_, err := svc.Update(context.Background(), 1, strp("tid"), service.LLMProviderKeyPatch{APIKey: &newKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestProviderKeyService_Update_RotateSecret(t *testing.T) {
 func TestProviderKeyService_SetDefault_NotFound(t *testing.T) {
 	d := &fakeDal{setDefaultProviderKeyErr: pgx.ErrNoRows}
 	svc := newProviderKeySvc(d)
-	_, err := svc.SetDefault(context.Background(), 999, "tid")
+	_, err := svc.SetDefault(context.Background(), 999, strp("tid"))
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
@@ -181,7 +181,7 @@ func TestProviderKeyService_SetDefault_NotFound(t *testing.T) {
 func TestProviderKeyService_Delete_NotFound(t *testing.T) {
 	d := &fakeDal{deleteProviderKeyErr: pgx.ErrNoRows}
 	svc := newProviderKeySvc(d)
-	err := svc.Delete(context.Background(), 999, "tid")
+	err := svc.Delete(context.Background(), 999, strp("tid"))
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
@@ -189,7 +189,7 @@ func TestProviderKeyService_Delete_NotFound(t *testing.T) {
 
 func TestProviderKeyService_Delete_Success(t *testing.T) {
 	svc := newProviderKeySvc(&fakeDal{})
-	if err := svc.Delete(context.Background(), 1, "tid"); err != nil {
+	if err := svc.Delete(context.Background(), 1, strp("tid")); err != nil {
 		t.Fatalf("want nil error, got %v", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestProviderKeyService_Delete_Success(t *testing.T) {
 func TestProviderKeyService_ResolveDecrypted_NotFound(t *testing.T) {
 	d := &fakeDal{getProviderKeyErr: pgx.ErrNoRows}
 	svc := newProviderKeySvc(d)
-	_, err := svc.ResolveDecrypted(context.Background(), 999, "tid")
+	_, err := svc.ResolveDecrypted(context.Background(), 999, strp("tid"))
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
@@ -207,9 +207,9 @@ func TestProviderKeyService_ResolveDecrypted_NotFound(t *testing.T) {
 
 func TestProviderKeyService_ResolveDecrypted_ReturnsPlaintext(t *testing.T) {
 	enc := encryptForTest("sk-my-real-key-99999999")
-	d := &fakeDal{providerKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: "tid", APIKeyEncrypted: enc}}
+	d := &fakeDal{providerKey: dal.LLMProviderKey{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), APIKeyEncrypted: enc}}
 	svc := newProviderKeySvc(d)
-	plain, err := svc.ResolveDecrypted(context.Background(), 1, "tid")
+	plain, err := svc.ResolveDecrypted(context.Background(), 1, strp("tid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,9 +223,9 @@ func TestProviderKeyService_ResolveDecrypted_ReturnsPlaintext(t *testing.T) {
 func TestProviderKeyService_List_MasksSecret_NoPlaintextInOutput(t *testing.T) {
 	plain := "sk-ant-api03-verysecretkey12345678"
 	enc := encryptForTest(plain)
-	d := &fakeDal{providerKeys: []dal.LLMProviderKey{{ID: 1, LLMProviderID: 1, TenantID: "tid", Name: "k", APIKeyEncrypted: enc}}}
+	d := &fakeDal{providerKeys: []dal.LLMProviderKey{{ID: 1, LLMProviderID: 1, TenantID: strp("tid"), Name: "k", APIKeyEncrypted: enc}}}
 	svc := newProviderKeySvc(d)
-	list, err := svc.List(context.Background(), 1, "tid")
+	list, err := svc.List(context.Background(), 1, strp("tid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestProviderKeyService_List_MasksSecret_NoPlaintextInOutput(t *testing.T) {
 
 func TestProviderKeyService_List_Empty_ReturnsEmptySlice(t *testing.T) {
 	svc := newProviderKeySvc(&fakeDal{providerKeys: []dal.LLMProviderKey{}})
-	list, err := svc.List(context.Background(), 1, "tid")
+	list, err := svc.List(context.Background(), 1, strp("tid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestProviderKeyService_List_Empty_ReturnsEmptySlice(t *testing.T) {
 func TestProviderKeyService_RecordTestResult_PassesThrough(t *testing.T) {
 	d := &fakeDal{}
 	svc := newProviderKeySvc(d)
-	if err := svc.RecordTestResult(context.Background(), 1, "tid", true); err != nil {
+	if err := svc.RecordTestResult(context.Background(), 1, strp("tid"), true); err != nil {
 		t.Fatal(err)
 	}
 	if len(d.setTestResultCalls) != 1 || !d.setTestResultCalls[0] {

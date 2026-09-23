@@ -100,18 +100,18 @@ func TestDAL_ProviderKey_CreateAndList(t *testing.T) {
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-list")
 
 	k1, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "Key_for_april", APIKeyEncrypted: "enc:aaa",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "Key_for_april", APIKeyEncrypted: "enc:aaa",
 	})
 	if err != nil {
 		t.Fatalf("create key 1: %v", err)
 	}
 	if _, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "Key_for_QA", APIKeyEncrypted: "enc:bbb",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "Key_for_QA", APIKeyEncrypted: "enc:bbb",
 	}); err != nil {
 		t.Fatalf("create key 2: %v", err)
 	}
 
-	list, err := d.ListLLMProviderKeys(context.Background(), providerID, tenantID)
+	list, err := d.ListLLMProviderKeys(context.Background(), providerID, &tenantID)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestDAL_ProviderKey_DuplicateName_UniqueViolation(t *testing.T) {
 	tenantID := setupProviderKeyTenant(t, pool, "inttest-pk-tenant-dup")
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-dup")
 
-	in := dal.LLMProviderKeyInput{LLMProviderID: providerID, TenantID: tenantID, Name: "dup", APIKeyEncrypted: "enc:aaa"}
+	in := dal.LLMProviderKeyInput{LLMProviderID: providerID, TenantID: &tenantID, Name: "dup", APIKeyEncrypted: "enc:aaa"}
 	if _, err := d.CreateLLMProviderKey(context.Background(), in); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
@@ -148,19 +148,19 @@ func TestDAL_ProviderKey_TenantIsolation(t *testing.T) {
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-iso")
 
 	k, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantA, Name: "a-key", APIKeyEncrypted: "enc:aaa",
+		LLMProviderID: providerID, TenantID: &tenantA, Name: "a-key", APIKeyEncrypted: "enc:aaa",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
 	// Tenant B must not be able to fetch tenant A's key by id.
-	_, err = d.GetLLMProviderKey(context.Background(), k.ID, tenantB)
+	_, err = d.GetLLMProviderKey(context.Background(), k.ID, &tenantB)
 	if err == nil {
 		t.Error("want error fetching another tenant's key, got nil")
 	}
 
-	listB, err := d.ListLLMProviderKeys(context.Background(), providerID, tenantB)
+	listB, err := d.ListLLMProviderKeys(context.Background(), providerID, &tenantB)
 	if err != nil {
 		t.Fatalf("list for tenant B: %v", err)
 	}
@@ -176,30 +176,30 @@ func TestDAL_ProviderKey_SetDefault_ClearsPrevious(t *testing.T) {
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-default")
 
 	k1, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "k1", APIKeyEncrypted: "enc:aaa", IsDefault: true,
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "k1", APIKeyEncrypted: "enc:aaa", IsDefault: true,
 	})
 	if err != nil {
 		t.Fatalf("create k1: %v", err)
 	}
 	k2, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "k2", APIKeyEncrypted: "enc:bbb",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "k2", APIKeyEncrypted: "enc:bbb",
 	})
 	if err != nil {
 		t.Fatalf("create k2: %v", err)
 	}
 
-	if _, err := d.SetDefaultLLMProviderKey(context.Background(), k2.ID, tenantID); err != nil {
+	if _, err := d.SetDefaultLLMProviderKey(context.Background(), k2.ID, &tenantID); err != nil {
 		t.Fatalf("SetDefaultLLMProviderKey: %v", err)
 	}
 
-	got1, err := d.GetLLMProviderKey(context.Background(), k1.ID, tenantID)
+	got1, err := d.GetLLMProviderKey(context.Background(), k1.ID, &tenantID)
 	if err != nil {
 		t.Fatalf("get k1: %v", err)
 	}
 	if got1.IsDefault {
 		t.Error("k1 must no longer be default after k2 is set as default")
 	}
-	got2, err := d.GetLLMProviderKey(context.Background(), k2.ID, tenantID)
+	got2, err := d.GetLLMProviderKey(context.Background(), k2.ID, &tenantID)
 	if err != nil {
 		t.Fatalf("get k2: %v", err)
 	}
@@ -215,14 +215,14 @@ func TestDAL_ProviderKey_UpdateRenameAndRotate(t *testing.T) {
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-update")
 
 	k, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "old-name", APIKeyEncrypted: "enc:old",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "old-name", APIKeyEncrypted: "enc:old",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	updated, err := d.UpdateLLMProviderKey(context.Background(), k.ID, tenantID, dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "new-name", APIKeyEncrypted: "enc:new",
+	updated, err := d.UpdateLLMProviderKey(context.Background(), k.ID, &tenantID, dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "new-name", APIKeyEncrypted: "enc:new",
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -239,17 +239,130 @@ func TestDAL_ProviderKey_Delete(t *testing.T) {
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-delete")
 
 	k, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "to-delete", APIKeyEncrypted: "enc:aaa",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "to-delete", APIKeyEncrypted: "enc:aaa",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := d.DeleteLLMProviderKey(context.Background(), k.ID, tenantID); err != nil {
+	if err := d.DeleteLLMProviderKey(context.Background(), k.ID, &tenantID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	_, err = d.GetLLMProviderKey(context.Background(), k.ID, tenantID)
+	_, err = d.GetLLMProviderKey(context.Background(), k.ID, &tenantID)
 	if err != pgx.ErrNoRows {
 		t.Errorf("want pgx.ErrNoRows after delete, got %v", err)
+	}
+}
+
+// ── Platform-owned keys (tenant_id IS NULL, added 108) ──────────────────────────
+
+func TestDAL_ProviderKey_PlatformOwned_CreateAndList(t *testing.T) {
+	pool := integrationPool(t)
+	d := newProviderDAL(t, pool)
+	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-platform-list")
+
+	k1, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: nil, Name: "PlatformKey1", APIKeyEncrypted: "enc:aaa",
+	})
+	if err != nil {
+		t.Fatalf("create platform key: %v", err)
+	}
+	t.Cleanup(func() { _ = d.DeleteLLMProviderKey(context.Background(), k1.ID, nil) })
+
+	list, err := d.ListLLMProviderKeys(context.Background(), providerID, nil)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].TenantID != nil {
+		t.Fatalf("want 1 platform key with nil TenantID, got %+v", list)
+	}
+}
+
+func TestDAL_ProviderKey_PlatformOwned_InvisibleToTenantQueries(t *testing.T) {
+	pool := integrationPool(t)
+	d := newProviderDAL(t, pool)
+	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-platform-iso")
+	tenantID := setupProviderKeyTenant(t, pool, "inttest-pk-tenant-platform-iso")
+
+	platformKey, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: nil, Name: "PlatformOnly", APIKeyEncrypted: "enc:aaa",
+	})
+	if err != nil {
+		t.Fatalf("create platform key: %v", err)
+	}
+	t.Cleanup(func() { _ = d.DeleteLLMProviderKey(context.Background(), platformKey.ID, nil) })
+
+	// A tenant-scoped query must not see the platform-owned key.
+	tenantList, err := d.ListLLMProviderKeys(context.Background(), providerID, &tenantID)
+	if err != nil {
+		t.Fatalf("list tenant: %v", err)
+	}
+	if len(tenantList) != 0 {
+		t.Errorf("want 0 keys visible to tenant query, got %d", len(tenantList))
+	}
+	if _, err := d.GetLLMProviderKey(context.Background(), platformKey.ID, &tenantID); err != pgx.ErrNoRows {
+		t.Errorf("want pgx.ErrNoRows fetching a platform key via a tenant-scoped Get, got %v", err)
+	}
+}
+
+func TestDAL_ProviderKey_PlatformOwned_NameUniqueAmongPlatformKeysOnly(t *testing.T) {
+	pool := integrationPool(t)
+	d := newProviderDAL(t, pool)
+	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-platform-dup")
+	tenantID := setupProviderKeyTenant(t, pool, "inttest-pk-tenant-platform-dup")
+
+	if _, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: nil, Name: "shared-name", APIKeyEncrypted: "enc:aaa",
+	}); err != nil {
+		t.Fatalf("create platform key: %v", err)
+	}
+	// A tenant key with the SAME name must succeed — uniqueness is scoped
+	// separately for platform (tenant_id IS NULL) vs tenant rows.
+	tenantKey, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "shared-name", APIKeyEncrypted: "enc:bbb",
+	})
+	if err != nil {
+		t.Fatalf("want tenant key with same name as a platform key to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = d.DeleteLLMProviderKey(context.Background(), tenantKey.ID, &tenantID) })
+
+	// A second platform key with the same name must fail.
+	_, err = d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: nil, Name: "shared-name", APIKeyEncrypted: "enc:ccc",
+	})
+	if !dal.IsUniqueViolation(err) {
+		t.Errorf("want unique violation for duplicate platform key name, got %v", err)
+	}
+}
+
+func TestDAL_ProviderKey_PlatformOwned_SetDefault_ClearsPrevious(t *testing.T) {
+	pool := integrationPool(t)
+	d := newProviderDAL(t, pool)
+	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-pk-provider-platform-default")
+
+	k1, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: nil, Name: "p1", APIKeyEncrypted: "enc:aaa", IsDefault: true,
+	})
+	if err != nil {
+		t.Fatalf("create k1: %v", err)
+	}
+	t.Cleanup(func() { _ = d.DeleteLLMProviderKey(context.Background(), k1.ID, nil) })
+	k2, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
+		LLMProviderID: providerID, TenantID: nil, Name: "p2", APIKeyEncrypted: "enc:bbb",
+	})
+	if err != nil {
+		t.Fatalf("create k2: %v", err)
+	}
+	t.Cleanup(func() { _ = d.DeleteLLMProviderKey(context.Background(), k2.ID, nil) })
+
+	if _, err := d.SetDefaultLLMProviderKey(context.Background(), k2.ID, nil); err != nil {
+		t.Fatalf("SetDefaultLLMProviderKey: %v", err)
+	}
+	got1, err := d.GetLLMProviderKey(context.Background(), k1.ID, nil)
+	if err != nil {
+		t.Fatalf("get k1: %v", err)
+	}
+	if got1.IsDefault {
+		t.Error("k1 must no longer be default after k2 is set as default")
 	}
 }
 
@@ -267,7 +380,7 @@ func TestDAL_ProviderKey_DeleteProviderCascadesKeys(t *testing.T) {
 	t.Cleanup(func() { _ = d.DeleteProvider(context.Background(), provider.ID) })
 
 	k, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: provider.ID, TenantID: tenantID, Name: "cascade-key", APIKeyEncrypted: "enc:aaa",
+		LLMProviderID: provider.ID, TenantID: &tenantID, Name: "cascade-key", APIKeyEncrypted: "enc:aaa",
 	})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
@@ -277,7 +390,7 @@ func TestDAL_ProviderKey_DeleteProviderCascadesKeys(t *testing.T) {
 		t.Fatalf("delete provider: %v", err)
 	}
 
-	_, err = d.GetLLMProviderKey(context.Background(), k.ID, tenantID)
+	_, err = d.GetLLMProviderKey(context.Background(), k.ID, &tenantID)
 	if err != pgx.ErrNoRows {
 		t.Errorf("want key cascade-deleted with its provider (pgx.ErrNoRows), got %v", err)
 	}

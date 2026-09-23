@@ -19,11 +19,13 @@ const systemAgentsConfigKey = "system_agents"
 
 type saRoleStored struct {
 	Enabled         bool    `json:"enabled"`
+	Mode            string  `json:"mode"` // "" or "custom" = today's fields below; "general" = Provider+KeyID against the platform's own LLM Providers config (db/108)
 	Provider        *string `json:"provider"`
 	Model           *string `json:"model"`
 	BaseURL         *string `json:"base_url"`
 	SystemPrompt    *string `json:"system_prompt"`
 	APIKeyEncrypted *string `json:"api_key_encrypted"`
+	KeyID           *int64  `json:"key_id"` // mode="general" only; nil = that provider's default platform key
 }
 
 type saConfigStored struct {
@@ -34,11 +36,13 @@ type saConfigStored struct {
 
 type SystemAgentRoleOut struct {
 	Enabled      bool    `json:"enabled"`
+	Mode         string  `json:"mode"`
 	Provider     *string `json:"provider"`
 	Model        *string `json:"model"`
 	BaseURL      *string `json:"base_url"`
 	SystemPrompt *string `json:"system_prompt"`
 	APIKeyHint   *string `json:"api_key_hint"` // masked, never plaintext
+	KeyID        *int64  `json:"key_id"`       // mode="general" only
 }
 
 type SystemAgentsOut struct {
@@ -47,11 +51,20 @@ type SystemAgentsOut struct {
 
 type SystemAgentRoleIn struct {
 	Enabled      *bool   `json:"enabled"`
+	Mode         *string `json:"mode"` // nil = leave unchanged; "" treated as "custom"
 	Provider     *string `json:"provider"`
 	Model        *string `json:"model"`
 	BaseURL      *string `json:"base_url"`
 	SystemPrompt *string `json:"system_prompt"`
 	APIKey       *string `json:"api_key"` // plaintext write-only; nil/blank = keep existing
+	// KeyID (mode="general" only): nil = leave unchanged, matching every other
+	// field on this struct — same "nil = unchanged" convention as Provider/Model
+	// above, not the tri-state present/absent/null pattern LLMProviderPatch.APIKey
+	// uses elsewhere. To switch a role from a specific named key back to "use
+	// that provider's default key," delete the platform key's is_default flag
+	// via the LLM Providers tab instead of clearing key_id here — a real but
+	// minor UX gap, not fixed in this pass.
+	KeyID *int64 `json:"key_id"`
 }
 
 type SystemAgentsIn struct {
@@ -109,6 +122,12 @@ func (h *SystemAgentsHandler) Put(w http.ResponseWriter, r *http.Request) {
 
 		if incoming.Enabled != nil {
 			existing.Enabled = *incoming.Enabled
+		}
+		if incoming.Mode != nil {
+			existing.Mode = *incoming.Mode
+		}
+		if incoming.KeyID != nil {
+			existing.KeyID = incoming.KeyID
 		}
 		if incoming.Provider != nil {
 			s := *incoming.Provider
@@ -261,10 +280,12 @@ func (h *SystemAgentsHandler) configToOut(cfg saConfigStored) SystemAgentsOut {
 	for name, r := range cfg.Roles {
 		role := SystemAgentRoleOut{
 			Enabled:      r.Enabled,
+			Mode:         r.Mode,
 			Provider:     r.Provider,
 			Model:        r.Model,
 			BaseURL:      r.BaseURL,
 			SystemPrompt: r.SystemPrompt,
+			KeyID:        r.KeyID,
 		}
 		if r.APIKeyEncrypted != nil && *r.APIKeyEncrypted != "" {
 			hint := keyHint(h.fernetKey, *r.APIKeyEncrypted)

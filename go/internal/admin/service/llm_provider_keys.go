@@ -48,7 +48,7 @@ func NewLLMProviderKeyService(d Dal, secretKey string) *LLMProviderKeyService {
 }
 
 // List returns all named keys for a provider, scoped to tenantID, masked.
-func (s *LLMProviderKeyService) List(ctx context.Context, llmProviderID int64, tenantID string) ([]LLMProviderKeyOut, error) {
+func (s *LLMProviderKeyService) List(ctx context.Context, llmProviderID int64, tenantID *string) ([]LLMProviderKeyOut, error) {
 	rows, err := s.dal.ListLLMProviderKeys(ctx, llmProviderID, tenantID)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (s *LLMProviderKeyService) List(ctx context.Context, llmProviderID int64, t
 // Create validates, encrypts the secret, and persists a new named key.
 // Returns ErrValidation for missing required fields and ErrConflict for a duplicate name.
 // When IsDefault is true, any existing default key for this provider+tenant is cleared first.
-func (s *LLMProviderKeyService) Create(ctx context.Context, llmProviderID int64, tenantID string, body LLMProviderKeyCreate) (LLMProviderKeyOut, error) {
+func (s *LLMProviderKeyService) Create(ctx context.Context, llmProviderID int64, tenantID *string, body LLMProviderKeyCreate) (LLMProviderKeyOut, error) {
 	if body.Name == "" {
 		return LLMProviderKeyOut{}, validation("name is required")
 	}
@@ -101,7 +101,7 @@ func (s *LLMProviderKeyService) Create(ctx context.Context, llmProviderID int64,
 
 // Update applies a PATCH (rename and/or rotate secret) using fetch-then-modify semantics.
 // Returns ErrNotFound when the key does not exist or is not owned by tenantID.
-func (s *LLMProviderKeyService) Update(ctx context.Context, id int64, tenantID string, patch LLMProviderKeyPatch) (LLMProviderKeyOut, error) {
+func (s *LLMProviderKeyService) Update(ctx context.Context, id int64, tenantID *string, patch LLMProviderKeyPatch) (LLMProviderKeyOut, error) {
 	row, err := s.dal.GetLLMProviderKey(ctx, id, tenantID)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -147,7 +147,7 @@ func (s *LLMProviderKeyService) Update(ctx context.Context, id int64, tenantID s
 
 // SetDefault marks the given key as the default for its provider+tenant.
 // Returns ErrNotFound when the key does not exist or is not owned by tenantID.
-func (s *LLMProviderKeyService) SetDefault(ctx context.Context, id int64, tenantID string) (LLMProviderKeyOut, error) {
+func (s *LLMProviderKeyService) SetDefault(ctx context.Context, id int64, tenantID *string) (LLMProviderKeyOut, error) {
 	row, err := s.dal.SetDefaultLLMProviderKey(ctx, id, tenantID)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -160,7 +160,7 @@ func (s *LLMProviderKeyService) SetDefault(ctx context.Context, id int64, tenant
 
 // Delete hard-deletes a named key. Returns ErrNotFound when it does not exist
 // or is not owned by tenantID.
-func (s *LLMProviderKeyService) Delete(ctx context.Context, id int64, tenantID string) error {
+func (s *LLMProviderKeyService) Delete(ctx context.Context, id int64, tenantID *string) error {
 	err := s.dal.DeleteLLMProviderKey(ctx, id, tenantID)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -173,7 +173,7 @@ func (s *LLMProviderKeyService) Delete(ctx context.Context, id int64, tenantID s
 
 // ResolveDecrypted returns the decrypted secret for a named key, scoped to tenantID.
 // Returns ErrNotFound when the key does not exist or is not owned by tenantID.
-func (s *LLMProviderKeyService) ResolveDecrypted(ctx context.Context, id int64, tenantID string) (string, error) {
+func (s *LLMProviderKeyService) ResolveDecrypted(ctx context.Context, id int64, tenantID *string) (string, error) {
 	row, err := s.dal.GetLLMProviderKey(ctx, id, tenantID)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -189,7 +189,7 @@ func (s *LLMProviderKeyService) ResolveDecrypted(ctx context.Context, id int64, 
 }
 
 // RecordTestResult stores the outcome of a Test-key probe call.
-func (s *LLMProviderKeyService) RecordTestResult(ctx context.Context, id int64, tenantID string, ok bool) error {
+func (s *LLMProviderKeyService) RecordTestResult(ctx context.Context, id int64, tenantID *string, ok bool) error {
 	return s.dal.SetLLMProviderKeyTestResult(ctx, id, tenantID, ok)
 }
 

@@ -30,7 +30,7 @@ func TestDAL_TenantSystemAgentConfig_UpsertGeneralMode(t *testing.T) {
 	tenantID := setupProviderKeyTenant(t, pool, "inttest-sac-tenant-general")
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-sac-provider-general")
 	key, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "k1", APIKeyEncrypted: "enc:aaa",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "k1", APIKeyEncrypted: "enc:aaa",
 	})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
@@ -139,7 +139,7 @@ func TestDAL_TenantSystemAgentConfig_KeyDeletedSetsKeyIDNull(t *testing.T) {
 	tenantID := setupProviderKeyTenant(t, pool, "inttest-sac-tenant-keydel")
 	providerID := setupProviderKeyPlatformProvider(t, d, "inttest-sac-provider-keydel")
 	key, err := d.CreateLLMProviderKey(context.Background(), dal.LLMProviderKeyInput{
-		LLMProviderID: providerID, TenantID: tenantID, Name: "k1", APIKeyEncrypted: "enc:aaa",
+		LLMProviderID: providerID, TenantID: &tenantID, Name: "k1", APIKeyEncrypted: "enc:aaa",
 	})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
@@ -152,7 +152,7 @@ func TestDAL_TenantSystemAgentConfig_KeyDeletedSetsKeyIDNull(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	if err := d.DeleteLLMProviderKey(context.Background(), key.ID, tenantID); err != nil {
+	if err := d.DeleteLLMProviderKey(context.Background(), key.ID, &tenantID); err != nil {
 		t.Fatalf("delete key: %v", err)
 	}
 

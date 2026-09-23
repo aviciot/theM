@@ -1,6 +1,6 @@
 'use client';
-import { useState } from 'react';
-import { themApi } from '@/lib/api';
+import { useEffect, useState } from 'react';
+import { themApi, type LLMProviderOut, type LLMProviderKeyOut } from '@/lib/api';
 import {
   PROVIDERS, PROVIDER_MODELS, CUSTOM_MODEL_SENTINEL,
   getRoleLabel, getRoleDescription, getRolePromptPlaceholder, getRoleWhereUsed,
@@ -9,11 +9,13 @@ import {
 
 export interface RoleForm {
   enabled: boolean;
+  mode?: 'general' | 'custom';
   provider: string;
   model: string;
   api_key: string;
   base_url: string;
   system_prompt: string;
+  key_id?: number | null;
 }
 
 interface TestState {
@@ -22,6 +24,14 @@ interface TestState {
   latency?: number;
   error?: string;
 }
+
+const segBtnStyle = (active: boolean): React.CSSProperties => ({
+  flex: 1, padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+  fontSize: '13px', fontWeight: 600,
+  background: active ? 'var(--tm-accent)' : 'transparent',
+  color: active ? '#fff' : 'var(--tm-text-muted)',
+  transition: 'all 0.15s',
+});
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -83,6 +93,42 @@ export function RoleCard({
   const knownModels = PROVIDER_MODELS[form.provider] ?? [];
   const isKnownModel = knownModels.some((m) => m.value === form.model);
   const [showCustom, setShowCustom] = useState(!isKnownModel && form.model !== '');
+
+  const mode: 'general' | 'custom' = form.mode === 'general' ? 'general' : 'custom';
+
+  // General mode: platform's own enabled providers + that provider's named keys.
+  const [platformProviders, setPlatformProviders] = useState<LLMProviderOut[]>([]);
+  const [providerKeys, setProviderKeys] = useState<LLMProviderKeyOut[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+
+  useEffect(() => {
+    if (mode !== 'general') return;
+    themApi.listPlatformProviders()
+      .then((provs) => setPlatformProviders(provs.filter((p) => p.enabled)))
+      .catch(() => setPlatformProviders([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== 'general' || !form.provider) {
+      setProviderKeys([]);
+      return;
+    }
+    setKeysLoading(true);
+    themApi.listPlatformProviderKeys(form.provider)
+      .then((keys) => setProviderKeys(keys))
+      .catch(() => setProviderKeys([]))
+      .finally(() => setKeysLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, form.provider]);
+
+  function handleModeChange(next: 'general' | 'custom') {
+    onChange({ mode: next });
+  }
+
+  function handleGeneralProviderChange(providerName: string) {
+    onChange({ provider: providerName, key_id: null });
+  }
 
   function handleProviderChange(provider: string) {
     const models = PROVIDER_MODELS[provider] ?? [];
@@ -154,60 +200,107 @@ export function RoleCard({
         <Toggle value={form.enabled} onChange={(v) => onChange({ enabled: v })} />
       </div>
 
-      <div style={{ height: '1px', background: 'rgba(132,157,188,.1)', marginBottom: '22px' }} />
+      <div style={{ height: '1px', background: 'rgba(132,157,188,.1)', marginBottom: '20px' }} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-        <Field label="Provider">
-          <select value={form.provider} onChange={(e) => handleProviderChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
-            {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Model">
-          {knownModels.length > 0 && !showCustom ? (
-            <select value={isKnownModel ? form.model : CUSTOM_MODEL_SENTINEL} onChange={(e) => handleModelSelectChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
-              {knownModels.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              <option value={CUSTOM_MODEL_SENTINEL}>Custom…</option>
-            </select>
-          ) : (
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <input style={{ ...inputStyle, flex: 1 }} value={form.model} onChange={(e) => onChange({ model: e.target.value })} placeholder="model-id" autoFocus={showCustom} />
-              {knownModels.length > 0 && (
-                <button type="button" onClick={() => { setShowCustom(false); onChange({ model: knownModels[0].value }); }} title="Pick from list" style={{ padding: '0 10px', borderRadius: '8px', border: '1px solid var(--tm-input-border)', background: 'var(--tm-inset)', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 }}>
-                  ↩ List
-                </button>
-              )}
-            </div>
-          )}
-        </Field>
+      <div style={{ display: 'flex', gap: '4px', background: 'rgba(0,0,0,0.2)', borderRadius: '10px', padding: '4px', marginBottom: '22px' }}>
+        <button style={segBtnStyle(mode === 'general')} onClick={() => handleModeChange('general')}>
+          General settings
+        </button>
+        <button style={segBtnStyle(mode === 'custom')} onClick={() => handleModeChange('custom')}>
+          Custom
+        </button>
       </div>
 
-      <Field label={apiKeyHint ? `API Key (current: …${apiKeyHint})` : 'API Key'} hint={apiKeyHint ? 'Leave blank to keep the current key.' : undefined}>
-        <input style={inputStyle} type="password" value={form.api_key} onChange={(e) => onChange({ api_key: e.target.value })} placeholder={apiKeyHint ? '••••••••  (leave blank to keep)' : 'sk-…'} autoComplete="new-password" />
-      </Field>
+      {mode === 'general' ? (
+        <>
+          <p style={{ fontSize: '12px', color: 'var(--tm-text-muted)', margin: '0 0 16px 0', lineHeight: 1.5 }}>
+            Uses the-M's own platform LLM Providers configuration — pick which provider and named
+            key this role should call. Test the key itself from the LLM Providers tab.
+          </p>
+          {platformProviders.length === 0 && (
+            <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(230,184,92,0.08)', border: '1px solid rgba(230,184,92,0.22)', color: '#e6b85c', fontSize: '13px', marginBottom: '16px' }}>
+              No platform providers enabled yet — enable one in the LLM Providers tab first.
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <Field label="Provider">
+              <select value={form.provider} onChange={(e) => handleGeneralProviderChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
+                <option value="">— select provider —</option>
+                {platformProviders.map((p) => <option key={p.name} value={p.name}>{p.display_name || p.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Key" hint={keysLoading ? 'Loading keys…' : (providerKeys.length === 0 && form.provider ? 'No named keys saved for this provider yet.' : undefined)}>
+              <select
+                value={form.key_id ?? ''}
+                onChange={(e) => onChange({ key_id: e.target.value ? Number(e.target.value) : null })}
+                disabled={!form.provider || keysLoading}
+                style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
+              >
+                <option value="">— use default key —</option>
+                {providerKeys.map((k) => (
+                  <option key={k.id} value={k.id}>{k.name}{k.is_default ? ' (default)' : ''}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <Field label="Provider">
+              <select value={form.provider} onChange={(e) => handleProviderChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
+                {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Model">
+              {knownModels.length > 0 && !showCustom ? (
+                <select value={isKnownModel ? form.model : CUSTOM_MODEL_SENTINEL} onChange={(e) => handleModelSelectChange(e.target.value)} style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}>
+                  {knownModels.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                  <option value={CUSTOM_MODEL_SENTINEL}>Custom…</option>
+                </select>
+              ) : (
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input style={{ ...inputStyle, flex: 1 }} value={form.model} onChange={(e) => onChange({ model: e.target.value })} placeholder="model-id" autoFocus={showCustom} />
+                  {knownModels.length > 0 && (
+                    <button type="button" onClick={() => { setShowCustom(false); onChange({ model: knownModels[0].value }); }} title="Pick from list" style={{ padding: '0 10px', borderRadius: '8px', border: '1px solid var(--tm-input-border)', background: 'var(--tm-inset)', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 }}>
+                      ↩ List
+                    </button>
+                  )}
+                </div>
+              )}
+            </Field>
+          </div>
 
-      <Field label="Base URL" hint="Optional — leave blank for the provider default.">
-        <input style={inputStyle} value={form.base_url} onChange={(e) => onChange({ base_url: e.target.value })} placeholder="https://api.example.com/v1" />
-      </Field>
+          <Field label={apiKeyHint ? `API Key (current: …${apiKeyHint})` : 'API Key'} hint={apiKeyHint ? 'Leave blank to keep the current key.' : undefined}>
+            <input style={inputStyle} type="password" value={form.api_key} onChange={(e) => onChange({ api_key: e.target.value })} placeholder={apiKeyHint ? '••••••••  (leave blank to keep)' : 'sk-…'} autoComplete="new-password" />
+          </Field>
 
-      <Field label="System Prompt">
-        <textarea style={{ ...inputStyle, minHeight: '100px', resize: 'vertical', fontFamily: 'monospace', fontSize: '12px', lineHeight: 1.5 }} value={form.system_prompt} onChange={(e) => onChange({ system_prompt: e.target.value })} placeholder={getRolePromptPlaceholder(role)} />
-      </Field>
+          <Field label="Base URL" hint="Optional — leave blank for the provider default.">
+            <input style={inputStyle} value={form.base_url} onChange={(e) => onChange({ base_url: e.target.value })} placeholder="https://api.example.com/v1" />
+          </Field>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px', flexWrap: 'wrap' }}>
-        <button onClick={handleTest} disabled={testState.loading || !canTest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 18px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'transparent', color: canTest ? 'var(--tm-text)' : 'var(--tm-text-muted)', cursor: (testState.loading || !canTest) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600, opacity: canTest ? 1 : 0.5 }} title={!canTest ? 'Select a provider and model first' : undefined}>
-          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>bolt</span>
-          {testState.loading ? 'Testing…' : 'Test'}
-        </button>
+          <Field label="System Prompt">
+            <textarea style={{ ...inputStyle, minHeight: '100px', resize: 'vertical', fontFamily: 'monospace', fontSize: '12px', lineHeight: 1.5 }} value={form.system_prompt} onChange={(e) => onChange({ system_prompt: e.target.value })} placeholder={getRolePromptPlaceholder(role)} />
+          </Field>
 
-        {!testState.loading && testState.ok !== undefined && (
-          testState.ok
-            ? <span style={{ fontSize: '13px', color: '#4edea3', fontWeight: 600 }}>Connected ({testState.latency}ms)</span>
-            : <span style={{ fontSize: '13px', color: '#f87171' }}>{testState.error ?? 'Connection failed'}</span>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px', flexWrap: 'wrap' }}>
+            <button onClick={handleTest} disabled={testState.loading || !canTest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 18px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'transparent', color: canTest ? 'var(--tm-text)' : 'var(--tm-text-muted)', cursor: (testState.loading || !canTest) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600, opacity: canTest ? 1 : 0.5 }} title={!canTest ? 'Select a provider and model first' : undefined}>
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>bolt</span>
+              {testState.loading ? 'Testing…' : 'Test'}
+            </button>
 
+            {!testState.loading && testState.ok !== undefined && (
+              testState.ok
+                ? <span style={{ fontSize: '13px', color: '#4edea3', fontWeight: 600 }}>Connected ({testState.latency}ms)</span>
+                : <span style={{ fontSize: '13px', color: '#f87171' }}>{testState.error ?? 'Connection failed'}</span>
+            )}
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '18px' }}>
         <div style={{ flex: 1 }} />
         {saveMsg && <span style={{ fontSize: '13px', fontWeight: 600, color: saveMsg.ok ? '#4edea3' : '#f87171' }}>{saveMsg.text}</span>}
-
         <button onClick={onSave} disabled={saving} style={{ padding: '8px 22px', borderRadius: '9px', border: 'none', background: saving ? 'rgba(99,102,241,.5)' : 'var(--tm-accent)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
           {saving ? 'Saving…' : 'Save'}
         </button>

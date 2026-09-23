@@ -49,12 +49,12 @@ type LLMProviderPatch struct {
 	ModelPricing  map[string]any `json:"model_pricing"` // nil=absent
 	Enabled       *bool          `json:"enabled"`
 	AllowedModels *[]string      `json:"allowed_models"` // nil=absent
-	APIKeyPresent bool           `json:"-"`               // set by handler when api_key appears in JSON
+	APIKeyPresent bool           `json:"-"`              // set by handler when api_key appears in JSON
 }
 
 // LLMProviderService owns the business logic for LLM provider CRUD.
 type LLMProviderService struct {
-	dal    Dal
+	dal       Dal
 	fernetKey []byte // 32-byte derived key from DeriveKey(secretKey)
 }
 
@@ -307,6 +307,20 @@ func (s *LLMProviderService) UpsertForTenant(ctx context.Context, tenantID, name
 // /my/llm-providers/{name} first to create its own row before it can hold keys).
 func (s *LLMProviderService) GetOwnProviderRow(ctx context.Context, name, tenantID string) (dal.LLMProvider, error) {
 	row, err := s.dal.GetProviderByNameForTenant(ctx, name, tenantID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return dal.LLMProvider{}, ErrNotFound
+		}
+		return dal.LLMProvider{}, err
+	}
+	return row, nil
+}
+
+// GetPlatformProviderRow returns the platform-default them.llm_providers row
+// for name (tenant_id IS NULL). Returns ErrNotFound when no platform row
+// exists for this provider name.
+func (s *LLMProviderService) GetPlatformProviderRow(ctx context.Context, name string) (dal.LLMProvider, error) {
+	row, err := s.dal.GetProviderByNamePlatform(ctx, name)
 	if err != nil {
 		if dal.IsNoRows(err) {
 			return dal.LLMProvider{}, ErrNotFound

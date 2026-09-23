@@ -84,7 +84,7 @@ func (h *LLMProviderKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := h.keys.List(r.Context(), provider.ID, tenantID)
+	out, err := h.keys.List(r.Context(), provider.ID, &tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -107,7 +107,7 @@ func (h *LLMProviderKeysHandler) Create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	out, err := h.keys.Create(r.Context(), provider.ID, tenantID, body)
+	out, err := h.keys.Create(r.Context(), provider.ID, &tenantID, body)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -136,7 +136,7 @@ func (h *LLMProviderKeysHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	out, err := h.keys.Update(r.Context(), id, tenantID, body)
+	out, err := h.keys.Update(r.Context(), id, &tenantID, body)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -158,7 +158,7 @@ func (h *LLMProviderKeysHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.keys.Delete(r.Context(), id, tenantID); err != nil {
+	if err := h.keys.Delete(r.Context(), id, &tenantID); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
@@ -179,7 +179,7 @@ func (h *LLMProviderKeysHandler) SetDefault(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	out, err := h.keys.SetDefault(r.Context(), id, tenantID)
+	out, err := h.keys.SetDefault(r.Context(), id, &tenantID)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -205,7 +205,7 @@ func (h *LLMProviderKeysHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiKey, err := h.keys.ResolveDecrypted(r.Context(), id, tenantID)
+	apiKey, err := h.keys.ResolveDecrypted(r.Context(), id, &tenantID)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -224,7 +224,7 @@ func (h *LLMProviderKeysHandler) Test(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	ok2, testErr := probeLLMWithBase(ctx, provider.Name, model, apiKey, baseURL)
-	if recErr := h.keys.RecordTestResult(r.Context(), id, tenantID, ok2); recErr != nil {
+	if recErr := h.keys.RecordTestResult(r.Context(), id, &tenantID, ok2); recErr != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -252,7 +252,7 @@ func (h *LLMProviderKeysHandler) ListModels(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	apiKey, err := h.keys.ResolveDecrypted(r.Context(), keyID, tenantID)
+	apiKey, err := h.keys.ResolveDecrypted(r.Context(), keyID, &tenantID)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return

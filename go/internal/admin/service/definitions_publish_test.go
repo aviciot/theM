@@ -361,31 +361,31 @@ func (f *publishFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) 
 func (f *publishFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
-func (f *publishFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ string) ([]dal.LLMProviderKey, error) {
+func (f *publishFakeDal) ListLLMProviderKeys(_ context.Context, _ int64, _ *string) ([]dal.LLMProviderKey, error) {
 	return nil, nil
 }
-func (f *publishFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *publishFakeDal) GetLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *publishFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *publishFakeDal) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
 func (f *publishFakeDal) CreateLLMProviderKey(_ context.Context, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *publishFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
+func (f *publishFakeDal) UpdateLLMProviderKey(_ context.Context, _ int64, _ *string, _ dal.LLMProviderKeyInput) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *publishFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ string, _ bool) error {
+func (f *publishFakeDal) SetLLMProviderKeyTestResult(_ context.Context, _ int64, _ *string, _ bool) error {
 	return nil
 }
-func (f *publishFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ string) error {
+func (f *publishFakeDal) ClearDefaultLLMProviderKeys(_ context.Context, _ int64, _ *string) error {
 	return nil
 }
-func (f *publishFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ string) (dal.LLMProviderKey, error) {
+func (f *publishFakeDal) SetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return dal.LLMProviderKey{}, nil
 }
-func (f *publishFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ string) error {
+func (f *publishFakeDal) DeleteLLMProviderKey(_ context.Context, _ int64, _ *string) error {
 	return nil
 }
 func (f *publishFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (dal.TenantSystemAgentConfig, error) {

@@ -55,7 +55,9 @@ function ProviderCard({
 
   async function loadKeys() {
     try {
-      const list = await themApi.listProviderKeys(prov.name);
+      const list = isSuperAdmin
+        ? await themApi.listPlatformProviderKeys(prov.name)
+        : await themApi.listProviderKeys(prov.name);
       setKeys(list);
     } catch {
       setKeys([]);
@@ -65,9 +67,9 @@ function ProviderCard({
   }
 
   useEffect(() => {
-    if (!isSuperAdmin && prov.enabled) loadKeys();
+    if (prov.enabled) loadKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prov.name, prov.enabled]);
+  }, [prov.name, prov.enabled, isSuperAdmin]);
 
   function toggleModel(model: string) {
     setAllowedModels((prev) => prev.includes(model) ? prev.filter((m) => m !== model) : [...prev, model]);
@@ -78,12 +80,17 @@ function ProviderCard({
     setSavingModels(true);
     setModelsMsg(null);
     try {
-      const body: LLMProviderUpsertInput = {
-        default_model: prov.default_model,
-        enabled: prov.enabled,
-        allowed_models: allowedModels,
-      };
-      await themApi.upsertMyLLMProvider(prov.name, body);
+      if (isSuperAdmin) {
+        if (!prov.id) throw new Error('provider id missing');
+        await themApi.patchPlatformProvider(prov.id, { allowed_models: allowedModels });
+      } else {
+        const body: LLMProviderUpsertInput = {
+          default_model: prov.default_model,
+          enabled: prov.enabled,
+          allowed_models: allowedModels,
+        };
+        await themApi.upsertMyLLMProvider(prov.name, body);
+      }
       setModelsMsg({ ok: true, text: 'Saved' });
     } catch (e: unknown) {
       setModelsMsg({ ok: false, text: e instanceof Error ? e.message : 'Save failed' });
@@ -97,7 +104,9 @@ function ProviderCard({
     setRefreshing(true);
     setRefreshErr(null);
     try {
-      const res = await themApi.listAvailableModels(prov.name, defaultKey.id);
+      const res = isSuperAdmin
+        ? await themApi.listPlatformAvailableModels(prov.name, defaultKey.id)
+        : await themApi.listAvailableModels(prov.name, defaultKey.id);
       setModelOptions(res.models);
     } catch (e: unknown) {
       setRefreshErr(e instanceof Error ? e.message : 'Refresh failed');
@@ -106,7 +115,7 @@ function ProviderCard({
     }
   }
 
-  const showTenantBody = !isSuperAdmin && prov.enabled;
+  const showKeysBody = prov.enabled;
 
   return (
     <div style={{ background: 'var(--tm-card-bg)', border: '1px solid var(--tm-card-border)', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
@@ -160,7 +169,7 @@ function ProviderCard({
         </p>
       )}
 
-      {showTenantBody && (
+      {showKeysBody && (
         <>
           <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid rgba(132,157,188,.1)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '10px' }}>
@@ -201,7 +210,7 @@ function ProviderCard({
           </div>
 
           {keysLoaded && (
-            <LLMProviderKeysPanel providerName={prov.name} keys={keys} onChanged={loadKeys} />
+            <LLMProviderKeysPanel providerName={prov.name} keys={keys} onChanged={loadKeys} isSuperAdmin={isSuperAdmin} />
           )}
         </>
       )}

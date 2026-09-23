@@ -34,13 +34,13 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/admin/dal"
-	"github.com/aviciot/them/internal/crypto"
 )
 
 // synthesizerDAL is the minimal DAL surface synthesizeAppCard needs.
 type synthesizerDAL interface {
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	systemAgentRoleResolverDAL
+	platformSystemAgentRoleResolverDAL
 }
 
 // subAgentSummary is the subset of an agent row that the synthesizer sees.
@@ -88,29 +88,18 @@ func synthesizeAppCard(
 ) map[string]any {
 	// Load platform-global config first — used as the fallback when the tenant
 	// has no row / mode="custom" with unset fields (unchanged prior behavior).
-	var platformProvider, platformModel, platformAPIKey, platformBaseURL, platformSystemPrompt string
+	// resolvePlatformSystemAgentRole also resolves the platform's own
+	// general/custom mode choice for this role (db/108).
+	var platformResolved resolvedSystemAgentRole
 	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
 		var cfg saConfigStored
 		if err := json.Unmarshal(row.Value, &cfg); err == nil {
-			role := cfg.Roles["card_synthesizer"]
-			if role.Enabled && role.Provider != nil && role.Model != nil && role.APIKeyEncrypted != nil {
-				if apiKey, err := crypto.DecryptStored(fernetKey, *role.APIKeyEncrypted); err == nil && apiKey != "" {
-					platformProvider = *role.Provider
-					platformModel = *role.Model
-					platformAPIKey = apiKey
-					if role.BaseURL != nil {
-						platformBaseURL = *role.BaseURL
-					}
-					if role.SystemPrompt != nil && *role.SystemPrompt != "" {
-						platformSystemPrompt = *role.SystemPrompt
-					}
-				}
-			}
+			platformResolved, _ = resolvePlatformSystemAgentRole(ctx, d, fernetKey, cfg.Roles["card_synthesizer"])
 		}
 	}
 
 	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "card_synthesizer",
-		platformProvider, platformModel, platformAPIKey, platformBaseURL, platformSystemPrompt)
+		platformResolved.Provider, platformResolved.Model, platformResolved.APIKey, platformResolved.BaseURL, platformResolved.SystemPrompt)
 	if !ok {
 		return nil
 	}

@@ -18,11 +18,31 @@ export function LLMProviderKeysPanel({
   providerName,
   keys,
   onChanged,
+  isSuperAdmin = false,
 }: {
   providerName: string;
   keys: LLMProviderKeyOut[];
   onChanged: () => void;
+  isSuperAdmin?: boolean;
 }) {
+  // Scoped to platform-owned keys (db/108) when isSuperAdmin, otherwise the
+  // caller's own tenant-owned keys — same shapes, same semantics either way.
+  const api = isSuperAdmin
+    ? {
+        create: themApi.createPlatformProviderKey,
+        update: themApi.updatePlatformProviderKey,
+        del: themApi.deletePlatformProviderKey,
+        setDefault: themApi.setDefaultPlatformProviderKey,
+        test: themApi.testPlatformProviderKey,
+      }
+    : {
+        create: themApi.createProviderKey,
+        update: themApi.updateProviderKey,
+        del: themApi.deleteProviderNamedKey,
+        setDefault: themApi.setDefaultProviderKey,
+        test: themApi.testProviderKey,
+      };
+
   const [newName, setNewName] = useState('');
   const [newKey, setNewKey] = useState('');
   const [creating, setCreating] = useState(false);
@@ -39,7 +59,7 @@ export function LLMProviderKeysPanel({
     setCreating(true);
     setCreateErr(null);
     try {
-      await themApi.createProviderKey(providerName, { name: newName.trim(), api_key: newKey.trim() });
+      await api.create(providerName, { name: newName.trim(), api_key: newKey.trim() });
       setNewName('');
       setNewKey('');
       onChanged();
@@ -55,7 +75,7 @@ export function LLMProviderKeysPanel({
     if (!name) return;
     setBusy((b) => ({ ...b, [keyId]: true }));
     try {
-      await themApi.updateProviderKey(providerName, keyId, { name });
+      await api.update(providerName, keyId, { name });
       setRenaming((r) => ({ ...r, [keyId]: '' }));
       setRowMsg((m) => ({ ...m, [keyId]: { ok: true, text: 'Renamed' } }));
       onChanged();
@@ -71,7 +91,7 @@ export function LLMProviderKeysPanel({
     if (!apiKey) return;
     setBusy((b) => ({ ...b, [keyId]: true }));
     try {
-      await themApi.updateProviderKey(providerName, keyId, { api_key: apiKey });
+      await api.update(providerName, keyId, { api_key: apiKey });
       setRotating((r) => ({ ...r, [keyId]: '' }));
       setRowMsg((m) => ({ ...m, [keyId]: { ok: true, text: 'Rotated' } }));
       onChanged();
@@ -85,7 +105,7 @@ export function LLMProviderKeysPanel({
   async function handleDelete(keyId: number) {
     setBusy((b) => ({ ...b, [keyId]: true }));
     try {
-      await themApi.deleteProviderNamedKey(providerName, keyId);
+      await api.del(providerName, keyId);
       onChanged();
     } catch (e: unknown) {
       setRowMsg((m) => ({ ...m, [keyId]: { ok: false, text: e instanceof Error ? e.message : 'Delete failed' } }));
@@ -96,7 +116,7 @@ export function LLMProviderKeysPanel({
   async function handleSetDefault(keyId: number) {
     setBusy((b) => ({ ...b, [keyId]: true }));
     try {
-      await themApi.setDefaultProviderKey(providerName, keyId);
+      await api.setDefault(providerName, keyId);
       onChanged();
     } catch (e: unknown) {
       setRowMsg((m) => ({ ...m, [keyId]: { ok: false, text: e instanceof Error ? e.message : 'Failed to set default' } }));
@@ -108,7 +128,7 @@ export function LLMProviderKeysPanel({
   async function handleTest(keyId: number) {
     setTestState((t) => ({ ...t, [keyId]: { loading: true } }));
     try {
-      const res = await themApi.testProviderKey(providerName, keyId);
+      const res = await api.test(providerName, keyId);
       setTestState((t) => ({ ...t, [keyId]: { loading: false, ok: res.ok, error: res.error } }));
       onChanged();
     } catch (e: unknown) {
