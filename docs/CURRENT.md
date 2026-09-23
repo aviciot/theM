@@ -1,9 +1,6 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys plan — ALL 7 STEPS COMPLETE, step 7 sign-off
-# done this session. One pre-existing unrelated flaky race found and flagged (not fixed):
-# internal/llmgateway.TestHandler_Stream_200. HEAD 220adc05 (docs-only commits may follow), on top
-# of the App Canvas Debug Mode Phase 5 backend slice (8269eae2) from earlier the same day — see
-# that thread's own section below for its own state, unaffected by this one.)
+# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 5 FRONTEND complete + a real
+# /ws/dashboard live-delivery bug found and fixed. HEAD 7cb2728d, pushed.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -11,8 +8,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `a3fdcc61` — committed locally, **not yet pushed**. Run `git pull --rebase origin main`
-before pushing — see the conflict-resolution note below, which still applies.
+HEAD: `7cb2728d` — **pushed to origin/main.**
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -26,6 +22,10 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+7cb2728d  feat(app-canvas): debug mode frontend — setup panel, Run All, real WS consumer (Phase 5)
+b27d0423  fix(dashboard): /ws/dashboard run:* channels never delivered live events
+46c9f9b8  feat(admin): LLM Providers UI/UX cleanup + seed missing gemini/groq rows
+e8115751  docs(current): update HEAD reference to a3fdcc61
 a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps complete
 220adc05  feat(admin): tenant General/Custom switch for classifier & card_synthesizer (step 6)
 283db880  feat(admin): tenant system-agent role config — general/custom mode (step 5)
@@ -36,50 +36,89 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 cc81978d  fix(admin): close cross-tenant IDOR on app_debug_config and app_temporal_config
 465ffe93  feat(admin): tenant LLM provider keys — multi-key + allowed_models (db/105)
 cda25d0c  feat(app-canvas): per-app AppFlow trace log-verbosity setting (Phase 4)
-ac39697a  docs(current): record Phase 3 commit hash 85a436bb
-85a436bb  feat(app-canvas): durable trace storage for Graph-mode runs (Phase 3)
-6104b349  feat(app-canvas): live per-node trace events for Graph-mode runs (Phase 2)
-865ad388  feat(app-canvas): debug worker pool + task-queue routing (Phase 1)
-70d91890  docs: plan real (non-simulated) debug mode for the app canvas
-19923bd6  fix(app-canvas): condition-node handle spread in LR layout; remove dead AI Advisor
-b1323abb  fix(compose): add missing RLS DSN env vars to them-agent-runtime
-5bda4ad4  fix(deploy): add them-dag-worker + them-dag-worker-2 to Hetzner overlay
-996b5dae  feat(app-canvas): rename Local/Temporal DAG to Simple/Graph; add them-dag-worker-2
 ```
 
 ---
 
 ## START HERE — next session
 
-Two independent threads are in flight. Pick based on what you're asked to continue:
+**App Canvas Debug Mode — Phase 6** is the recommended next task: Step controls (pause after
+each node, lockstep multi-branch stepping per the "Decisions confirmed (round 2)" section of
+`docs/APP_CANVAS_DEBUG_PLAN.md`), plus canvas node click-to-inspect for a debug session's
+input/output. Phase 5 (setup panel + Run All + real WS consumer) is now **fully complete and
+live-verified** — see `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 5 frontend section for full detail.
+One phase per session — do not start Phase 6 and Phase 5 follow-ups in the same session as
+whatever comes next.
 
-1. **App Canvas Debug Mode — Phase 5** — backend slice COMPLETE (`8269eae2`, this session).
-   **Not yet built: the frontend UI itself** (setup panel + Run All button + WS/SSE consumer,
-   mirroring the agent builder's `buildDebugParamSpecs()` dynamic scan pattern). Read
-   `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 5 section first — it now documents what backend-slice
-   research found (two prerequisite gaps neither the original plan nor Phases 1-4 anticipated) and
-   the two design decisions made to close them. One phase per session — do not start Phase 6 in the
-   same session as Phase 5's remaining frontend work.
-2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — **DONE, all 7 steps
-   complete** as of this session's step 7 sign-off (see the dated section below for full detail).
-   Nothing further planned on this thread unless new requirements surface. The
-   platform-admin-on-tenant route mirror for keys (from step 3) remains optionally unbuilt, still
-   not needed by anything — not a gap, a deliberate deferral.
-   A pre-existing test-count reconciliation gap from `465ffe93` remains flagged (not fixed) in
-   `go/TEST_INDEX.md` — see the "gap (465ffe93)" row — and a pre-existing, unrelated flaky race
-   (`internal/llmgateway.TestHandler_Stream_200`) was found during step 7's `-race` run and flagged
-   (not fixed, out of scope) — see the "flaky (pre-existing)" row in the same file.
-   **Nothing in this entire plan was ever verified in a live browser or via direct curl against the
-   running stack, across any session.** No browser-automation tool was available in any session
-   that worked on this plan; direct API probing was attempted once, declined by the user, and not
-   repeated afterward. **Strongly recommend a real logged-in click-through** (both tenant admin and
-   super_admin, covering the checklist at the end of the plan doc's step 7 section) before trusting
-   this feature in front of actual tenants.
+**Known limitation carried over, not fixed this session:** a draft canvas containing agent nodes
+still cannot be debugged until it has been published at least once (`unresolved_agent` — see the
+Phase 5 backend-slice section of the plan doc). Flows made entirely of inline nodes are unaffected.
+Worth fixing before Phase 6 if agent-node debugging is a priority — candidate approaches are
+noted in the plan doc.
 
-**Before starting either:** if you're auditing this session's work, note the tenant-isolation
-security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
-new per-app admin config table/route, check ownership (`tenant_id` join to `them.applications`) is
-enforced from the start, not retrofitted after a review catches it.
+**Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — all 7 steps complete as of
+an earlier session (see the dated section further below for full detail). Nothing further planned
+on this thread unless new requirements surface. **Still never verified in a live browser** —
+recommend a real logged-in click-through before trusting it in front of actual tenants.
+
+**Before starting Phase 6:** read the new lesson in `docs/LESSONS.md` ("`/ws/dashboard`'s `run:*`
+channels never delivered live events") before touching anything that publishes or consumes
+per-run trace events — it explains a real, non-obvious gap between `XADD`-only writes and
+pub/sub-only consumers that this session found and fixed, and the same class of bug could recur
+if a new event type is ever added without checking which mechanism actually delivers it live.
+
+---
+
+## App Canvas Debug Mode — Phase 5 frontend + /ws/dashboard live-delivery fix — COMPLETE (2026-09-23)
+
+Commits `b27d0423` (backend fix), `7cb2728d` (frontend), both pushed. Full detail in
+`docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 5 frontend section and `docs/LESSONS.md`'s new entry.
+Summary:
+
+Built the Phase 5 frontend the earlier backend slice (`8269eae2`) was waiting on: a new
+`useAppFlowDebugSession` hook (`frontend/src/app/admin/applications/hooks/`) that POSTs
+`/admin/applications/{id}/debug/start` with the canvas's selected entry point + a test message,
+then subscribes to that run over `/ws/dashboard` and drives per-node debug state from real
+`node_start`/`node_done`/`node_error`/`done`/`error` events — not a client-side simulator like the
+agent builder's own debug feature. New `AppFlowDebugPanel.tsx` (setup form + Run All/Reset/Close)
+and a new "▶ Debug" button in `CanvasBuilderView.tsx`'s top bar. `CanvasNodes.tsx`'s
+`InlineNode`/`FlowControlNode` gained a debug-state border/glow overlay reusing the agent
+builder's `StepNode.tsx` color scheme.
+
+**A real, pre-existing backend bug was found and fixed while live-testing this** (no
+browser-automation tool was available — Playwright's Chromium downloaded but its shared-library
+deps couldn't be installed without interactive sudo in this container; verification instead used a
+Node script run inside the already-running `them-frontend` container against the live stack over
+the Docker network): `/ws/dashboard`'s `run:*` channels never delivered live events, only a
+one-shot snapshot at subscribe time — because `internal/runstream.PublishEvent` only ever `XADD`s
+to the run's Redis Stream, nothing ever `PUBLISH`es. Any run fast enough to finish before that
+single snapshot round-trip (every mock-LLM AppFlow debug run tested this session: well under 1s
+end-to-end) delivered zero events, live or otherwise — this silently also affected the
+playground's own `run:*` trace pane, not just this new feature. Fixed in
+`go/internal/dashboard/handler.go`: `run:*` channels are now tailed via the same
+`internal/runstream.StreamFromRedis` replay+live-poll primitive `internal/ws`/`internal/sse`
+already use for production routes, instead of plain pub/sub.
+
+Tests: 2 new in `go/internal/dashboard/handler_test.go` — `go/TEST_INDEX.md` S1-52 bumped 13→15,
+S1 total 1417→1419. `go test ./...` 0 failures, full suite (58 packages). `npx tsc --noEmit` 0
+errors. `them-go-bridge` rebuilt and force-recreated; logs confirm healthy startup.
+
+**Verified against the live stack end-to-end**, not just unit tests: created a real throwaway
+application + draft definition (EP + inline LLM + condition + two branch LLM nodes, no agent
+nodes) + its `them.entry_points` row via direct API calls, called `debug/start`, and drove the
+exact `/ws/dashboard` subscribe flow the new frontend hook uses. Before the fix: ack then silence
+for 20s despite the run completing correctly (confirmed via direct Redis `XRANGE`). After the fix:
+the full `node_start→node_done→token→node_start→node_done→node_start→node_done→token→done`
+sequence arrived live, in order, matching exactly what the frontend hook parses. Also confirmed
+the documented "agent nodes need publish first" limitation is real, reproducing it as a 422
+(`unresolved_agent`) against an existing draft that has agent nodes. The 9 throwaway
+`phase5-probe-*` applications created during this verification were deleted from the live DB
+after testing (confirmed with the user first).
+
+**Not done — no actual logged-in browser click-through of the new "▶ Debug" button** (see above
+for why, and what was done instead to compensate). The WS/backend contract it depends on is now
+proven live end-to-end; recommend a manual UI pass before fully trusting the button/panel
+rendering itself. Step controls (Phase 6) not built — explicitly out of scope for this phase.
 
 ---
 
