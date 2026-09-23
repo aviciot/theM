@@ -300,13 +300,13 @@ type wsBuilder struct {
 
 func (b *wsBuilder) defaultEP() *epconfig.EPConfig {
 	return &epconfig.EPConfig{
-		EPSlug:            "ep1",
-		EPType:            "websocket",
-		AccessMode:        epconfig.AccessModeToken,
-		EPEnabled:         true,
-		AppEnabled:        true,
-		TenantID:          "aaaaaaaa-0000-0000-0000-000000000001",
-		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
 		// SEC-04: orchestrator resolved from EP binding, not from EP slug.
 		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
 		OrchestratorName:  "test-orchestrator",
@@ -445,6 +445,46 @@ func TestWS_MessageAndDone(t *testing.T) {
 		}
 	}
 	assert.Contains(t, types, "done", "expected done event")
+}
+
+// 3b. AppFlow node trace events (node_start/node_done/node_error) are forwarded
+// to the client, not silently dropped (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+func TestWS_NodeTraceEventsForwarded(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	streamMsgs := []string{
+		`{"type":"node_start","run_id":"r1","node_id":"n1","kind":"llm"}`,
+		`{"type":"node_done","run_id":"r1","node_id":"n1","kind":"llm","detail":"ok"}`,
+		`{"type":"done","run_id":"r1"}`,
+	}
+	b := &wsBuilder{authn: authn, streamMsgs: streamMsgs}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hi")
+	msgs := readUntilDone(t, conn, 5*time.Second)
+
+	var start, done map[string]any
+	for _, m := range msgs {
+		switch m["type"] {
+		case "node_start":
+			start = m
+		case "node_done":
+			done = m
+		}
+	}
+	require.NotNil(t, start, "expected a node_start event")
+	assert.Equal(t, "n1", start["node_id"])
+	assert.Equal(t, "llm", start["kind"])
+
+	require.NotNil(t, done, "expected a node_done event")
+	assert.Equal(t, "n1", done["node_id"])
+	assert.Equal(t, "ok", done["detail"])
 }
 
 // 4. Client disconnect → session.End called.

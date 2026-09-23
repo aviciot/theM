@@ -238,6 +238,53 @@ func TestLifecycle_HappyPath(t *testing.T) {
 	assert.True(t, g.releaseCalled, "gate.Release must be called in Release")
 }
 
+// docs/APP_CANVAS_DEBUG_PLAN.md Phase 5: AdmitDebug builds a handle for an
+// admin-triggered debug run — no token, no gate/session slot consumed — but
+// still resolves EPConfig via the real epLoader and creates a real run row.
+func TestLifecycle_AdmitDebug_HappyPath(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{}
+
+	lc := buildLifecycle(publicEP("ep1"), &fakeAuth{}, g, s, r, tmp)
+	h, err := lc.AdmitDebug(context.Background(), "tenant-id-1", "app-slug", "ep1", 7)
+	require.NoError(t, err)
+	require.NotNil(t, h)
+
+	assert.NotEmpty(t, h.RunID)
+	assert.NotEmpty(t, h.ContextID)
+	assert.Equal(t, int64(7), h.UserID)
+	assert.Equal(t, "tenant-id-1", h.BillingTenantID)
+	require.NotNil(t, h.EPConfig)
+	assert.Equal(t, "ep1", h.EPConfig.EPSlug)
+
+	assert.False(t, g.checkCalled, "AdmitDebug must not consume a gate slot")
+	assert.False(t, s.registerCalled, "AdmitDebug must not register a session")
+	assert.True(t, r.createCalled, "AdmitDebug must still create a real run row")
+	assert.Equal(t, domain.RunStatusAdmitted, r.lastRun.Status)
+}
+
+// AdmitDebug must surface a not-found AdmitError when the (tenant, app, ep)
+// triple doesn't resolve — same as Admit — so a bad debug request 404s instead
+// of starting a workflow against a nonexistent entry point.
+func TestLifecycle_AdmitDebug_EPNotFound(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{}
+
+	lc := buildLifecycle(nil, &fakeAuth{}, g, s, r, tmp)
+	h, err := lc.AdmitDebug(context.Background(), "tenant-id-1", "app-slug", "missing", 7)
+
+	require.Error(t, err)
+	assert.Nil(t, h)
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrNotFound, ae.Kind)
+	assert.False(t, r.createCalled, "no run row when EP resolution fails")
+}
+
 func TestLifecycle_EPNotFound(t *testing.T) {
 	g := &fakeGate{}
 	s := &fakeSession{}

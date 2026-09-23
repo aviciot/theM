@@ -68,6 +68,9 @@ type serverMsg struct {
 	RunID     string          `json:"run_id,omitempty"`
 	ContextID string          `json:"context_id,omitempty"`
 	Message   string          `json:"message,omitempty"`
+	NodeID    string          `json:"node_id,omitempty"`
+	NodeKind  string          `json:"kind,omitempty"`
+	Detail    string          `json:"detail,omitempty"`
 }
 
 // Authenticator validates bearer tokens and returns auth claims.
@@ -106,7 +109,7 @@ type Handler struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
-	runStreamer    runstream.RedisStreamer
+	runStreamer   runstream.RedisStreamer
 	sessionPub    *dashboard.SessionPublisher
 	slugResolver  SlugResolver
 	metricsRec    metrics.Recorder
@@ -690,6 +693,23 @@ func (h *Handler) writeEvent(conn *websocket.Conn, ev event.Event) error {
 			_ = json.Unmarshal(raw, &message)
 		}
 		msg = serverMsg{Type: "replay_unavailable", Message: message}
+	case "node_start", "node_done", "node_error":
+		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5).
+		// Wire shape from emitTrace: {type, run_id, node_id, kind, detail?}.
+		var runID, nodeID, kind, detail string
+		if raw, ok := payload["run_id"]; ok {
+			_ = json.Unmarshal(raw, &runID)
+		}
+		if raw, ok := payload["node_id"]; ok {
+			_ = json.Unmarshal(raw, &nodeID)
+		}
+		if raw, ok := payload["kind"]; ok {
+			_ = json.Unmarshal(raw, &kind)
+		}
+		if raw, ok := payload["detail"]; ok {
+			_ = json.Unmarshal(raw, &detail)
+		}
+		msg = serverMsg{Type: ev.Type, RunID: runID, NodeID: nodeID, NodeKind: kind, Detail: detail}
 	default:
 		return nil
 	}

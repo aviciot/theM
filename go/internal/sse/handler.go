@@ -65,7 +65,7 @@ type Handler struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
-	runStreamer    runstream.RedisStreamer
+	runStreamer   runstream.RedisStreamer
 	slugResolver  SlugResolver
 	metricsRec    metrics.Recorder
 }
@@ -595,6 +595,23 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 			"content_type": contentType,
 			"url":          downloadURL,
 		}
+	case "node_start", "node_done", "node_error":
+		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5).
+		// Wire shape from emitTrace: {type, run_id, node_id, kind, detail?}.
+		var runID, nodeID, kind, detail string
+		if raw, ok := payload["run_id"]; ok {
+			_ = json.Unmarshal(raw, &runID)
+		}
+		if raw, ok := payload["node_id"]; ok {
+			_ = json.Unmarshal(raw, &nodeID)
+		}
+		if raw, ok := payload["kind"]; ok {
+			_ = json.Unmarshal(raw, &kind)
+		}
+		if raw, ok := payload["detail"]; ok {
+			_ = json.Unmarshal(raw, &detail)
+		}
+		msg = map[string]any{"type": ev.Type, "run_id": runID, "node_id": nodeID, "kind": kind, "detail": detail}
 	default:
 		return "", fmt.Errorf("sse: unknown event type %q", ev.Type)
 	}

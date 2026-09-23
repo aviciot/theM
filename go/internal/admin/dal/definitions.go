@@ -128,6 +128,44 @@ func (d *DB) ListDefinitions(ctx context.Context, tenantID, appID string) ([]App
 	return defs, nil
 }
 
+// GetLatestDraftDefinition returns the highest-revision draft row for the given
+// tenant + application (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5 — debug runs the
+// unpublished draft directly, never the published active_definition_id).
+// Returns pgx.ErrNoRows when no draft row exists (nothing saved yet) or the
+// application belongs to another tenant.
+func (d *DB) GetLatestDraftDefinition(ctx context.Context, tenantID, appID string) (AppDefinition, error) {
+	const q = `
+		SELECT id::text, application_id::text, tenant_id::text, revision, status,
+		       definition, definition_hash,
+		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+		       CASE WHEN published_at IS NULL THEN NULL
+		            ELSE to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		       END AS published_at
+		  FROM them.application_definitions
+		 WHERE application_id=$1::uuid AND tenant_id=$2::uuid AND status='draft'
+		 ORDER BY revision DESC
+		 LIMIT 1`
+
+	var def AppDefinition
+	var publishedAt *string
+	row := d.q.QueryRow(ctx, q, appID, tenantID)
+	if err := row.Scan(
+		&def.ID,
+		&def.ApplicationID,
+		&def.TenantID,
+		&def.Revision,
+		&def.Status,
+		&def.Definition,
+		&def.DefinitionHash,
+		&def.CreatedAt,
+		&publishedAt,
+	); err != nil {
+		return def, err
+	}
+	def.PublishedAt = publishedAt
+	return def, nil
+}
+
 // UpdateDraftDefinition updates definition + hash for a draft row scoped to
 // tenant + application. Returns pgx.ErrNoRows if the row is not found, does
 // not belong to the tenant/application, or is not a draft (status != 'draft').
@@ -154,4 +192,3 @@ func (d *DB) DeleteDraftDefinition(ctx context.Context, tenantID, appID, defID s
 	var id string
 	return d.q.ExecReturning(ctx, q, defID, appID, tenantID).Scan(&id)
 }
-

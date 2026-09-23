@@ -17,6 +17,13 @@ import (
 	"github.com/aviciot/them/internal/temporal"
 )
 
+// AppFlowDebugLifecycle is the *execution.Lifecycle surface BuildRouter needs
+// to mount the debug-start route (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+// Aliased to service.AppFlowDebugStarter so this file doesn't need to import
+// internal/execution directly. Pass nil to disable the debug route (tests only,
+// or when Temporal is not configured).
+type AppFlowDebugLifecycle = service.AppFlowDebugStarter
+
 // registryQuerierAdapter adapts admin.DBQuerier to registry.DBQuerier.
 // Both interfaces expose QueryRow with the same signature except for the
 // return type — dal.SingleRowScanner vs registry.SingleRowScanner — which
@@ -124,6 +131,7 @@ func BuildRouter(
 	canvasSignaler temporal.CanvasSignaler,
 	idpKey []byte,
 	logoDir string,
+	appFlowDebugLifecycle AppFlowDebugLifecycle,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -193,6 +201,14 @@ func BuildRouter(
 				logVerbosityApp := NewLogVerbosityHandler(dbq)
 				tenantScoped.Get("/applications/{id}/log-verbosity", logVerbosityApp.GetApp)
 				tenantScoped.Put("/applications/{id}/log-verbosity", logVerbosityApp.PutApp)
+
+				// Debug: run the draft canvas directly, no publish required
+				// (tenant-scoped). Nil when Temporal isn't configured — no route
+				// mounted rather than a handler that always 503s.
+				if appFlowDebugLifecycle != nil {
+					debugApp := NewAppFlowDebugHandler(dbq, appFlowDebugLifecycle)
+					tenantScoped.Post("/applications/{id}/debug/start", debugApp.Start)
+				}
 
 				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)

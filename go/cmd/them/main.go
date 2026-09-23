@@ -19,41 +19,41 @@ import (
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
-	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/admin/dal"
-	"github.com/aviciot/them/internal/llmgateway"
-	"github.com/aviciot/them/internal/llmresolve"
-	"github.com/aviciot/them/internal/jwks"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/agentregistry"
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/appliveness"
-	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/artifacts"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
+	"github.com/aviciot/them/internal/idpcrypto"
+	"github.com/aviciot/them/internal/jwks"
+	"github.com/aviciot/them/internal/llmgateway"
+	"github.com/aviciot/them/internal/llmresolve"
 	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/middleware"
-	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/quota"
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
+	"github.com/aviciot/them/internal/roles"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/server"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/sse"
+	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/tenantctx"
-	"github.com/aviciot/them/internal/idpcrypto"
-	"github.com/aviciot/them/internal/roles"
 	"github.com/aviciot/them/internal/transport"
 	"github.com/aviciot/them/internal/voice"
 	"github.com/aviciot/them/internal/ws"
@@ -459,7 +459,7 @@ func run() error {
 	adminHITLStore := agentgen.NewHITLStore(adminHITLRedis)
 	adminIDPKey, _ := idpcrypto.ParseKey(cfg.IDPEncryptionKey) // validated at startup; err is nil here
 	logoDir := getEnvDefault("TENANT_LOGO_DIR", "/app/data/tenants")
-	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey, logoDir)
+	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey, logoDir, execLifecycle)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 
@@ -553,7 +553,6 @@ func (a *fileGateAdapter) Intercept(ctx context.Context, in a2a.FileInterceptInp
 	}, nil
 }
 
-
 // tenantQuotaAdapter implements execution.QuotaEnforcer. It loads the tenant's
 // quota row from the DB and delegates enforcement to quota.Enforcer. When no
 // quota row exists the check is skipped (fail-open).
@@ -618,4 +617,3 @@ func (a *gatewayQuotaAdapter) CheckAPIRPM(ctx context.Context, tenantID string) 
 	}
 	return a.enforcer.Check(ctx, tenantID, quota.Quota{APIRequestsPerMinute: q.APIRequestsPerMinute})
 }
-

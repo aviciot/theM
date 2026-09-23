@@ -47,8 +47,8 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 }
 
 type fakeSessionStore struct {
-	mu          sync.Mutex
-	lastSession session.SessionInfo
+	mu           sync.Mutex
+	lastSession  session.SessionInfo
 	failRegister bool
 }
 
@@ -143,7 +143,7 @@ func (f *fakeEPLoader) Load(_ context.Context, _, _, _ string) (*epconfig.EPConf
 
 type fakeRunCreator struct{}
 
-func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { return nil }
+func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error    { return nil }
 func (f *fakeRunCreator) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 func (f *fakeRunCreator) UpdateRunStatus(_ context.Context, _ string, _ domain.RunStatus, _ string) error {
 	return nil
@@ -253,12 +253,12 @@ func (f *fakeRunStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]r
 
 // sseBuilder assembles an SSE Handler with injectable fakes.
 type sseBuilder struct {
-	authn    transport.Authenticator
-	epLoader transport.EPConfigLoader
-	gate     transport.GateStore
-	sessions transport.SessionStore
-	recorder execution.RunCreator
-	temporal transport.TemporalClientExecutor
+	authn      transport.Authenticator
+	epLoader   transport.EPConfigLoader
+	gate       transport.GateStore
+	sessions   transport.SessionStore
+	recorder   execution.RunCreator
+	temporal   transport.TemporalClientExecutor
 	streamMsgs []string
 }
 
@@ -392,6 +392,45 @@ func TestSSETokenEvents(t *testing.T) {
 		}
 	}
 	assert.True(t, hasToken, "expected at least one token event")
+}
+
+// 2b. AppFlow node trace events (node_start/node_done/node_error) are forwarded
+// as SSE, not silently dropped (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+func TestSSENodeTraceEventsForwarded(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	tc := &fakeTemporalClient{}
+	raw1, _ := json.Marshal(map[string]any{"type": "node_start", "run_id": "r1", "node_id": "n1", "kind": "llm"})
+	raw2, _ := json.Marshal(map[string]any{"type": "node_done", "run_id": "r1", "node_id": "n1", "kind": "llm", "detail": "ok"})
+	raw3, _ := json.Marshal(map[string]any{"type": "done", "run_id": "r1"})
+	b := &sseBuilder{authn: authn, temporal: tc, streamMsgs: []string{string(raw1), string(raw2), string(raw3)}}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/orchestrate/app/ep?message=hi", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := collectSSE(t, resp, 3*time.Second)
+	var start, done map[string]any
+	for _, ev := range events {
+		switch ev["type"] {
+		case "node_start":
+			start = ev
+		case "node_done":
+			done = ev
+		}
+	}
+	require.NotNil(t, start, "expected a node_start SSE event")
+	assert.Equal(t, "n1", start["node_id"])
+	assert.Equal(t, "llm", start["kind"])
+
+	require.NotNil(t, done, "expected a node_done SSE event")
+	assert.Equal(t, "ok", done["detail"])
 }
 
 // 3. Done event closes the stream.
@@ -995,9 +1034,9 @@ func TestSSE_MissingMessage(t *testing.T) {
 // orderingStreamer records whether its stream reader was opened (first XRange)
 // before ExecuteWorkflow ran, and delivers a terminal "done" on replay.
 type orderingStreamer struct {
-	mu        sync.Mutex
+	mu         sync.Mutex
 	readCalled bool
-	tc        *orderingTemporalClient
+	tc         *orderingTemporalClient
 }
 
 func (s *orderingStreamer) XRange(_ context.Context, _, start, _ string) ([]runstream.StreamEntry, error) {

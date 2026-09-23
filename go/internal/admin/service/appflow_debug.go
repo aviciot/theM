@@ -1,0 +1,125 @@
+package service
+
+import (
+	"context"
+	"fmt"
+
+	temporalclient "go.temporal.io/sdk/client"
+
+	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/appflow"
+	"github.com/aviciot/them/internal/execution"
+)
+
+// AppFlowDebugStarter is the minimal execution.Lifecycle surface this service
+// needs — defined here so tests can inject a fake without a live Temporal
+// client (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+type AppFlowDebugStarter interface {
+	AdmitDebug(ctx context.Context, tenantID, appSlug, epSlug string, userID int64) (*execution.ExecutionHandle, error)
+	StartAppFlow(ctx context.Context, h *execution.ExecutionHandle, input appflow.AppFlowWorkflowInput, debug bool) (temporalclient.WorkflowRun, error)
+}
+
+// AppFlowDebugDAL is the minimal DAL surface this service needs — defined
+// here (rather than depending on the full ~80-method service.Dal interface,
+// or the concrete *dal.DB) so tests can inject a small hand-rolled fake
+// without reproducing dal.DB's SQL row-scan shapes.
+type AppFlowDebugDAL interface {
+	GetApplication(ctx context.Context, tenantID, id string) (dal.Application, error)
+	GetLatestDraftDefinition(ctx context.Context, tenantID, appID string) (dal.AppDefinition, error)
+}
+
+// AppFlowDebugService starts a debug run of an application's unpublished draft
+// canvas definition — never the published active_definition_id. Debug is an
+// opt-in, per-session toggle: it does not require publishing first, and always
+// dispatches to the isolated debug Temporal task queue (Lifecycle.StartAppFlow
+// with debug=true handles that routing).
+type AppFlowDebugService struct {
+	dal AppFlowDebugDAL
+	lc  AppFlowDebugStarter
+}
+
+// NewAppFlowDebugService creates an AppFlowDebugService.
+func NewAppFlowDebugService(db AppFlowDebugDAL, lc AppFlowDebugStarter) *AppFlowDebugService {
+	return &AppFlowDebugService{dal: db, lc: lc}
+}
+
+// DebugStartResult is returned to the caller on a successful debug start.
+type DebugStartResult struct {
+	RunID string
+}
+
+// Start compiles the application's latest draft definition, validates it, and
+// launches an AppFlowWorkflow on the debug worker pool. userMessage is the
+// seed input for the flow's entry point (mirrors the agent builder's
+// "__test_input" debug param). Returns ErrNotFound when the application has
+// no draft saved yet, or the entry point slug doesn't exist on it.
+func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug, userMessage string, userID int64) (DebugStartResult, error) {
+	app, err := s.dal.GetApplication(ctx, tenantID, appID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return DebugStartResult{}, ErrNotFound
+		}
+		return DebugStartResult{}, fmt.Errorf("get application: %w", err)
+	}
+
+	epFound := false
+	for _, ep := range app.EntryPoints {
+		if ep.Slug == epSlug {
+			epFound = true
+			break
+		}
+	}
+	if !epFound {
+		return DebugStartResult{}, ErrNotFound
+	}
+
+	draft, err := s.dal.GetLatestDraftDefinition(ctx, tenantID, appID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return DebugStartResult{}, unprocessable("no draft definition saved for this application yet")
+		}
+		return DebugStartResult{}, fmt.Errorf("get latest draft definition: %w", err)
+	}
+
+	agentByInstanceID, err := appflow.ResolveAgentByInstanceID(draft.Definition)
+	if err != nil {
+		return DebugStartResult{}, unprocessable(fmt.Sprintf("resolve agents: %v", err))
+	}
+	spec, err := appflow.Compile(draft.Definition, agentByInstanceID)
+	if err != nil {
+		return DebugStartResult{}, unprocessable(fmt.Sprintf("compile: %v", err))
+	}
+	if errs := appflow.Validate(spec); len(errs) > 0 {
+		return DebugStartResult{}, unprocessable(fmt.Sprintf("validate: %v", errs[0]))
+	}
+
+	var epFlow *appflow.EPFlow
+	for i := range spec.EntryPoints {
+		if spec.EntryPoints[i].Slug == epSlug {
+			epFlow = &spec.EntryPoints[i]
+			break
+		}
+	}
+	if epFlow == nil {
+		return DebugStartResult{}, unprocessable(fmt.Sprintf("no entry point %q in draft definition", epSlug))
+	}
+	singleEPSpec := &appflow.AppFlowSpec{
+		ExecutionBackend: spec.ExecutionBackend,
+		EntryPoints:      []appflow.EPFlow{*epFlow},
+	}
+
+	handle, err := s.lc.AdmitDebug(ctx, tenantID, app.Slug, epSlug, userID)
+	if err != nil {
+		return DebugStartResult{}, fmt.Errorf("admit debug run: %w", err)
+	}
+
+	input := appflow.AppFlowWorkflowInput{
+		Spec:        singleEPSpec,
+		UserMessage: userMessage,
+	}
+	if _, err := s.lc.StartAppFlow(ctx, handle, input, true); err != nil {
+		return DebugStartResult{}, fmt.Errorf("start appflow workflow: %w", err)
+	}
+
+	return DebugStartResult{RunID: handle.RunID}, nil
+}

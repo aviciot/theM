@@ -298,6 +298,49 @@ improvement over the agent builder's in-memory-only session.
 
 ---
 
+## Phase 5 — design decisions (confirmed with user, 2026-09-23)
+
+Research before starting Phase 5 found the plan above assumed two things that don't exist yet:
+1. Trace events (`node_start`/`node_done`/`node_error`, shipped in Phase 2) never reach a browser
+   today — `ws/handler.go`'s and `sse/handler.go`'s event writer silently drops any event type it
+   doesn't recognize (`default: return nil`). Must add cases for these three types first.
+2. There is no "Run" trigger anywhere in the app-canvas UI at all, debug or not. The only existing
+   run-start paths (`ws/handler.go` route, `sse/handler.go` route) require a **published** entry
+   point (`handle.EPConfig.ActiveDefinitionJSON`) — but a canvas being debugged is normally an
+   unpublished **draft**. `StartAppFlow(..., debug bool)` is hardcoded `false` at exactly two call
+   sites: `go/internal/ws/handler.go:543`, `go/internal/sse/handler.go:445`.
+
+**Decisions:**
+- **Debug runs the draft directly — no publish required.** Publishing is a production/deployment
+  step and must stay unrelated to debugging. A new backend path is needed to start an AppFlow
+  workflow from draft JSON (not `ActiveDefinitionJSON`).
+- **New dedicated debug-start route**, not a flag added to the production WS/SSE routes. Keeps
+  production request handling completely untouched, and can accept draft JSON directly (which the
+  production routes have no reason to ever accept). Shape: something like
+  `POST /admin/applications/{id}/debug/start` taking the draft canvas JSON in the body, returning a
+  run/workflow ID the frontend then follows over WS/SSE for live trace events.
+- Also confirmed: no AppFlow node kind declares `app_params` today (unlike the agent builder's HTTP
+  node) — the "HTTP node → param spec" branch of `buildDebugParamSpecs()` has no direct analogue to
+  port yet. LLM node provider/model/key live in Runtime config, not canvas node config, so the
+  param-spec scan for Phase 5 is narrower than the agent builder's until a future AppFlow node kind
+  adds declared params.
+- `CanvasNodes.tsx` (427 lines) and `CanvasBuilderView.tsx` (645 lines) are already over the
+  400-line guideline — new debug-state styling and Run/Debug controls land in new sibling files,
+  not added to those two directly.
+
+**Known limitation, found while writing Phase 5's service-layer tests:** a draft canvas containing
+agent nodes cannot be debugged until it has been **published at least once**.
+`appflow.ResolveAgentByInstanceID` reads a `_resolved_agent_ids` map that is only stamped into the
+definition JSON by `PublishDefinition` at publish time — a draft that has never been published has
+no such stamp, so `Validate` correctly rejects it with `unresolved_agent`, even though "debug the
+draft directly, no publish required" was this phase's whole design decision. Flows made entirely of
+inline nodes (LLM, Condition, Router, etc. — no agent components) are unaffected, since they need no
+such resolution. Not fixed in Phase 5 — flagged for a later session; a fix would need either
+stamping `_resolved_agent_ids` on every save (not just publish) or having the debug-start endpoint
+resolve agent instance IDs itself from the live component registry instead of trusting the stamp.
+
+---
+
 ## Explicitly out of scope for this plan
 
 - Agent-builder-side changes — this plan is app-canvas only. (Reserved naming for a future

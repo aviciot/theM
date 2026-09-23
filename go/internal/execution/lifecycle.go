@@ -71,21 +71,21 @@ var ErrQuotaMonthlyLLMTokens = errors.New("quota: monthly LLM token limit exceed
 // Callers MUST subscribe to the event bus between Admit and Start to guarantee
 // that no event emitted by the workflow is missed (bootstrap ordering invariant).
 type Lifecycle struct {
-	auth      transport.Authenticator
-	epLoader  transport.EPConfigLoader
-	gate      transport.GateStore
-	sessions  transport.SessionStore
-	recorder  RunCreator
-	temporal  transport.TemporalClientExecutor
-	quota            QuotaEnforcer // optional; nil = no quota enforcement
-	jwtSecret        []byte        // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
-	ridpLoader       transport.RuntimeIDPLoader    // optional; loads per-tenant external JWT config
-	extJWTValidator  *auth.ExternalJWTValidator    // optional; validates external RS256 JWTs
-	roleChecker      RoleChecker   // optional; nil = role gate disabled
-	temporalCfgLoader TemporalConfigLoader // optional; nil = hardcoded defaults for AppFlow
-	llmOverrideLoader AppFlowLLMOverrideLoader // optional; nil = no inline LLM node overrides applied
-	logVerbosityLoader LogVerbosityLoader // optional; nil = dal.DefaultLogVerbosity for AppFlow
-	logger           *slog.Logger
+	auth               transport.Authenticator
+	epLoader           transport.EPConfigLoader
+	gate               transport.GateStore
+	sessions           transport.SessionStore
+	recorder           RunCreator
+	temporal           transport.TemporalClientExecutor
+	quota              QuotaEnforcer              // optional; nil = no quota enforcement
+	jwtSecret          []byte                     // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
+	ridpLoader         transport.RuntimeIDPLoader // optional; loads per-tenant external JWT config
+	extJWTValidator    *auth.ExternalJWTValidator // optional; validates external RS256 JWTs
+	roleChecker        RoleChecker                // optional; nil = role gate disabled
+	temporalCfgLoader  TemporalConfigLoader       // optional; nil = hardcoded defaults for AppFlow
+	llmOverrideLoader  AppFlowLLMOverrideLoader   // optional; nil = no inline LLM node overrides applied
+	logVerbosityLoader LogVerbosityLoader         // optional; nil = dal.DefaultLogVerbosity for AppFlow
+	logger             *slog.Logger
 }
 
 // NewLifecycle constructs a production Lifecycle. epLoader, gateStore, sessions,
@@ -580,6 +580,67 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		BillingTenantID: billingTenantID,
 		gateCfg:         gateCfg,
 		gateAdmitted:    gateAdmitted,
+		runCreated:      runCreated,
+	}, nil
+}
+
+// AdmitDebug builds a minimal ExecutionHandle for an admin-triggered debug run
+// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — no live end-user connection exists,
+// so there is no token to validate and no gate/session slot to reserve. Debug
+// runs must never compete with production traffic for admission capacity, so
+// gate.Check/Confirm and session.Register are deliberately skipped entirely
+// (gateAdmitted stays false; SessionID is "" — WS/SSE-only concerns).
+//
+// EPConfig is still resolved via the real DB-backed epLoader, exactly like
+// Admit — this is what proves the caller's (tenantID, appSlug, epSlug) triple
+// actually exists and belongs together before any workflow starts; it is not
+// a security bypass, only a capacity-admission bypass.
+//
+// A real them.runs row is created via the recorder (RunStatusAdmitted, same as
+// Admit) so the debug run is visible in Run History and Phase 3's trace storage
+// works unmodified — debug runs are real runs, not a separate bookkeeping path.
+func (lc *Lifecycle) AdmitDebug(ctx context.Context, tenantID, appSlug, epSlug string, userID int64) (*ExecutionHandle, error) {
+	if lc.epLoader == nil {
+		lc.logger.Warn("execution: no ep loader configured", "ep_slug", epSlug)
+		return nil, admitErr(AdmitErrInternal)
+	}
+	resolvedCfg, err := lc.epLoader.Load(ctx, tenantID, appSlug, epSlug)
+	if err != nil {
+		if errors.Is(err, epconfig.ErrNotFound) {
+			return nil, admitErr(AdmitErrNotFound)
+		}
+		lc.logger.Warn("execution: epconfig load failed", "tenant_id", tenantID, "app_slug", appSlug, "ep_slug", epSlug, "error", err)
+		return nil, admitErr(AdmitErrDBUnavailable)
+	}
+
+	runID := newRunID()
+	contextID := newRunID()
+
+	run := domain.Run{
+		ID:             runID,
+		ContextID:      contextID,
+		EntryPointSlug: epSlug,
+		TenantID:       resolvedCfg.TenantID,
+		ApplicationID:  resolvedCfg.AppID,
+		Status:         domain.RunStatusAdmitted,
+		Goal:           "debug session",
+		UserID:         userID,
+	}
+	runCreated := false
+	if lc.recorder != nil {
+		if recErr := lc.recorder.CreateRun(ctx, run); recErr != nil {
+			lc.logger.Warn("execution: create debug run failed", "run_id", runID, "ep_slug", epSlug, "error", recErr)
+			return nil, admitErr(AdmitErrInternal)
+		}
+		runCreated = true
+	}
+
+	return &ExecutionHandle{
+		RunID:           runID,
+		ContextID:       contextID,
+		EPConfig:        resolvedCfg,
+		UserID:          userID,
+		BillingTenantID: resolvedCfg.TenantID,
 		runCreated:      runCreated,
 	}, nil
 }

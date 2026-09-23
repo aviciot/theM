@@ -125,7 +125,7 @@ func thBuildHS256Token(t *testing.T, secret []byte) string {
 	payload, err := json.Marshal(map[string]any{
 		"sub": "1", "username": "admin", "role": "super_admin",
 		"tenant_id": thBootstrapTenantID,
-		"exp": now + 3600, "iat": now,
+		"exp":       now + 3600, "iat": now,
 	})
 	require.NoError(t, err)
 	payloadEnc := base64.RawURLEncoding.EncodeToString(payload)
@@ -185,7 +185,7 @@ func tenantAdminRouter(t *testing.T, cache *auth.Cache) http.Handler {
 		})
 	}
 
-	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir())
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir(), nil)
 }
 
 // tenantAdminRouterNoTenant returns a router that auto-injects a super_admin JWT
@@ -217,7 +217,7 @@ func tenantAdminRouterNoTenant(t *testing.T, cache *auth.Cache) http.Handler {
 			inner(next).ServeHTTP(w, r2)
 		})
 	}
-	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir())
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir(), nil)
 }
 
 // thGet sends a GET request to path with an Authorization: Bearer <token> header.
@@ -427,7 +427,7 @@ func thBuildAdminJWT(t *testing.T, secret []byte, tenantID string) string {
 	payload, err := json.Marshal(map[string]any{
 		"sub": "2", "username": "alice", "role": "admin",
 		"tenant_id": tenantID,
-		"exp": now + 3600, "iat": now,
+		"exp":       now + 3600, "iat": now,
 	})
 	require.NoError(t, err)
 	payloadEnc := base64.RawURLEncoding.EncodeToString(payload)
@@ -445,7 +445,7 @@ func thBuildMemberJWT(t *testing.T, secret []byte, tenantID string) string {
 	payload, err := json.Marshal(map[string]any{
 		"sub": "3", "username": "bob", "role": "member",
 		"tenant_id": tenantID,
-		"exp": now + 3600, "iat": now,
+		"exp":       now + 3600, "iat": now,
 	})
 	require.NoError(t, err)
 	payloadEnc := base64.RawURLEncoding.EncodeToString(payload)
@@ -469,7 +469,7 @@ func tenantAdminRouterWithJWT(t *testing.T, cache *auth.Cache, jwtToken string) 
 			inner(next).ServeHTTP(w, r2)
 		})
 	}
-	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir())
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil, nil, t.TempDir(), nil)
 }
 
 // TH-13: admin JWT with tenant_id → 200 on /admin/agents (tenant-scoped route).
