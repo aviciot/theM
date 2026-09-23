@@ -1,9 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (Tenant LLM Provider Keys step 6 — frontend General/Custom switch for
-# classifier/card_synthesizer — COMPLETE. Steps 1-6 of 7 now done; only step 7 (final sign-off,
-# effectively already covered by this session's test runs) remains. HEAD 220adc05, on top of the
-# App Canvas Debug Mode Phase 5 backend slice (8269eae2) from earlier the same day — see that
-# thread's own section below for its own state, unaffected by this one.)
+# Last updated: 2026-09-23 (Tenant LLM Provider Keys plan — ALL 7 STEPS COMPLETE, step 7 sign-off
+# done this session. One pre-existing unrelated flaky race found and flagged (not fixed):
+# internal/llmgateway.TestHandler_Stream_200. HEAD 220adc05 (docs-only commits may follow), on top
+# of the App Canvas Debug Mode Phase 5 backend slice (8269eae2) from earlier the same day — see
+# that thread's own section below for its own state, unaffected by this one.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -59,22 +59,21 @@ Two independent threads are in flight. Pick based on what you're asked to contin
    research found (two prerequisite gaps neither the original plan nor Phases 1-4 anticipated) and
    the two design decisions made to close them. One phase per session — do not start Phase 6 in the
    same session as Phase 5's remaining frontend work.
-2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — **steps 1-6 of 7 now done.**
-   Migration, DAL/service layers (`465ffe93`), test-key/list-models HTTP endpoints (`6a6be2ca`),
-   frontend UI (`99434bb9`), `them.tenant_system_agent_config` + resolution wiring (step 5,
-   `283db880`), and now the frontend General/Custom switch on the classifier/card_synthesizer role
-   cards (step 6, `220adc05` — see the dated section below). Only **step 7** remains — final
-   full-suite sign-off, which is effectively already covered by this session's test runs; mostly a
-   formality unless new issues surface. The platform-admin-on-tenant route mirror for keys (from
-   step 3) remains optionally unbuilt, still not needed by anything.
-   Read the plan doc's "Why the model changes" and "Hard rule" sections before touching this — no
-   platform-key fallback for tenants, ever. A pre-existing test-count reconciliation gap from
-   `465ffe93` was flagged (not fixed) in `go/TEST_INDEX.md` — see the "gap (465ffe93)" row.
-   **Nothing in this entire plan has been verified in a live browser or via direct curl against the
-   running stack across any session so far** — no browser-automation tool has been available, and
-   direct API probing was declined once and not repeated per the user's standing preference.
-   Strongly recommend a real logged-in click-through (both tenant admin and super_admin) before
-   calling step 7 truly done.
+2. **Tenant LLM Provider Keys** (`docs/TENANT_LLM_PROVIDERS_PLAN.md`) — **DONE, all 7 steps
+   complete** as of this session's step 7 sign-off (see the dated section below for full detail).
+   Nothing further planned on this thread unless new requirements surface. The
+   platform-admin-on-tenant route mirror for keys (from step 3) remains optionally unbuilt, still
+   not needed by anything — not a gap, a deliberate deferral.
+   A pre-existing test-count reconciliation gap from `465ffe93` remains flagged (not fixed) in
+   `go/TEST_INDEX.md` — see the "gap (465ffe93)" row — and a pre-existing, unrelated flaky race
+   (`internal/llmgateway.TestHandler_Stream_200`) was found during step 7's `-race` run and flagged
+   (not fixed, out of scope) — see the "flaky (pre-existing)" row in the same file.
+   **Nothing in this entire plan was ever verified in a live browser or via direct curl against the
+   running stack, across any session.** No browser-automation tool was available in any session
+   that worked on this plan; direct API probing was attempted once, declined by the user, and not
+   repeated afterward. **Strongly recommend a real logged-in click-through** (both tenant admin and
+   super_admin, covering the checklist at the end of the plan doc's step 7 section) before trusting
+   this feature in front of actual tenants.
 
 **Before starting either:** if you're auditing this session's work, note the tenant-isolation
 security fix below was needed because a prior change shipped a cross-tenant IDOR — when adding any
@@ -83,9 +82,36 @@ enforced from the start, not retrofitted after a review catches it.
 
 ---
 
+## Tenant LLM Provider Keys — PLAN COMPLETE — step 7 sign-off (2026-09-23)
+
+See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 7 section for full detail. All 7 steps of the plan
+are now done. This session's sign-off run:
+
+- `go test ./...` — 0 failures, full suite, run fresh (not reused from an earlier step).
+- `go test -race ./...` — found **one failure, confirmed pre-existing and unrelated**:
+  `internal/llmgateway.TestHandler_Stream_200` (a genuine data race in `Service.Stream`'s
+  goroutine, reproduced 1-of-3 runs in isolation). `git log` confirms `internal/llmgateway/
+  handler.go` was last touched by commit `936ae696` (LLM Gateway Phase 2) — no commit in this plan
+  (`465ffe93` through `220adc05`) touches that package. Not fixed here — flagged in
+  `go/TEST_INDEX.md`'s new "flaky (pre-existing)" row as a dedicated follow-up.
+- `npx tsc --noEmit` — 0 errors, run fresh.
+
+**Never verified, across any session that worked on this plan:** a real logged-in browser
+click-through, or a direct `curl` round trip against the live stack. No browser-automation tool
+was available in any of those sessions; direct API probing was attempted once this session and
+declined, and not repeated afterward. Every verification claim across all 7 steps is either a
+unit/integration test (several run for real against live Postgres) or a container-log
+observation (compile success, healthy startup) — never an end-to-end interactive check. Before
+trusting this feature in front of real tenants, do a manual pass covering: enable a provider +
+save allowed models, add/test/delete a named key, set a role to general mode and confirm a real
+classify/synthesize call actually uses that tenant's own key (not the platform's), and set a role
+to custom mode with its own key and test it.
+
+---
+
 ## Tenant LLM Provider Keys — step 6: frontend General/Custom switch — COMPLETE (2026-09-23)
 
-Commit `220adc05`, not yet pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 6 write-up for
+Commit `220adc05`, pushed. See `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s step 6 write-up for
 full detail. Summary:
 
 **Design point confirmed with the user before implementing:** the System Agents tab's `RoleCard`

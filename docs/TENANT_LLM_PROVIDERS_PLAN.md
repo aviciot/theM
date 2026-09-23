@@ -1,5 +1,5 @@
 # Tenant-Level LLM Provider Configuration — Plan
-# Status: approved design, implementing — steps 1-6 of 7 complete
+# Status: COMPLETE — all 7 steps done
 # Owner: platform
 # Last updated: 2026-09-23
 
@@ -454,5 +454,44 @@ fully — nothing in this repo's test suite drives that real round trip yet.
 
 **Not yet built:** the platform-admin-on-tenant route mirror for keys
 (`/admin/tenants/{id}/llm-providers/{name}/keys...`, from step 3) remains not built — still not
-needed by anything. Step 7 (final full-suite pass + docs sign-off) is effectively just this
-write-up plus the test runs already recorded above.
+needed by anything.
+
+---
+
+## Step 7 — final full-suite pass + sign-off — COMPLETE (2026-09-23)
+
+`go test ./...` — 0 failures, full suite, run fresh at sign-off time (not reused from an earlier
+step's run).
+
+`go test -race ./...` — found one failure, **confirmed pre-existing and unrelated**:
+`internal/llmgateway.TestHandler_Stream_200` fails intermittently (reproduced 1-of-3 runs in
+isolation) with a genuine data race in `Service.Stream`'s goroutine. `git log` on
+`internal/llmgateway/handler.go` shows it was last touched by commit `936ae696` (LLM Gateway
+Phase 2) — weeks before this plan started, and no commit in this plan (`465ffe93` through
+`220adc05`) touches `internal/llmgateway` at all. Not fixed as part of this plan — flagged in
+`go/TEST_INDEX.md` (`flaky (pre-existing)` row) as a dedicated follow-up, since fixing an unrelated
+package's race is out of scope for a plan that never touched it.
+
+`npx tsc --noEmit` — 0 errors, frontend, run fresh at sign-off time.
+
+**Final state of all 7 steps:**
+1. Migration (`db/105`, `db/106`) — done.
+2. DAL + service layers — done.
+3. Test-key/list-models HTTP endpoints — done.
+4. Frontend LLM Providers tab (model checklist, refresh, named-keys sub-section) — done.
+5. `them.tenant_system_agent_config` + classifier/card_synthesizer resolution wiring — done.
+6. Frontend General/Custom switch on the role cards — done.
+7. This sign-off — done.
+
+**What was never verified across any step of this plan, by any session:** a real logged-in
+browser click-through, or a direct `curl` round trip against the live stack. No
+browser-automation tool was available in any session that worked on this plan; direct API probing
+was attempted once, declined by the user, and not repeated afterward per that standing signal.
+Every verification claim in this document is either a unit/integration test (many run for real
+against live Postgres) or a container-log observation (compile success, healthy startup, one
+real incidental user request in `them-frontend`'s logs) — never an end-to-end browser or curl
+check performed by the assistant. **Recommend a real logged-in walkthrough before trusting this
+feature in front of actual tenants**, covering at minimum: enabling a provider and saving allowed
+models, adding/testing/deleting a named key, setting a role to general mode and confirming a real
+classify/synthesize call uses that tenant's own key, and setting a role to custom mode with its
+own key and testing it.
