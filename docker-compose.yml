@@ -347,7 +347,6 @@ services:
       - "9500"
     environment:
       PORT: "9500"
-      ANTHROPIC_API_KEY: "${SECURITY_SCANNER_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
     networks:
       - them-network
     restart: unless-stopped

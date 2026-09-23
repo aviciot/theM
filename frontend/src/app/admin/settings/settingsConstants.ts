@@ -49,6 +49,12 @@ export const ROLE_DEFAULTS: Record<string, { label: string; description: string;
     promptPlaceholder: 'You are an AI application analyst. Given an orchestrator\'s purpose and its sub-agents, synthesize a JSON A2A agent card. Return ONLY: {"name":"...","description":"...","skills":[{"id":"...","name":"...","description":"...","tags":[...]}]}',
     whereUsed: 'Runs when clicking "Synthesize Card" on an A2A entry point in the Applications admin. The result is stored per entry point and served as the public A2A agent card.',
   },
+  security_scanner: {
+    label: 'Security Scanner',
+    description: 'Analyzes an agent\'s card and declared skills for security risk — over-broad scope, prompt-injection risk, missing input guardrails.',
+    promptPlaceholder: 'You are a security auditor for an AI agent orchestration platform. Given an agent\'s declared metadata (card, description, skills), assess security risk. Return ONLY JSON: {"summary":"...","findings":[{"id":"...","label":"...","status":"pass|warn|fail","risk":"low|medium|high","detail":"...","recommendation":"..."}]}',
+    whereUsed: 'Runs when clicking "Security Scan" on an agent in the Agents admin. Combined with HTTP surface probes (TLS, auth) into a single 0-100 score.',
+  },
 };
 
 export function getRoleLabel(role: string) {

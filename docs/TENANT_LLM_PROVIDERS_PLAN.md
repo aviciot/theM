@@ -495,3 +495,86 @@ feature in front of actual tenants**, covering at minimum: enabling a provider a
 models, adding/testing/deleting a named key, setting a role to general mode and confirming a real
 classify/synthesize call uses that tenant's own key, and setting a role to custom mode with its
 own key and testing it.
+
+---
+
+## Follow-up (post-plan, 2026-09-23): UI/UX cleanup + security_scanner as a third role
+
+Two pieces of follow-up work landed after the plan's step 7 sign-off, both reusing the
+infrastructure this plan built rather than adding new infrastructure.
+
+### LLM Providers tab redesign + missing gemini/groq seed rows
+
+The user reviewed the live UI and found two real problems step 4/6 missed:
+1. Tenant admins had **no way to enable/disable a provider** — the toggle only ever rendered for
+   super_admin (`isSuperAdmin && (...)` in `ProviderCard`); tenant admins saw a static badge with
+   no control.
+2. The allowed-models checklist (wrapped pills) "looked bad."
+3. Gemini and Groq — fully supported in code (dispatch, model-list fetch, key-test probing) since
+   before this plan started — never appeared in the tab at all.
+
+Root cause of (3): `them.llm_providers` platform-default rows were only ever seeded for
+`anthropic` (`002_seed.sql`) and `openai` (`003_phase8.sql`, disabled). Nobody ever seeded `gemini`
+or `groq`. New migration `db/107_seed_gemini_groq_providers.sql` adds both, disabled by default,
+targeting the correct partial unique index (`llm_providers_name_platform_uq`) since a plain
+`UNIQUE(name)` no longer exists on this table post-057 — the first attempt at this migration
+failed with "no unique or exclusion constraint matching ON CONFLICT" until that was fixed. Applied
+live to this box's `them-postgres`.
+
+Fixed (1) and (2) in `frontend/src/app/admin/settings/LLMProvidersPanel.tsx`: tenant admins now get
+a real `Toggle` (reused from `RoleCard.tsx`), and the rest of the card (allowed models, keys)
+collapses to a one-line hint when the provider is disabled instead of showing an unusable form.
+The models checklist became a vertical list of labeled checkbox rows with a clear
+selected/unselected visual state, replacing the wrapped-pill layout. No dedicated UI/UX skill
+exists in this environment — this was done by the assistant applying direct design judgment, not
+a specialized tool.
+
+**Noted, not fixed:** a `mock` provider (dev/testing stub, no real API, always enabled) shows in
+the same tenant-facing list — likely noise for a real tenant, flagged for the user to decide on,
+not changed here since it's a separate pre-existing decision outside this task's scope.
+
+### security_scanner promoted to a third `tenant_system_agent_config` role
+
+The user asked: can the security scanner use a tenant's own key, the same way the classifier does?
+Investigation found the security-scan LLM step was architecturally different from
+classifier/card_synthesizer: it ran **inside a separate Python container**
+(`agents/security_scanner/`, `them-security-agent`), calling Anthropic directly with **one
+hardcoded `ANTHROPIC_API_KEY` env var shared by every tenant** — not resolved per-tenant at all,
+and Anthropic-only regardless of what a tenant might want to use.
+
+**Decision made with the user:** move the LLM analysis step out of Python and into go-bridge, the
+same place `classifyAgent`/`synthesizeAppCard` already live, rather than passing a decrypted
+tenant key across the process boundary to Python for each scan. The Python container now does
+HTTP-surface probes only (TLS, auth enforcement, reachability) — unchanged from before. Go-bridge
+calls the Python scanner for those probes, then separately runs its own LLM analysis
+(`llmCardAnalysis`, new `go/internal/admin/security_scan_llm.go`) resolved through the exact same
+`resolveSystemAgentRole` step 5 built, and merges both results (`mergeSecurityScanResult` in
+`scanjob.go`) before persisting — porting the score-penalty/risk/findings-merge arithmetic that
+used to live in `scanner.py`'s `run_scan` verbatim into Go.
+
+`security_scanner` added to `validSystemAgentRoles` (service) and the platform-global default
+roles map (`system_agents.go`) — it now gets its own General/Custom card in the frontend for free,
+via the same `TenantRoleCard`/`ROLE_DEFAULTS` machinery step 6 built, no new frontend component
+needed. Added its label/description/prompt-placeholder to `settingsConstants.ts`'s `ROLE_DEFAULTS`.
+
+**Python side changes** (`agents/security_scanner/`): `scanner.py`'s `llm_card_analysis`,
+`_SYSTEM_PROMPT`, `_build_user_prompt`, and the `anthropic` import removed entirely — `run_scan` is
+now probes-only. `main.py` no longer reads `ANTHROPIC_API_KEY`. `requirements.txt` no longer lists
+`anthropic`. `docker-compose.yml`'s `them-security-agent` service no longer sets
+`ANTHROPIC_API_KEY`. **Not removed** (flagged, not fixed): `SECURITY_SCANNER_ANTHROPIC_API_KEY` in
+`generate-env.sh`/`.env.example` — now dead, harmless, left alone rather than touching
+secrets-generation scripts for a cosmetic cleanup.
+
+Tests: 7 new (`go/TEST_INDEX.md` S1-150) — 3 for `llmCardAnalysis` (including the hard-rule
+end-to-end proof, mirroring `classify_test.go`'s pattern exactly) and 4 for
+`mergeSecurityScanResult`'s pure arithmetic. `go test ./...` 0 failures full suite. `tsc --noEmit`
+0 errors. Both `them-go-bridge` and `them-security-agent` rebuilt (Dockerfile runs the full Go
+suite in-image for the former) and force-recreated; logs confirm healthy startup on both, no crash
+loops.
+
+**Not live-verified this session** — same standing limitation as the rest of this plan: no
+browser-automation tool, no direct curl probing. Recommend running an actual Security Scan against
+a real agent, both with security_scanner left on custom/disabled (should degrade gracefully,
+platform-key fallback if a platform config exists) and with it set to general mode using a real
+tenant key, to confirm the merged score/findings look right end-to-end — nothing in this repo's
+test suite drives that real A2A round trip.

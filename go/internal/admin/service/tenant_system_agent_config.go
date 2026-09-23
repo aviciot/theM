@@ -9,10 +9,11 @@ import (
 )
 
 // validSystemAgentRoles gates which role names may have a tenant config row —
-// mirrors the two roles SystemAgentsHandler's platform-global config supports.
+// mirrors the roles SystemAgentsHandler's platform-global config supports.
 var validSystemAgentRoles = map[string]bool{
 	"classifier":       true,
 	"card_synthesizer": true,
+	"security_scanner": true,
 }
 
 // TenantSystemAgentConfigOut is the HTTP response shape. CustomAPIKeyMasked is

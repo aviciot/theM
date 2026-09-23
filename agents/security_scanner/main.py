@@ -38,7 +38,6 @@ from a2a.types import (
 
 from scanner import run_scan
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 PORT = int(os.getenv("PORT", "9500"))
 
 
@@ -78,7 +77,7 @@ class SecurityScannerExecutor(AgentExecutor):
 
         try:
             payload = _extract_input(context)
-            result = await run_scan(payload, anthropic_api_key=ANTHROPIC_API_KEY)
+            result = await run_scan(payload)
 
             artifact = Artifact()
             artifact.artifact_id = "scan-result"
@@ -125,10 +124,10 @@ def make_agent_card() -> AgentCard:
     card = AgentCard()
     card.name = "security-scanner"
     card.description = (
-        "Analyzes a registered agent for security posture: HTTP surface probes "
-        "(TLS, auth enforcement, reachability) and LLM analysis of the agent card "
-        "and declared skills for over-broad scope, prompt-injection risk, and missing "
-        "input guardrails. Returns a 0-100 score, risk level, summary, and actionable findings."
+        "Runs HTTP surface probes (TLS, auth enforcement, reachability) on a "
+        "registered agent's endpoint. The caller (go-bridge) combines this with "
+        "its own LLM analysis of the agent card and declared skills to produce "
+        "a 0-100 score, risk level, summary, and actionable findings."
     )
     card.version = "1.0.0"
     card.icon_url = "security"

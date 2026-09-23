@@ -1,74 +1,20 @@
 """
-Security scanner logic — HTTP surface probes + LLM card/skill analysis.
+Security scanner logic — HTTP surface probes only.
 No A2A imports. Called from main.py execute().
+
+The LLM card/skill risk analysis step used to run here (llm_card_analysis,
+calling Anthropic directly with a single hardcoded ANTHROPIC_API_KEY shared
+by every tenant). It now runs in go-bridge instead
+(internal/admin/security_scan_llm.go, llmCardAnalysis) so a tenant's own
+"security_scanner" general/custom mode config (see
+docs/TENANT_LLM_PROVIDERS_PLAN.md) can be used instead of one shared
+platform key. This scanner is now HTTP-probes-only; go-bridge's
+runScanJob merges this result with its own LLM analysis before persisting.
 """
 
-import asyncio
-import json
 from datetime import datetime, timezone
-from typing import Any
 
 import httpx
-
-# ── Prompt ────────────────────────────────────────────────────────────────────
-
-_SYSTEM_PROMPT = """\
-You are a security auditor for an AI agent orchestration platform. You analyze one \
-agent's declared metadata (agent card, description, and skills) for security risk. \
-You do NOT execute anything or call the agent. Judge only what the metadata reveals.
-
-Assess these dimensions:
-1. Skill scope — are any skills dangerously broad or capable of destructive/arbitrary \
-action (e.g. "execute commands", "read any file", "run arbitrary code", unrestricted \
-network/filesystem/database access)?
-2. Description quality — is the tool description accurate, specific, and appropriately \
-scoped? Flag vague, over-promising, or manipulable descriptions that raise prompt-injection risk.
-3. Input/output modes — are risky or unconstrained data types accepted with no stated limits?
-4. Missing guardrails — absence of an input schema or constraints means the agent accepts \
-unbounded input; treat as elevated risk.
-
-Return ONLY a JSON object, no prose, no markdown fences, with this exact shape:
-{
-  "summary": "<one plain-English sentence summarizing overall security posture>",
-  "findings": [
-    {
-      "id": "<short_snake_case_id>",
-      "label": "<short human label>",
-      "status": "pass" | "warn" | "fail",
-      "risk": "low" | "medium" | "high",
-      "detail": "<one sentence: what you observed>",
-      "recommendation": "<one sentence: concrete fix, or 'No action needed'>"
-    }
-  ]
-}
-Rules: 2-5 findings. Use "pass"/"low" for things that look fine. Reserve "fail"/"high" \
-for genuinely dangerous scope or missing auth-relevant guardrails. Be concise and specific.\
-"""
-
-
-def _build_user_prompt(payload: dict) -> str:
-    skills_json = json.dumps(payload.get("skills", []), indent=2)
-    endpoint_url = payload.get("endpoint_url", "")
-    scheme = "https" if endpoint_url.startswith("https://") else "http"
-    agent_card = payload.get("agent_card") or {}
-    has_input_schema = bool(
-        agent_card.get("inputModes") or
-        any(s.get("inputModes") for s in (payload.get("skills") or []) if isinstance(s, dict))
-    )
-    return (
-        f"Agent under review:\n\n"
-        f"slug: {payload.get('slug', '?')}\n"
-        f"display_name: {payload.get('display_name', '?')}\n\n"
-        f"Description (this is the text the orchestrating LLM sees to decide when to call it):\n"
-        f"{payload.get('description', '(none)')}\n\n"
-        f"Declared skills (JSON):\n{skills_json}\n\n"
-        f"Capabilities: streaming={payload.get('supports_streaming', False)}, "
-        f"push={payload.get('supports_push', False)}\n"
-        f"Input schema present: {'yes' if has_input_schema else 'no'}\n"
-        f"Endpoint scheme: {scheme}\n\n"
-        f"Analyze and return the JSON object."
-    )
-
 
 # ── HTTP probes ───────────────────────────────────────────────────────────────
 
@@ -113,53 +59,13 @@ async def http_probes(endpoint_url: str, has_auth_token: bool) -> dict:
     return {"tls": tls, "auth_required": auth_required, "reachable": reachable}
 
 
-# ── LLM analysis ──────────────────────────────────────────────────────────────
-
-async def llm_card_analysis(payload: dict, anthropic_api_key: str) -> dict:
-    """
-    Calls Haiku for card/skill analysis. Returns {"summary": str, "findings": list}.
-    Never raises — returns degraded result on any failure.
-    """
-    if not anthropic_api_key:
-        return {"summary": "Card analysis unavailable — probes only (no API key configured).", "findings": []}
-
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=anthropic_api_key)
-        user_prompt = _build_user_prompt(payload)
-
-        response = await asyncio.to_thread(
-            client.messages.create,
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1500,
-            temperature=0,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-
-        raw = response.content[0].text.strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-
-        return json.loads(raw)
-
-    except Exception as exc:
-        return {
-            "summary": f"Card analysis unavailable — probes only ({exc}).",
-            "findings": [],
-        }
-
-
 # ── Score ─────────────────────────────────────────────────────────────────────
 
-def compute_score(probes: dict, llm_findings: list) -> int:
+def compute_score(probes: dict) -> int:
     """
-    Starts at 100. HTTP probes deduct up to 60, LLM findings up to 40.
+    Starts at 100. HTTP probes deduct up to 60. The LLM-findings penalty
+    (up to 40, plus the degraded-analysis -10) is now applied in Go, after
+    llmCardAnalysis runs — see mergeSecurityScanResult in scanjob.go.
     """
     score = 100
 
@@ -169,15 +75,6 @@ def compute_score(probes: dict, llm_findings: list) -> int:
         score -= 25
     if not probes.get("reachable", True):
         score -= 5
-
-    llm_penalty = 0
-    for f in llm_findings:
-        risk = f.get("risk", "low")
-        if risk == "high":
-            llm_penalty += 20
-        elif risk == "medium":
-            llm_penalty += 10
-    score -= min(llm_penalty, 40)
 
     return max(0, min(100, score))
 
@@ -247,50 +144,27 @@ def _probe_findings(probes: dict) -> list:
     return findings
 
 
-# ── Degraded analysis finding ─────────────────────────────────────────────────
-
-def _degraded_finding() -> dict:
-    return {
-        "id": "analysis",
-        "label": "Card Analysis",
-        "status": "warn",
-        "risk": "medium",
-        "detail": "LLM card/skill analysis was unavailable — assessment based on HTTP probes only.",
-        "recommendation": "Re-run the scan once the scanner API key is configured.",
-    }
-
-
 # ── Main entry ────────────────────────────────────────────────────────────────
 
-async def run_scan(payload: dict, anthropic_api_key: str) -> dict:
+async def run_scan(payload: dict) -> dict:
+    """
+    Probes-only result. go-bridge's runScanJob merges this with its own
+    llmCardAnalysis output (findings, summary, score adjustment) before
+    persisting the final ScanResult.
+    """
     endpoint_url = payload.get("endpoint_url", "")
-    has_auth_token = bool(payload.get("has_auth_token", False))
 
-    probes, llm = await asyncio.gather(
-        http_probes(endpoint_url, has_auth_token),
-        llm_card_analysis(payload, anthropic_api_key),
-    )
-
+    probes = await http_probes(endpoint_url, bool(payload.get("has_auth_token", False)))
     probe_findings = _probe_findings(probes)
-    llm_findings = llm.get("findings", [])
-    degraded = not llm_findings and "probes only" in llm.get("summary", "")
-
-    all_findings = probe_findings + llm_findings
-    if degraded:
-        all_findings.append(_degraded_finding())
-
-    score = compute_score(probes, llm_findings)
-    if degraded:
-        score = max(0, score - 10)
-
+    score = compute_score(probes)
     risk = "low" if score >= 80 else "medium" if score >= 50 else "high"
-    summary = llm.get("summary") or _synthesize_summary(probes, score, risk)
+    summary = _synthesize_summary(probes, score, risk)
 
     return {
         "score": score,
         "risk": risk,
         "summary": summary,
-        "findings": all_findings,
+        "findings": probe_findings,
         "http_probes": probes,
         "scanned_at": datetime.now(timezone.utc).isoformat(),
     }

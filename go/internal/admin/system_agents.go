@@ -243,6 +243,7 @@ func (h *SystemAgentsHandler) loadConfig(ctx context.Context) (saConfigStored, e
 		return saConfigStored{Roles: map[string]saRoleStored{
 			"classifier":       {Enabled: false},
 			"card_synthesizer": {Enabled: false},
+			"security_scanner": {Enabled: false},
 		}}, nil
 	}
 	var cfg saConfigStored

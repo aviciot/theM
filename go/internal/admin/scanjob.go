@@ -19,9 +19,13 @@ import (
 	"github.com/redis/rueidis"
 )
 
-// scanJobDAL is the minimal DAL surface runScanJob needs.
+// scanJobDAL is the minimal DAL surface runScanJob needs. Embeds classifierDAL
+// so llmCardAnalysis (the security_scanner role's LLM step, moved from the
+// Python scanner into Go — see security_scan_llm.go) can resolve a tenant's
+// own general/custom mode config the same way classifyAgent/synthesizeAppCard do.
 type scanJobDAL interface {
 	UpdateAgentScanResult(ctx context.Context, agentID string, result []byte) error
+	classifierDAL
 }
 
 // scanRedis is the minimal Redis surface runScanJob needs.
@@ -244,12 +248,18 @@ func runScanJob(
 		return
 	}
 
-	// Step 6 — Parse the result JSON.
+	// Step 6 — Parse the probes-only result JSON from the Python scanner.
 	var scanResult map[string]any
 	if err := json.Unmarshal([]byte(resultText), &scanResult); err != nil {
 		publishScanFailed(ctx, rc, hashKey, dashCh, agentID, "parse result json: "+err.Error())
 		return
 	}
+
+	// Step 7 — LLM card/skill analysis now runs in Go (not the Python scanner)
+	// so it can resolve the caller's own tenant's security_scanner config —
+	// see security_scan_llm.go. Merges into scanResult before persisting.
+	llmResult := llmCardAnalysis(ctx, d, fernetKey, tenantID, payload)
+	mergeSecurityScanResult(scanResult, llmResult)
 
 	// Step 8 — Persist result to DB.
 	resultBytes, _ := json.Marshal(scanResult)
@@ -299,6 +309,73 @@ func runScanJob(
 	}
 	hsetExpire(ctx, rc, hashKey, 300, completeFields)
 	pubJSON(ctx, rc, dashCh, completeEvent)
+}
+
+// mergeSecurityScanResult combines llmResult (from llmCardAnalysis) into
+// scanResult (the Python scanner's probes-only result), mutating scanResult
+// in place. Ports the merge logic that used to live in scanner.py's
+// run_scan: findings = probe_findings + llm_findings (+ a degraded finding
+// when the LLM step had no usable key/config); score gets an additional
+// penalty from llm_findings (capped at 40), plus -10 more when degraded;
+// risk and summary are recomputed from the adjusted score.
+func mergeSecurityScanResult(scanResult map[string]any, llmResult securityScanLLMResult) {
+	degraded := len(llmResult.Findings) == 0
+
+	probeFindings, _ := scanResult["findings"].([]any)
+	allFindings := make([]any, 0, len(probeFindings)+len(llmResult.Findings)+1)
+	allFindings = append(allFindings, probeFindings...)
+	for _, f := range llmResult.Findings {
+		allFindings = append(allFindings, f)
+	}
+	if degraded {
+		allFindings = append(allFindings, map[string]any{
+			"id":             "analysis",
+			"label":          "Card Analysis",
+			"status":         "warn",
+			"risk":           "medium",
+			"detail":         "LLM card/skill analysis was unavailable — assessment based on HTTP probes only.",
+			"recommendation": "Re-run the scan once a security_scanner key is configured (Settings → System Agents).",
+		})
+	}
+	scanResult["findings"] = allFindings
+
+	score, _ := scanResult["score"].(float64)
+	llmPenalty := 0
+	for _, f := range llmResult.Findings {
+		risk, _ := f["risk"].(string)
+		switch risk {
+		case "high":
+			llmPenalty += 20
+		case "medium":
+			llmPenalty += 10
+		}
+	}
+	if llmPenalty > 40 {
+		llmPenalty = 40
+	}
+	score -= float64(llmPenalty)
+	if degraded {
+		score -= 10
+	}
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	scanResult["score"] = score
+
+	risk := "high"
+	if score >= 80 {
+		risk = "low"
+	} else if score >= 50 {
+		risk = "medium"
+	}
+	scanResult["risk"] = risk
+
+	if llmResult.Summary != "" {
+		scanResult["summary"] = llmResult.Summary
+	}
 }
 
 // publishScanFailed emits a scan_failed event and sets the hash TTL to 30s.
