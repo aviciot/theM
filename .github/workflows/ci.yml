@@ -7,130 +7,22 @@ on:
     branches: [main]
 
 jobs:
-  # ── Job 1: structural checks — no Docker needed, fast ─────────────────────
-  structural:
-    name: Structural checks
+  go-test:
+    name: Go test suite
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
+          go-version: "1.25.0"
+          cache-dependency-path: go/go.sum
 
-      - name: Install bridge dependencies
-        run: pip install -r requirements.txt
+      - name: go vet
+        run: go vet ./...
 
-      - name: Run structural tests
-        run: |
-          python scripts/tests/run_tests.py 07 09 10 13 16 17 18 19 21 22 23 25 26 27 28 29 30 31 32
-
-  # ── Job 2: live stack — full suite against running containers ─────────────
-  live:
-    name: Live stack tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install bridge dependencies
-        run: pip install -r requirements.txt
-
-      - name: Generate .env from fixed CI secret
-        run: |
-          echo "THE_M_MASTER_SECRET=ci-fixed-secret-not-for-production-use" > secrets.local
-          bash generate-env.sh
-          # Append CI-specific overrides
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
-          echo "THE_M_CORS_ORIGINS=http://localhost:3200,http://localhost:8088" >> .env
-
-      - name: Build and start stack
-        run: |
-          docker compose \
-            -f docker-compose.yml \
-            -f docker-compose.local.yml \
-            -f .github/docker-compose.ci.yml \
-            up -d them-postgres them-redis them-auth-service them-bridge them-traefik
-        timeout-minutes: 5
-
-      - name: Wait for stack to be healthy
-        run: |
-          echo "Waiting for containers to be healthy..."
-          for i in $(seq 1 30); do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' them-bridge 2>/dev/null || echo "starting")
-            echo "  attempt $i: them-bridge = $STATUS"
-            if [ "$STATUS" = "healthy" ]; then break; fi
-            sleep 3
-          done
-          docker compose \
-            -f docker-compose.yml \
-            -f docker-compose.local.yml \
-            -f .github/docker-compose.ci.yml \
-            ps
-
-      - name: Apply DB migrations
-        run: |
-          # Copy all migration files
-          docker cp db/001_schema.sql          them-postgres:/tmp/them_001_schema.sql
-          docker cp auth_service/SCHEMA.sql    them-postgres:/tmp/them_auth_schema.sql
-          docker cp db/002_seed.sql            them-postgres:/tmp/them_002_seed.sql
-          docker cp db/003_phase8.sql          them-postgres:/tmp/them_003_phase8.sql
-          docker cp db/004_phase9.sql          them-postgres:/tmp/them_004_phase9.sql
-          docker cp db/005_phase10.sql         them-postgres:/tmp/them_005_phase10.sql
-          docker cp db/006_phase11.sql         them-postgres:/tmp/them_006_phase11.sql
-          docker cp db/007_docu_stack.sql      them-postgres:/tmp/them_007_docu_stack.sql
-          docker cp db/009_security_scan.sql   them-postgres:/tmp/them_009_security_scan.sql
-          docker cp db/010_app_entrypoints.sql them-postgres:/tmp/them_010_app_entrypoints.sql
-          docker cp db/011_app_conversation_budget.sql them-postgres:/tmp/them_011.sql
-          docker cp db/012_sub_orchestrator.sql        them-postgres:/tmp/them_012.sql
-          docker cp db/013_agentic_middleware.sql       them-postgres:/tmp/them_013.sql
-          docker cp db/014_app_orchestrators.sql        them-postgres:/tmp/them_014.sql
-          docker cp db/015_phase12_drop_deprecated.sql  them-postgres:/tmp/them_015.sql
-          docker cp db/016_graph_storage.sql            them-postgres:/tmp/them_016.sql
-          docker cp db/017_canvas_layout.sql            them-postgres:/tmp/them_017.sql
-          docker cp db/018_graph_compiler.sql           them-postgres:/tmp/them_018.sql
-          docker cp db/019_system_agents.sql            them-postgres:/tmp/them_019.sql
-          docker cp db/020_agent_category.sql           them-postgres:/tmp/them_020.sql
-          docker cp db/021_voice_ep.sql                 them-postgres:/tmp/them_021.sql
-          # Apply in order
-          docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
-          docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_003_phase8.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_006_phase11.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_007_docu_stack.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_009_security_scan.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_010_app_entrypoints.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_011.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_012.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_013.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_014.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_015.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_016.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_017.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_018.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_019.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_020.sql
-          docker exec them-postgres psql -U them -d them -f /tmp/them_021.sql
-
-      - name: Run full test suite
-        run: python scripts/tests/run_tests.py
-
-      - name: Print bridge logs on failure
-        if: failure()
-        run: docker logs them-bridge --tail 100
-
-      - name: Tear down
-        if: always()
-        run: |
-          docker compose \
-            -f docker-compose.yml \
-            -f docker-compose.local.yml \
-            -f .github/docker-compose.ci.yml \
-            down -v
+      - name: go test
+        run: go test ./...

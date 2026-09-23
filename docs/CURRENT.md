@@ -43,6 +43,15 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
+**CI fixed this session (2026-09-23):** `.github/workflows/ci.yml` had been broken since the
+Python→Go migration — it referenced a nonexistent `docker-compose.local.yml` and the removed
+`them-auth-service`/`them-bridge` containers (renamed to `them-auth-go`/`them-go-bridge`). Every
+run on `main` and every PR had been failing silently. Replaced with a single `go-test` job
+(`go vet ./...` + `go test ./...`); dropped the live-Docker-stack job and the now-unused
+`.github/docker-compose.ci.yml`. See `docs/LESSONS.md` for the full writeup. If a live-stack E2E
+job is wanted later, it needs to be rebuilt from scratch against the current container list in
+this file's Container Map, not repaired from the old one.
+
 **App Canvas Debug Mode — Phase 6** is the recommended next task: Step controls (pause after
 each node, lockstep multi-branch stepping per the "Decisions confirmed (round 2)" section of
 `docs/APP_CANVAS_DEBUG_PLAN.md`), plus canvas node click-to-inspect for a debug session's

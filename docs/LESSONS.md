@@ -1102,3 +1102,27 @@ handling, either drive the actual shipped parsing function directly, or diff the
 parsing logic against the consumer's line-by-line before trusting the script's pass/fail as proof
 the shipped code works. A script that independently re-implements "the same" parsing logic can
 silently diverge from what's actually shipped and prove nothing about it.
+
+## GitHub Actions CI silently rotted after the Python→Go migration (found 2026-09-23)
+
+`.github/workflows/ci.yml` was written for the old Python-bridge stack and never updated when
+commits `9f1c5b33` ("the-M is Go-only") and `4a6241b5` ("remove all remaining Python bridge
+references") renamed/removed the containers it depended on. The "live stack" job referenced
+`docker-compose.local.yml` (never existed), and tried to start/health-check `them-auth-service`
+and `them-bridge` (renamed to `them-auth-go` and `them-go-bridge` respectively). Every CI run on
+`main` and every PR had been failing at the "Build and start stack" step ever since, unnoticed.
+
+**Why it wasn't caught earlier:** compose/container renames were made as part of larger feature
+commits, and nothing in the workflow (or a pre-commit/PR check) cross-referenced service names in
+`ci.yml` against `docker-compose.yml`. CI failure notifications were not being actively monitored.
+
+**Fix:** replaced the workflow with a single `go-test` job (`go vet ./...` + `go test ./...`),
+matching CLAUDE.md's mandatory "every `go/` change needs tests, run full suite before commit" rule.
+Dropped the live-Docker-stack job and the now-unused `.github/docker-compose.ci.yml` override
+entirely rather than trying to repair container names — the platform is Go-only now, and a
+live-stack E2E job can be reintroduced deliberately later with the current service list if needed.
+
+**Watch for:** any time a container/service is renamed or removed in `docker-compose.yml`, grep
+`.github/workflows/*.yml` for the old name before considering the rename complete — CI can silently
+reference stale container names for a long time since a failing "live stack" job doesn't block
+anything locally and is easy to miss if notifications aren't watched.
