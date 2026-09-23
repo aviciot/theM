@@ -607,6 +607,11 @@ export interface PublishResult {
   definition_hash: string;
 }
 
+// ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───────────
+export interface AppFlowDebugStartResult {
+  run_id: string;
+}
+
 // ── Canvas A2A Agent Builder (Phase 2) ───────────────────────────────────────
 
 export interface AgentRootDoc {

@@ -52,6 +52,7 @@ export type {
   ValidationError,
   ValidationReport,
   PublishResult,
+  AppFlowDebugStartResult,
   AgentRootDoc,
   AgentStepDoc,
   AgentSkillDoc,
@@ -160,6 +161,7 @@ import type {
   AppDefinition,
   ValidationReport,
   PublishResult,
+  AppFlowDebugStartResult,
   AgentDefinitionDoc,
   AgentDefinition,
   AgentIssue,
@@ -562,6 +564,14 @@ export const themApi = {
     api.post<ValidationReport>(`/admin/applications/${appId}/definitions/${defId}/validate`, {}),
   publishDefinition: (appId: string, defId: string) =>
     api.post<PublishResult>(`/admin/applications/${appId}/definitions/${defId}/publish`, {}),
+
+  // App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — runs the
+  // latest saved draft directly, no publish required.
+  startAppFlowDebug: (appId: string, entryPointSlug: string, userMessage: string) =>
+    api.post<AppFlowDebugStartResult>(`/admin/applications/${appId}/debug/start`, {
+      entry_point_slug: entryPointSlug,
+      user_message: userMessage,
+    }),
 
   // Canvas A2A Agent Builder (Phase 2)
   listAgentDefinitions: () =>

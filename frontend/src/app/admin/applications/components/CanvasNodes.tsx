@@ -5,6 +5,22 @@ import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
 import { useAppLayoutDir } from '../AppLayoutContext';
 import { getNodeDef, resolveOutputPorts } from '@/lib/nodeRegistry';
+import type { AppFlowNodeDebugInfo } from '../types';
+
+// ── App Canvas Debug Mode overlay (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───
+// Same visual language as the agent builder's StepNode.tsx debug states,
+// applied to InlineNode/FlowControlNode when a real debug run is active —
+// driven by node_start/node_done/node_error events over WS, not a simulator.
+const debugAccent: Record<AppFlowNodeDebugInfo['state'], string | null> = {
+  idle: null, pending: '#f59e0b', running: '#60a5fa', done: '#4ade80', error: '#f87171',
+};
+const debugGlow: Record<AppFlowNodeDebugInfo['state'], string | null> = {
+  idle: null,
+  pending: '0 0 8px 2px rgba(245,158,11,0.5)',
+  running: '0 0 8px 2px rgba(96,165,250,0.5)',
+  done: '0 0 8px 2px rgba(74,222,128,0.4)',
+  error: '0 0 8px 2px rgba(248,113,113,0.5)',
+};
 
 // ── Tiny the-M logo badge for internal nodes ──────────────────────────────────
 function InternalMBadge() {
@@ -277,12 +293,15 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
   const nodeDef = getNodeDef(data.node_type, 'appflow');
   const meta = { emoji: nodeDef.emoji, color: nodeDef.border, label: nodeDef.label };
   const hasError = data._error || data._shake;
-  const accent = hasError ? '#f87171' : meta.color;
+  const dbgState = data._debug?.state;
+  const dbgAccent = dbgState ? debugAccent[dbgState] : null;
+  const dbgGlow = dbgState ? debugGlow[dbgState] : null;
+  const accent = dbgAccent ?? (hasError ? '#f87171' : meta.color);
   const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${meta.color}59`;
   const selBg   = hasError ? 'rgba(248,113,113,0.10)' : `${meta.color}1a`;
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
-      title={data._errorMsg || undefined}>
+      title={data._debug?.error || data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -305,8 +324,8 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
           width: 56, height: 56, borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: selected ? selBg : 'transparent',
-          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : `2px dashed ${accent}`,
-          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : 'none',
+          border: dbgAccent ? `2px solid ${dbgAccent}` : selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : `2px dashed ${accent}`,
+          boxShadow: dbgGlow ?? (selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : 'none'),
           transition: 'all 0.18s ease',
         }}>
         <div style={{ fontSize: 26, lineHeight: 1 }}>{meta.emoji}</div>
@@ -318,6 +337,12 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
         <div style={{ fontSize: 9, color: accent, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.8 }}>
           {data.node_type}
         </div>
+        {dbgState === 'done' && data._debug?.detail && (
+          <div style={{ fontSize: 9, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data._debug.detail}</div>
+        )}
+        {dbgState === 'running' && (
+          <div style={{ fontSize: 9, color: '#60a5fa' }}>running…</div>
+        )}
       </div>
       <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
@@ -341,13 +366,16 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
   const meta = { emoji: nodeDef.emoji, color: nodeDef.border, label: nodeDef.label };
   const controlPorts = resolveOutputPorts(nodeDef, data.config ?? {}).filter(p => p.kind === 'control' && p.id !== 'ctrl-out');
   const hasError = data._error || data._shake;
-  const accent = hasError ? '#f87171' : meta.color;
+  const dbgState = data._debug?.state;
+  const dbgAccent = dbgState ? debugAccent[dbgState] : null;
+  const dbgGlow = dbgState ? debugGlow[dbgState] : null;
+  const accent = dbgAccent ?? (hasError ? '#f87171' : meta.color);
   const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${meta.color}59`;
   const selBg   = hasError ? 'rgba(248,113,113,0.10)' : `${meta.color}1a`;
   const handleStyle = { background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 };
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
-      title={data._errorMsg || undefined}>
+      title={data._debug?.error || data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -370,8 +398,8 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
           width: 56, height: 56, borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: selected ? selBg : 'transparent',
-          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : `2px solid ${accent}`,
-          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : 'none',
+          border: dbgAccent ? `2px solid ${dbgAccent}` : selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : `2px solid ${accent}`,
+          boxShadow: dbgGlow ?? (selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : 'none'),
           transition: 'all 0.18s ease',
         }}>
         <div style={{ fontSize: 26, lineHeight: 1 }}>{meta.emoji}</div>
@@ -383,6 +411,12 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
         <div style={{ fontSize: 9, color: accent, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.8 }}>
           {data.node_type}
         </div>
+        {dbgState === 'done' && data._debug?.detail && (
+          <div style={{ fontSize: 9, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data._debug.detail}</div>
+        )}
+        {dbgState === 'running' && (
+          <div style={{ fontSize: 9, color: '#60a5fa' }}>running…</div>
+        )}
       </div>
       {controlPorts.length > 0 ? (
         <>

@@ -148,6 +148,18 @@ export interface EpNodeData {
   _errorMsg?: string;
 }
 
+// ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───────────
+// Real WS/SSE-driven state, not a client-side simulator — see
+// useAppFlowDebugSession.ts. Mirrors the agent builder's DebugNodeState shape
+// so StepNode.tsx's border/glow styling constants can be reused as-is.
+export type AppFlowDebugNodeState = 'idle' | 'pending' | 'running' | 'done' | 'error';
+
+export interface AppFlowNodeDebugInfo {
+  state: AppFlowDebugNodeState;
+  detail?: string;
+  error?: string;
+}
+
 // node_type is a string, not a literal union — new appflow node kinds
 // (see go/internal/appflow/noderegistry.go) need zero frontend type changes,
 // per docs/NODE_REGISTRY_PLAN.md Phase 4.
@@ -160,6 +172,7 @@ export interface FlowControlNodeData {
   _error?: boolean;
   _shake?: boolean;
   _errorMsg?: string;
+  _debug?: AppFlowNodeDebugInfo;
 }
 
 export interface InlineNodeData {
@@ -171,6 +184,7 @@ export interface InlineNodeData {
   _error?: boolean;
   _shake?: boolean;
   _errorMsg?: string;
+  _debug?: AppFlowNodeDebugInfo;
 }
 
 export type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData | FlowControlNodeData | InlineNodeData;

@@ -22,6 +22,8 @@ import { CanvasNodePropertiesPanel } from './cbv/CanvasNodePropertiesPanel';
 import { CanvasTopBar } from './CanvasTopBar';
 import { CanvasPalette } from './CanvasPalette';
 import { exportAppDefinition, parseImportedAppDefinition } from './CanvasExportImport';
+import { AppFlowDebugPanel } from './AppFlowDebugPanel';
+import { useAppFlowDebugSession } from '../hooks/useAppFlowDebugSession';
 
 // Which RF node component (and canvas palette section) each appflow node_type
 // renders as. This split is a frontend/UI concern, not portable node metadata
@@ -165,6 +167,13 @@ export function CanvasBuilderView({
 
   // Export/Import JSON (docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md)
   const importFileRef = useRef<HTMLInputElement>(null);
+
+  // App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — real WS
+  // consumer, not a simulator. Runs the saved draft directly on the debug
+  // Temporal worker pool; node states drive CanvasNodes.tsx's overlay via
+  // decorateNodes (see useAppFlowDebugSession.ts).
+  const appFlowDebug = useAppFlowDebugSession({ appId: app.id, nodes });
+  const debugDecoratedNodes = useMemo(() => appFlowDebug.decorateNodes(nodes), [nodes, appFlowDebug]);
 
 
   useEffect(() => {
@@ -483,10 +492,18 @@ export function CanvasBuilderView({
         onSaveDraft={saveDraft}
         onPublishClick={handlePublishClick}
         exportButton={
-          <button onClick={handleExport} title="Export as JSON file" style={{
-            background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.5)',
-            color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-          }}>↑ Export JSON</button>
+          <>
+            {activeDef && !appFlowDebug.debug.active && (
+              <button onClick={appFlowDebug.openPanel} title="Debug this draft — real execution on the isolated debug worker pool, no publish required" style={{
+                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)',
+                color: '#f59e0b', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+              }}>▶ Debug</button>
+            )}
+            <button onClick={handleExport} title="Export as JSON file" style={{
+              background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.5)',
+              color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+            }}>↑ Export JSON</button>
+          </>
         }
         importControls={!activeDef ? (
           <>
@@ -504,6 +521,18 @@ export function CanvasBuilderView({
           </>
         ) : undefined}
       />
+
+      {appFlowDebug.debug.active && (
+        <AppFlowDebugPanel
+          debug={appFlowDebug.debug}
+          entryPointOptions={appFlowDebug.entryPointOptions}
+          onSetEntryPointSlug={appFlowDebug.setEntryPointSlug}
+          onSetUserMessage={appFlowDebug.setUserMessage}
+          onRunAll={appFlowDebug.runAll}
+          onReset={appFlowDebug.reset}
+          onClose={appFlowDebug.closePanel}
+        />
+      )}
 
       {/* Three-column canvas area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -524,7 +553,7 @@ export function CanvasBuilderView({
           {activeDef ? (
             <ReactFlowProvider>
               <CanvasInnerWithDrop
-                nodes={nodes}
+                nodes={debugDecoratedNodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}

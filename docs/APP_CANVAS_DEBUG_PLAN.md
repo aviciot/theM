@@ -1,6 +1,6 @@
 # App Canvas — Debug Mode (real execution, not simulated)
-# Status: PLANNED, phased. Phase 1 + 2 + 3 + 4 COMPLETE. Phase 5 NEXT.
-# Date: 2026-09-22
+# Status: PLANNED, phased. Phase 1 + 2 + 3 + 4 + 5 COMPLETE. Phase 6 NEXT.
+# Date: 2026-09-22 (Phase 5 frontend + a real backend bug fix: 2026-09-23)
 
 ---
 
@@ -12,7 +12,7 @@
 | 2 — Per-node trace instrumentation | AppFlow activities emit node_start/node_done/node_error | ✅ COMPLETE (2026-09-22) |
 | 3 — Durable trace storage | Extend `them.run_steps`; make existing Flow tree populate for Graph-mode runs | ✅ COMPLETE (2026-09-22) |
 | 4 — Runtime log-verbosity setting | Per-app off/status/full config, gates persistence in Phase 3 | ✅ COMPLETE (2026-09-22) |
-| 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ⬜ NOT STARTED |
+| 5 — Debug UI: setup + Run All | Dynamic param-spec scan (mirrors agent builder), Run All button, WS/SSE consumer | ✅ COMPLETE (2026-09-23) |
 | 6 — Debug UI: Step controls | Step button, lockstep multi-branch pause/resume, canvas node highlighting | ⬜ NOT STARTED |
 
 **One phase per session** (same discipline as `docs/NODE_REGISTRY_PLAN.md`). Update this table
@@ -338,6 +338,98 @@ inline nodes (LLM, Condition, Router, etc. — no agent components) are unaffect
 such resolution. Not fixed in Phase 5 — flagged for a later session; a fix would need either
 stamping `_resolved_agent_ids` on every save (not just publish) or having the debug-start endpoint
 resolve agent instance IDs itself from the live component registry instead of trusting the stamp.
+
+---
+
+## Phase 5 — frontend (setup panel + Run All + real WS consumer) — COMPLETE (2026-09-23)
+
+**What was built**, mirroring the agent builder's `useDebugSession.ts`/`DebugPanel.tsx`/
+`StepNode.tsx` UX but as a real WS consumer, not a simulator:
+
+- `frontend/src/app/admin/applications/hooks/useAppFlowDebugSession.ts` (new) — `runAll()` POSTs
+  `/admin/applications/{id}/debug/start` with the selected entry-point slug + test message, then
+  opens `/ws/dashboard`, subscribes to `run:{run_id}`, and maps incoming `node_start`/`node_done`/
+  `node_error`/`done`/`error` events into per-node state (`idle|pending|running|done|error`) plus a
+  `decorateNodes()` helper that stamps `_debug` onto matching canvas nodes for the overlay below.
+  Entry-point options are scanned live from the canvas's own `entryPoint` nodes (`n.data.slug`) —
+  no separate lookup needed. No LLM/HTTP param-spec branch exists yet (confirmed in the earlier
+  design-decisions section: no AppFlow node kind declares `app_params` today), so setup is just
+  entry point + test message.
+- `frontend/src/app/admin/applications/components/AppFlowDebugPanel.tsx` (new) — setup form +
+  Run All/Reset/Close buttons + status line, styled like the agent builder's `DebugPanel.tsx`.
+- `frontend/src/app/admin/applications/components/CanvasNodes.tsx` — `InlineNode`/`FlowControlNode`
+  gained a `_debug` overlay (border/glow keyed by state, small "running…"/detail text), reusing
+  `StepNode.tsx`'s exact color scheme. Kept as a small addition to two existing files rather than a
+  third sibling file, since the alternative (threading debug state through a wrapper component) was
+  a bigger diff for no real benefit — the file-size guideline note in the design-decisions section
+  above was about *new* debug-state styling files, not modifying existing node renderers in place.
+- `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx` — new amber "▶ Debug"
+  button next to Export JSON (only shown once a draft is loaded), renders `AppFlowDebugPanel` when
+  active, and passes `appFlowDebug.decorateNodes(nodes)` into the canvas instead of raw `nodes`.
+- `frontend/src/lib/api.ts`/`apiTypes.ts` — `themApi.startAppFlowDebug()` + `AppFlowDebugStartResult`.
+
+**A real, pre-existing backend bug was found and fixed while live-testing this** (no
+browser-automation tool was available — see the note below on how this was verified instead):
+**`/ws/dashboard`'s `run:*` channels never delivered live events, only a one-shot snapshot.**
+`internal/runstream.PublishEvent` (called by every AppFlow node's `emitTrace`) only `XADD`s to the
+run's Redis Stream — nothing ever `PUBLISH`es to the parallel pub/sub channel `/ws/dashboard`
+actually subscribes to. The old `sendRunSnapshot` ran exactly once, at subscribe time, via
+`XRevRange` — so any run fast enough to finish before that single Redis round-trip landed (every
+debug run tested this session: mock-LLM AppFlow runs complete in well under 1 second end-to-end)
+delivered **zero** events to the client, live or otherwise. This wasn't a Phase-5-only bug — the
+playground's own `run:*` trace pane (`useChatConnection.ts`'s `openDashWs`) has the identical latent
+gap; it went unnoticed there because that pane is secondary (the primary chat response streams over
+a different WS that already uses the correct mechanism) and because orchestrator-mode runs are
+usually slow enough that a human clicking around happens to subscribe after some entries already
+exist.
+
+**The fix:** `go/internal/dashboard/handler.go` — `run:*` channels are no longer handed to the
+generic pub/sub `Subscribe` call at all. Each one is now tailed by a new `tailRunChannel` method
+that calls `internal/runstream.StreamFromRedis` — the same replay-then-live-XREAD-BLOCK primitive
+`internal/ws`/`internal/sse` already use for the production routes — so a `run:*` subscriber now
+gets full history-so-far plus every event published after subscribing, with no gap, exactly like
+the production WS/SSE routes already guaranteed. `Handler` gained a `streamer
+runstream.RedisStreamer` field (threaded from `cmd/them/main.go`'s existing `rsStreamer` instance,
+already built for the WS/SSE handlers — no new Redis client needed); nil-safe, so the old
+one-shot-snapshot path still runs when a test constructs a `Handler` without one (`NewForTest`'s
+existing signature gained the parameter; every pre-existing test passes `nil` and is unaffected).
+
+**Verified against the live stack, not just unit tests** — no browser-automation tool was available
+in this environment (Playwright's Chromium downloaded but its shared-library dependencies couldn't
+be installed without interactive sudo; confirmed the same limitation every prior session on this
+plan hit). Instead: a Node script run inside the already-running `them-frontend` container (same
+Docker network, so it can reach `them-auth-go`/`them-go-bridge` directly) logged in, created a real
+throwaway application + draft definition (EP + inline LLM + condition + two branch LLM nodes, no
+agent nodes — sidesteps the known agent-node limitation above) + its `them.entry_points` row (a
+separate table from the draft JSON, discovered via this exercise — canvas save presumably keeps it
+in sync via `POST .../entry-points`, which this script also called directly), called
+`debug/start`, and opened the exact same `/ws/dashboard` subscribe flow the new hook uses. Before
+the fix: `{"type":"subscribed",...}` and then nothing for 20s, despite the run completing and its
+Redis Stream containing the full correct event sequence (confirmed via direct `XRANGE`). After the
+fix: the full sequence arrived live over the WS —
+`node_start(llm_1)→node_done(llm_1)→token→node_start(cond_1)→node_done(cond_1,
+detail=branch=true)→node_start(llm_true)→node_done(llm_true)→token→done` — in order, matching
+exactly what the new frontend hook parses. Also separately confirmed the documented "agent nodes
+need publish first" limitation is real and correctly surfaced as a 422
+(`validate: [unresolved_agent] ...`) by trying an existing draft (`stage2-graph-llm-condition-v2`)
+that does have agent nodes.
+
+**Tests:** 2 new in `go/internal/dashboard/handler_test.go` (`TestDashboard_RunChannel_
+TailsLiveInsteadOfPubSub`, `TestDashboard_RunChannel_NoStreamerFallsBackToOneShotSnapshot`) using a
+small fake `runstream.RedisStreamer` — `go/TEST_INDEX.md` S1-52 bumped 13→15, new S1-149 row, S1
+total 1417→1419. `go test ./...` — 0 failures, full suite (58 packages), run via
+`docker run golang:1.25-alpine` (no local Go toolchain on this box). `npx tsc --noEmit` — 0 errors.
+`them-go-bridge` rebuilt (Dockerfile runs the full suite in-image, 0 failures confirmed again
+there) and force-recreated; logs confirm healthy startup. `docs/REDIS.md`'s
+`them:dash:run:{run_id}:stream` entry updated to document the new consumer + the bug it fixes.
+
+**Not done / deferred to Phase 6 (not a regression):** Step controls (pause after each node,
+lockstep multi-branch stepping) — this phase only built Run All, per the plan's own phase split.
+The known "agent nodes need publish first" limitation from the backend slice above remains
+unfixed — still flagged for a later session, unrelated to this phase's WS-delivery fix. No actual
+logged-in browser click-through was performed (see the live-stack verification note above for why,
+and what was done instead) — recommend a manual pass through the new "▶ Debug" button before fully
+trusting the UI layer specifically (the WS/backend contract it depends on is now proven live).
 
 ---
 
