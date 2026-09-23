@@ -48,7 +48,38 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**CI fixed this session (2026-09-23):** `.github/workflows/ci.yml` had been broken since the
+**Next task: App Canvas Debug Mode — Phase 6 (Step controls). Not started — this is what the next
+session should implement.** Everything it depends on (Phases 1–5, the runtime-params picker UI, the
+bounded debug lifetime) is complete and live. Full requirements, decisions already confirmed with
+the user, and prior-phase implementation detail live in `docs/APP_CANVAS_DEBUG_PLAN.md` — read it
+end to end before writing code, especially:
+- The phase table at the top (line ~16) and "Decisions confirmed with the user (round 2)"
+  (line ~448) — 5 numbered decisions, already settled, do not re-litigate:
+  1. Fix the existing Run History "Flow" tree (`frontend/src/app/runs/`), don't build a second one.
+  2. Per-app verbosity setting already exists (`off`/`status`/`full`) — debug always forces `full`.
+  3. `them.run_steps` already extended with nullable `node_id`/`node_kind` (Phase 3) — reuse it.
+  4. Debug worker pool already supports N replicas — no new design needed there.
+  5. **Step semantics for branching: step ALL currently-active nodes together, one tick at a
+     time** (not one node globally) — if a Fork just split into 2 branches, one Step click runs
+     one node in *each* branch simultaneously, keeping them in lockstep. This was explicitly
+     chosen over "step one branch, auto-run the others."
+- What "Step controls" concretely means (line ~297, ~426): a Step button in the debug toolbar
+  (same interaction model as the agent builder's existing debug bar), pause-after-each-node
+  execution, canvas node highlighting as it steps, plus click-to-inspect a node's input/output
+  mid-session.
+- The existing HIL approval signal (`appflow.AppFlowSignalHILApproval`,
+  `go/internal/appflow/workflow.go`) is the closest existing precedent for "pause a running
+  Temporal workflow node-by-node and resume on an external signal" — read it before designing the
+  Step signal, most of the pause/resume plumbing pattern likely transfers directly.
+- The real WS consumer built in Phase 5 (`frontend/src/app/admin/applications/hooks/
+  useAppFlowDebugSession.ts`, subscribes to `run:{runID}` on `/ws/dashboard`) already delivers
+  `node_start`/`node_done`/`node_error` events live — Phase 6 adds pause/resume control on top of
+  this existing event stream, it does not need to build new event delivery.
+
+**One phase per session** — do not start anything beyond Phase 6 in the same session. At the end,
+update this file's phase table and HEAD per the usual handover procedure.
+
+**CI fixed earlier this session (2026-09-23):** `.github/workflows/ci.yml` had been broken since the
 Python→Go migration — it referenced a nonexistent `docker-compose.local.yml` and the removed
 `them-auth-service`/`them-bridge` containers (renamed to `them-auth-go`/`them-go-bridge`). Every
 run on `main` and every PR had been failing silently. Replaced with a single `go-test` job
@@ -57,19 +88,15 @@ run on `main` and every PR had been failing silently. Replaced with a single `go
 job is wanted later, it needs to be rebuilt from scratch against the current container list in
 this file's Container Map, not repaired from the old one.
 
-**App Canvas Debug Mode — Phase 6** is the recommended next task: Step controls (pause after
-each node, lockstep multi-branch stepping per the "Decisions confirmed (round 2)" section of
-`docs/APP_CANVAS_DEBUG_PLAN.md`), plus canvas node click-to-inspect for a debug session's
-input/output. Phase 5 (setup panel + Run All + real WS consumer) and its follow-on plan
-`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md` (per-node LLM credential overrides for debug runs,
-**including two rounds of review follow-up this session**) are now both **complete and
-live-verified** — see that doc's three completion sections for full detail. Round 2 (most recent):
-General-mode model selector + Custom-mode Base URL field wired into the picker UI, and debug runs
-now have an actually-enforced wall-clock ceiling (`appflow.DebugRunMaxLifetime` = 3h30m, set as
-`WorkflowRunTimeout` — previously unset entirely for debug runs) with `debugcred.TTL` derived from
-that same ceiling (3h40m = 3h30m + 10min cleanup margin) instead of an independently-guessed flat
-30 minutes. The bound is surfaced to the user via `expires_at`/a panel badge, not just silently
-enforced. One phase per session — do not start Phase 6 in the same session as whatever comes next.
+**Phase 5 + AppFlow Runtime Params (per-node debug LLM credential overrides) are both complete and
+live-verified**, including two rounds of review follow-up this session — see
+`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`'s three completion sections for full detail. Round 2 (most
+recent): General-mode model selector + Custom-mode Base URL field wired into the picker UI, and
+debug runs now have an actually-enforced wall-clock ceiling (`appflow.DebugRunMaxLifetime` =
+3h30m, set as `WorkflowRunTimeout` — previously unset entirely for debug runs) with
+`debugcred.TTL` derived from that same ceiling (3h40m = 3h30m + 10min cleanup margin) instead of an
+independently-guessed flat 30 minutes. The bound is surfaced to the user via `expires_at`/a panel
+badge, not just silently enforced.
 
 **Manual browser verification still outstanding for round 2** (no headless browser available in
 this environment all session — see the plan doc's round-2 completion section for the exact 7-step
