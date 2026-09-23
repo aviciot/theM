@@ -1040,3 +1040,65 @@ whether the write side actually `PUBLISH`es to the channel a WS/SSE consumer sub
 `XADD`-only write (or any Stream-only write) will pass every "does the data exist in Redis" check
 while still delivering nothing live to a plain pub/sub subscriber. If a channel needs both replay
 and live delivery, reuse `internal/runstream.StreamFromRedis` rather than a bespoke snapshot.
+
+## `/ws/dashboard`'s `run:*` channel had no tenant-ownership check — a real cross-tenant IDOR (found 2026-09-23)
+
+While fixing the live-delivery gap above, a second, separate bug was found in the same code path:
+`IsValidChannel(ch)` only validates that a channel name is well-formed (`"run:" + non-empty
+suffix`) — it never checks whether the caller's own tenant actually owns the run UUID in that
+channel name. Any authenticated user of any tenant could subscribe to `run:{any-uuid}` and, if that
+run's Redis Stream still existed, receive another tenant's complete live trace — including LLM
+prompts and outputs — with no authorization check at all.
+
+**Why it wasn't caught earlier:** `tenantID` (from the JWT) is already passed into
+`sendSnapshots(ctx, cw, pubsubChannels, tenantID)` and used there for `agent:`/`scan:` channel
+authorization — so a reviewer skimming `ServeHTTP` could reasonably assume every channel type gets
+the same treatment. `run:*` channels were split out of `pubsubChannels` into their own
+`tailRunChannel` path (the live-delivery fix above) with no equivalent check carried over — the
+`tenantID` variable was right there in scope, just never referenced by the new code.
+
+**Fix:** new `dashboard.RunOwnershipChecker` interface + `PgxRunOwnershipChecker`
+(`go/internal/dashboard/run_ownership.go`) — a single `SELECT EXISTS(... WHERE id = $1 AND
+tenant_id = $2)` query against `them.runs`, checked before `tailRunChannel` is ever called for a
+given channel. Fails **closed**: a nil checker, a query error, or `owns=false` all refuse to tail
+that channel (silent — logged as a warning, no distinguishable error sent to the client, so a
+tenant probing run IDs can't tell "wrong tenant" apart from "doesn't exist" or "server
+misconfigured").
+
+**Watch for:** any handler that threads a caller's `tenantID` through some code paths for
+authorization but not others in the same function — especially when a new branch is added that
+looks structurally similar to existing authorized branches (same function, same loop, same
+variable in scope) but was written without an explicit ownership check because "it's just like the
+other channels" was assumed rather than verified. Grep for every place a resource ID from client
+input is used to build a lookup key, and confirm each one is scoped by the caller's own tenant, not
+just well-formed.
+
+## Frontend was silently dropping every real WS event by gating on the wrong field (found 2026-09-23)
+
+`useAppFlowDebugSession.ts`'s `ws.onmessage` handler checked `msg.type` first (`if (!type ||
+type === 'ping' || type === 'subscribed') return;`) before ever looking at `msg.event`. But
+`/ws/dashboard`'s actual wire shape for every real trace/data event is `{"channel": "...",
+"event": {"type": "node_start", ...}}` — the *outer* envelope has **no top-level `type` field at
+all**. Only the three WS-protocol control messages (`ping`, `{"type":"error",...}` for a malformed
+subscribe, `{"type":"subscribed",...}` for the ack) have one. Since `msg.type` was `undefined` for
+every real event, the original `if (!type ...) return;` matched and silently discarded every single
+event this hook was built to consume — the entire Phase 5 debug panel had never actually displayed
+a live node state in a real browser, from the session it first shipped in through to this fix.
+
+**Why it wasn't caught earlier:** the bug was introduced and shipped in the same session that first
+built this hook, and that session's own live verification used a hand-written Node script that
+checked `msg.event?.type` directly — bypassing the exact buggy branch — so the verification
+"proved" the backend contract worked while never actually exercising the frontend code as written.
+The gap between "I wrote a script that proves the wire protocol works" and "I proved the actual
+shipped frontend code parses that wire protocol correctly" is where this hid.
+
+**Fix:** check `msg.type === 'ping' || msg.type === 'subscribed'` for the control messages, handle
+`msg.type === 'error' && !msg.event` for the WS-protocol error case explicitly, then unconditionally
+try `msg.event` for everything else — presence of `event`, not `type`, is what distinguishes a real
+trace message.
+
+**Watch for:** when writing a "verification script" to test a WS/SSE consumer's wire-format
+handling, either drive the actual shipped parsing function directly, or diff the script's own
+parsing logic against the consumer's line-by-line before trusting the script's pass/fail as proof
+the shipped code works. A script that independently re-implements "the same" parsing logic can
+silently diverge from what's actually shipped and prove nothing about it.

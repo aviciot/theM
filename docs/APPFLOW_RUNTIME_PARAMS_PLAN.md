@@ -1,8 +1,7 @@
 # AppFlow Runtime Params — declared node runtime parameters, starting with Debug
 
-# Status: PLANNED, phased. Phase 1 NEXT.
-# Date: 2026-09-23 (revised same day: per-node scoping, storage/concurrency/retry/failure
-# requirements added after review — see "Revision (same day)" note below)
+# Status: IMPLEMENTED (Debug-panel phase). Runtime settings screen migration still deferred.
+# Date: 2026-09-23 (planned, revised after review, then implemented and live-verified same day)
 
 ---
 
@@ -375,3 +374,113 @@ itself a kind of durable log outside this plan's control).
    *never-requested* required param — that's a UX/validation question for the debug panel's "setup
    complete" gate (§3), not a backend resolution question, but worth confirming before implementing
    the gate's exact rule.
+
+---
+
+## Implementation — COMPLETE (2026-09-23)
+
+All open questions above were resolved during implementation:
+
+1. `RuntimeParamDecl` lives in `appflow` itself (`go/internal/appflow/noderegistry.go`), not
+   `nodedefs` — matching `nodedefs`'s own stated boundary ("param-declaration types are typed to
+   each runtime's own compiler/resolution model, not shared metadata"), the same reason
+   `agentgen.AppParamDecl` lives in `agentgen` rather than the shared package. JSON tag `app_params`
+   (not a new field name) so the frontend's existing `NodeDef.app_params?: AppParamDecl[]` needed
+   zero structural changes — only a new `'llm_credential'` value added to its `type` union.
+2. `InlineLLMRequest` gained `RunID`/`NodeID` fields, populated unconditionally at both call sites
+   (`workflow.go`, `graph.go`) from the activity input's own `RunID`/`NodeID` — always non-empty,
+   since every AppFlow run has these. `Debug bool` (also added) is what actually gates the
+   debug-override check, not emptiness of the IDs.
+3. TTL is `debugcred.TTL = 10 * time.Minute` (`go/internal/debugcred/store.go`). Proactive
+   delete-on-terminal-event was **not** implemented this pass — TTL-only cleanup, per the plan's
+   own "TTL is the fallback for runs that never reach a terminal event" framing generalized to the
+   only cleanup path for now. Flagged as a possible follow-up, not a regression: a debug run's
+   credentials linger in Redis for up to 10 minutes after the run finishes rather than being deleted
+   immediately.
+4. Resolved: a required `llm_credential` param with **no** override entry in the request fails the
+   whole `debug/start` call with 422 before `AdmitDebug` is ever invoked — there is no "falls
+   through to Runtime settings" behavior for AppFlow debug runs. Confirmed live: a request with zero
+   `llm_overrides` against a 3-LLM-node draft returned `422 node "llm_1" requires an llm_overrides
+   entry...` without admitting a run.
+
+**What was built, exactly per the six requirements from the review:**
+
+1. **Per-node, not global** — `useAppFlowDebugSession.ts`'s `runtimeParamSpecs` scan produces one
+   spec per `${nodeId}:${paramKey}`, never deduped across nodes. `AppFlowDebugPanel.tsx` renders one
+   `AppFlowLLMCredentialField.tsx` instance per node, each with its own independent General/Custom
+   state. Verified live: a 3-LLM-node draft with 3 different custom keys produced 3 distinct Redis
+   entries with 3 distinct `api_key` values (confirmed via direct `GET` against `them-redis`).
+2. **General + Custom** — `AppFlowLLMCredentialField.tsx` mirrors `TenantRoleCard.tsx`'s
+   provider-dropdown → key-dropdown (General) / provider+model+key text fields (Custom) pattern, at
+   node scope. General mode resolves via `resolveLLMOverride` (new
+   `go/internal/admin/service/appflow_debug_credentials.go`), reusing the same
+   `them.llm_provider_keys` DAL calls `resolveSystemAgentRole` already uses — never re-implemented.
+3. **Storage scoped to tenant + run + node** (user recorded in the value, not the key) —
+   `go/internal/debugcred.Store`, key shape `them:debug:{tenant_id}:{run_id}:{node_id}:llm_override`.
+   Concurrency safety comes from `run_id` already being a fresh UUIDv4 per `debug/start` call — no
+   locking needed, proven by 5 integration tests against live Redis (`TestIntegration_Store_*`,
+   including `TenantScoping_DifferentTenantsDoNotCollide`).
+4. **Applies only to that debug run** — the override check in `dbLLMCaller.Complete`
+   (`cmd/dag-worker/main.go`) only fires when `req.Debug == true`; production (non-debug) calls
+   never look at `debugcred.Store` at all, and nothing in this change touches
+   `GetAppFlowLLMNodes`/`PutAppFlowLLMOverride` (the Runtime settings API) or its underlying table.
+5. **Survives retries, fails clearly on missing credential** — `debugcred.Store.Get` is a plain
+   non-destructive Redis `GET` (proven by `TestIntegration_Store_GetSurvivesRepeatedReads`, 3
+   consecutive reads all succeed). `dbLLMCaller.Complete`'s debug branch returns an explicit error
+   — never falls through to `resolveKey`/`llmresolve` — on: lookup error, override absent
+   (`"debug credential unavailable for this run (expired or evicted)"`), or `debugStore` unconfigured
+   at all (`"debug run but no debug credential store configured on this worker"` — a real bug this
+   session's own tests caught before shipping: this case was originally falling through to normal
+   resolution and nil-panicking, fixed in the same commit as the test that found it).
+6. **Secrets never in Temporal history or logs** — the override value never crosses the workflow/
+   activity boundary; only `RunID`/`NodeID` (IDs, not secrets) were added to `InlineLLMRequest`,
+   confirmed safe under the existing `AF-WF-14` reflection guard test (which checks
+   `InlineLLMActivityInput`, and these same names would pass that check too). Custom-mode keys are
+   sent once in the `debug/start` request body and never written to browser-side persistent storage
+   (stricter than the agent builder's own `sessionStorage` precedent for its debug secrets).
+
+**Also fixed in the same session, found while live-testing this feature (not originally part of
+this plan, but blocking real verification of it):**
+- **Cross-tenant IDOR on `/ws/dashboard` `run:*` subscriptions** — `IsValidChannel` validated
+  channel-name shape only, never whether the caller's tenant owned the run. Fixed with a new
+  `dashboard.RunOwnershipChecker` (`go/internal/dashboard/run_ownership.go`), checked before
+  `tailRunChannel` runs; fails closed (refuses) on a nil checker, an error, or `owns=false`. 3 new
+  tests prove this (`TestDashboard_RunChannel_WrongTenantRefused`,
+  `OwnershipCheckErrorRefusesNotTails`, `NilOwnerRefusesEntirely`).
+- **Frontend was silently dropping every real trace event** — `useAppFlowDebugSession.ts`'s
+  `ws.onmessage` gated on a top-level `msg.type`, but real events arrive as `{"channel":...,
+  "event":{"type":"node_start",...}}` with no top-level `type` at all (only `ping`/`subscribed`/a
+  WS-protocol `error` have one). The shipped Phase 5 hook had never actually displayed a single live
+  event in a real browser — this bug predates this session's other work and was only caught now.
+
+**Tests:** 13 new unit tests across 4 packages (`internal/appflow` +1, `internal/admin/service` +4,
+`internal/dashboard` +3, `cmd/dag-worker` +5 — `dbLLMCaller` had zero direct tests before this
+change) plus 5 new integration tests (`internal/debugcred`, run for real against live Redis this
+session). `go/TEST_INDEX.md` S1 total 1448→1461, S2 total 73→78. `go test ./...` 0 failures, full
+suite. `go test -race` on touched packages found one **pre-existing, unrelated** flaky race
+(`internal/appflow.TestForkJoin_EmitsTraceForAllNodes`, inside the Temporal SDK's own test-harness
+concurrency, nowhere near this session's one-line-per-file edits to `workflow.go`/`graph.go`) —
+flagged in `TEST_INDEX.md`, not fixed, same category as the already-documented
+`internal/llmgateway.TestHandler_Stream_200` flake. `npx tsc --noEmit` 0 errors.
+
+**Verified live end-to-end, not just unit tests:** rebuilt and restarted `them-go-bridge`,
+`them-dag-worker`, `them-dag-worker-2`, `them-dag-worker-debug` (all healthy, all workers polling
+correctly post-restart); `them-frontend` hot-reloaded with 0 compile errors. Ran a Node script
+inside the live `them-frontend` container (no browser-automation tool available in this
+environment) that: created a real throwaway app + 3-LLM-node draft + entry point, called
+`debug/start` with no overrides (confirmed 422, no run admitted), then called it again with 3
+distinct per-node custom credentials (confirmed 200, real run executed on the debug worker pool,
+full `node_start`/`node_done`/`done` sequence arrived live over `/ws/dashboard`), then confirmed via
+direct `redis-cli GET` that 3 separate Redis keys existed with 3 distinct `api_key` values scoped
+correctly by tenant+run+node. The throwaway application was deleted from the live DB after testing.
+
+**Not done — no actual logged-in browser click-through of the new per-node picker UI itself** (see
+above for why, and what was done instead to compensate). The full backend contract (validation,
+per-node isolation, retry-safe storage, fail-loud-on-missing, tenant ownership) is proven live;
+the picker component's rendering/interaction (dropdowns populating, mode toggle, etc.) has not been
+visually confirmed in a real browser. Recommend a manual pass through the Debug button before fully
+trusting the UI layer specifically.
+
+**Explicitly still deferred, unchanged from the plan:** Runtime settings screen migration
+(`flow-llm-nodes` reading from the same `RuntimeParams` declaration) — a separate future phase, not
+started.
