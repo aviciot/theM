@@ -30,6 +30,15 @@ function TenantCard({ tenant, selected, onClick }: { tenant: TenantRecord; selec
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
+          {tenant.is_bootstrap && (
+            <span title="the-M's own operating tenant — cannot be deleted" style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px',
+              background: 'rgba(230,184,92,.14)', color: '#e6b85c', border: '1px solid rgba(230,184,92,.3)',
+              display: 'flex', alignItems: 'center', gap: '4px',
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>shield</span>
+              Platform
+            </span>
+          )}
           <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px',
             background: tenant.enabled ? 'rgba(52,211,153,.12)' : 'rgba(248,113,113,.1)',
             color: tenant.enabled ? '#34d399' : '#f87171', border: `1px solid ${tenant.enabled ? 'rgba(52,211,153,.25)' : 'rgba(248,113,113,.2)'}`,
@@ -405,7 +414,18 @@ function TenantPanel({ tenant, onClose, onPatched, onDeleted }: {
     }} className="custom-scrollbar">
       <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid rgba(255,255,255,.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <p style={{ fontWeight: 700, fontSize: '15px', color: 'var(--tm-card-text)', margin: '0 0 2px 0' }}>{tenant.display_name}</p>
+          <p style={{ fontWeight: 700, fontSize: '15px', color: 'var(--tm-card-text)', margin: '0 0 2px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {tenant.display_name}
+            {tenant.is_bootstrap && (
+              <span title="the-M's own operating tenant — cannot be deleted" style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px', borderRadius: '9px',
+                background: 'rgba(230,184,92,.14)', color: '#e6b85c', border: '1px solid rgba(230,184,92,.3)',
+                display: 'inline-flex', alignItems: 'center', gap: '3px',
+              }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '11px' }}>shield</span>
+                Platform
+              </span>
+            )}
+          </p>
           <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', margin: 0, fontFamily: 'monospace' }}>{tenant.slug}</p>
         </div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tm-card-text-muted)', padding: '4px' }}>

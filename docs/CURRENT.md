@@ -1,10 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 4 COMPLETE — removed the isSuperAdmin branch
-# from Settings -> System Agents / LLM Providers; both screens always render the tenant-scoped
-# view for the caller's own tenant now. Confirmed the removed branch was calling backend routes
-# Phase 2 had already deleted (/admin/system-agents, platform-key routes) -- dead code, not just
-# "wrong screen". docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 4 of 6 done. Next: Phase 5 (tenant
-# management UI).)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 5 COMPLETE — /admin/tenants now marks the
+# bootstrap/platform tenant with a visible "Platform" badge in both the grid card and the side
+# panel header, gated on the already-existing tenant.is_bootstrap field. No functional change to
+# the pre-existing deletion guard -- purely additive visibility. docs/PLATFORM_AS_TENANT_PLAN.md,
+# 6 phases, 5 of 6 done. Next: Phase 6 (re-verification walkthrough).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -61,16 +60,33 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 4 of 6 COMPLETE.**
+**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 5 of 6 COMPLETE.**
 Read that plan doc end to end before continuing — especially the "Current-state map" section
 (researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE"
-through "Phase 4 — COMPLETE" sections for exactly what was and wasn't done in each.
+through "Phase 5 — COMPLETE" sections for exactly what was and wasn't done in each.
 
-**Next: Phase 5 (tenant management UI) — NOT started.** Ensure `/admin/tenants`'s list clearly
-marks the bootstrap/platform tenant as such (not hidden, but visually distinct) — no functional
-change to the deletion guard, which already exists (`dal/tenants.go` filters `AND is_bootstrap =
-false`). Independent of Phase 4, can run anytime. Phase 6 (re-verify the App Canvas Debug Mode
-walkthrough) depends on all prior phases and should come after Phase 5.
+**Next: Phase 6 (verification) — NOT started, and the last phase of this plan.** Re-run the App
+Canvas Debug Mode walkthrough that originally surfaced this whole plan — confirm
+`stage2-graph-llm-condition-v2`'s debug panel General mode now shows the bootstrap tenant's own
+keys/models correctly. Depends on all prior phases (all now done). This phase is pure
+verification — no code changes expected unless it finds a new bug, in which case scope that
+finding as its own follow-up rather than silently expanding Phase 6.
+
+**Phase 5 (tenant management UI) is done** — `/admin/tenants` (`frontend/src/app/admin/tenants/page.tsx`)
+now shows an amber "Platform" badge (shield icon, tooltip "the-M's own operating tenant — cannot
+be deleted") on the bootstrap tenant, in both the grid's `TenantCard` (next to the existing
+enabled/IdP badges) and the side panel's header (next to the display name) — gated on
+`tenant.is_bootstrap`, which the API already returned and `apiTypes.ts` already typed, so no
+backend change was needed. Purely additive: the bootstrap tenant is still fully visible/manageable
+in the list (not hidden), and the pre-existing deletion guard (`dal/tenants.go`'s `is_bootstrap =
+false` filter, and the existing `!tenant.is_bootstrap` check that already hid the Danger Zone
+section) was not touched — it already worked correctly. `ProvisionWizard.tsx` (tenant creation)
+untouched, since the bootstrap tenant is seeded, never created through that flow.
+`npx tsc --noEmit` 0 errors. No Go files touched, no Go test run needed per the trigger map.
+**Not live-browser-verified** — same standing limitation as every phase of this plan so far, no
+browser-automation tool available in this environment. Recommend a real logged-in check next:
+`/admin/tenants` should show the badge on the bootstrap tenant's card and side panel, Danger Zone
+still absent for it specifically.
 
 **Phase 4 (frontend consolidation) is done** — removed the `isSuperAdmin` branch from Settings →
 LLM Providers / System Agents (`frontend/src/app/admin/settings/page.tsx`,
@@ -86,11 +102,11 @@ deleted by Phase 2, so the removed branch was calling dead routes, not just "the
 This is the phase that actually closes the original bug this whole plan started from — a
 `super_admin` session as `avi`/`admin` can now reach the tenant self-service LLM Providers/System
 Agents screens the same way any tenant admin does, scoped to the bootstrap tenant.
-`npx tsc --noEmit` 0 errors. No Go files touched, no Go test run needed per the trigger map.
 **Not live-browser-verified** — same standing limitation as every other phase of this plan, no
-browser-automation tool available in this environment. Recommend a real logged-in check next:
+browser-automation tool available in this environment. Recommend a real logged-in check:
 `avi`/`admin` → Settings → LLM Providers should show the bootstrap tenant's 5 providers +
-"MainKey" (moved there by Phase 1).
+"MainKey" (moved there by Phase 1) — this check and Phase 6's re-verification can be done
+together in the same session.
 
 **Phase 3 (RLS verification) is done** — `go/internal/db/platform_as_tenant_rls_integration_test.go`,
 4 new tests run via `them_app`/`BeginTenantTx` (real RLS enforcement, not the BYPASSRLS admin pool

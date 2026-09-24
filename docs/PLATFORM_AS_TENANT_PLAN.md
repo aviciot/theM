@@ -1,6 +1,7 @@
 # Platform-as-Tenant — Plan
 # Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24).
-# Phase 3 COMPLETE (2026-09-24). Phase 4 COMPLETE (2026-09-24). Phase 5 NEXT.
+# Phase 3 COMPLETE (2026-09-24). Phase 4 COMPLETE (2026-09-24). Phase 5 COMPLETE (2026-09-24).
+# Phase 6 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -213,7 +214,7 @@ alternative. This plan is not overriding a considered decision.
 | 2 — Backend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 2 — COMPLETE" section below | Phase 1 |
 | 3 — RLS verification | ✅ **COMPLETE (2026-09-24)** — see "Phase 3 — COMPLETE" section below | Phase 1 |
 | 4 — Frontend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 4 — COMPLETE" section below | Phase 2 |
-| 5 — Tenant management UI | Ensure `/admin/tenants` list clearly marks the bootstrap/platform tenant as such (not hidden, but visually distinct) — no functional change to deletion guard, which already exists | Independent, can run anytime |
+| 5 — Tenant management UI | ✅ **COMPLETE (2026-09-24)** — see "Phase 5 — COMPLETE" section below | Independent, can run anytime |
 | 6 — Verification | Re-run the App Canvas Debug Mode Phase 6 walkthrough that surfaced this gap — confirm `stage2-graph-llm-condition-v2`'s debug panel General mode now shows the bootstrap tenant's own keys/models correctly | All above |
 
 **One phase per session**, same discipline as every other plan this session referenced. Do not
@@ -489,6 +490,31 @@ started from, and Phase 4 is the phase that should close it.
 **Deferred, not this phase's job:** Phase 5 (tenant management UI — mark the bootstrap/platform
 tenant as such in `/admin/tenants`'s list) and Phase 6 (re-verify the App Canvas Debug Mode
 walkthrough that surfaced this whole plan) are both still open. One phase per session.
+
+---
+
+## Phase 5 — COMPLETE (2026-09-24)
+
+Added a "Platform" badge (shield icon, amber) to `frontend/src/app/admin/tenants/page.tsx`
+wherever a tenant's identity is shown, gated on `tenant.is_bootstrap` (already returned by the
+API, already typed in `apiTypes.ts` — no backend change needed): the tenant grid's `TenantCard`
+(next to the existing enabled/IdP badges) and the side panel's header (next to the display name).
+Both carry a `title` tooltip: "the-M's own operating tenant — cannot be deleted."
+
+**Deliberately not changed, per the phase's own spec:** the bootstrap tenant is not hidden or
+filtered out of the list/grid — still fully visible and manageable like any other tenant, just
+visually distinct now. The deletion guard itself (`dal/tenants.go`'s `AND is_bootstrap = false`,
+and the pre-existing `!tenant.is_bootstrap` check at `page.tsx`'s old line 480 that hides the
+Danger Zone section) was not touched — it already existed and already worked correctly; this
+phase only added visibility, no new guard logic. `ProvisionWizard.tsx` (tenant creation) is
+untouched — the bootstrap tenant is seeded, never created through this flow.
+
+**Verified:** `npx tsc --noEmit` — 0 errors. No Go files touched, no Go test run needed per the
+trigger map. **Not live-browser-verified** — same standing limitation as every other phase of
+this plan, no browser-automation tool available in this environment. The concrete thing to check
+in a real browser session: `/admin/tenants` should show the bootstrap tenant's card and side
+panel both carrying the amber "Platform" badge, with the Danger Zone (delete button) still
+absent for that tenant specifically.
 
 ---
 
