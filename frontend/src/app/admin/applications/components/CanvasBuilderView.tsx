@@ -526,6 +526,7 @@ export function CanvasBuilderView({
 
       {appFlowDebug.debug.active && (
         <AppFlowDebugPanel
+          appId={app.id}
           debug={appFlowDebug.debug}
           entryPointOptions={appFlowDebug.entryPointOptions}
           runtimeParamSpecs={appFlowDebug.runtimeParamSpecs}

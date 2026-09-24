@@ -136,3 +136,34 @@ func TestAppFlowDebugHandler_Step_Success_SignalsWorkflow(t *testing.T) {
 	assert.Equal(t, runID, resp["run_id"])
 	assert.Equal(t, "stepped", resp["status"])
 }
+
+// AFD-8: malformed run_id → 400, never reaches the service layer — same
+// mechanics as the Step route's own AFD-3-equivalent guard.
+func TestAppFlowDebugHandler_Result_InvalidRunID_Returns400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/debug/not-a-uuid/result", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// AFD-9: run doesn't exist (or belongs to another tenant) → 404 — same
+// fakeDB{queryRowErr: pgx.ErrNoRows} pattern as
+// TestAppFlowDebugHandler_Step_RunNotFound_Returns404, since GetRunDetail's
+// first internal call is the same single-row GetRun lookup.
+func TestAppFlowDebugHandler_Result_RunNotFound_Returns404(t *testing.T) {
+	runID := "00000000-0000-0000-0000-0000000000c1"
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/debug/"+runID+"/result", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}

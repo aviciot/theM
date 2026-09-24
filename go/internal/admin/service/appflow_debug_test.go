@@ -88,6 +88,12 @@ type fakeAppFlowDebugDAL struct {
 	agentExists    bool
 	agentExistsSet bool
 	agentExistsErr error
+
+	// GetRunDetail fakes — see appflow_debug_result_test.go for the tests
+	// that actually exercise this; unused (returns the zero value) by every
+	// test in this file.
+	runDetail    dal.RunDetail
+	runDetailErr error
 }
 
 func (f *fakeAppFlowDebugDAL) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
@@ -108,6 +114,10 @@ func (f *fakeAppFlowDebugDAL) GetLLMProviderKey(_ context.Context, _ int64, _ *s
 
 func (f *fakeAppFlowDebugDAL) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return f.key, f.keyErr
+}
+
+func (f *fakeAppFlowDebugDAL) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) {
+	return f.runDetail, f.runDetailErr
 }
 
 // AgentExists is unused by every existing test in this file (all pass a nil

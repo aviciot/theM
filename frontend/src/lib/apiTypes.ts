@@ -594,6 +594,26 @@ export interface AppFlowDebugStartResult {
   workflow_id: string;
 }
 
+// Structured, LLM-readable debug run result (Platform-as-Tenant Phase 6
+// "smart debug log" follow-up) — an up-front pass/fail verdict plus every
+// node's status/output/error in execution order.
+export interface AppFlowDebugStepResult {
+  node_id: string;
+  node_kind: string;
+  status: string; // "completed" | "failed" | "running"
+  output?: string;
+  error?: string;
+  latency_ms?: number;
+}
+
+export interface AppFlowDebugResultSummary {
+  run_id: string;
+  ok: boolean;
+  failed_node_id?: string;
+  failed_error?: string;
+  node_results: AppFlowDebugStepResult[];
+}
+
 // Per-node LLM credential override for a debug run only
 // (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's saved
 // Runtime settings. Keyed by canvas node_id in the request body.

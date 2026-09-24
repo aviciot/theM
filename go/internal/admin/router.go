@@ -210,6 +210,7 @@ func BuildRouter(
 					debugApp := NewAppFlowDebugHandler(dbq, appFlowDebugLifecycle, debugcred.New(redis), fernetKey, temporalSig, registry.NewResolver(&registryQuerierAdapter{dbq}))
 					tenantScoped.Post("/applications/{id}/debug/start", debugApp.Start)
 					tenantScoped.Post("/applications/{id}/debug/{run_id}/step", debugApp.Step)
+					tenantScoped.Get("/applications/{id}/debug/{run_id}/result", debugApp.Result)
 				}
 
 				secCfg := NewSecurityConfigHandler(dbq, redis)

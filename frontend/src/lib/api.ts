@@ -50,6 +50,7 @@ export type {
   ValidationReport,
   PublishResult,
   AppFlowDebugStartResult,
+  AppFlowDebugResultSummary,
   AppFlowLLMOverrideInput,
   AgentRootDoc,
   AgentStepDoc,
@@ -158,6 +159,7 @@ import type {
   ValidationReport,
   PublishResult,
   AppFlowDebugStartResult,
+  AppFlowDebugResultSummary,
   AppFlowLLMOverrideInput,
   AgentDefinitionDoc,
   AgentDefinition,
@@ -579,6 +581,14 @@ export const themApi = {
   // by exactly one tick.
   stepAppFlowDebug: (appId: string, runId: string) =>
     api.post<{ run_id: string; status: string }>(`/admin/applications/${appId}/debug/${runId}/step`, {}),
+
+  // Structured, LLM-readable debug run result: an up-front pass/fail
+  // verdict plus every node's status/output/error in execution order —
+  // the same underlying them.run_steps data the WS-driven inspector
+  // already shows, reshaped so a human or an assistant LLM never has to
+  // scan every step to answer "did this work, and if not, where."
+  getAppFlowDebugResult: (appId: string, runId: string) =>
+    api.get<AppFlowDebugResultSummary>(`/admin/applications/${appId}/debug/${runId}/result`),
 
   // Canvas A2A Agent Builder (Phase 2)
   listAgentDefinitions: () =>

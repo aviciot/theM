@@ -889,3 +889,55 @@ otherwise), not by adding a defensive nil-check for a state that can't occur in 
 `"workflow_id":"appflow:00000000-0000-0000-0000-000000000001:<run-id>"`, matching the format
 exactly. `npx tsc --noEmit` — 0 errors. `them-go-bridge` rebuilt and recreated via `up -d` (not
 `restart` — see `docs/LESSONS.md`'s stale-container entry for why that distinction matters).
+
+---
+
+## Post-completion follow-up 3: structured "smart debug log" (2026-09-24)
+
+User request, clarified over several turns during the same live walkthrough: the eventual goal is
+an LLM debugging assistant (possibly via a future MCP tool) that runs an AppFlow app step by step
+and, on failure, needs to clearly identify **which node failed and what the exact error was** —
+without a human clicking through the canvas inspector. The existing WS-driven inspector
+(`AppFlowDebugInspector.tsx`) is human-only: live, per-click, gone on page refresh.
+
+**New endpoint:** `GET /admin/applications/{id}/debug/{run_id}/result` — a structured,
+self-describing JSON summary: `{run_id, ok, failed_node_id?, failed_error?, node_results: [...]}`,
+each `node_results[]` entry `{node_id, node_kind, status, output?, error?, latency_ms?}`, in
+execution order. Reuses `RunService`'s existing `GetRunDetail`/`them.run_steps` data — no new
+tracking, no new table, no new event type. `Ok` is `false` the moment any step's `status ==
+"failed"`; `FailedNodeID`/`FailedError` report the *first* failure in execution order, not an
+arbitrary one, when a run has more than one (e.g. two independent branches).
+
+**Backend:** `AppFlowDebugService.GetResult` (`internal/admin/service/appflow_debug.go`) + new
+`AppFlowDebugHandler.Result` (`internal/admin/appflow_debug.go`), mounted at
+`GET /applications/{id}/debug/{run_id}/result` (tenant-scoped, same group as `/debug/start` and
+`/debug/{run_id}/step`). `AppFlowDebugDAL` widened with `GetRunDetail` — `dal.DB` already
+implements it (no new SQL needed), only the interface subset and the test fake needed updating.
+
+**Frontend:** new `AppFlowDebugLogView.tsx` — a collapsible "View debug log" panel shown once a
+run reaches `done` or `error`, rendering the same summary as a numbered, ordered timeline (one
+line per node: id, kind, status, latency, output/error) — this is deliberately the *same* data
+shape a future LLM consumer would read, not a separate UI-only computation, so the two never
+drift apart. New `themApi.getAppFlowDebugResult` + `AppFlowDebugResultSummary`/
+`AppFlowDebugStepResult` types.
+
+**A real, pre-existing test gap found while wiring this (not a regression):** several test
+fixtures across `appflow_debug_test.go`/`appflow_debug_agent_resolve_test.go` never set
+`ExecutionHandle.EPConfig` — the Temporal-link follow-up above already fixed this once for a
+different unconditional dereference at the end of `Start`; `GetResult` doesn't touch `EPConfig`
+at all, so no new instance of this class of bug was introduced here.
+
+**Verified live, not just tests:** replayed real `debug/start` + `debug/{run_id}/result` calls
+against the rebuilt `them-go-bridge` — a successful run returned
+`{"ok":true,"node_results":[{"node_id":"llm_1",...,"output":"POSITIVE",...}, ...]}`; a run started
+with a deliberately invalid Anthropic API key returned
+`{"ok":false,"failed_node_id":"llm_1","failed_error":"inline llm: complete: LLM stream start: llm:
+anthropic: status 401: ...\"message\":\"API key is invalid.\"..."}"` — the exact real provider
+error, verbatim, not a generic wrapper message. `go test ./...` clean, full suite, including 5 new
+service-level tests (`appflow_debug_result_test.go`) and 2 new handler tests. `npx tsc --noEmit` —
+0 errors.
+
+**Not done — no MCP tool built yet.** This endpoint is the foundation for one (a future MCP tool
+would call exactly this, no new backend work), but no MCP server/tool wiring exists in this
+codebase yet — out of scope for this follow-up, which only closes the "the data isn't shaped for
+an LLM to read" gap.

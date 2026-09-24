@@ -3,6 +3,7 @@ import { C } from '../constants';
 import type { AppFlowDebugSessionState } from '../hooks/useAppFlowDebugSession';
 import type { AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
 import { AppFlowLLMCredentialField } from './AppFlowLLMCredentialField';
+import { AppFlowDebugLogView } from './AppFlowDebugLogView';
 
 // AppFlowDebugPanel — App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md
 // Phase 5). Setup panel + Run All + status bar, mirroring the agent builder's
@@ -32,6 +33,7 @@ function formatExpiry(iso: string): string {
 }
 
 export function AppFlowDebugPanel({
+  appId,
   debug,
   entryPointOptions,
   runtimeParamSpecs,
@@ -44,6 +46,7 @@ export function AppFlowDebugPanel({
   onReset,
   onClose,
 }: {
+  appId: string;
   debug: AppFlowDebugSessionState;
   entryPointOptions: string[];
   runtimeParamSpecs: AppFlowRuntimeParamSpec[];
@@ -205,6 +208,10 @@ export function AppFlowDebugPanel({
           <span style={{ color: '#4ade80', fontSize: '13px', fontWeight: 700 }}>Debug run complete</span>
           <span style={{ color: '#94a3b8', fontSize: '11px' }}>— every reached node finished. Click a node to inspect its output.</span>
         </div>
+      )}
+
+      {debug.runId && (debug.done || debug.error) && (
+        <AppFlowDebugLogView appId={appId} runId={debug.runId} />
       )}
 
       {credentialSpecs.length > 0 && (

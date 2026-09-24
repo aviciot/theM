@@ -34,6 +34,10 @@ type AppFlowDebugDAL interface {
 	// PublishDefinition uses before trusting a resolved component_definitions
 	// row also has a matching agents row.
 	AgentExists(ctx context.Context, id string) (bool, error)
+	// GetRunDetail backs GetResult's structured, LLM-readable debug summary —
+	// the exact same per-node status/output/error/timing data the human
+	// inspector already reads, just reshaped with an up-front verdict.
+	GetRunDetail(ctx context.Context, tenantID, runID string) (dal.RunDetail, error)
 	AppFlowDebugCredentialDAL
 }
 
@@ -212,6 +216,80 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 		ExpiresAt:  startedAt.Add(appflow.DebugRunMaxLifetime),
 		WorkflowID: appflow.WorkflowIDForRun(handle.EPConfig.TenantID, handle.RunID),
 	}, nil
+}
+
+// DebugStepResult is one node's outcome in a debug run, in execution order —
+// the building block of DebugResultSummary.NodeResults. Deliberately a flat,
+// self-describing shape (no nested run_steps SQL types) so it reads the same
+// whether the consumer is a human-facing UI or an LLM assistant helping a
+// user debug their own app (docs/PLATFORM_AS_TENANT_PLAN.md Phase 6 —
+// "smart debug log" request): a coding agent building an AppFlow app via a
+// future MCP tool needs to read exactly this — which node, what it did,
+// what it produced or failed with — without inferring anything from a
+// human-oriented color/icon scheme.
+type DebugStepResult struct {
+	NodeID    string `json:"node_id"`
+	NodeKind  string `json:"node_kind"`
+	Status    string `json:"status"` // "completed" | "failed" | "running"
+	Output    string `json:"output,omitempty"`
+	Error     string `json:"error,omitempty"`
+	LatencyMS *int64 `json:"latency_ms,omitempty"`
+}
+
+// DebugResultSummary is the structured result of a finished (or in-progress)
+// debug run — a single up-front verdict plus the full ordered node list, so
+// a caller never has to scan every step itself to answer "did this work,
+// and if not, where." Ok is true only when every node in NodeResults
+// completed successfully; FailedNodeID/FailedError are set together, only
+// when Ok is false and a node actually reported an error (a run that never
+// even reached its first node has Ok=false with both left empty).
+type DebugResultSummary struct {
+	RunID        string            `json:"run_id"`
+	Ok           bool              `json:"ok"`
+	FailedNodeID string            `json:"failed_node_id,omitempty"`
+	FailedError  string            `json:"failed_error,omitempty"`
+	NodeResults  []DebugStepResult `json:"node_results"`
+}
+
+// GetResult builds a DebugResultSummary for a finished or in-progress debug
+// run — the same underlying them.run_steps data the human inspector already
+// reads (via GetRunDetail), reshaped with an up-front pass/fail verdict so a
+// caller (human or LLM) never has to scan every step to answer "what broke."
+// Returns ErrNotFound when the run doesn't exist or belongs to another
+// tenant (GetRunDetail is already tenant-scoped).
+func (s *AppFlowDebugService) GetResult(ctx context.Context, tenantID, runID string) (DebugResultSummary, error) {
+	detail, err := s.dal.GetRunDetail(ctx, tenantID, runID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return DebugResultSummary{}, ErrNotFound
+		}
+		return DebugResultSummary{}, fmt.Errorf("get run detail: %w", err)
+	}
+
+	summary := DebugResultSummary{
+		RunID:       runID,
+		Ok:          true,
+		NodeResults: make([]DebugStepResult, 0, len(detail.Steps)),
+	}
+	for _, step := range detail.Steps {
+		sr := DebugStepResult{
+			NodeID:    step.NodeID,
+			NodeKind:  step.NodeKind,
+			Status:    step.Status,
+			Output:    step.Output,
+			Error:     step.Error,
+			LatencyMS: step.LatencyMS,
+		}
+		summary.NodeResults = append(summary.NodeResults, sr)
+		if step.Status == "failed" {
+			summary.Ok = false
+			if summary.FailedNodeID == "" {
+				summary.FailedNodeID = step.NodeID
+				summary.FailedError = step.Error
+			}
+		}
+	}
+	return summary, nil
 }
 
 // resolveDraftAgentIDs fills agentByInstanceID with a live registry lookup for

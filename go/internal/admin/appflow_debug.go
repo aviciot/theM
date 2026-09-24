@@ -40,11 +40,12 @@ func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credSt
 	return &AppFlowDebugHandler{db: db, svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey, reg), temporal: temporal}
 }
 
-// AppRoutes mounts the debug-start and debug-step routes. Must be registered
-// under a RequireTenantAdmin group with {id} = application UUID.
+// AppRoutes mounts the debug-start, debug-step, and debug-result routes.
+// Must be registered under a RequireTenantAdmin group with {id} = application UUID.
 func (h *AppFlowDebugHandler) AppRoutes(r chi.Router) {
 	r.Post("/debug/start", h.Start)
 	r.Post("/debug/{run_id}/step", h.Step)
+	r.Get("/debug/{run_id}/result", h.Result)
 }
 
 type debugStartBody struct {
@@ -175,4 +176,29 @@ func (h *AppFlowDebugHandler) Step(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "status": "stepped"})
+}
+
+// Result handles GET /admin/applications/{id}/debug/{run_id}/result — a
+// structured, LLM-readable summary of a finished (or in-progress) debug
+// run: an up-front pass/fail verdict plus every node's status/output/error
+// in execution order. Built for a future debugging-assistant LLM to read
+// directly (not just a human clicking through the canvas inspector) — see
+// docs/APP_CANVAS_DEBUG_PLAN.md's "smart debug log" follow-up.
+func (h *AppFlowDebugHandler) Result(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	if _, err := uuid.Parse(runID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid run id")
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	result, err := h.svc.GetResult(r.Context(), tenantID, runID)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
