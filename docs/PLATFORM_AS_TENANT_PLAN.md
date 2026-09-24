@@ -1,6 +1,5 @@
 # Platform-as-Tenant — Plan
-# Status: PLANNED, phased. Reviewed (2 research passes + 1 critical review), all decisions
-# confirmed with the user. Phase 1 IN PROGRESS.
+# Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
