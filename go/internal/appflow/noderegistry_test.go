@@ -91,6 +91,38 @@ func TestAllAppCanvasNodeInfos_ForkJoinDegreeRules(t *testing.T) {
 	}
 }
 
+// TestAllAppCanvasNodeInfos_LLMHasOutputPort verifies llm declares exactly one
+// named output port ("output") for the AppFlow Named Data Ports feature
+// (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 1) — this is what lets the frontend
+// alias the existing output_var field as a real, drag-connectable port instead
+// of an implicit shared variable name. condition has no data output port (its
+// two outputs are control branches, not a data value) — only llm writes to
+// FlowVars at runtime, so only llm gets an OutputPorts entry.
+func TestAllAppCanvasNodeInfos_LLMHasOutputPort(t *testing.T) {
+	infos := AllAppCanvasNodeInfos()
+	for _, info := range infos {
+		if info.Type != "llm" {
+			if len(info.OutputPorts) != 0 {
+				t.Errorf("kind %q: expected no OutputPorts, got %+v", info.Type, info.OutputPorts)
+			}
+			continue
+		}
+		if len(info.OutputPorts) != 1 {
+			t.Fatalf("llm: expected exactly 1 OutputPorts entry, got %d", len(info.OutputPorts))
+		}
+		p := info.OutputPorts[0]
+		if p.ID != "output" {
+			t.Errorf("llm: expected OutputPorts[0].ID == \"output\", got %q", p.ID)
+		}
+		if p.Label == "" {
+			t.Error("llm: OutputPorts[0].Label must not be empty")
+		}
+		if !info.AcceptsDynamicInputs {
+			t.Error("llm: expected AcceptsDynamicInputs=true (frontend derives live input aliases per-instance)")
+		}
+	}
+}
+
 // TestAllAppCanvasNodeInfos_ReturnsCopyNotSharedSlice verifies mutating the
 // returned slice/struct does not corrupt the shared static registry — the
 // same defensive-copy guarantee agentgen.AllNodeTypeInfos gives its callers.

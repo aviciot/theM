@@ -1,5 +1,5 @@
 # AppFlow Named Data Ports — Plan
-# Status: PLANNED, phased. Phase 0 (research + planning) COMPLETE. Phase 1 NEXT.
+# Status: PLANNED, phased. Phase 0 + open questions COMPLETE. Phase 1 IN PROGRESS.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -214,23 +214,47 @@ plan/implement/test/commit cycle)
    upstream ever writes. Not part of the user's original ask (UI visibility, not a new compiler
    error class) — call this out explicitly before touching it if it comes up later.
 
-### Open questions requiring the user's decision before implementation starts
+### Open questions — RESOLVED 2026-09-24
 
-1. **Scope-narrowing confirmation** (see above) — only `llm`/`condition` get real ports; every
-   other kind gets none, because they don't touch `FlowVars`. Needs explicit sign-off since it
-   narrows "every node" from the user's first framing of the request.
-2. **Drag-drop target ambiguity** — when dragging a wire onto an `llm`/`condition` node to create
-   a named port, does the drop need to land directly on the node card itself (like agent
-   builder), or does it need to land inside the specific prompt/expression text field inside the
-   open side panel? AppFlow's `llm` node has two text fields (system + user prompt) it could feed
-   — dropping on the card alone is ambiguous about which field receives it, unlike agentgen's
-   steps which (per this research) don't have this same multi-field ambiguity. Two live options:
-   (a) card-drop targets a fixed default field (e.g. always user_prompt) — simple, one rule to
-   learn; (b) drop zones live inside the open panel next to each specific field — unambiguous,
-   but requires the panel already open, which is a real interaction-model change from agent
-   builder's flow. **This is the single biggest open UX question and should be resolved with the
-   user before Phase 4/5 implementation begins — it changes the interaction model, not just the
-   data model.**
+1. **Scope-narrowing — CONFIRMED.** Only `llm`/`condition` get real named ports. User asked for
+   the reasoning per excluded kind before signing off; verified directly against
+   `go/internal/appflow/workflow.go` (lines ~425-610) rather than re-asserting the plan's own
+   summary:
+   - **`router`** — user accepted exclusion without needing the runtime check (skipped).
+   - **`hil`** (425-438) — pure approve/reject gate. Only reads `approved`/`comment` from an
+     activity result; never touches `vars` (FlowVars). No config field like `output_var` or an
+     expression exists to alias. A port here would represent nothing real.
+   - **`fork`** (548-602) — accepts no explicit input value; it's pure topology (fans out over
+     `outEdgesBySource`). Never touches `vars`. Its "outputs" are the same `accumulated` context
+     replayed down N branches, not distinct data values — so even calling them separate outputs is
+     cosmetic.
+   - **`join`** (604-610, merge logic in `graph.go`'s `walkBranch`/`mergeBranchResults`) — merges
+     branch results via string concatenation into `accumulated`, never `vars`. The bare
+     `case "join"` in workflow.go is just a pass-through if reached without a preceding fork.
+   - Conclusion: all three (plus `agent`/`orchestrator`/`middleware`/`entryPoint`, unchanged from
+     original research) are confirmed cosmetic-only for named ports. Only `llm`/`condition` read
+     or write `FlowVars`. Scope stands as originally proposed.
+
+2. **Drag-drop target — CONFIRMED: contextual popover at the drop point.** User explicitly wanted
+   "something modern and clean," rejecting both a silent fixed-default field and a
+   panel-must-be-open requirement. Final interaction model:
+   - User drags a wire from an upstream output toward the `llm`/`condition` node — panel does
+     **not** need to be pre-open.
+   - On drop over the node card: if the target has more than one nameable field (`llm` has
+     system prompt + user prompt), a small popover opens at the drop point listing the candidate
+     fields by label; user picks one and the binding commits to that field.
+   - If the target has only one nameable field (`condition`'s single expression), skip the
+     popover and bind immediately — no extra click for the common case.
+   - This reuses the drop-point screen coordinates already available from the drag gesture (no
+     new positioning logic needed) and follows the common React Flow "connection line + drop
+     menu" pattern — not a bespoke invention.
+   - Implementation note for Phase 5: this changes the shape of the connect-commit handler in
+     `useInlinePortWiring.ts` slightly from the original sketch — `onConnect` cannot commit the
+     `input_aliases` write synchronously in all cases now; when the popover appears, the commit is
+     deferred until the field choice is made. Design the handler as
+     `resolveDropTarget(node) -> field | 'ambiguous'`, and only open the popover in the
+     `'ambiguous'` branch.
+
 3. **Output ports are symmetric with input ports** (confirmed with the user 2026-09-24 — not
    input-only, matching agentgen's symmetric treatment).
 4. **`input_aliases` rename-rewrite risk** — renaming an alias does a find/replace over free-text

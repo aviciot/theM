@@ -75,6 +75,9 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 				{Key: "temperature", Type: "number", Required: false, Description: "Sampling temperature. Stored but not yet applied by the LLM call — see docs/NODE_REGISTRY_PLAN.md known gaps.", Example: "0.7"},
 			},
 			UsageNotes: "Provider/model are set once per app in the Runtime screen (GET|PUT /admin/applications/{id}/flow-llm-nodes), not on the canvas node — changing the model does not require a re-publish. A Debug run may override the credential per-node (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md); production runs always use the Runtime screen's setting.",
+			OutputPorts: []nodedefs.PortDef{
+				{ID: "output", Label: "Output", Required: true, TypeHint: "text"},
+			},
 		},
 		OutputArity:          "single",
 		AcceptsDynamicInputs: true,
