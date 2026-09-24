@@ -11,10 +11,9 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `47407692` — pushed to `origin/main`. Remote URL updated this session to
-`https://github.com/aviciot/theM.git` (the old `them.git` URL now redirects but the repo moved,
-per the note GitHub returns on push — this note in earlier CURRENT.md revisions is now resolved,
-`git remote -v` confirms the new URL is set).
+HEAD: `d5ad1575` — pushed to `origin/main`. Remote URL is `https://github.com/aviciot/them.git`
+(`git remote -v` confirms this — the note in earlier CURRENT.md revisions referencing a `theM.git`
+rename was itself stale/incorrect and is now removed).
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -24,6 +23,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+d5ad1575  feat(db): Platform-as-Tenant Phase 3 — RLS verification
 47407692  docs(current): record Platform-as-Tenant Phase 2 completion
 9cf638a8  feat(db): Platform-as-Tenant Phase 2 — backend consolidation
 8b9511b5  fix(ci): satisfy go vet lostcancel check in two context-cancellation tests
