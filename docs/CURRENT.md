@@ -1,8 +1,8 @@
 # Current Session State — the-M
 # Last updated: 2026-09-24 (Platform-as-Tenant Phase 2 COMPLETE — platform-only NULL-tenant Go code
 # paths deleted; classify/synthesize/security_scan now resolve their "platform" fallback through the
-# bootstrap tenant via the same resolveSystemAgentRole every tenant uses. HEAD 9cf638a8, NOT yet
-# confirmed pushed this session — see note below. docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 2 of 6 done.)
+# bootstrap tenant via the same resolveSystemAgentRole every tenant uses. HEAD 47407692, pushed.
+# docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 2 of 6 done.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,14 +10,10 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `9cf638a8` — **push status unconfirmed this session**: `git log origin/main -1` did not
-return output in this environment (no confirmed network/remote access). Run
-`git log origin/main -1` and `git push origin main` at the start of the next session before
-assuming this commit (or `8b9511b5` before it) has landed on the remote.
-
-**Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
-(capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
-update the remote when convenient: `git remote set-url origin https://github.com/aviciot/theM.git`.
+HEAD: `47407692` — pushed to `origin/main`. Remote URL updated this session to
+`https://github.com/aviciot/theM.git` (the old `them.git` URL now redirects but the repo moved,
+per the note GitHub returns on push — this note in earlier CURRENT.md revisions is now resolved,
+`git remote -v` confirms the new URL is set).
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -27,6 +23,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+47407692  docs(current): record Platform-as-Tenant Phase 2 completion
 9cf638a8  feat(db): Platform-as-Tenant Phase 2 — backend consolidation
 8b9511b5  fix(ci): satisfy go vet lostcancel check in two context-cancellation tests
 dc529235  feat(db): Platform-as-Tenant Phase 1 — migrate platform LLM rows to bootstrap tenant
@@ -63,11 +60,6 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 Read that plan doc end to end before continuing — especially the "Current-state map" section
 (researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE"
 and "Phase 2 — COMPLETE" sections for exactly what was and wasn't done in each.
-
-**First thing next session: confirm the push landed.** This session could not confirm
-`git log origin/main -1` succeeded (no confirmed network access in that environment) — run it, and
-`git push origin main` if `9cf638a8` (or `8b9511b5` before it) hasn't reached the remote yet, before
-starting Phase 3.
 
 **Next: Phase 3 (RLS verification) — NOT started.** Dedicated integration tests proving the
 bootstrap tenant's `llm_providers`/`llm_provider_keys` rows are correctly visible/invisible to other
