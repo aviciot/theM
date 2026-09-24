@@ -121,6 +121,13 @@ export function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
 }
 
 // ── Styled edges ──────────────────────────────────────────────────────────────
+// App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md) marks an edge as
+// `data._debugActive` (useAppFlowDebugSession.ts's decorateEdges) when a live
+// debug run has actually walked it — found live, this session, that
+// styledEdges was unconditionally overwriting animated/style on every edge,
+// silently clobbering that decoration before ReactFlow ever rendered it
+// (decorateEdges' output feeds into this function, not the other way
+// around). Any edge carrying that marker keeps its debug styling untouched.
 export function styledEdges(edges: Edge[], nodes: Node[]): Edge[] {
   const chainEdgeIds = new Set<string>();
   const epNodes = nodes.filter(n => n.type === 'entryPoint');
@@ -133,13 +140,16 @@ export function styledEdges(edges: Edge[], nodes: Node[]): Edge[] {
       chainEdgeIds.add(downEdge.id);
     }
   }
-  return edges.map(e => ({
-    ...e,
-    animated: chainEdgeIds.has(e.id),
-    style: chainEdgeIds.has(e.id)
-      ? { stroke: C.cyan, strokeWidth: 2 }
-      : { stroke: C.error, strokeWidth: 1.5, strokeDasharray: '5 4' },
-  }));
+  return edges.map(e => {
+    if ((e.data as Record<string, unknown> | undefined)?._debugActive) return e;
+    return {
+      ...e,
+      animated: chainEdgeIds.has(e.id),
+      style: chainEdgeIds.has(e.id)
+        ? { stroke: C.cyan, strokeWidth: 2 }
+        : { stroke: C.error, strokeWidth: 1.5, strokeDasharray: '5 4' },
+    };
+  });
 }
 
 export function toSlug(s: string) {

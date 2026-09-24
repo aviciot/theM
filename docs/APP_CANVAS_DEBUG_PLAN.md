@@ -833,6 +833,14 @@ against the source node's own `node_done` detail, e.g. `branch=true`) for condit
 or unconditionally for a plain single-target edge. Wired into `CanvasBuilderView.tsx` alongside
 the existing node decoration.
 
+**Follow-up bug, found live immediately after shipping the above:** the highlight computed by
+`decorateEdges` never actually reached the canvas — `CanvasInner.tsx`'s pre-existing `styledEdges`
+(entry-point→orchestrator "chain" highlighting, unrelated to debug mode) unconditionally
+overwrites `animated`/`style` on *every* edge, and `decorateEdges`' output feeds into it, not the
+other way around, so the debug highlight was silently clobbered before `ReactFlow` ever rendered
+it. Fixed by having `decorateEdges` stamp `data._debugActive: true` on any edge it highlights, and
+`styledEdges` skip restyling any edge carrying that marker.
+
 **UX gap 2: no clear "the flow is done" signal.** A completion state already existed (`debug.done`
 → small "✓ Run complete" text in the toolbar row) but was easy to miss, especially for a fast run
 (an `a2a_echo` agent completes in single-digit milliseconds — nothing to visually track mid-flight,

@@ -316,6 +316,12 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
         ...e,
         animated: true,
         style: { ...e.style, stroke: '#4ade80', strokeWidth: 2.5 },
+        // styledEdges (CanvasInner.tsx) unconditionally overwrites
+        // animated/style on every edge for its own chain-highlighting
+        // purpose — this marker tells it to leave this edge's debug styling
+        // alone instead of clobbering it (found live: without this, the
+        // edge highlight computed here never actually reached the canvas).
+        data: { ...e.data, _debugActive: true },
       };
     });
   }, [debug]);
