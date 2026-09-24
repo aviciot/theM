@@ -568,6 +568,17 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				})
 			}
 			wg.Wait(ctx)
+			// Sync the main loop's own step cursor up to whatever tick.Gen
+			// reached while the branches ran (docs/APP_CANVAS_DEBUG_PLAN.md
+			// Phase 6). Each branch advanced tick.Gen independently via its
+			// own signals while converging on the join — without this sync,
+			// mainLastSeenGen stays frozen at its pre-fork value, so the
+			// very next stepGate call (for whatever follows the join) would
+			// see tick.Gen already ahead of its stale cursor and run
+			// immediately, for free, without a Step click of its own.
+			if tick != nil {
+				mainLastSeenGen = tick.Gen
+			}
 			// Merge branch results: concatenate non-empty results.
 			merged := mergeBranchResults(branchResults)
 			if merged != "" {

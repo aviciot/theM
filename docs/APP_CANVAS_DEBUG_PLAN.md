@@ -751,5 +751,38 @@ shows the right per-node detail when clicking a paused/done node. Also unchanged
 draft canvas containing agent nodes still needs to have been published at least once before it can
 be debugged at all (`unresolved_agent`) — orthogonal to Step controls, not addressed here.
 
-**Plan status: all 6 phases complete.** No further phases planned on this thread unless new
-requirements surface.
+---
+
+## Phase 6 — review fix: `mainLastSeenGen` staleness across a fork (2026-09-24)
+
+**A real bug, found by the user's review, not caught by Phase 6's own tests:** after a fork's
+branches converge (`wg.Wait(ctx)` returns), `tick.Gen` has already advanced from whatever signals
+released those branches — but the main loop's own step cursor, `mainLastSeenGen`, was never updated
+to match. The very next `stepGate` call (for the node immediately after the join) then saw
+`tick.Gen` already ahead of its stale cursor and ran **immediately, for free, without its own Step
+click** — silently skipping a pause point right after every fork/join in Step mode. Phase 6's
+original lockstep test (`TestStepMode_ForkedBranches_OneSignalReleasesBothInLockstep`) didn't catch
+this because its spec had nothing executable after the join to observe the free-ride with.
+
+**The fix:** sync `mainLastSeenGen = tick.Gen` (guarded `tick != nil`, since `tick` is nil when
+`StepMode` is false) immediately after `wg.Wait(ctx)` in the fork case, `go/internal/appflow/
+workflow.go`. One line, no interface changes, no test infrastructure changes.
+
+**Regression test:** `TestStepMode_NodeAfterJoin_RequiresItsOwnSeparateStepClick`
+(`internal/appflow/workflow_temporal_test.go`, AF-STEP-04) — a new `forkJoinThenNodeSpec` (fork → 2
+condition branches → join → a 5th real node → end) sends exactly 4 signals and asserts the
+post-join node does not complete before its own, separate 4th signal. Confirmed failing before the
+fix (workflow completed on only 3 signals, the post-join node ran unreleased) and passing after —
+verified both ways, not assumed. `go/TEST_INDEX.md` S1-164, S1 total 1483→1484. `go test ./...` 0
+failures, full suite. `go test -race -count=3 ./internal/appflow/...` — only the same pre-existing,
+already-documented `TestForkJoin_EmitsTraceForAllNodes` flake appears across all 3 runs; the new
+regression test and every other Phase 6 test are race-clean.
+
+**Not yet rebuilt/redeployed** on this box's live containers — same as Phase 6's original
+completion note, this fix has not been exercised through a real running Temporal worker, only the
+test-environment proof above.
+
+---
+
+**Plan status: all 6 phases complete**, including this post-completion review fix. No further
+phases planned on this thread unless new requirements surface.

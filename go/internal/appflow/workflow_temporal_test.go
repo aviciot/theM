@@ -355,3 +355,107 @@ func (s *AppFlowTraceWorkflowTestSuite) TestStepMode_ForkedBranches_OneSignalRel
 	s.True(doneIDs["condA"], "condA must have completed")
 	s.True(doneIDs["condB"], "condB must have completed")
 }
+
+// forkJoinThenNodeSpec is forkJoinSpec with one more real node after the join
+// (condPost) — used to check whether mainLastSeenGen (the main loop's own
+// stepGate cursor) is correctly kept in sync with tick.Gen across a fork,
+// since the fork's branches advance tick.Gen independently of the main
+// loop's own cursor while they run.
+func forkJoinThenNodeSpec() *AppFlowSpec {
+	return &AppFlowSpec{
+		EntryPoints: []EPFlow{
+			{
+				Slug:    "test",
+				StartID: "fork1",
+				Nodes: []AppFlowNode{
+					{ID: "fork1", Kind: "fork"},
+					{ID: "condA", Kind: "condition", Config: mustJSON(InlineConditionConfig{Expression: "true"})},
+					{ID: "condB", Kind: "condition", Config: mustJSON(InlineConditionConfig{Expression: "true"})},
+					{ID: "join1", Kind: "join"},
+					{ID: "condPost", Kind: "condition", Config: mustJSON(InlineConditionConfig{Expression: "true"})},
+					{ID: "end", Kind: "orchestrator"},
+				},
+				Edges: []AppFlowEdge{
+					{Source: "fork1", Target: "condA"},
+					{Source: "fork1", Target: "condB"},
+					{Source: "condA", Target: "join1", Label: "true"},
+					{Source: "condB", Target: "join1", Label: "true"},
+					{Source: "join1", Target: "condPost"},
+					{Source: "condPost", Target: "end", Label: "true"},
+				},
+			},
+		},
+	}
+}
+
+// AF-STEP-04: regression test — after a fork's branches complete, the main
+// loop's stepGate cursor (mainLastSeenGen) must still require its OWN Step
+// click for the node after the join, even though tick.Gen has already
+// advanced past mainLastSeenGen's stale value while the branches ran.
+//
+// Sequence: signal 1 releases fork1 (spawns condA/condB, tick.Gen=1,
+// mainLastSeenGen frozen at 1 — the value it read when fork1 was released).
+// Both branches pause waiting for tick.Gen>1. Signal 2 releases both
+// (tick.Gen=2) — condA and condB run to completion, walk to join1, which is
+// consumed inside the fork case (not walkBranch) once wg.Wait returns.
+// At this point tick.Gen=2 but mainLastSeenGen is STILL 1 (never updated by
+// the fork case) — so condPost's stepGate call, which checks
+// tick.Gen(2) > mainLastSeenGen(1), evaluates true immediately and runs
+// WITHOUT a 3rd signal. This test asserts condPost must NOT have run before
+// a 3rd, separate signal is sent.
+func (s *AppFlowTraceWorkflowTestSuite) TestStepMode_NodeAfterJoin_RequiresItsOwnSeparateStepClick() {
+	input := AppFlowWorkflowInput{
+		RunID:          "run-step-4",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           forkJoinThenNodeSpec(),
+		UserMessage:    "hi",
+		StepMode:       true,
+	}
+
+	s.env.RegisterDelayedCallback(func() {
+		// Signal 1: releases fork1.
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, time.Second)
+	s.env.RegisterDelayedCallback(func() {
+		// Signal 2: releases both condA and condB in lockstep.
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, 2*time.Second)
+	s.env.RegisterDelayedCallback(func() {
+		// At this point both branches must have completed and the workflow
+		// must have walked through join1 into condPost's stepGate — but
+		// condPost itself must NOT have executed yet (node_done) without its
+		// own, separate, 3rd Step click. This is the assertion that catches
+		// the bug: if mainLastSeenGen is stale, condPost's stepGate sees
+		// tick.Gen already ahead and runs for free here, before this test
+		// ever sends a 3rd signal.
+		dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+		for _, d := range dones {
+			s.NotEqual("condPost", d["node_id"],
+				"condPost must not run without its own Step click after the fork's branches complete")
+		}
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, 3*time.Second)
+	s.env.RegisterDelayedCallback(func() {
+		// Signal 4: releases the final "end" node so the workflow can complete.
+		dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+		doneIDs := map[string]bool{}
+		for _, d := range dones {
+			doneIDs[d["node_id"].(string)] = true
+		}
+		s.Require().True(doneIDs["condPost"], "condPost must have completed by now, from its own 3rd signal")
+		s.env.SignalWorkflow(AppFlowSignalStep, nil)
+	}, 4*time.Second)
+
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	doneIDs := map[string]bool{}
+	for _, d := range dones {
+		doneIDs[d["node_id"].(string)] = true
+	}
+	s.True(doneIDs["condPost"], "condPost must eventually complete once its own signal is sent")
+}
