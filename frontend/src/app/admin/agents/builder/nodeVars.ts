@@ -13,6 +13,8 @@
 
 import type { Node, Edge } from '@xyflow/react';
 import type { StepData } from './types';
+import { extractTemplateVars } from '@/lib/templateVars';
+import { reachablePredecessors, reachableSuccessors } from '@/lib/graphWalk';
 
 export interface NodeVars {
   reads: string[];
@@ -20,14 +22,10 @@ export interface NodeVars {
 }
 
 // ── Template var extraction ───────────────────────────────────────────────────
-
-export function extractTemplateVars(tmpl: string): string[] {
-  const matches: string[] = [];
-  const re = /\{\{\.?(\w+)\}\}/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(tmpl)) !== null) matches.push(m[1]);
-  return [...new Set(matches)];
-}
+// Moved to src/lib/templateVars.ts (shared with AppFlow, see
+// docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 2) — re-exported here for existing
+// importers (StepNode.tsx) so no call site needs to change.
+export { extractTemplateVars };
 
 // ── Per-node static analysis ──────────────────────────────────────────────────
 
@@ -124,44 +122,10 @@ export function extractNodeVars(node: Node): NodeVars {
 }
 
 // ── Graph-aware helpers ───────────────────────────────────────────────────────
-
-/**
- * Collect all node IDs that can reach `targetId` by walking edges backwards.
- * Returns the set of predecessor node IDs (not including targetId itself).
- */
-export function reachablePredecessors(targetId: string, edges: Edge[]): Set<string> {
-  const pred = new Set<string>();
-  const queue = [targetId];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const e of edges) {
-      if (e.target === cur && !pred.has(e.source)) {
-        pred.add(e.source);
-        queue.push(e.source);
-      }
-    }
-  }
-  return pred;
-}
-
-/**
- * Collect all node IDs reachable from `sourceId` by walking edges forwards.
- * Returns the set of successor node IDs (not including sourceId itself).
- */
-export function reachableSuccessors(sourceId: string, edges: Edge[]): Set<string> {
-  const succ = new Set<string>();
-  const queue = [sourceId];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const e of edges) {
-      if (e.source === cur && !succ.has(e.target)) {
-        succ.add(e.target);
-        queue.push(e.target);
-      }
-    }
-  }
-  return succ;
-}
+// reachablePredecessors/reachableSuccessors moved to src/lib/graphWalk.ts
+// (shared with AppFlow, see docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 2) —
+// re-exported here for existing importers so no call site needs to change.
+export { reachablePredecessors, reachableSuccessors };
 
 /**
  * Build a map of var → source node label for all variables reachable upstream

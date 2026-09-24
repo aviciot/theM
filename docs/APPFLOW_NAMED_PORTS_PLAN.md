@@ -1,5 +1,5 @@
 # AppFlow Named Data Ports — Plan
-# Status: PLANNED, phased. Phase 0 + open questions COMPLETE. Phase 1 IN PROGRESS.
+# Status: PLANNED, phased. Phase 0 + open questions + Phase 1 + Phase 2 COMPLETE. Phase 3 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -193,10 +193,22 @@ confirm this with a round-trip test before assuming.
 plan/implement/test/commit cycle)
 
 1. **Backend registry metadata only** — populate `OutputPorts`/confirm `AcceptsDynamicInputs` for
-   `llm` in `noderegistry.go`. Zero runtime behavior change. New `AF-NR-xx` test(s).
+   `llm` in `noderegistry.go`. Zero runtime behavior change. New `AF-NR-xx` test(s). **DONE
+   2026-09-24** — `llm` got `OutputPorts: [{ID: "output", ...}]`; new
+   `TestAllAppCanvasNodeInfos_LLMHasOutputPort` in `noderegistry_test.go`; full `go test ./...`
+   (1326 tests) and `go build ./...` both clean.
 2. **Shared frontend extraction** — move `extractTemplateVars`/`reachablePredecessors`/
    `reachableSuccessors` to `frontend/src/lib/`; agentgen re-exports, zero behavior change there
-   (verify against agent builder's existing tests/smoke).
+   (verify against agent builder's existing tests/smoke). **DONE 2026-09-24** — new
+   `frontend/src/lib/templateVars.ts` and `frontend/src/lib/graphWalk.ts`; `nodeVars.ts` now
+   re-exports both (`export { extractTemplateVars }` / `export { reachablePredecessors,
+   reachableSuccessors }`) so every existing call site (`StepNode.tsx`,
+   `StepDataFlowSection.tsx`) needed zero edits. New test files
+   `frontend/src/lib/__tests__/templateVars.test.js` (7 tests) and `graphWalk.test.js` (8 tests),
+   following the existing plain-`node`/`assert` convention (no test runner configured in this
+   frontend yet). Verified: pre-existing `nodeVars.test.js` still 26/26 passing (its inlined copy
+   is unaffected by the re-export, confirming behavior didn't drift), `npx tsc --noEmit` clean
+   with zero errors project-wide, and a full `npx next build` production build succeeded.
 3. **"What can I read, and where from" panel** (the smaller, high-value half) — build
    `appFlowVars.ts` + `InlinePortsSection.tsx`, mount read-only inside `InlineNodePanel.tsx` for
    `llm`/`condition`. No drag-to-connect, no handle changes, no registry-shape risk. **Good
