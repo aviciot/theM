@@ -154,6 +154,16 @@ type fakeDal struct {
 	upsertTenantSystemAgentConfigErr   error
 	upsertTenantSystemAgentConfigCalls []dal.TenantSystemAgentConfigInput
 
+	// AppFlow debug preset fields (db/111)
+	appFlowDebugPresets            []dal.AppFlowDebugPreset
+	listAppFlowDebugPresetsErr     error
+	appFlowDebugPreset             dal.AppFlowDebugPreset
+	getAppFlowDebugPresetErr       error
+	upsertedAppFlowDebugPreset     dal.AppFlowDebugPreset
+	upsertAppFlowDebugPresetErr    error
+	upsertAppFlowDebugPresetCalls  []dal.AppFlowDebugPresetInput
+	deleteAppFlowDebugPresetErr    error
+
 	// token fields
 	tokens           []dal.Token
 	token            dal.Token
@@ -546,6 +556,21 @@ func (f *fakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ string) (da
 func (f *fakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
 	f.upsertTenantSystemAgentConfigCalls = append(f.upsertTenantSystemAgentConfigCalls, in)
 	return f.upsertedTenantSystemAgentConfig, f.upsertTenantSystemAgentConfigErr
+}
+
+// AppFlow debug preset fakes (db/111).
+func (f *fakeDal) ListAppFlowDebugPresets(_ context.Context, _ string, _ int64, _ string) ([]dal.AppFlowDebugPreset, error) {
+	return f.appFlowDebugPresets, f.listAppFlowDebugPresetsErr
+}
+func (f *fakeDal) GetAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) (dal.AppFlowDebugPreset, error) {
+	return f.appFlowDebugPreset, f.getAppFlowDebugPresetErr
+}
+func (f *fakeDal) UpsertAppFlowDebugPreset(_ context.Context, in dal.AppFlowDebugPresetInput) (dal.AppFlowDebugPreset, error) {
+	f.upsertAppFlowDebugPresetCalls = append(f.upsertAppFlowDebugPresetCalls, in)
+	return f.upsertedAppFlowDebugPreset, f.upsertAppFlowDebugPresetErr
+}
+func (f *fakeDal) DeleteAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) error {
+	return f.deleteAppFlowDebugPresetErr
 }
 
 // Component definitions registry stub.

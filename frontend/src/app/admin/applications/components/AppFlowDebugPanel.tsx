@@ -1,7 +1,9 @@
 'use client';
+import { useState } from 'react';
 import { C } from '../constants';
 import type { AppFlowDebugSessionState } from '../hooks/useAppFlowDebugSession';
 import type { AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
+import type { AppFlowDebugPreset } from '@/lib/api';
 import { AppFlowLLMCredentialField } from './AppFlowLLMCredentialField';
 import { AppFlowDebugLogView } from './AppFlowDebugLogView';
 
@@ -45,6 +47,11 @@ export function AppFlowDebugPanel({
   onStep,
   onReset,
   onClose,
+  presets,
+  presetError,
+  onSavePreset,
+  onLoadPreset,
+  onDeletePreset,
 }: {
   appId: string;
   debug: AppFlowDebugSessionState;
@@ -58,8 +65,15 @@ export function AppFlowDebugPanel({
   onStep: () => void;
   onReset: () => void;
   onClose: () => void;
+  presets: AppFlowDebugPreset[];
+  presetError: string | null;
+  onSavePreset: (name: string) => void;
+  onLoadPreset: (presetId: string) => void;
+  onDeletePreset: (presetId: string) => void;
 }) {
   const credentialSpecs = runtimeParamSpecs.filter(s => s.type === 'llm_credential');
+  const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [savingName, setSavingName] = useState('');
   // At least one node is genuinely paused, waiting for the next Step click —
   // derived from nodeStates rather than a separate tracked field, since
   // "paused" is already an observed backend state (docs/APP_CANVAS_DEBUG_PLAN.md
@@ -116,6 +130,55 @@ export function AppFlowDebugPanel({
           />
           Step mode
         </label>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <label style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>PRESET</label>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <select
+              value={selectedPresetId}
+              disabled={debug.running}
+              onChange={e => {
+                setSelectedPresetId(e.target.value);
+                if (e.target.value) onLoadPreset(e.target.value);
+              }}
+              style={{ ...inputStyle, width: '140px', fontSize: '12px' }}
+            >
+              <option value="">— load preset —</option>
+              {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            {selectedPresetId && (
+              <button
+                onClick={() => { onDeletePreset(selectedPresetId); setSelectedPresetId(''); }}
+                disabled={debug.running}
+                title="Delete this preset"
+                style={{ background: 'transparent', border: `1px solid ${C.outline}`, color: '#f87171', borderRadius: 6, cursor: debug.running ? 'not-allowed' : 'pointer', fontSize: '12px', padding: '0 8px' }}
+              >✕</button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <label style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>SAVE AS</label>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <input
+              value={savingName}
+              onChange={e => setSavingName(e.target.value)}
+              disabled={debug.running}
+              placeholder="Preset name…"
+              style={{ ...inputStyle, width: '140px', fontSize: '12px' }}
+            />
+            <button
+              onClick={() => { if (savingName.trim()) { onSavePreset(savingName.trim()); setSavingName(''); } }}
+              disabled={debug.running || !savingName.trim()}
+              title="Save current entry point, message, step mode, and LLM credentials as a preset"
+              style={{
+                background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.5)', color: '#60a5fa',
+                borderRadius: 6, cursor: debug.running || !savingName.trim() ? 'not-allowed' : 'pointer', fontSize: '12px', padding: '0 10px',
+                opacity: debug.running || !savingName.trim() ? 0.6 : 1,
+              }}
+            >💾 Save</button>
+          </div>
+        </div>
 
         <button
           onClick={onRunAll}
@@ -183,6 +246,11 @@ export function AppFlowDebugPanel({
         {debug.error && (
           <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             ✗ {debug.error}
+          </span>
+        )}
+        {presetError && (
+          <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            ✗ preset: {presetError}
           </span>
         )}
       </div>

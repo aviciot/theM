@@ -125,6 +125,39 @@ the `/admin/my/llm-providers` naming pattern — `go/internal/admin/tenant_syste
 
 ---
 
+## them.appflow_debug_presets (migration 111)
+Per-(tenant, user, application) saved presets for the AppFlow debug panel
+(`go/internal/admin/appflow_debug.go`'s `/debug/start` body shape) — lets a user save the entry
+point, test message, step mode, and per-node LLM overrides they typed into the debug panel and
+reload them next time instead of re-entering everything. Presets are personal: scoped to
+`(tenant_id, user_id, application_id)`, never visible to other users even within the same
+tenant/app (deliberately not folded into the tenant Role model — see
+`docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md`).
+
+`llm_overrides` is a JSONB map keyed by canvas `node_id`, mirroring `debugStartBody.LLMOverrides`
+plus one change: any Custom-mode `api_key` is Fernet-encrypted (`api_key_encrypted`, same scheme as
+`them.tenant_system_agent_config.custom_api_key_encrypted`) before storage — the plaintext key is
+never written to this table, and the service layer only ever returns a masked hint, never the
+decrypted value, on read.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE | |
+| user_id | BIGINT | the-M internal user id (not a FK — mirrors `them.audit_logs`' pattern) |
+| application_id | UUID FK→them.applications(id) ON DELETE CASCADE | |
+| name | TEXT | unique per (tenant_id, user_id, application_id, name) |
+| entry_point_slug | TEXT | |
+| user_message | TEXT | |
+| step_mode | BOOLEAN | |
+| llm_overrides | JSONB | keyed by node_id; `api_key` never stored — see `api_key_encrypted` above |
+
+Admin routes (tenant-scoped, under `/admin/applications/{id}/debug/presets`):
+`GET`/`POST /debug/presets`, `DELETE /debug/presets/{preset_id}` — all scoped to the caller's own
+`user_id` (`go/internal/admin/appflow_debug_presets.go`).
+
+---
+
 ## them.agents ⭐
 The agent registry. Each enabled row = one LLM tool named `agent__<slug>`.
 

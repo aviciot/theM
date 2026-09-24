@@ -626,6 +626,40 @@ export interface AppFlowLLMOverrideInput {
   base_url?: string;
 }
 
+// ── AppFlow debug panel presets (db/111) ─────────────────────────────────────
+// Personal, per-(tenant, user, application) saved presets — save/reload the
+// debug panel's entry point, test message, step mode, and per-node LLM
+// overrides. api_key is write-only on save (never returned); a masked hint
+// comes back instead. See docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why
+// these are deliberately personal, not shared via the tenant Role model.
+export interface AppFlowDebugPresetLLMOverrideOut {
+  mode: 'general' | 'custom';
+  provider?: string;
+  key_id?: number | null;
+  model?: string;
+  api_key_masked?: string;
+  base_url?: string;
+}
+
+export interface AppFlowDebugPreset {
+  id: string;
+  name: string;
+  entry_point_slug: string;
+  user_message: string;
+  step_mode: boolean;
+  llm_overrides: Record<string, AppFlowDebugPresetLLMOverrideOut>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppFlowDebugPresetSaveInput {
+  name: string;
+  entry_point_slug: string;
+  user_message: string;
+  step_mode: boolean;
+  llm_overrides: Record<string, AppFlowLLMOverrideInput>;
+}
+
 // ── Canvas A2A Agent Builder (Phase 2) ───────────────────────────────────────
 
 export interface AgentRootDoc {

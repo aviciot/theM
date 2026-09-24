@@ -213,6 +213,14 @@ func BuildRouter(
 					tenantScoped.Get("/applications/{id}/debug/{run_id}/result", debugApp.Result)
 				}
 
+				// Debug panel presets — per (tenant, user, application); saves
+				// the last-used entry point/message/step-mode/LLM overrides so
+				// a user can reload them next time instead of re-entering.
+				debugPresets := NewAppFlowDebugPresetsHandler(dbq, secretKey)
+				tenantScoped.Get("/applications/{id}/debug/presets", debugPresets.List)
+				tenantScoped.Post("/applications/{id}/debug/presets", debugPresets.Save)
+				tenantScoped.Delete("/applications/{id}/debug/presets/{preset_id}", debugPresets.Delete)
+
 				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)
 

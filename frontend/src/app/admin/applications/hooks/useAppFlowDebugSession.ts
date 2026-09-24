@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from 'react';
 import { themApi } from '@/lib/api';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import { getBridgeWs } from '../../playground/playgroundTypes';
+import { useAppFlowDebugPresets } from './useAppFlowDebugPresets';
 import type { AppFlowDebugNodeState, AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 
@@ -91,6 +92,9 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     }));
   });
 
+  const { presets, presetsLoaded, presetError, loadPresets, savePreset, loadPreset, deletePreset } =
+    useAppFlowDebugPresets({ appId, debug, setDebug, runtimeParamSpecs });
+
   function openPanel() {
     setDebug(prev => ({
       ...INITIAL_STATE,
@@ -100,6 +104,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       stepMode: prev.stepMode,
       credentials: prev.credentials,
     }));
+    if (!presetsLoaded) void loadPresets();
   }
 
   function closePanel() {
@@ -345,5 +350,10 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     reset,
     decorateNodes,
     decorateEdges,
+    presets,
+    presetError,
+    savePreset,
+    loadPreset,
+    deletePreset,
   };
 }

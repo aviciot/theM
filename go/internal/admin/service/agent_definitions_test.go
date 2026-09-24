@@ -418,6 +418,18 @@ func (f *agentDefFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ str
 func (f *agentDefFakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
 	return dal.TenantSystemAgentConfig{}, nil
 }
+func (f *agentDefFakeDal) ListAppFlowDebugPresets(_ context.Context, _ string, _ int64, _ string) ([]dal.AppFlowDebugPreset, error) {
+	return []dal.AppFlowDebugPreset{}, nil
+}
+func (f *agentDefFakeDal) GetAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) (dal.AppFlowDebugPreset, error) {
+	return dal.AppFlowDebugPreset{}, pgx.ErrNoRows
+}
+func (f *agentDefFakeDal) UpsertAppFlowDebugPreset(_ context.Context, in dal.AppFlowDebugPresetInput) (dal.AppFlowDebugPreset, error) {
+	return dal.AppFlowDebugPreset{}, nil
+}
+func (f *agentDefFakeDal) DeleteAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
 func (f *agentDefFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota, error) {
 	return dal.TenantQuota{}, nil
 }

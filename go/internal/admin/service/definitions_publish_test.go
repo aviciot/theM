@@ -391,6 +391,18 @@ func (f *publishFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ stri
 func (f *publishFakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
 	return dal.TenantSystemAgentConfig{}, nil
 }
+func (f *publishFakeDal) ListAppFlowDebugPresets(_ context.Context, _ string, _ int64, _ string) ([]dal.AppFlowDebugPreset, error) {
+	return []dal.AppFlowDebugPreset{}, nil
+}
+func (f *publishFakeDal) GetAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) (dal.AppFlowDebugPreset, error) {
+	return dal.AppFlowDebugPreset{}, pgx.ErrNoRows
+}
+func (f *publishFakeDal) UpsertAppFlowDebugPreset(_ context.Context, in dal.AppFlowDebugPresetInput) (dal.AppFlowDebugPreset, error) {
+	return dal.AppFlowDebugPreset{}, nil
+}
+func (f *publishFakeDal) DeleteAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
 func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return []dal.ComponentDefinitionSummary{}, nil
 }

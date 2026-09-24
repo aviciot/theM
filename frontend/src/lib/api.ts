@@ -52,6 +52,8 @@ export type {
   AppFlowDebugStartResult,
   AppFlowDebugResultSummary,
   AppFlowLLMOverrideInput,
+  AppFlowDebugPreset,
+  AppFlowDebugPresetSaveInput,
   AgentRootDoc,
   AgentStepDoc,
   AgentSkillDoc,
@@ -161,6 +163,8 @@ import type {
   AppFlowDebugStartResult,
   AppFlowDebugResultSummary,
   AppFlowLLMOverrideInput,
+  AppFlowDebugPreset,
+  AppFlowDebugPresetSaveInput,
   AgentDefinitionDoc,
   AgentDefinition,
   AgentIssue,
@@ -589,6 +593,18 @@ export const themApi = {
   // scan every step to answer "did this work, and if not, where."
   getAppFlowDebugResult: (appId: string, runId: string) =>
     api.get<AppFlowDebugResultSummary>(`/admin/applications/${appId}/debug/${runId}/result`),
+
+  // Debug panel presets (db/111) — personal, per-(tenant, user, application).
+  // Save/reload the entry point, test message, step mode, and per-node LLM
+  // overrides so they don't need to be re-entered every time the debug panel
+  // opens. api_key values are Fernet-encrypted server-side; List/Save never
+  // return the plaintext, only a masked hint.
+  listAppFlowDebugPresets: (appId: string) =>
+    api.get<AppFlowDebugPreset[]>(`/admin/applications/${appId}/debug/presets`),
+  saveAppFlowDebugPreset: (appId: string, body: AppFlowDebugPresetSaveInput) =>
+    api.post<AppFlowDebugPreset>(`/admin/applications/${appId}/debug/presets`, body),
+  deleteAppFlowDebugPreset: (appId: string, presetId: string) =>
+    api.delete<{ deleted: boolean }>(`/admin/applications/${appId}/debug/presets/${presetId}`),
 
   // Canvas A2A Agent Builder (Phase 2)
   listAgentDefinitions: () =>

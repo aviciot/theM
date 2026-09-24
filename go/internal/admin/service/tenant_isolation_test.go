@@ -430,6 +430,18 @@ func (f *isolationFakeDal) GetTenantSystemAgentConfig(_ context.Context, _, _ st
 func (f *isolationFakeDal) UpsertTenantSystemAgentConfig(_ context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error) {
 	return dal.TenantSystemAgentConfig{}, nil
 }
+func (f *isolationFakeDal) ListAppFlowDebugPresets(_ context.Context, _ string, _ int64, _ string) ([]dal.AppFlowDebugPreset, error) {
+	return []dal.AppFlowDebugPreset{}, nil
+}
+func (f *isolationFakeDal) GetAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) (dal.AppFlowDebugPreset, error) {
+	return dal.AppFlowDebugPreset{}, errors.New("not found")
+}
+func (f *isolationFakeDal) UpsertAppFlowDebugPreset(_ context.Context, in dal.AppFlowDebugPresetInput) (dal.AppFlowDebugPreset, error) {
+	return dal.AppFlowDebugPreset{}, nil
+}
+func (f *isolationFakeDal) DeleteAppFlowDebugPreset(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
 
 // Runtime config + bulk delete stubs — no isolation-specific behavior needed.
 func (f *isolationFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {

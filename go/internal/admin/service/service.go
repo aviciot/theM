@@ -205,6 +205,12 @@ type Dal interface {
 	GetTenantSystemAgentConfig(ctx context.Context, tenantID, role string) (dal.TenantSystemAgentConfig, error)
 	UpsertTenantSystemAgentConfig(ctx context.Context, in dal.TenantSystemAgentConfigInput) (dal.TenantSystemAgentConfig, error)
 
+	// AppFlow debug presets — per (tenant, user, application), db/111
+	ListAppFlowDebugPresets(ctx context.Context, tenantID string, userID int64, applicationID string) ([]dal.AppFlowDebugPreset, error)
+	GetAppFlowDebugPreset(ctx context.Context, id, tenantID string, userID int64) (dal.AppFlowDebugPreset, error)
+	UpsertAppFlowDebugPreset(ctx context.Context, in dal.AppFlowDebugPresetInput) (dal.AppFlowDebugPreset, error)
+	DeleteAppFlowDebugPreset(ctx context.Context, id, tenantID string, userID int64) error
+
 	// MCP servers — tenant-scoped
 	ListMCPServers(ctx context.Context, tenantID string) ([]dal.MCPServer, error)
 	GetMCPServer(ctx context.Context, id, tenantID string) (dal.MCPServer, error)

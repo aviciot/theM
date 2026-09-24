@@ -538,6 +538,11 @@ export function CanvasBuilderView({
           onStep={appFlowDebug.step}
           onReset={appFlowDebug.reset}
           onClose={appFlowDebug.closePanel}
+          presets={appFlowDebug.presets}
+          presetError={appFlowDebug.presetError}
+          onSavePreset={appFlowDebug.savePreset}
+          onLoadPreset={appFlowDebug.loadPreset}
+          onDeletePreset={appFlowDebug.deletePreset}
         />
       )}
 
