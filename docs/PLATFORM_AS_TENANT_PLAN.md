@@ -1,7 +1,8 @@
 # Platform-as-Tenant — Plan
 # Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24).
 # Phase 3 COMPLETE (2026-09-24). Phase 4 COMPLETE (2026-09-24). Phase 5 COMPLETE (2026-09-24).
-# Phase 6 NEXT.
+# Phase 6 IN PROGRESS (2026-09-24) — found and fixed a real test-cleanup bug live; UI
+# walkthrough still pending user confirmation.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -215,7 +216,7 @@ alternative. This plan is not overriding a considered decision.
 | 3 — RLS verification | ✅ **COMPLETE (2026-09-24)** — see "Phase 3 — COMPLETE" section below | Phase 1 |
 | 4 — Frontend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 4 — COMPLETE" section below | Phase 2 |
 | 5 — Tenant management UI | ✅ **COMPLETE (2026-09-24)** — see "Phase 5 — COMPLETE" section below | Independent, can run anytime |
-| 6 — Verification | Re-run the App Canvas Debug Mode Phase 6 walkthrough that surfaced this gap — confirm `stage2-graph-llm-condition-v2`'s debug panel General mode now shows the bootstrap tenant's own keys/models correctly | All above |
+| 6 — Verification | 🔶 **IN PROGRESS (2026-09-24)** — see "Phase 6 — IN PROGRESS" section below | All above |
 
 **One phase per session**, same discipline as every other plan this session referenced. Do not
 start Phase 2 in the same session as Phase 1, etc., unless explicitly told otherwise.
@@ -515,6 +516,63 @@ this plan, no browser-automation tool available in this environment. The concret
 in a real browser session: `/admin/tenants` should show the bootstrap tenant's card and side
 panel both carrying the amber "Platform" badge, with the Danger Zone (delete button) still
 absent for that tenant specifically.
+
+---
+
+## Phase 6 — IN PROGRESS (2026-09-24)
+
+Started the planned re-verification walkthrough. The user's first live check (Settings → LLM
+Providers as `avi`/`admin`) immediately surfaced a real, unrelated bug: a provider row named
+`rlsp3-bootstrap-own-write` with `display_name = 'updated-by-self'` was visible in the real
+bootstrap tenant's provider list — a live symptom of leaked test fixture data, not a Phase 4/5
+regression.
+
+**Root cause found:** `go/internal/db/platform_as_tenant_rls_integration_test.go` (added in Phase
+3) has a cleanup-ordering bug, present in every one of its 4 tests plus its shared
+`upsertRLSP3Tenant` helper. Each test did:
+```go
+superPool := mustSuperPool(ctx, t)
+defer superPool.Close()          // runs when the test function returns
+...
+t.Cleanup(func() { superPool.Exec(ctx, "DELETE ...") })  // t.Cleanup ALWAYS runs after
+                                                           // the function's own defers
+```
+Go's `testing.T` semantics: a test function's own `defer`s fire when the function body returns;
+`t.Cleanup`-registered funcs run only *after* that. So `superPool.Close()` always ran before the
+`t.Cleanup` delete that still needed `superPool` — every seed row this test file ever created
+(`rlsp3-bootstrap-provider`, `rlsp3-bootstrap-own-write`, `rlsp3-bootstrap-keys-provider`,
+`rlsp3-bootstrap-selfkey-provider`, plus 2 throwaway tenants and 2 provider-keys via
+`upsertRLSP3Tenant`) leaked into the real, live database on every run since Phase 3 shipped — the
+`_, _ = superPool.Exec(...)` discard-errors pattern hid the resulting "pool already closed" error
+completely, so `go test` reported clean PASS results throughout.
+
+**Fixed:** `mustSuperPool` now registers `t.Cleanup(pool.Close)` itself, instead of every caller
+doing `defer superPool.Close()`. `t.Cleanup` funcs run LIFO, so registering the close inside
+`mustSuperPool` (before any caller's own delete-cleanup registers) guarantees deletes run first
+and the pool closes last. Removed the now-redundant `defer superPool.Close()` from all 4 call
+sites. Verified by re-running the suite twice and checking the live DB directly (`docker exec
+them-postgres psql`) — zero `rlsp3-*` rows remain in `them.llm_providers`, `them.llm_provider_keys`,
+or `them.tenants` after the fix, versus 4/2/2 leaked rows respectively before it. The bootstrap
+tenant's `them.llm_providers` list is back to exactly its 5 real rows (`anthropic`, `openai`,
+`mock`, `gemini`, `groq`).
+
+**Verified:** `go build ./...` + `go vet ./...` clean. `go test ./internal/db/...` (unit) and
+`go test -tags=integration -run TestRLS_BootstrapTenant ./internal/db/...` (integration, live
+Postgres) both pass, run twice for the leak check. Full `go test ./...` — every package passes
+except `internal/a2a`, which timed out (600s) inside vendored `a2aproject/a2a-go` goroutine
+internals; confirmed **pre-existing and unrelated** by running `internal/a2a` in isolation both
+before (via `git stash`) and after this fix — passes cleanly (`ok`, 0.18s) either way, and this
+fix touches no `a2a` code. Flagged as a new "flaky (pre-existing)" row in `go/TEST_INDEX.md`
+rather than chased down, per this session's scope. The pre-existing, already-documented
+`TestRLS_TwoTenantFullIsolation`/`TestRLS_CatalogVerification` schema-drift failures from Phase 3
+still fail, unchanged — not caused by or related to this fix.
+
+**Still outstanding for Phase 6 (not yet done):** the actual UI walkthrough this phase exists for
+— confirming Settings → LLM Providers/System Agents render correctly for `avi`/`admin` (Phase 4's
+claim) and that `stage2-graph-llm-condition-v2`'s (or an equivalent bootstrap-tenant app's) debug
+panel General mode shows a usable key (the original bug this whole plan started from). The user
+has started this check live; continuing once they report back what they see next (past the
+`rlsp3-*` provider, which is now gone after this fix and a page refresh).
 
 ---
 

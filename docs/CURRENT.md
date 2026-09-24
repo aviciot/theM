@@ -1,9 +1,11 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 5 COMPLETE — /admin/tenants now marks the
-# bootstrap/platform tenant with a visible "Platform" badge in both the grid card and the side
-# panel header, gated on the already-existing tenant.is_bootstrap field. No functional change to
-# the pre-existing deletion guard -- purely additive visibility. docs/PLATFORM_AS_TENANT_PLAN.md,
-# 6 phases, 5 of 6 done. Next: Phase 6 (re-verification walkthrough).)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 IN PROGRESS -- live UI walkthrough found a
+# real bug: Phase 3's RLS integration test leaked fixture rows into the live DB on every run
+# because of a t.Cleanup-vs-defer ordering mistake (pool closed before its own cleanup delete
+# could use it). Fixed in go/internal/db/platform_as_tenant_rls_integration_test.go; leaked rows
+# deleted; full go test ./... clean except a confirmed-unrelated internal/a2a timeout (new flaky
+# row in TEST_INDEX.md). docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 5 done + 6 in progress. Next:
+# finish the Phase 6 UI walkthrough (Settings screens + App Canvas debug panel).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---

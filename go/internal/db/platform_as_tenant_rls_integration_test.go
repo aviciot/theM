@@ -45,7 +45,6 @@ func TestRLS_BootstrapTenant_LLMProviders_VisibleCrossTenant_ReadOnly(t *testing
 	defer pools.Close()
 
 	superPool := mustSuperPool(ctx, t)
-	defer superPool.Close()
 
 	bootstrapID := "00000000-0000-0000-0000-000000000001"
 
@@ -149,7 +148,6 @@ func TestRLS_BootstrapTenant_LLMProviders_AppRoleHasNoWriteGrant(t *testing.T) {
 	defer pools.Close()
 
 	superPool := mustSuperPool(ctx, t)
-	defer superPool.Close()
 
 	bootstrapID := "00000000-0000-0000-0000-000000000001"
 	const providerName = "rlsp3-bootstrap-own-write"
@@ -229,7 +227,6 @@ func TestRLS_BootstrapTenant_LLMProviderKeys_InvisibleCrossTenant(t *testing.T) 
 	defer pools.Close()
 
 	superPool := mustSuperPool(ctx, t)
-	defer superPool.Close()
 
 	bootstrapID := "00000000-0000-0000-0000-000000000001"
 
@@ -361,7 +358,6 @@ func TestRLS_BootstrapTenant_LLMProviderKeys_OwnTenantSeesOwnKey(t *testing.T) {
 	defer pools.Close()
 
 	superPool := mustSuperPool(ctx, t)
-	defer superPool.Close()
 
 	bootstrapID := "00000000-0000-0000-0000-000000000001"
 	const providerName = "rlsp3-bootstrap-selfkey-provider"
@@ -422,12 +418,24 @@ func TestRLS_BootstrapTenant_LLMProviderKeys_OwnTenantSeesOwnKey(t *testing.T) {
 // mustSuperPool connects with the superuser DSN (BYPASSRLS via table
 // ownership, not a role attribute) for seed/cleanup work — same helper
 // pattern as testDSN(t) used inline elsewhere in this package.
+//
+// Close is registered via t.Cleanup, NOT returned for the caller to defer.
+// t.Cleanup funcs always run after the test function's own defers (Go
+// testing.T semantics), so a caller-side `defer superPool.Close()` would
+// close this pool before any t.Cleanup-registered delete that still needs
+// it — every seed/delete cleanup in this file silently no-ops against a
+// closed pool as a result (found live: every "rlsp3-*" seed row this file
+// creates was leaking into the real database on every test run, because
+// each caller had exactly that ordering bug). Registering Close here,
+// before any caller registers its own delete cleanup, means LIFO order
+// runs the deletes first and closes the pool last.
 func mustSuperPool(ctx context.Context, t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	pool, err := pgxpool.New(ctx, testDSN(t))
 	if err != nil {
 		t.Fatalf("connect super: %v", err)
 	}
+	t.Cleanup(pool.Close)
 	return pool
 }
 
