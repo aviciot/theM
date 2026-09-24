@@ -659,7 +659,10 @@ func TestGetOwnProviderRow_NotFound_ReturnsErrNotFound(t *testing.T) {
 }
 
 func TestGetOwnProviderRow_Found_ReturnsTenantRow_NeverPlatformID(t *testing.T) {
-	tid := "00000000-0000-0000-0000-000000000001"
+	// A real (non-bootstrap) tenant ID — distinct from tenantctx.BootstrapTenantID
+	// so fakeDal's tenant-vs-bootstrap dispatch (see GetProviderByNameForTenant)
+	// routes this call to tenantProviderByName, not platformProviderByName.
+	tid := "11111111-1111-1111-1111-111111111111"
 	d := &fakeDal{
 		tenantProviderByName:   dal.LLMProvider{ID: 20, Name: "anthropic", DefaultModel: "m", TenantID: &tid},
 		platformProviderByName: dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "m"},
@@ -670,36 +673,16 @@ func TestGetOwnProviderRow_Found_ReturnsTenantRow_NeverPlatformID(t *testing.T) 
 		t.Fatal(err)
 	}
 	if row.ID != 20 {
-		t.Errorf("want the tenant's own row id=20, got %d (must never resolve to the platform row's id)", row.ID)
-	}
-}
-
-// ── GetPlatformProviderRow tests (db/108 — platform-owned named keys) ────────
-
-func TestGetPlatformProviderRow_NotFound_ReturnsErrNotFound(t *testing.T) {
-	d := &fakeDal{platformProviderNotFound: true}
-	svc := newProviderSvc(d)
-	_, err := svc.GetPlatformProviderRow(context.Background(), "gemini")
-	if !errors.Is(err, service.ErrNotFound) {
-		t.Errorf("want ErrNotFound when no platform row exists, got %v", err)
-	}
-}
-
-func TestGetPlatformProviderRow_Found_ReturnsPlatformRow(t *testing.T) {
-	d := &fakeDal{platformProviderByName: dal.LLMProvider{ID: 4, Name: "gemini", DefaultModel: "gemini-2.0-flash"}}
-	svc := newProviderSvc(d)
-	row, err := svc.GetPlatformProviderRow(context.Background(), "gemini")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if row.ID != 4 || row.Name != "gemini" {
-		t.Errorf("unexpected row: %+v", row)
+		t.Errorf("want the tenant's own row id=20, got %d (must never resolve to the bootstrap row's id)", row.ID)
 	}
 }
 
 func TestTenantProvider_Upsert_AllowedModels_PreservedWhenAbsent(t *testing.T) {
 	platform := dal.LLMProvider{ID: 1, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-sonnet-4-6"}
-	tid := "00000000-0000-0000-0000-000000000001"
+	// A real (non-bootstrap) tenant ID so fakeDal's tenant-vs-bootstrap dispatch
+	// (see GetProviderByNameForTenant in service_test.go) routes the
+	// existing-row lookup to tenantProviderByName, not platformProviderByName.
+	tid := "11111111-1111-1111-1111-111111111111"
 	d := &fakeDal{
 		platformProviderByName: platform,
 		tenantProviderByName: dal.LLMProvider{

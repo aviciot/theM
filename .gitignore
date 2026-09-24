@@ -21,6 +21,7 @@ logs/
 data/them-postgres/pgdata/
 data/them-redis/
 data/them-logs/
+data/tenants/
 # Old volume paths (pre-rename)
 volumes/postgres/pgdata/
 volumes/redis/

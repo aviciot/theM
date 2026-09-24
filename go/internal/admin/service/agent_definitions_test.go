@@ -380,9 +380,6 @@ func (f *agentDefFakeDal) ListProvidersForTenant(_ context.Context, _ string) ([
 func (f *agentDefFakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
-func (f *agentDefFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
-	return dal.LLMProvider{}, nil
-}
 func (f *agentDefFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }

@@ -18,9 +18,6 @@ type fakeSystemAgentResolverDAL struct {
 	provider    dal.LLMProvider
 	providerErr error
 
-	platformProvider    dal.LLMProvider
-	platformProviderErr error
-
 	defaultKey    dal.LLMProviderKey
 	defaultKeyErr error
 
@@ -33,9 +30,6 @@ func (f *fakeSystemAgentResolverDAL) GetTenantSystemAgentConfig(_ context.Contex
 }
 func (f *fakeSystemAgentResolverDAL) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
 	return f.provider, f.providerErr
-}
-func (f *fakeSystemAgentResolverDAL) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
-	return f.platformProvider, f.platformProviderErr
 }
 func (f *fakeSystemAgentResolverDAL) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return f.defaultKey, f.defaultKeyErr
@@ -218,106 +212,3 @@ func TestResolveSystemAgentRole_CustomMode_UnsetFields_FallsBackToPlatform(t *te
 	}
 }
 
-// ── resolvePlatformSystemAgentRole (the-M admin's own general/custom mode, db/108) ──
-
-func TestResolvePlatformSystemAgentRole_Disabled_ReturnsNotOK(t *testing.T) {
-	d := &fakeSystemAgentResolverDAL{}
-	_, ok := resolvePlatformSystemAgentRole(context.Background(), d, testFernetKey(t), saRoleStored{Enabled: false})
-	if ok {
-		t.Error("want ok=false when role is disabled")
-	}
-}
-
-func TestResolvePlatformSystemAgentRole_CustomMode_UsesOwnFields(t *testing.T) {
-	fernetKey := testFernetKey(t)
-	enc := encryptForTest(t, fernetKey, "sk-platform-custom")
-	provider := "anthropic"
-	model := "claude-sonnet-4-6"
-	d := &fakeSystemAgentResolverDAL{}
-	resolved, ok := resolvePlatformSystemAgentRole(context.Background(), d, fernetKey, saRoleStored{
-		Enabled: true, Mode: "custom", Provider: &provider, Model: &model, APIKeyEncrypted: &enc,
-	})
-	if !ok {
-		t.Fatal("want ok=true")
-	}
-	if resolved.Provider != "anthropic" || resolved.Model != "claude-sonnet-4-6" || resolved.APIKey != "sk-platform-custom" {
-		t.Errorf("unexpected resolved value: %+v", resolved)
-	}
-}
-
-func TestResolvePlatformSystemAgentRole_ModeEmpty_TreatedAsCustom(t *testing.T) {
-	fernetKey := testFernetKey(t)
-	enc := encryptForTest(t, fernetKey, "sk-legacy-role")
-	provider := "openai"
-	model := "gpt-4o-mini"
-	d := &fakeSystemAgentResolverDAL{}
-	resolved, ok := resolvePlatformSystemAgentRole(context.Background(), d, fernetKey, saRoleStored{
-		Enabled: true, Mode: "", Provider: &provider, Model: &model, APIKeyEncrypted: &enc,
-	})
-	if !ok {
-		t.Fatal("want ok=true — a role saved before this feature existed has no mode field and must still work")
-	}
-	if resolved.Provider != "openai" {
-		t.Errorf("unexpected resolved value: %+v", resolved)
-	}
-}
-
-func TestResolvePlatformSystemAgentRole_GeneralMode_MissingProvider_ReturnsNotOK(t *testing.T) {
-	d := &fakeSystemAgentResolverDAL{}
-	_, ok := resolvePlatformSystemAgentRole(context.Background(), d, testFernetKey(t), saRoleStored{Enabled: true, Mode: "general"})
-	if ok {
-		t.Error("want ok=false when general mode has no provider selected")
-	}
-}
-
-func TestResolvePlatformSystemAgentRole_GeneralMode_UsesDefaultKeyWhenKeyIDNil(t *testing.T) {
-	fernetKey := testFernetKey(t)
-	enc := encryptForTest(t, fernetKey, "sk-platform-default-key")
-	provider := "groq"
-	d := &fakeSystemAgentResolverDAL{
-		platformProvider: dal.LLMProvider{ID: 3, Name: "groq", DefaultModel: "llama-3.3-70b-versatile"},
-		defaultKey:       dal.LLMProviderKey{ID: 7, APIKeyEncrypted: enc},
-	}
-	resolved, ok := resolvePlatformSystemAgentRole(context.Background(), d, fernetKey, saRoleStored{
-		Enabled: true, Mode: "general", Provider: &provider,
-	})
-	if !ok {
-		t.Fatal("want ok=true")
-	}
-	if resolved.Provider != "groq" || resolved.Model != "llama-3.3-70b-versatile" || resolved.APIKey != "sk-platform-default-key" {
-		t.Errorf("unexpected resolved value: %+v", resolved)
-	}
-}
-
-func TestResolvePlatformSystemAgentRole_GeneralMode_UsesStoredGeneralModel(t *testing.T) {
-	fernetKey := testFernetKey(t)
-	enc := encryptForTest(t, fernetKey, "sk-platform-default-key")
-	provider := "groq"
-	d := &fakeSystemAgentResolverDAL{
-		platformProvider: dal.LLMProvider{ID: 3, Name: "groq", DefaultModel: "llama-3.3-70b-versatile"},
-		defaultKey:       dal.LLMProviderKey{ID: 7, APIKeyEncrypted: enc},
-	}
-	resolved, ok := resolvePlatformSystemAgentRole(context.Background(), d, fernetKey, saRoleStored{
-		Enabled: true, Mode: "general", Provider: &provider, GeneralModel: strp2("llama-3.1-8b-instant"),
-	})
-	if !ok {
-		t.Fatal("want ok=true")
-	}
-	if resolved.Model != "llama-3.1-8b-instant" {
-		t.Errorf("want stored GeneralModel to override provider.DefaultModel, got %+v", resolved)
-	}
-}
-
-func TestResolvePlatformSystemAgentRole_GeneralMode_NoUsableKey_ReturnsNotOK(t *testing.T) {
-	provider := "gemini"
-	d := &fakeSystemAgentResolverDAL{
-		platformProvider: dal.LLMProvider{ID: 4, Name: "gemini", DefaultModel: "gemini-2.0-flash"},
-		defaultKeyErr:    pgx.ErrNoRows, // no platform key saved for this provider yet
-	}
-	_, ok := resolvePlatformSystemAgentRole(context.Background(), d, testFernetKey(t), saRoleStored{
-		Enabled: true, Mode: "general", Provider: &provider,
-	})
-	if ok {
-		t.Error("want ok=false when the platform has no usable key for the selected provider")
-	}
-}

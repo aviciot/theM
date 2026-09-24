@@ -4,19 +4,12 @@ package admin
 // agent based on its name, description, and skills. It is best-effort: any
 // error returns ("", "") so the caller can continue without a category.
 //
-// Configuration is read from them.config row where config_key='system_agents'.
-// Expected shape:
-//
-//	{
-//	  "roles": {
-//	    "classifier": {
-//	      "enabled": true,
-//	      "provider": "anthropic",
-//	      "model": "claude-haiku-4-5-20251001",
-//	      "api_key_encrypted": "enc:..."
-//	    }
-//	  }
-//	}
+// Configuration is resolved through them.tenant_system_agent_config for the
+// "classifier" role — first for the bootstrap tenant (the-M's own operating
+// tenant since Platform-as-Tenant Phase 2, docs/PLATFORM_AS_TENANT_PLAN.md),
+// whose resolved config is fed in as the fallback for the real tenant's own
+// resolution. There is no more separate them.config['system_agents'] platform
+// path.
 
 import (
 	"context"
@@ -25,15 +18,21 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // classifierDAL is the minimal DAL surface classifyAgent needs.
 type classifierDAL interface {
-	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	systemAgentRoleResolverDAL
-	platformSystemAgentRoleResolverDAL
 }
+
+// classifierDefaultModel is the classifier's historical default model, used
+// only when the bootstrap tenant's own "classifier" config resolves with a
+// usable provider/key but no model set (custom mode never had a model field
+// filled in) — matches the pre-Phase-2 behavior where the platform-global
+// config's stored role got this default applied before resolution when
+// mode != "general" and no model was stored.
+const classifierDefaultModel = "claude-haiku-4-5-20251001"
 
 var (
 	classifierValidCategories = map[string]bool{
@@ -56,21 +55,18 @@ func classifyAgent(
 	displayName, description string,
 	skills []any,
 ) (category, icon string) {
-	// Load platform-global config first — used as the fallback when the tenant
-	// has no row / mode="custom" with unset fields (unchanged prior behavior).
-	// resolvePlatformSystemAgentRole also resolves the platform's own
-	// general/custom mode choice for this role (db/108).
-	var platformResolved resolvedSystemAgentRole
-	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
-		var cfg saConfigStored
-		if err := json.Unmarshal(row.Value, &cfg); err == nil {
-			role := cfg.Roles["classifier"]
-			if role.Mode != "general" && role.Model == nil {
-				defaultModel := "claude-haiku-4-5-20251001" // classifier's historical default, custom mode only
-				role.Model = &defaultModel
-			}
-			platformResolved, _ = resolvePlatformSystemAgentRole(ctx, d, fernetKey, role)
-		}
+	// Resolve the bootstrap tenant's own "classifier" config first — this is
+	// the "platform" fallback source used when the real tenant has no row /
+	// mode="custom" with unset fields (unchanged prior behavior, just sourced
+	// from the bootstrap tenant's tenant-scoped config instead of a separate
+	// them.config['system_agents'] row). The bootstrap tenant's own call has
+	// no further fallback tier, so its platform-fallback args are all "".
+	platformResolved, _ := resolveSystemAgentRole(ctx, d, fernetKey, tenantctx.BootstrapTenantID, "classifier",
+		"", "", "", "", "")
+	if platformResolved.Provider != "" && platformResolved.APIKey != "" && platformResolved.Model == "" {
+		// classifier's historical default, custom mode only (see
+		// classifierDefaultModel doc comment).
+		platformResolved.Model = classifierDefaultModel
 	}
 
 	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "classifier",

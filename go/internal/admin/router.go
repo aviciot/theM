@@ -102,9 +102,6 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 //	GET    /admin/llm-providers/{id}
 //	PATCH  /admin/llm-providers/{id}
 //	DELETE /admin/llm-providers/{id}
-//	GET    /admin/system-agents
-//	PUT    /admin/system-agents
-//	POST   /admin/system-agents/{role}/test-llm
 //	GET    /admin/my/system-agents/{role}/config
 //	PUT    /admin/my/system-agents/{role}/config
 //	POST   /admin/my/system-agents/{role}/test-llm
@@ -151,7 +148,6 @@ func BuildRouter(
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
 	llmProviderKeys := NewLLMProviderKeysHandler(dbq, secretKey)
 	tenantSystemAgentConfig := NewTenantSystemAgentConfigHandler(dbq, secretKey)
-	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
 	tenants := NewTenantsHandler(dbq, auditWriter, idpKey, logoDir)
 	// Admin + runs routes — all require JWT. Within /admin, routes are split into
 	// two authorization tiers via sub-groups:
@@ -253,8 +249,6 @@ func BuildRouter(
 				llmRouting.Routes(platformGlobal)
 				llmProviders.Routes(platformGlobal)
 				llmProviders.TenantProviderRoutes(platformGlobal)
-				llmProviderKeys.PlatformRoutes(platformGlobal)
-				systemAgents.Routes(platformGlobal)
 				tenants.Routes(platformGlobal)
 				if pools != nil {
 					NewObservabilityHandler(pools, redis).Routes(platformGlobal)

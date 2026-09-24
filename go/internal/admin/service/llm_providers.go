@@ -8,6 +8,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // LLMProviderOut is the HTTP response shape for LLM provider endpoints.
@@ -226,16 +227,23 @@ func (s *LLMProviderService) ListForTenant(ctx context.Context, tenantID string)
 }
 
 // UpsertForTenant creates or replaces a tenant-scoped LLM provider override.
-// name must match an existing platform provider name (validates against platform row).
-// Returns ErrNotFound when name has no platform-default row.
+// name must match an existing bootstrap-tenant provider name (validates
+// against the bootstrap tenant's own row, which is what "platform default"
+// means post Platform-as-Tenant Phase 1 — see docs/PLATFORM_AS_TENANT_PLAN.md;
+// the bootstrap tenant IS the platform now, no separate NULL-tenant row exists).
+// Returns ErrNotFound when name has no bootstrap-tenant row.
 // Returns ErrValidation for bad field values.
 func (s *LLMProviderService) UpsertForTenant(ctx context.Context, tenantID, name string, body LLMProviderCreate) (LLMProviderOut, error) {
 	if body.DefaultModel == "" {
 		return LLMProviderOut{}, validation("default_model is required")
 	}
 
-	// Fetch the platform row to inherit display_name and model_pricing defaults.
-	platform, err := s.dal.GetProviderByNamePlatform(ctx, name)
+	// Fetch the bootstrap tenant's own row to inherit display_name and
+	// model_pricing defaults — this is the "platform template" use case, a
+	// different (legitimate) call from a tenant's own general/custom mode
+	// resolution: it reads the bootstrap tenant's row as a seed for a new
+	// tenant override, not as a fallback credential.
+	platform, err := s.dal.GetProviderByNameForTenant(ctx, name, tenantctx.BootstrapTenantID)
 	if err != nil {
 		if dal.IsNoRows(err) {
 			return LLMProviderOut{}, ErrNotFound
@@ -307,20 +315,6 @@ func (s *LLMProviderService) UpsertForTenant(ctx context.Context, tenantID, name
 // /my/llm-providers/{name} first to create its own row before it can hold keys).
 func (s *LLMProviderService) GetOwnProviderRow(ctx context.Context, name, tenantID string) (dal.LLMProvider, error) {
 	row, err := s.dal.GetProviderByNameForTenant(ctx, name, tenantID)
-	if err != nil {
-		if dal.IsNoRows(err) {
-			return dal.LLMProvider{}, ErrNotFound
-		}
-		return dal.LLMProvider{}, err
-	}
-	return row, nil
-}
-
-// GetPlatformProviderRow returns the platform-default them.llm_providers row
-// for name (tenant_id IS NULL). Returns ErrNotFound when no platform row
-// exists for this provider name.
-func (s *LLMProviderService) GetPlatformProviderRow(ctx context.Context, name string) (dal.LLMProvider, error) {
-	row, err := s.dal.GetProviderByNamePlatform(ctx, name)
 	if err != nil {
 		if dal.IsNoRows(err) {
 			return dal.LLMProvider{}, ErrNotFound

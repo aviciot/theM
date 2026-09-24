@@ -9,7 +9,8 @@ import (
 )
 
 // validSystemAgentRoles gates which role names may have a tenant config row —
-// mirrors the roles SystemAgentsHandler's platform-global config supports.
+// classifier, card_synthesizer, and security_scanner, the three system-agent
+// roles resolveSystemAgentRole (internal/admin/system_agent_resolve.go) supports.
 var validSystemAgentRoles = map[string]bool{
 	"classifier":       true,
 	"card_synthesizer": true,

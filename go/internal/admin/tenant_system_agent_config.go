@@ -5,9 +5,11 @@ package admin
 // card_synthesizer) — see docs/TENANT_LLM_PROVIDERS_PLAN.md step 5.
 //
 // Mounted under /admin/my/system-agents/{role}/config, tenant self-service
-// only (mirrors the /admin/my/llm-providers naming pattern). Distinct from
-// the existing platform-global /admin/system-agents routes (SystemAgentsHandler),
-// which remain the fallback used when a tenant has no row here.
+// only (mirrors the /admin/my/llm-providers naming pattern). When a tenant has
+// no row here, resolveSystemAgentRole falls back to the bootstrap tenant's own
+// config for the same role (Platform-as-Tenant Phase 2,
+// docs/PLATFORM_AS_TENANT_PLAN.md) — there is no separate platform-global
+// system-agents screen/route anymore.
 
 import (
 	"context"

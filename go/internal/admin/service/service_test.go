@@ -10,6 +10,7 @@ import (
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/session"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -481,17 +482,24 @@ func (f *fakeDal) DeleteProvider(_ context.Context, _ int64) error {
 func (f *fakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLMProvider, error) {
 	return f.tenantProviders, nil
 }
-func (f *fakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
+// GetProviderByNameForTenant is used for two distinct call sites in the real
+// code: a tenant's own row lookup (GetOwnProviderRow) and, since
+// Platform-as-Tenant Phase 2 (docs/PLATFORM_AS_TENANT_PLAN.md), the bootstrap
+// tenant's row used as a template in UpsertForTenant (formerly
+// GetProviderByNamePlatform). Dispatch on the tenantID argument so both call
+// sites can be faked independently in the same test via
+// tenantProviderByName/platformProviderByName.
+func (f *fakeDal) GetProviderByNameForTenant(_ context.Context, _, tenantID string) (dal.LLMProvider, error) {
+	if tenantID == tenantctx.BootstrapTenantID {
+		if f.platformProviderNotFound {
+			return dal.LLMProvider{}, pgx.ErrNoRows
+		}
+		return f.platformProviderByName, nil
+	}
 	if f.tenantProviderNotFound {
 		return dal.LLMProvider{}, pgx.ErrNoRows
 	}
 	return f.tenantProviderByName, nil
-}
-func (f *fakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
-	if f.platformProviderNotFound {
-		return dal.LLMProvider{}, pgx.ErrNoRows
-	}
-	return f.platformProviderByName, nil
 }
 func (f *fakeDal) UpsertTenantProvider(_ context.Context, _ string, in dal.LLMProviderInput) (dal.LLMProvider, error) {
 	f.upsertTenantProviderCalls = append(f.upsertTenantProviderCalls, in)

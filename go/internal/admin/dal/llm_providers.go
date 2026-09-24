@@ -3,6 +3,8 @@ package dal
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // llmProviderSelectCols is the column list shared by all provider queries.
@@ -28,9 +30,11 @@ func scanProvider(r RowScanner) (LLMProvider, error) {
 	return p, nil
 }
 
-// ListProviders returns all platform-default LLM providers (tenant_id IS NULL), ordered by id ASC.
+// ListProviders returns the bootstrap tenant's own LLM providers — the-M's own
+// "platform-default" rows post-Platform-as-Tenant (see docs/PLATFORM_AS_TENANT_PLAN.md).
+// Ordered by id ASC.
 func (d *DB) ListProviders(ctx context.Context) ([]LLMProvider, error) {
-	rows, err := d.q.Query(ctx, llmProviderSelectCols+" WHERE tenant_id IS NULL ORDER BY id ASC")
+	rows, err := d.q.Query(ctx, llmProviderSelectCols+" WHERE tenant_id = $1::uuid ORDER BY id ASC", tenantctx.BootstrapTenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -48,19 +52,22 @@ func (d *DB) ListProviders(ctx context.Context) ([]LLMProvider, error) {
 }
 
 // ListProvidersForTenant returns the merged view for a tenant:
-// tenant overrides for this tenantID, plus all platform defaults not overridden.
-// Tenant rows win when name matches. Results are ordered by name ASC.
+// tenant overrides for this tenantID, plus the bootstrap tenant's provider
+// defaults not overridden (Platform-as-Tenant Phase 1 moved what used to be
+// NULL-tenant "platform default" rows to the bootstrap tenant's real
+// tenant_id — see docs/PLATFORM_AS_TENANT_PLAN.md). Tenant rows win when name
+// matches. Results are ordered by name ASC.
 func (d *DB) ListProvidersForTenant(ctx context.Context, tenantID string) ([]LLMProvider, error) {
 	const q = `
 		SELECT id, name, display_name, api_key_encrypted, base_url,
 		       default_model, model_pricing, enabled, tenant_id, allowed_models
 		FROM them.llm_providers
 		WHERE tenant_id = $1::uuid
-		   OR (tenant_id IS NULL AND name NOT IN (
+		   OR (tenant_id = $2::uuid AND name NOT IN (
 		           SELECT name FROM them.llm_providers WHERE tenant_id = $1::uuid
 		       ))
 		ORDER BY name ASC`
-	rows, err := d.q.Query(ctx, q, tenantID)
+	rows, err := d.q.Query(ctx, q, tenantID, tenantctx.BootstrapTenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,20 +97,15 @@ func (d *DB) GetProviderByNameForTenant(ctx context.Context, name, tenantID stri
 	return scanProvider(&singleToRow{s: row})
 }
 
-// GetProviderByNamePlatform returns the platform-default row for name (tenant_id IS NULL).
-// Returns pgx.ErrNoRows when not found.
-func (d *DB) GetProviderByNamePlatform(ctx context.Context, name string) (LLMProvider, error) {
-	row := d.q.QueryRow(ctx, llmProviderSelectCols+" WHERE name=$1 AND tenant_id IS NULL", name)
-	return scanProvider(&singleToRow{s: row})
-}
-
-// CreateProvider inserts a new platform-default LLM provider row (tenant_id = NULL).
-// Returns a unique-violation error (SQLSTATE 23505) when name already exists.
+// CreateProvider inserts a new LLM provider row owned by the bootstrap tenant
+// — the-M's own "platform-default" provider post-Platform-as-Tenant (see
+// docs/PLATFORM_AS_TENANT_PLAN.md). Returns a unique-violation error
+// (SQLSTATE 23505) when a bootstrap-tenant row with this name already exists.
 func (d *DB) CreateProvider(ctx context.Context, in LLMProviderInput) (LLMProvider, error) {
 	const q = `
 		INSERT INTO them.llm_providers
-		  (name, display_name, api_key_encrypted, base_url, default_model, model_pricing, enabled, allowed_models)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		  (name, display_name, api_key_encrypted, base_url, default_model, model_pricing, enabled, tenant_id, allowed_models)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9)
 		RETURNING id, name, display_name, api_key_encrypted, base_url,
 		          default_model, model_pricing, enabled, tenant_id, allowed_models`
 
@@ -118,7 +120,7 @@ func (d *DB) CreateProvider(ctx context.Context, in LLMProviderInput) (LLMProvid
 
 	row := d.q.ExecReturning(ctx, q,
 		in.Name, in.DisplayName, in.APIKeyEncrypted, in.BaseURL,
-		in.DefaultModel, modelPricingJSON, in.Enabled, allowedModelsJSON,
+		in.DefaultModel, modelPricingJSON, in.Enabled, tenantctx.BootstrapTenantID, allowedModelsJSON,
 	)
 	return scanProvider(&singleToRow{s: row})
 }

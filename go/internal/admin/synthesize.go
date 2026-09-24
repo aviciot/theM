@@ -9,19 +9,12 @@ package admin
 // array that reflects what the application as a whole can do — not the
 // individual agent internals.
 //
-// Configuration is read from them.config where config_key='system_agents':
-//
-//	{
-//	  "roles": {
-//	    "card_synthesizer": {
-//	      "enabled": true,
-//	      "provider": "anthropic",
-//	      "model": "claude-haiku-4-5-20251001",
-//	      "api_key_encrypted": "enc:...",
-//	      "system_prompt": "optional override"
-//	    }
-//	  }
-//	}
+// Configuration is resolved through them.tenant_system_agent_config for the
+// "card_synthesizer" role — first for the bootstrap tenant (the-M's own
+// operating tenant since Platform-as-Tenant Phase 2,
+// docs/PLATFORM_AS_TENANT_PLAN.md), whose resolved config is fed in as the
+// fallback for the real tenant's own resolution. There is no more separate
+// them.config['system_agents'] platform path.
 
 import (
 	"bytes"
@@ -33,14 +26,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // synthesizerDAL is the minimal DAL surface synthesizeAppCard needs.
 type synthesizerDAL interface {
-	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	systemAgentRoleResolverDAL
-	platformSystemAgentRoleResolverDAL
 }
 
 // subAgentSummary is the subset of an agent row that the synthesizer sees.
@@ -86,17 +77,15 @@ func synthesizeAppCard(
 	orchSystemPrompt string,
 	agents []subAgentSummary,
 ) map[string]any {
-	// Load platform-global config first — used as the fallback when the tenant
-	// has no row / mode="custom" with unset fields (unchanged prior behavior).
-	// resolvePlatformSystemAgentRole also resolves the platform's own
-	// general/custom mode choice for this role (db/108).
-	var platformResolved resolvedSystemAgentRole
-	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
-		var cfg saConfigStored
-		if err := json.Unmarshal(row.Value, &cfg); err == nil {
-			platformResolved, _ = resolvePlatformSystemAgentRole(ctx, d, fernetKey, cfg.Roles["card_synthesizer"])
-		}
-	}
+	// Resolve the bootstrap tenant's own "card_synthesizer" config first —
+	// this is the "platform" fallback source used when the real tenant has no
+	// row / mode="custom" with unset fields (unchanged prior behavior, just
+	// sourced from the bootstrap tenant's tenant-scoped config instead of a
+	// separate them.config['system_agents'] row). The bootstrap tenant's own
+	// call has no further fallback tier, so its platform-fallback args are
+	// all "".
+	platformResolved, _ := resolveSystemAgentRole(ctx, d, fernetKey, tenantctx.BootstrapTenantID, "card_synthesizer",
+		"", "", "", "", "")
 
 	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "card_synthesizer",
 		platformResolved.Provider, platformResolved.Model, platformResolved.APIKey, platformResolved.BaseURL, platformResolved.SystemPrompt)

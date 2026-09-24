@@ -13,25 +13,13 @@ import (
 // fakeClassifierDAL satisfies classifierDAL for classifyAgent tests.
 type fakeClassifierDAL struct {
 	fakeSystemAgentResolverDAL
-	configRow *dal.ConfigRow
-	configErr error
-}
-
-func (f *fakeClassifierDAL) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
-	return f.configRow, f.configErr
-}
-
-func classifierPlatformConfigRow(t *testing.T, fernetKey []byte, apiKey string) *dal.ConfigRow {
-	t.Helper()
-	enc := encryptForTest(t, fernetKey, apiKey)
-	value := `{"roles":{"classifier":{"enabled":true,"model":"claude-haiku-4-5-20251001","api_key_encrypted":"` + enc + `"}}}`
-	return &dal.ConfigRow{Key: "system_agents", Value: []byte(value)}
 }
 
 // TestClassifyAgent_NoConfig_ReturnsEmpty verifies the best-effort contract:
-// no platform config and no tenant row must degrade silently, not error.
+// neither the bootstrap tenant's config nor the real tenant's row must
+// degrade silently, not error, when both resolve to nothing usable.
 func TestClassifyAgent_NoConfig_ReturnsEmpty(t *testing.T) {
-	d := &fakeClassifierDAL{configErr: pgx.ErrNoRows, fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{cfgErr: pgx.ErrNoRows}}
+	d := &fakeClassifierDAL{fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{cfgErr: pgx.ErrNoRows}}
 	category, icon := classifyAgent(context.Background(), d, testFernetKey(t), "tid", "Agent", "desc", nil)
 	if category != "" || icon != "" {
 		t.Errorf("want empty category/icon with no config anywhere, got (%q, %q)", category, icon)
@@ -40,12 +28,11 @@ func TestClassifyAgent_NoConfig_ReturnsEmpty(t *testing.T) {
 
 // TestClassifyAgent_GeneralMode_NoUsableKey_ReturnsEmpty proves the hard rule
 // end-to-end through classifyAgent, not just the resolver in isolation: a
-// tenant in general mode with no usable key must degrade silently even though
-// a platform key IS configured — the platform key must never be substituted.
+// tenant in general mode with no usable key must degrade silently — the
+// bootstrap tenant's (platform's) key must never be substituted.
 func TestClassifyAgent_GeneralMode_NoUsableKey_ReturnsEmpty(t *testing.T) {
 	fernetKey := testFernetKey(t)
 	d := &fakeClassifierDAL{
-		configRow: classifierPlatformConfigRow(t, fernetKey, "sk-PLATFORM-MUST-NOT-BE-USED"),
 		fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{
 			cfg:           dal.TenantSystemAgentConfig{Mode: "general", ProviderName: strp2("anthropic")},
 			provider:      dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "claude-sonnet-4-6"},

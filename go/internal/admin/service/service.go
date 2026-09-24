@@ -187,7 +187,6 @@ type Dal interface {
 	// LLM providers — per-tenant override management
 	ListProvidersForTenant(ctx context.Context, tenantID string) ([]dal.LLMProvider, error)
 	GetProviderByNameForTenant(ctx context.Context, name, tenantID string) (dal.LLMProvider, error)
-	GetProviderByNamePlatform(ctx context.Context, name string) (dal.LLMProvider, error)
 	UpsertTenantProvider(ctx context.Context, tenantID string, in dal.LLMProviderInput) (dal.LLMProvider, error)
 
 	// LLM provider keys — multiple named keys per (provider, tenant), db/105

@@ -355,9 +355,6 @@ func (f *publishFakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]
 func (f *publishFakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
-func (f *publishFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
-	return dal.LLMProvider{}, nil
-}
 func (f *publishFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }

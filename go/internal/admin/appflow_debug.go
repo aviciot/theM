@@ -28,7 +28,7 @@ type AppFlowDebugHandler struct {
 // per-node LLM credential overrides for debug runs
 // (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md); fernetKey decrypts General-mode
 // tenant provider keys — pass the same key used elsewhere in this package
-// (e.g. NewSystemAgentsHandler). temporal sends the debug Step signal
+// (e.g. NewAgentsHandler). temporal sends the debug Step signal
 // (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — same TemporalSignaler
 // HILApprovalsHandler already uses; nil disables the Step route only (Start
 // still works, since Run-All debug sessions never need a signal).

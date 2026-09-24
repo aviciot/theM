@@ -394,9 +394,6 @@ func (f *isolationFakeDal) ListProvidersForTenant(_ context.Context, _ string) (
 func (f *isolationFakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
-func (f *isolationFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
-	return dal.LLMProvider{}, nil
-}
 func (f *isolationFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }

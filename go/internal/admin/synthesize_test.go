@@ -14,23 +14,10 @@ import (
 // fakeSynthesizerDAL satisfies synthesizerDAL for synthesizeAppCard tests.
 type fakeSynthesizerDAL struct {
 	fakeSystemAgentResolverDAL
-	configRow *dal.ConfigRow
-	configErr error
-}
-
-func (f *fakeSynthesizerDAL) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
-	return f.configRow, f.configErr
-}
-
-func synthesizerPlatformConfigRow(t *testing.T, fernetKey []byte, apiKey string) *dal.ConfigRow {
-	t.Helper()
-	enc := encryptForTest(t, fernetKey, apiKey)
-	value := `{"roles":{"card_synthesizer":{"enabled":true,"provider":"anthropic","model":"claude-haiku-4-5-20251001","api_key_encrypted":"` + enc + `"}}}`
-	return &dal.ConfigRow{Key: "system_agents", Value: []byte(value)}
 }
 
 func TestSynthesizeAppCard_NoConfig_ReturnsNil(t *testing.T) {
-	d := &fakeSynthesizerDAL{configErr: pgx.ErrNoRows, fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{cfgErr: pgx.ErrNoRows}}
+	d := &fakeSynthesizerDAL{fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{cfgErr: pgx.ErrNoRows}}
 	card := synthesizeAppCard(context.Background(), d, testFernetKey(t), "tid", "Orch", "purpose", nil)
 	if card != nil {
 		t.Errorf("want nil card with no config anywhere, got %+v", card)
@@ -39,11 +26,10 @@ func TestSynthesizeAppCard_NoConfig_ReturnsNil(t *testing.T) {
 
 // TestSynthesizeAppCard_GeneralMode_NoUsableKey_ReturnsNil proves the hard
 // rule end-to-end: a tenant in general mode with no usable key must degrade
-// to nil even though a platform key IS configured.
+// to nil — the bootstrap tenant's (platform's) key must never be substituted.
 func TestSynthesizeAppCard_GeneralMode_NoUsableKey_ReturnsNil(t *testing.T) {
 	fernetKey := testFernetKey(t)
 	d := &fakeSynthesizerDAL{
-		configRow: synthesizerPlatformConfigRow(t, fernetKey, "sk-PLATFORM-MUST-NOT-BE-USED"),
 		fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{
 			cfg:           dal.TenantSystemAgentConfig{Mode: "general", ProviderName: strp2("anthropic")},
 			provider:      dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "claude-sonnet-4-6"},

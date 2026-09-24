@@ -1,6 +1,10 @@
 package dal
 
-import "context"
+import (
+	"context"
+
+	"github.com/aviciot/them/internal/tenantctx"
+)
 
 // AppGlobalParam is one entry in applications.app_params JSONB as returned to callers.
 // For secrets, Value is always empty and ValueHint holds the last 4 chars of the plaintext.
@@ -60,16 +64,21 @@ func (d *DB) UpsertProviderBaseURL(ctx context.Context, tenantID, provider, base
 }
 
 // GetProviderBaseURLs returns a map of provider name → base_url for the given
-// tenant. Prefers the tenant-scoped row; falls back to platform default (tenant_id IS NULL).
+// tenant. Prefers the tenant-scoped row; falls back to the bootstrap tenant's
+// default row (Platform-as-Tenant Phase 1 moved what used to be NULL-tenant
+// "platform default" rows to the bootstrap tenant's real tenant_id — see
+// docs/PLATFORM_AS_TENANT_PLAN.md). The CASE expression orders the caller's
+// own tenant row first so it is never overwritten by the bootstrap default
+// below, mirroring the old "tenant_id NULLS LAST" ordering intent.
 func (d *DB) GetProviderBaseURLs(ctx context.Context, tenantID string) (map[string]string, error) {
 	const q = `
 		SELECT name, base_url
 		FROM them.llm_providers
-		WHERE (tenant_id = $1::uuid OR tenant_id IS NULL)
+		WHERE (tenant_id = $1::uuid OR tenant_id = $2::uuid)
 		  AND base_url IS NOT NULL
 		  AND enabled = true
-		ORDER BY tenant_id NULLS LAST`
-	rows, err := d.q.Query(ctx, q, tenantID)
+		ORDER BY (tenant_id = $1::uuid) DESC`
+	rows, err := d.q.Query(ctx, q, tenantID, tenantctx.BootstrapTenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +91,8 @@ func (d *DB) GetProviderBaseURLs(ctx context.Context, tenantID string) (map[stri
 			continue
 		}
 		if url != nil && *url != "" {
-			// tenant-scoped rows come first (ORDER BY tenant_id NULLS LAST);
-			// don't overwrite a tenant row with the platform default.
+			// tenant-scoped rows come first (ORDER BY tenant match DESC);
+			// don't overwrite a tenant row with the bootstrap default.
 			if _, exists := out[name]; !exists {
 				out[name] = *url
 			}

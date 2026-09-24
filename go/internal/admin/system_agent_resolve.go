@@ -2,11 +2,19 @@ package admin
 
 // resolveSystemAgentRole resolves the effective provider/model/apiKey/baseURL/
 // systemPrompt for a tenant's use of a system-agent role (classifier,
-// card_synthesizer), honoring the tenant's mode choice:
+// card_synthesizer, security_scanner), honoring the tenant's mode choice:
 //
 //   - No row in them.tenant_system_agent_config yet, or mode="custom" with no
-//     custom fields set: falls back to the platform-global them.config
-//     ['system_agents'] row — today's behavior, unchanged.
+//     custom fields set: falls back to the "platform" fields the caller
+//     passes in (platformProvider/platformModel/platformAPIKey/...). Since
+//     Platform-as-Tenant Phase 2 (docs/PLATFORM_AS_TENANT_PLAN.md), these
+//     fields are themselves produced by resolving the bootstrap tenant's own
+//     them.tenant_system_agent_config row for the same role through this
+//     exact function — there is no more separate NULL-tenant/them.config
+//     platform concept. Callers (classify.go/synthesize.go/
+//     security_scan_llm.go) do this by calling resolveSystemAgentRole once
+//     for the bootstrap tenant and feeding its result in as the fallback args
+//     of the second call for the real tenant.
 //   - mode="custom" with fields set: uses those fields directly (never touches
 //     the tenant's LLM Providers config).
 //   - mode="general": resolves through the tenant's OWN them.llm_providers /
@@ -14,7 +22,8 @@ package admin
 //     default key when key_id is nil). Hard rule: no platform-key fallback —
 //     if the tenant has no usable key here, resolution fails and the caller
 //     degrades gracefully (same as "role disabled" today). This function never
-//     substitutes a platform-level key for a "general" mode resolution.
+//     substitutes a platform-level (bootstrap tenant's) key for a "general"
+//     mode resolution.
 //
 // Returns ok=false when no usable configuration exists — callers must treat
 // this exactly like "role disabled" (silent no-op / degrade), never an error
@@ -35,14 +44,15 @@ type systemAgentRoleResolverDAL interface {
 	GetLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
 }
 
-// resolveGeneralMode is the shared "General mode" resolution used by both
-// resolveSystemAgentRole (tenant) and resolvePlatformSystemAgentRole
-// (platform): look up the named provider, then its chosen key (or default
-// key when keyID is nil), decrypt it, and fall back to the provider's
-// default_model when generalModel is unset. Callers scope getProvider/
-// getDefaultKey/getKey to their own tenant vs platform rows via closures.
-// Returns ok=false on any lookup/decrypt failure — callers must degrade
-// silently, never substituting a different scope's key.
+// resolveGeneralMode is the shared "General mode" resolution used by
+// resolveSystemAgentRole for any tenant (including the bootstrap tenant, when
+// called as the fallback source — see resolveSystemAgentRole's doc comment):
+// look up the named provider, then its chosen key (or default key when keyID
+// is nil), decrypt it, and fall back to the provider's default_model when
+// generalModel is unset. Callers scope getProvider/getDefaultKey/getKey to
+// the relevant tenant's rows via closures. Returns ok=false on any
+// lookup/decrypt failure — callers must degrade silently, never substituting
+// a different tenant's key.
 func resolveGeneralMode(
 	fernetKey []byte,
 	getProvider func() (dal.LLMProvider, error),
@@ -99,10 +109,12 @@ type resolvedSystemAgentRole struct {
 	SystemPrompt string // "" = caller uses its own built-in default prompt
 }
 
-// resolveSystemAgentRole resolves role for tenantID, given the platform-global
-// fallback fields already loaded from them.config['system_agents'] (provider,
-// model, decrypted apiKey, baseURL, systemPrompt — pass "" for any that were
-// unset/disabled there).
+// resolveSystemAgentRole resolves role for tenantID, given the "platform"
+// fallback fields (provider, model, decrypted apiKey, baseURL, systemPrompt —
+// pass "" for any that are unavailable). Since Platform-as-Tenant Phase 2,
+// callers source these fallback fields from resolving the bootstrap tenant's
+// own config for the same role through this same function, not from a
+// separate them.config['system_agents'] row.
 func resolveSystemAgentRole(
 	ctx context.Context,
 	d systemAgentRoleResolverDAL,
@@ -168,72 +180,6 @@ func platformFallback(provider, model, apiKey, baseURL, systemPrompt string) (re
 	return resolvedSystemAgentRole{
 		Provider:     provider,
 		Model:        model,
-		APIKey:       apiKey,
-		BaseURL:      baseURL,
-		SystemPrompt: systemPrompt,
-	}, true
-}
-
-// platformSystemAgentRoleResolverDAL is the DAL surface
-// resolvePlatformSystemAgentRole needs, in addition to reading the
-// them.config['system_agents'] row (done by the caller via GetConfig,
-// already required by classifierDAL/synthesizerDAL).
-type platformSystemAgentRoleResolverDAL interface {
-	GetProviderByNamePlatform(ctx context.Context, name string) (dal.LLMProvider, error)
-	GetDefaultLLMProviderKey(ctx context.Context, llmProviderID int64, tenantID *string) (dal.LLMProviderKey, error)
-	GetLLMProviderKey(ctx context.Context, id int64, tenantID *string) (dal.LLMProviderKey, error)
-}
-
-// resolvePlatformSystemAgentRole resolves the effective provider/model/apiKey/
-// baseURL/systemPrompt for the platform-global (super_admin) use of a
-// system-agent role, honoring role.Mode the same way resolveSystemAgentRole
-// does for tenants:
-//   - mode="" or "custom": today's behavior — role.Provider/Model/
-//     APIKeyEncrypted/BaseURL/SystemPrompt used directly.
-//   - mode="general": resolves through the platform's OWN them.llm_providers
-//     (tenant_id IS NULL) + them.llm_provider_keys (also tenant_id IS NULL,
-//     added db/108) — role.Provider names which provider, role.KeyID selects
-//     which named platform key (nil = that provider's default key).
-//
-// Returns ok=false when the role is disabled or no usable configuration
-// exists — callers must degrade silently, exactly like today.
-func resolvePlatformSystemAgentRole(ctx context.Context, d platformSystemAgentRoleResolverDAL, fernetKey []byte, role saRoleStored) (resolvedSystemAgentRole, bool) {
-	if !role.Enabled {
-		return resolvedSystemAgentRole{}, false
-	}
-
-	if role.Mode == "general" {
-		if role.Provider == nil || *role.Provider == "" {
-			return resolvedSystemAgentRole{}, false
-		}
-		return resolveGeneralMode(
-			fernetKey,
-			func() (dal.LLMProvider, error) { return d.GetProviderByNamePlatform(ctx, *role.Provider) },
-			func(llmProviderID int64) (dal.LLMProviderKey, error) { return d.GetDefaultLLMProviderKey(ctx, llmProviderID, nil) },
-			func(id int64) (dal.LLMProviderKey, error) { return d.GetLLMProviderKey(ctx, id, nil) },
-			role.KeyID, role.GeneralModel,
-		)
-	}
-
-	// mode="" or "custom": today's behavior, unchanged.
-	if role.Provider == nil || role.Model == nil || role.APIKeyEncrypted == nil {
-		return resolvedSystemAgentRole{}, false
-	}
-	apiKey, err := crypto.DecryptStored(fernetKey, *role.APIKeyEncrypted)
-	if err != nil || apiKey == "" {
-		return resolvedSystemAgentRole{}, false
-	}
-	baseURL := ""
-	if role.BaseURL != nil {
-		baseURL = *role.BaseURL
-	}
-	systemPrompt := ""
-	if role.SystemPrompt != nil {
-		systemPrompt = *role.SystemPrompt
-	}
-	return resolvedSystemAgentRole{
-		Provider:     *role.Provider,
-		Model:        *role.Model,
 		APIKey:       apiKey,
 		BaseURL:      baseURL,
 		SystemPrompt: systemPrompt,

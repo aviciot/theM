@@ -1238,7 +1238,7 @@ func TestTenantLLMProviders_List_400_MissingID(t *testing.T) {
 
 // TLP-03: PUT /admin/tenants/{id}/llm-providers/{name} — success (200).
 func TestTenantLLMProviders_Upsert_200(t *testing.T) {
-	// QueryRow returns the platform row (for GetProviderByNamePlatform).
+	// QueryRow returns the bootstrap tenant's own row (for GetProviderByNameForTenant).
 	// ExecReturning returns the upserted row.
 	db := &fakeProviderDB{
 		queryRow8: &fakeProviderRow{

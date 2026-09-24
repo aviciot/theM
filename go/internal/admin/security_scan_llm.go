@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 const securityScanSystemPrompt = `You are a security auditor for an AI agent orchestration platform. You analyze one agent's declared metadata (agent card, description, and skills) for security risk. You do NOT execute anything or call the agent. Judge only what the metadata reveals.
@@ -52,23 +54,22 @@ type securityScanLLMResult struct {
 }
 
 // llmCardAnalysis resolves tenantID's security_scanner config (general or
-// custom mode, falling back to the platform-global them.config['system_agents']
-// row) and asks it to assess payload for security risk. tenantID must be the
-// caller's own tenant — never resolve another tenant's config here.
+// custom mode, falling back to the bootstrap tenant's own config for the same
+// role — the-M's own operating tenant since Platform-as-Tenant Phase 2,
+// docs/PLATFORM_AS_TENANT_PLAN.md; there is no more separate
+// them.config['system_agents'] platform path) and asks it to assess payload
+// for security risk. tenantID must be the caller's own tenant — never resolve
+// another tenant's config here.
 func llmCardAnalysis(ctx context.Context, d classifierDAL, fernetKey []byte, tenantID string, payload scanAgentPayload) securityScanLLMResult {
 	degraded := securityScanLLMResult{Summary: "Card analysis unavailable — probes only (no key configured)."}
 
-	// Load platform-global config first — used as the fallback when the
-	// tenant has no row / mode="custom" with unset fields (same pattern as
-	// classifyAgent/synthesizeAppCard). resolvePlatformSystemAgentRole also
-	// resolves the platform's own general/custom mode choice (db/108).
-	var platformResolved resolvedSystemAgentRole
-	if row, err := d.GetConfig(ctx, "system_agents"); err == nil && row != nil {
-		var stored saConfigStored
-		if err := json.Unmarshal(row.Value, &stored); err == nil {
-			platformResolved, _ = resolvePlatformSystemAgentRole(ctx, d, fernetKey, stored.Roles["security_scanner"])
-		}
-	}
+	// Resolve the bootstrap tenant's own "security_scanner" config first —
+	// this is the "platform" fallback source used when the real tenant has no
+	// row / mode="custom" with unset fields (same pattern as
+	// classifyAgent/synthesizeAppCard). The bootstrap tenant's own call has no
+	// further fallback tier, so its platform-fallback args are all "".
+	platformResolved, _ := resolveSystemAgentRole(ctx, d, fernetKey, tenantctx.BootstrapTenantID, "security_scanner",
+		"", "", "", "", "")
 
 	resolved, ok := resolveSystemAgentRole(ctx, d, fernetKey, tenantID, "security_scanner",
 		platformResolved.Provider, platformResolved.Model, platformResolved.APIKey, platformResolved.BaseURL, "")

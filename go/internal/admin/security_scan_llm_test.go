@@ -13,16 +13,10 @@ import (
 // fakeSecurityScanDAL satisfies classifierDAL for llmCardAnalysis tests.
 type fakeSecurityScanDAL struct {
 	fakeSystemAgentResolverDAL
-	configRow *dal.ConfigRow
-	configErr error
-}
-
-func (f *fakeSecurityScanDAL) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
-	return f.configRow, f.configErr
 }
 
 func TestLLMCardAnalysis_NoConfig_ReturnsDegraded(t *testing.T) {
-	d := &fakeSecurityScanDAL{configErr: pgx.ErrNoRows, fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{cfgErr: pgx.ErrNoRows}}
+	d := &fakeSecurityScanDAL{fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{cfgErr: pgx.ErrNoRows}}
 	result := llmCardAnalysis(context.Background(), d, testFernetKey(t), "tid", scanAgentPayload{Slug: "agent1"})
 	if len(result.Findings) != 0 {
 		t.Errorf("want zero findings when degraded, got %d", len(result.Findings))
@@ -34,11 +28,11 @@ func TestLLMCardAnalysis_NoConfig_ReturnsDegraded(t *testing.T) {
 
 // TestLLMCardAnalysis_GeneralMode_NoUsableKey_ReturnsDegraded proves the hard
 // rule end-to-end for the security_scanner role: a tenant in general mode
-// with no usable key must degrade even though a platform key IS configured.
+// with no usable key must degrade — the bootstrap tenant's (platform's) key
+// must never be substituted.
 func TestLLMCardAnalysis_GeneralMode_NoUsableKey_ReturnsDegraded(t *testing.T) {
 	fernetKey := testFernetKey(t)
 	d := &fakeSecurityScanDAL{
-		configRow: securityScannerPlatformConfigRow(t, fernetKey, "sk-PLATFORM-MUST-NOT-BE-USED"),
 		fakeSystemAgentResolverDAL: fakeSystemAgentResolverDAL{
 			cfg:           dal.TenantSystemAgentConfig{Mode: "general", ProviderName: strp2("anthropic")},
 			provider:      dal.LLMProvider{ID: 1, Name: "anthropic", DefaultModel: "claude-sonnet-4-6"},
@@ -74,13 +68,6 @@ func TestLLMCardAnalysis_CustomMode_DispatchesToResolvedProvider(t *testing.T) {
 	if result.Summary != "looks fine" || len(result.Findings) != 1 {
 		t.Errorf("unexpected result: %+v", result)
 	}
-}
-
-func securityScannerPlatformConfigRow(t *testing.T, fernetKey []byte, apiKey string) *dal.ConfigRow {
-	t.Helper()
-	enc := encryptForTest(t, fernetKey, apiKey)
-	value := `{"roles":{"security_scanner":{"enabled":true,"provider":"anthropic","model":"claude-haiku-4-5-20251001","api_key_encrypted":"` + enc + `"}}}`
-	return &dal.ConfigRow{Key: "system_agents", Value: []byte(value)}
 }
 
 // ── mergeSecurityScanResult ───────────────────────────────────────────────────
