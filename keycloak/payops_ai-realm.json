@@ -16,7 +16,7 @@
   "attributes": {
     "userProfileEnabled": "true",
     "unmanagedAttributePolicy": "ENABLED",
-    "frontendUrl": "http://localhost:8088/auth/keycloak"
+    "frontendUrl": "http://10.55.125.43:8088/auth/keycloak"
   },
   "clients": [
     {
