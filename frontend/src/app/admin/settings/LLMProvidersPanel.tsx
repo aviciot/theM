@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { themApi, type LLMProviderOut, type LLMProviderUpsertInput, type LLMProviderKeyOut } from '@/lib/api';
 import { PROVIDER_MODELS } from './settingsConstants';
 import { LLMProviderKeysPanel } from './LLMProviderKeysPanel';
-import { Toggle } from './RoleCard';
+import { Toggle } from './Toggle';
 
 function ModelRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
   return (
@@ -24,11 +24,9 @@ function ModelRow({ label, checked, onChange }: { label: string; checked: boolea
 
 function ProviderCard({
   prov,
-  isSuperAdmin,
   onToggleEnabled,
 }: {
   prov: LLMProviderOut;
-  isSuperAdmin: boolean;
   onToggleEnabled: (enabled: boolean) => void;
 }) {
   const [allowedModels, setAllowedModels] = useState<string[]>(prov.allowed_models ?? []);
@@ -48,9 +46,7 @@ function ProviderCard({
 
   async function loadKeys() {
     try {
-      const list = isSuperAdmin
-        ? await themApi.listPlatformProviderKeys(prov.name)
-        : await themApi.listProviderKeys(prov.name);
+      const list = await themApi.listProviderKeys(prov.name);
       setKeys(list);
     } catch {
       setKeys([]);
@@ -62,7 +58,7 @@ function ProviderCard({
   useEffect(() => {
     if (prov.enabled) loadKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prov.name, prov.enabled, isSuperAdmin]);
+  }, [prov.name, prov.enabled]);
 
   function toggleModel(model: string) {
     setAllowedModels((prev) => prev.includes(model) ? prev.filter((m) => m !== model) : [...prev, model]);
@@ -73,17 +69,12 @@ function ProviderCard({
     setSavingModels(true);
     setModelsMsg(null);
     try {
-      if (isSuperAdmin) {
-        if (!prov.id) throw new Error('provider id missing');
-        await themApi.patchPlatformProvider(prov.id, { allowed_models: allowedModels });
-      } else {
-        const body: LLMProviderUpsertInput = {
-          default_model: prov.default_model,
-          enabled: prov.enabled,
-          allowed_models: allowedModels,
-        };
-        await themApi.upsertMyLLMProvider(prov.name, body);
-      }
+      const body: LLMProviderUpsertInput = {
+        default_model: prov.default_model,
+        enabled: prov.enabled,
+        allowed_models: allowedModels,
+      };
+      await themApi.upsertMyLLMProvider(prov.name, body);
       setModelsMsg({ ok: true, text: 'Saved' });
     } catch (e: unknown) {
       setModelsMsg({ ok: false, text: e instanceof Error ? e.message : 'Save failed' });
@@ -97,9 +88,7 @@ function ProviderCard({
     setRefreshing(true);
     setRefreshErr(null);
     try {
-      const res = isSuperAdmin
-        ? await themApi.listPlatformAvailableModels(prov.name, defaultKey.id)
-        : await themApi.listAvailableModels(prov.name, defaultKey.id);
+      const res = await themApi.listAvailableModels(prov.name, defaultKey.id);
       setModelOptions(res.models);
     } catch (e: unknown) {
       setRefreshErr(e instanceof Error ? e.message : 'Refresh failed');
@@ -166,7 +155,7 @@ function ProviderCard({
           </div>
 
           {keysLoaded && (
-            <LLMProviderKeysPanel providerName={prov.name} keys={keys} onChanged={loadKeys} isSuperAdmin={isSuperAdmin} />
+            <LLMProviderKeysPanel providerName={prov.name} keys={keys} onChanged={loadKeys} />
           )}
         </>
       )}
@@ -174,16 +163,14 @@ function ProviderCard({
   );
 }
 
-export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+export function LLMProvidersPanel() {
   const [providers, setProviders] = useState<LLMProviderOut[]>([]);
   const [provLoading, setProvLoading] = useState(false);
 
   async function loadProviders() {
     setProvLoading(true);
     try {
-      const list = isSuperAdmin
-        ? await themApi.listPlatformProviders()
-        : await themApi.listMyLLMProviders();
+      const list = await themApi.listMyLLMProviders();
       setProviders(list);
     } catch {
       setProviders([]);
@@ -194,23 +181,17 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
 
   useEffect(() => {
     loadProviders();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperAdmin]);
+  }, []);
 
   async function handleToggleEnabled(name: string, enabled: boolean) {
     const prov = providers.find((p) => p.name === name);
     // Optimistic update so the toggle feels instant.
     setProviders((prev) => prev.map((p) => p.name === name ? { ...p, enabled } : p));
     try {
-      if (isSuperAdmin) {
-        if (!prov?.id) throw new Error('provider id missing');
-        await themApi.patchPlatformProvider(prov.id, { enabled });
-      } else {
-        await themApi.upsertMyLLMProvider(name, {
-          default_model: prov?.default_model ?? '',
-          enabled,
-        });
-      }
+      await themApi.upsertMyLLMProvider(name, {
+        default_model: prov?.default_model ?? '',
+        enabled,
+      });
     } catch {
       // Revert on failure.
       setProviders((prev) => prev.map((p) => p.name === name ? { ...p, enabled: !enabled } : p));
@@ -220,9 +201,7 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   return (
     <>
       <p style={{ fontSize: '13px', color: 'var(--tm-text-muted)', margin: '0 0 24px 0', lineHeight: 1.5 }}>
-        {isSuperAdmin
-          ? 'Platform-level LLM providers used by the-M\'s own internal helpers (classifier, card synthesizer, security scanner).'
-          : 'Your organisation\'s LLM providers. The-M never uses platform keys for your tenant calls — you must supply your own.'}
+        Your organisation&apos;s LLM providers. The-M never uses platform keys for your tenant calls — you must supply your own.
       </p>
       {provLoading && <div style={{ padding: '40px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>Loading…</div>}
       {!provLoading && providers.length === 0 && (
@@ -234,7 +213,6 @@ export function LLMProvidersPanel({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         <ProviderCard
           key={prov.name}
           prov={prov}
-          isSuperAdmin={isSuperAdmin}
           onToggleEnabled={(enabled) => handleToggleEnabled(prov.name, enabled)}
         />
       ))}

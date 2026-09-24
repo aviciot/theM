@@ -18,30 +18,20 @@ export function LLMProviderKeysPanel({
   providerName,
   keys,
   onChanged,
-  isSuperAdmin = false,
 }: {
   providerName: string;
   keys: LLMProviderKeyOut[];
   onChanged: () => void;
-  isSuperAdmin?: boolean;
 }) {
-  // Scoped to platform-owned keys (db/108) when isSuperAdmin, otherwise the
-  // caller's own tenant-owned keys — same shapes, same semantics either way.
-  const api = isSuperAdmin
-    ? {
-        create: themApi.createPlatformProviderKey,
-        update: themApi.updatePlatformProviderKey,
-        del: themApi.deletePlatformProviderKey,
-        setDefault: themApi.setDefaultPlatformProviderKey,
-        test: themApi.testPlatformProviderKey,
-      }
-    : {
-        create: themApi.createProviderKey,
-        update: themApi.updateProviderKey,
-        del: themApi.deleteProviderNamedKey,
-        setDefault: themApi.setDefaultProviderKey,
-        test: themApi.testProviderKey,
-      };
+  // Always the caller's own tenant-owned keys — for the bootstrap tenant,
+  // this is the-M's own platform keys, same code path as any other tenant.
+  const api = {
+    create: themApi.createProviderKey,
+    update: themApi.updateProviderKey,
+    del: themApi.deleteProviderNamedKey,
+    setDefault: themApi.setDefaultProviderKey,
+    test: themApi.testProviderKey,
+  };
 
   const [newName, setNewName] = useState('');
   const [newKey, setNewKey] = useState('');

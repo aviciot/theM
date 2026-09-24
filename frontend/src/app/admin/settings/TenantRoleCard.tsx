@@ -163,7 +163,6 @@ export function TenantRoleCard({ role }: { role: string }) {
 
       {mode === 'general' ? (
         <GeneralModePicker
-          isSuperAdmin={false}
           provider={generalProvider}
           model={generalModel}
           keyId={generalKeyId}

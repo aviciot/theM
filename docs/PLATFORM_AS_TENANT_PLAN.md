@@ -1,6 +1,6 @@
 # Platform-as-Tenant — Plan
 # Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24).
-# Phase 3 COMPLETE (2026-09-24). Phase 4 NEXT.
+# Phase 3 COMPLETE (2026-09-24). Phase 4 COMPLETE (2026-09-24). Phase 5 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -212,7 +212,7 @@ alternative. This plan is not overriding a considered decision.
 | 1 — Data migration + RLS rewrite | ✅ **COMPLETE (2026-09-24)** — see "Phase 1 — COMPLETE" section below | Decisions above confirmed |
 | 2 — Backend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 2 — COMPLETE" section below | Phase 1 |
 | 3 — RLS verification | ✅ **COMPLETE (2026-09-24)** — see "Phase 3 — COMPLETE" section below | Phase 1 |
-| 4 — Frontend consolidation | Remove `isSuperAdmin` branch from Settings → LLM Providers / System Agents; both screens always render the tenant-scoped view for the caller's own tenant | Phase 2 |
+| 4 — Frontend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 4 — COMPLETE" section below | Phase 2 |
 | 5 — Tenant management UI | Ensure `/admin/tenants` list clearly marks the bootstrap/platform tenant as such (not hidden, but visually distinct) — no functional change to deletion guard, which already exists | Independent, can run anytime |
 | 6 — Verification | Re-run the App Canvas Debug Mode Phase 6 walkthrough that surfaced this gap — confirm `stage2-graph-llm-condition-v2`'s debug panel General mode now shows the bootstrap tenant's own keys/models correctly | All above |
 
@@ -431,6 +431,64 @@ assume" discipline decision 6/7 of this plan already applied to `llm_providers`)
 the `isSuperAdmin` branch in `settings/page.tsx` is completely untouched by this phase; a normal
 browser session as `avi`/`admin` still cannot reach `/admin/my/llm-providers`'s UI. Tenant management
 UI (Phase 5) and the App Canvas Debug Mode re-verification (Phase 6) are also untouched.
+
+---
+
+## Phase 4 — COMPLETE (2026-09-24)
+
+Removed the `isSuperAdmin` branch from Settings → System Agents / LLM Providers per decision 5 —
+both screens now always render the tenant-scoped view for the caller's own tenant, no separate
+"platform" screen. Confirmed at research time that the platform-only backend routes these
+branches called were already dead: Phase 2 deleted `SystemAgentsHandler`
+(`/admin/system-agents`) and `llm_provider_keys_platform.go`
+(`/admin/llm-providers/{name}/keys...`) entirely — the super_admin branch had been calling
+routes that 404 since Phase 2 shipped, not merely "the wrong screen." The still-live
+`/admin/llm-providers` CRUD (`LLMProvidersHandler.List`/etc.) was found to already be hardcoded
+to `tenantctx.BootstrapTenantID` since Phase 2's `ListProviders` fix — i.e. it was already a
+second tenant-scoped-to-bootstrap path, just via a different route/handler than
+`/admin/my/llm-providers`. Nothing server-side changed this phase; only frontend code deleted or
+stopped calling routes that no longer serve a live UI purpose.
+
+**Frontend changes:**
+- `settings/page.tsx` — dropped `isSuperAdmin`/`useAuthStore` entirely; `system_agents` tab
+  always renders `TenantRoleCard` for every `ROLE_DEFAULTS` role (previously branched to
+  `RoleCard` for super_admin); `llm_providers` tab renders `LLMProvidersPanel` with no prop.
+  Dropped the whole `getSystemAgents`/`putSystemAgents` fetch-save round trip, its `RoleForm`
+  conversion helpers, and the "Settings backend not available yet" fallback banner (all
+  unreachable now that the fetch always uses the live tenant-scoped path).
+- `GeneralModePicker.tsx`, `LLMProvidersPanel.tsx`, `LLMProviderKeysPanel.tsx` — dropped the
+  `isSuperAdmin` prop and its `listPlatformProviders`/`listPlatformProviderKeys`/
+  `patchPlatformProvider`/`listPlatformAvailableModels`/platform-key-CRUD branches; each now
+  unconditionally calls the tenant self-service API (`listMyLLMProviders`, `listProviderKeys`,
+  `upsertMyLLMProvider`, the `/my/llm-providers/{name}/keys...` key routes) — for the bootstrap
+  tenant, this resolves to its own rows via the exact same DAL query every other tenant uses.
+- `RoleCard.tsx` deleted (fully unused after the branch removal; also called the now-dead
+  `/admin/system-agents/{role}/test-llm` route). Its `Toggle` component — still needed by
+  `LLMProvidersPanel.tsx` — was extracted into a new standalone `Toggle.tsx` first.
+- `api.ts`/`apiTypes.ts` — removed `getSystemAgents`/`putSystemAgents`/`testSystemAgentLlm`,
+  `listPlatformProviders`/`patchPlatformProvider`, and all 6 `listPlatformProviderKeys`-family
+  platform-key functions, plus the now-fully-unreferenced `SystemAgentRoleOut`/`SystemAgentsOut`/
+  `SystemAgentRoleIn` types. Confirmed zero remaining callers by grep before each removal.
+
+**Not changed, per the plan's explicit scope:** `/admin/tenants` (tenant management) — untouched.
+The still-live super_admin-only `/admin/llm-providers` CRUD routes and their DAL/service code
+were **not** deleted server-side this phase (no frontend caller anymore, but deleting the Go
+handler itself was out of scope for a frontend-consolidation phase — flagged as a candidate for
+a future cleanup pass, not a correctness issue: it's dead code, not a live duplicate data path
+anymore since Phase 1/2 already collapsed the underlying data/query layer).
+
+**Verified:** `npx tsc --noEmit` — 0 errors, run after every file change and again at the end.
+No Go files touched this phase, so no Go test run was needed per the trigger map. **Not
+live-browser-verified** — same standing limitation as every other phase of this plan, no
+browser-automation tool available in this environment. The concrete claim to verify in a real
+browser session next: log in as `avi`/`admin` (super_admin, member of the bootstrap tenant), open
+Settings → LLM Providers, and confirm the bootstrap tenant's own 5 providers + "MainKey" (moved
+there by Phase 1) render via the tenant-scoped screen — this is the original bug the whole plan
+started from, and Phase 4 is the phase that should close it.
+
+**Deferred, not this phase's job:** Phase 5 (tenant management UI — mark the bootstrap/platform
+tenant as such in `/admin/tenants`'s list) and Phase 6 (re-verify the App Canvas Debug Mode
+walkthrough that surfaced this whole plan) are both still open. One phase per session.
 
 ---
 

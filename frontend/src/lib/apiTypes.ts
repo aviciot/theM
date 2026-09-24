@@ -28,37 +28,8 @@ export interface DiscoverResult {
   category?: string;
 }
 
-export interface SystemAgentRoleOut {
-  enabled: boolean;
-  mode: 'general' | 'custom' | '';
-  provider: string | null;
-  model: string | null;
-  base_url: string | null;
-  system_prompt: string | null;
-  api_key_hint: string | null;
-  key_id: number | null;
-  general_model: string | null;
-}
-
-export interface SystemAgentsOut {
-  roles: Record<string, SystemAgentRoleOut>;
-}
-
-export interface SystemAgentRoleIn {
-  enabled?: boolean;
-  mode?: 'general' | 'custom';
-  provider?: string | null;
-  model?: string | null;
-  base_url?: string | null;
-  system_prompt?: string | null;
-  api_key?: string | null;
-  key_id?: number | null;
-  general_model?: string | null;
-}
-
 // Tenant self-service system-agent role config (general/custom mode) — step 5/6
-// of docs/TENANT_LLM_PROVIDERS_PLAN.md. Distinct from SystemAgentRoleOut/In
-// above, which are the platform-global (super_admin-only) config.
+// of docs/TENANT_LLM_PROVIDERS_PLAN.md.
 export interface TenantSystemAgentConfigOut {
   role: string;
   mode: 'general' | 'custom';

@@ -1,9 +1,10 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 3 COMPLETE — dedicated RLS-enforced regression
-# tests for decision 7's asymmetric visibility, run via them_app/BeginTenantTx against the live
-# migrated DB. New known issue found (unrelated, not fixed): two pre-existing internal/db RLS tests
-# fail on unrelated schema drift. docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 3 of 6 done. Next: Phase 4
-# (frontend consolidation).)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 4 COMPLETE — removed the isSuperAdmin branch
+# from Settings -> System Agents / LLM Providers; both screens always render the tenant-scoped
+# view for the caller's own tenant now. Confirmed the removed branch was calling backend routes
+# Phase 2 had already deleted (/admin/system-agents, platform-key routes) -- dead code, not just
+# "wrong screen". docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 4 of 6 done. Next: Phase 5 (tenant
+# management UI).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -60,17 +61,36 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 3 of 6 COMPLETE.**
+**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 4 of 6 COMPLETE.**
 Read that plan doc end to end before continuing — especially the "Current-state map" section
-(researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE",
-"Phase 2 — COMPLETE", and "Phase 3 — COMPLETE" sections for exactly what was and wasn't done in each.
+(researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE"
+through "Phase 4 — COMPLETE" sections for exactly what was and wasn't done in each.
 
-**Next: Phase 4 (frontend consolidation) — NOT started.** Remove the `isSuperAdmin` branch from
-Settings → LLM Providers / System Agents (`frontend/src/app/admin/settings/page.tsx`) so both
-screens always render the tenant-scoped view for the caller's own tenant. Depends on Phase 2
-(done). This is the phase that actually closes the original bug this whole plan started from — a
-`super_admin` session as `avi`/`admin` still cannot reach `/admin/my/llm-providers`'s UI today,
-even though Phases 1-3 made the backend/RLS data and tests fully correct underneath it.
+**Next: Phase 5 (tenant management UI) — NOT started.** Ensure `/admin/tenants`'s list clearly
+marks the bootstrap/platform tenant as such (not hidden, but visually distinct) — no functional
+change to the deletion guard, which already exists (`dal/tenants.go` filters `AND is_bootstrap =
+false`). Independent of Phase 4, can run anytime. Phase 6 (re-verify the App Canvas Debug Mode
+walkthrough) depends on all prior phases and should come after Phase 5.
+
+**Phase 4 (frontend consolidation) is done** — removed the `isSuperAdmin` branch from Settings →
+LLM Providers / System Agents (`frontend/src/app/admin/settings/page.tsx`,
+`GeneralModePicker.tsx`, `LLMProvidersPanel.tsx`, `LLMProviderKeysPanel.tsx`); both screens now
+always render the tenant-scoped view (`TenantRoleCard`, `listMyLLMProviders`, etc.) for the
+caller's own tenant. `RoleCard.tsx` deleted (fully unused after the branch removal; its `Toggle`
+component moved to a new standalone `Toggle.tsx` first, since `LLMProvidersPanel.tsx` still needs
+it). `api.ts`/`apiTypes.ts` lost the now-fully-dead `getSystemAgents`/`putSystemAgents`/
+`testSystemAgentLlm` and all `listPlatformProviders*`/`*PlatformProviderKey*` functions —
+confirmed by grep these had zero remaining callers after the frontend branch removal, and their
+backend routes (`/admin/system-agents`, `/admin/llm-providers/{name}/keys...`) had already been
+deleted by Phase 2, so the removed branch was calling dead routes, not just "the wrong screen."
+This is the phase that actually closes the original bug this whole plan started from — a
+`super_admin` session as `avi`/`admin` can now reach the tenant self-service LLM Providers/System
+Agents screens the same way any tenant admin does, scoped to the bootstrap tenant.
+`npx tsc --noEmit` 0 errors. No Go files touched, no Go test run needed per the trigger map.
+**Not live-browser-verified** — same standing limitation as every other phase of this plan, no
+browser-automation tool available in this environment. Recommend a real logged-in check next:
+`avi`/`admin` → Settings → LLM Providers should show the bootstrap tenant's 5 providers +
+"MainKey" (moved there by Phase 1).
 
 **Phase 3 (RLS verification) is done** — `go/internal/db/platform_as_tenant_rls_integration_test.go`,
 4 new tests run via `them_app`/`BeginTenantTx` (real RLS enforcement, not the BYPASSRLS admin pool
