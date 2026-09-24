@@ -11,9 +11,11 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `d5ad1575` — pushed to `origin/main`. Remote URL is `https://github.com/aviciot/them.git`
-(`git remote -v` confirms this — the note in earlier CURRENT.md revisions referencing a `theM.git`
-rename was itself stale/incorrect and is now removed).
+HEAD: `79fa7956` — pushed to `origin/main`. Remote URL updated this session to
+`https://github.com/aviciot/theM.git` — confirmed for real this time: pushing to the old
+`them.git` URL still succeeds (GitHub redirects) but returns "This repository moved. Please use
+the new location: https://github.com/aviciot/theM.git" on every push. `git remote set-url origin`
+run to point at the real location directly; `git fetch origin` confirmed the new URL works.
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -23,6 +25,7 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+79fa7956  docs(current): record Platform-as-Tenant Phase 3 completion
 d5ad1575  feat(db): Platform-as-Tenant Phase 3 — RLS verification
 47407692  docs(current): record Platform-as-Tenant Phase 2 completion
 9cf638a8  feat(db): Platform-as-Tenant Phase 2 — backend consolidation
