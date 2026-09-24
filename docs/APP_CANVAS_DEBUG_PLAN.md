@@ -950,9 +950,23 @@ User request: extend `stage2-graph-llm-condition-v2` (the app used throughout th
 live verification) to exercise more of AppFlow's node kinds, not just `llm`/`condition`/`agent`.
 
 **Added:** on the canvas's "false" branch (previously a dead end at `agent_false`) —
-`agent_false → fork_1 (2 branches) → [llm_branch_a, llm_branch_b] → join_1`. Saved via the real
-`PUT /admin/applications/{id}/definitions/{def_id}` API (not a direct SQL edit), same path the
-canvas editor itself uses.
+`cond_1 --false--> fork_1 (2 branches) → [llm_branch_a, llm_branch_b] → join_1 → agent_false`.
+Saved via the real `PUT /admin/applications/{id}/definitions/{def_id}` API (not a direct SQL
+edit), same path the canvas editor itself uses.
+
+**A real frontend bug found and worked around, not fixed:** the first version of this wiring put
+`fork_1` directly after `agent_false` (`agent_false → fork_1 → ...`). The saved JSON was correct
+and the workflow ran it correctly end-to-end (verified live) — but the canvas rendered `fork_1`
+and everything after it as a completely disconnected floating subtree, because
+`AgentNode` (`CanvasNodes.tsx`) has **no outgoing `Handle` at all** — only a `target` handle,
+unlike `FlowControlNode`/`InlineNode` which render both. Agent nodes were only ever designed as
+leaf/terminal nodes in this canvas; nothing can visually connect *out* of one today, even though
+the backend has no such restriction (an agent's `AgentInvokeActivity` output flows into
+`accumulated` exactly like any other node's). Worked around by rewiring so every new edge
+originates from a node type that does support an outgoing connection (`cond_1 --false--> fork_1
+→ ... → join_1 → agent_false` — the agent is now purely a target again, matching its only
+supported role). The underlying `AgentNode` gap itself was **not fixed** — flagged as a real,
+separate limitation for a future session, not fixed as a side effect of this test-app extension.
 
 **Deliberately not added — `router`:** found and flagged to the user a real, pre-existing gap
 unrelated to this session's other fixes: `AppFlowWorkflowInput.LLMProviderName` (the field
@@ -966,14 +980,17 @@ fixed.
 via a separate action — would make every debug run through that path require manual intervention
 to finish. User chose to skip it to keep every debug run in this app fully automatic.
 
-**Verified live, with a temporary swap (immediately reverted):** the existing condition
-(`{{gt (len .sentiment) 0}}`) is always true with the mock LLM provider's canned non-empty
-replies, so the new false-branch (fork/join) can never be reached naturally through the real
-condition today. Temporarily swapped the true/false edge targets, ran a real debug run, confirmed
-`fork_1` (`branches=2`), both `llm_branch_a`/`llm_branch_b` completing with distinct real output,
-and `join_1` completing correctly after both converged — then restored the original true/false
-wiring immediately after. The saved draft's true/false semantics are unchanged from before this
-follow-up; only the previously-dead-ended false branch now has real nodes after it.
+**Verified live, with a temporary swap (immediately reverted), on the corrected wiring:** the
+existing condition (`{{gt (len .sentiment) 0}}`) is always true with the mock LLM provider's
+canned non-empty replies, so the new false-branch (fork/join) can never be reached naturally
+through the real condition today. Temporarily swapped the true/false edge targets, ran a real
+debug run against the corrected `cond_1 --false--> fork_1 → ... → join_1 → agent_false` wiring —
+confirmed `fork_1` (`branches=2`), both `llm_branch_a`/`llm_branch_b` completing with distinct
+real output, `join_1` completing correctly after both converged, and `agent_false` receiving both
+branch outputs merged with a newline separator (per `join`'s documented merge behavior) — then
+restored the original true/false wiring immediately after. The saved draft's true/false semantics
+are unchanged from before this follow-up; only the previously-dead-ended false branch now has
+real nodes after it.
 
 **Known, accepted limitation:** with the condition and mock provider as they are today, the new
 fork/join nodes are not reachable through a normal debug run from the UI — only via the same

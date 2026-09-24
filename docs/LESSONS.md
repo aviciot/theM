@@ -1333,3 +1333,43 @@ whoever wrote it remembered every kind that existed *at the time*. When a new no
 is added to a canvas system later, grep every existing allowlist-style check across the type's
 sibling handling (decoration, validation, serialization) rather than assuming "it'll just fall
 through safely" — a silent no-op is much harder to notice than an error would have been.
+
+---
+
+## AgentNode has no outgoing connection point — agents were only ever designed as canvas leaves (found 2026-09-24)
+
+**Symptom:** extended `stage2-graph-llm-condition-v2` with fork/join on the "false" branch,
+wired as `agent_false → fork_1 → ...` (chaining fork after the existing terminal agent node). The
+backend ran this correctly end-to-end — verified live, real output at every node — but the user
+reported the canvas rendered it as two disconnected trees: the original
+`websocket → llm → condition → agents` chain, and a separate floating
+`fork → branch A / branch B → join` island with no visible wire connecting them.
+
+**Root cause:** `AgentNode` (`frontend/src/app/admin/applications/components/CanvasNodes.tsx`)
+renders only a `target` `Handle` — no `source` `Handle` at all. `FlowControlNode` and `InlineNode`
+both render target *and* source handles; `AgentNode` never got the source one, because every
+existing use of an agent node in this canvas was as a genuine dead end (an orchestrator's tool
+target, or — until this session — the last node on a branch). React Flow needs a source handle
+on the *originating* node to anchor an edge visually; with none present, the edge data existed
+and executed correctly, but had nothing to visually attach to on the `agent_false` end.
+
+**Not a data bug, not a backend bug** — `InvokeAgentActivity`'s output flows into `accumulated`
+exactly like any other node kind's; the workflow engine has no rule against continuing past an
+agent node. This is purely a frontend rendering gap: agent nodes can act as a mid-flow step today
+(the backend already supports it), the canvas editor just never gave them the handle to draw that
+wire.
+
+**Fix applied this session:** worked around it, did not fix the underlying gap — rewired so the
+new fork/join sits between `cond_1` (source-capable) and `agent_false` (target-only, as
+designed): `cond_1 --false--> fork_1 → ... → join_1 → agent_false`. User explicitly chose the
+workaround over fixing `AgentNode` itself in this pass, to keep the scope to "extend the test
+app," not "fix a canvas rendering gap." The real gap — agent nodes can't be a source of an
+outgoing edge in the UI, even though the runtime has no such restriction — is unfixed, tracked
+here for a future session.
+
+**Watch for:** when a node type's canvas component was written before that node type was ever
+used in a particular position (source vs. leaf), don't assume the missing capability is a design
+decision — check whether the *runtime* actually enforces that restriction (`go/internal/appflow`
+in this case: it doesn't) before treating "the UI won't let me draw this wire" as authoritative.
+A UI gap and a real architectural constraint look identical from the outside until you check the
+execution engine directly.
