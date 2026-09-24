@@ -131,6 +131,7 @@ func TestOpenAIProvider_contextCancellation(t *testing.T) {
 	defer srv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	p := newTestOpenAIProvider(t, srv.URL)
 	ch, err := p.Stream(ctx, []domain.Message{
 		{Role: "user", Parts: []domain.ContentPart{{Type: "text", Text: "hi"}}},

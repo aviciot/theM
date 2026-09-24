@@ -47,6 +47,7 @@ func TestMockProvider_respectsContextCancellation(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	p := NewMockProvider(responses)
 	ch, err := p.Stream(ctx, nil, nil, Options{})
