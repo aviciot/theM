@@ -1,27 +1,18 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 COMPLETE -- the plan's original bug
-# confirmed fixed live. This was the first real interactive browser click-through either this
-# plan or the parent App Canvas Debug Mode plan ever got (every prior phase recorded "not
-# live-verified" as a standing limitation) -- as a direct result, found + fixed 5 real bugs along
-# the way: (1) Phase 3's RLS integration test leaked fixture rows into the live DB every run
-# (t.Cleanup-vs-defer ordering mistake, go/internal/db/platform_as_tenant_rls_integration_test.go),
-# (2) them-go-bridge was running a stale binary despite a recent-looking image (rebuild+restart
-# fixed it, no code change needed), (3) App Canvas Debug Mode's long-standing "must publish before
-# debugging an agent node" limitation was a real design gap, now fixed by resolving agent IDs live
-# at debug-start time (go/internal/admin/service/appflow_debug.go's new resolveDraftAgentIDs)
-# instead of only at publish time, (4) InlineLLMActivity/InvokeAgentActivity both hardcoded
-# node_done's detail to "" -- the debug inspector showed "Done" with no output for every LLM/agent
-# node (go/internal/appflow/activities.go), (5) agent-kind canvas nodes were completely missing
-# from decorateNodes' allowlist since it was first written -- an agent node showed ZERO visual
-# debug state at all, not even the border/glow every other node type got (frontend/src/app/admin/
-# applications/hooks/useAppFlowDebugSession.ts + CanvasNodes.tsx's AgentNode). Also added, per
-# direct user request during the walkthrough: live edge/wire highlighting for the branch actually
-# taken, and a prominent "Debug run complete" banner (previously a small easy-to-miss toolbar
-# text) -- see docs/APP_CANVAS_DEBUG_PLAN.md's new "Post-completion follow-up" section and
-# docs/LESSONS.md for the full write-ups. All 6 Platform-as-Tenant phases now done;
-# them-dag-worker/-2/-debug rebuilt+restarted for fix (4). Next: pick a new thread -- no plan doc
-# currently active. Frontend changes (5 + the two UX additions) not yet re-verified live in a
-# fresh browser session -- recommend one more click-through before trusting them fully.)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 + App Canvas Debug Mode follow-ups all
+# COMPLETE and live-verified (5 real bugs found + fixed during the first real browser
+# click-through either plan ever got — full detail in docs/APP_CANVAS_DEBUG_PLAN.md's
+# "Post-completion follow-up" sections and docs/LESSONS.md). NEW ACTIVE THREAD started same
+# session: docs/APPFLOW_NAMED_PORTS_PLAN.md — App Canvas's llm/condition nodes need real named
+# data ports (drag-to-connect, auto-naming, upstream-source visibility) ported from the agent
+# builder's mature pattern, found live when a Condition node's panel gave zero visibility into
+# what variables were even available to it. Phase 0 (research + full plan) is COMPLETE — read
+# that doc before starting Phase 1. Long-term direction (not this plan's scope, but why it
+# matters): App Canvas may eventually replace the agent builder entirely — prefer porting agent
+# builder's patterns over inventing AppFlow-specific ones. Next: Phase 1 (backend registry
+# metadata only, go/internal/appflow/noderegistry.go) — but FIRST get the user's explicit
+# sign-off on the plan doc's two open questions (scope narrowed to only llm/condition; drag-drop
+# target ambiguity for multi-field nodes) before writing any code.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -78,9 +69,20 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
+**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phase 0 (research + plan) COMPLETE, Phase 1
+NOT started.** Read that doc end to end first. Before writing any code, get the user's explicit
+answer on its two open questions: (1) confirm the scope is narrowed to only `llm`/`condition`
+node kinds getting real named ports — every other AppFlow kind (`router`/`hil`/`fork`/`join`/
+`agent`/`orchestrator`/`middleware`) doesn't touch the runtime's shared `FlowVars` bag today, so a
+port on them would be fake; (2) resolve the drag-drop-target ambiguity for multi-field nodes
+(does dropping a wire onto the node card itself work, defaulting to one field, or must the drop
+land inside the open side panel next to the specific field?) — this changes the interaction
+model, not just internals, and was flagged as needing the user's decision specifically, not a
+default to assume. Once both are confirmed, start with Phase 1 (backend registry metadata only,
+`go/internal/appflow/noderegistry.go` — zero runtime behavior change, safest phase to start with).
+
 **Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`) is DONE — all 6 of 6 phases complete.**
-No active thread right now — next session should pick a new task, or start a new plan doc for
-whatever's next. Read `docs/PLATFORM_AS_TENANT_PLAN.md` end to end if touching anything
+No further work planned on that thread. Read it end to end if touching anything
 `llm_providers`/`llm_provider_keys`/system-agent-role/debug-mode related, even though the plan
 itself is closed — it has the full current-state map for how those pieces fit together now.
 
