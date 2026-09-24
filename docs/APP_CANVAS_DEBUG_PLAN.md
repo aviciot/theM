@@ -941,3 +941,43 @@ service-level tests (`appflow_debug_result_test.go`) and 2 new handler tests. `n
 would call exactly this, no new backend work), but no MCP server/tool wiring exists in this
 codebase yet — out of scope for this follow-up, which only closes the "the data isn't shaped for
 an LLM to read" gap.
+
+---
+
+## Post-completion follow-up 4: broader node-kind coverage in the test app (2026-09-24)
+
+User request: extend `stage2-graph-llm-condition-v2` (the app used throughout this whole plan's
+live verification) to exercise more of AppFlow's node kinds, not just `llm`/`condition`/`agent`.
+
+**Added:** on the canvas's "false" branch (previously a dead end at `agent_false`) —
+`agent_false → fork_1 (2 branches) → [llm_branch_a, llm_branch_b] → join_1`. Saved via the real
+`PUT /admin/applications/{id}/definitions/{def_id}` API (not a direct SQL edit), same path the
+canvas editor itself uses.
+
+**Deliberately not added — `router`:** found and flagged to the user a real, pre-existing gap
+unrelated to this session's other fixes: `AppFlowWorkflowInput.LLMProviderName` (the field
+`router`'s intent-classification LLM call reads) is never set by any caller anywhere in this
+codebase, for any run kind, not just debug — so any `router` node fails today with `"no API key
+for provider \"\""` regardless of how it's configured. User chose to skip it rather than fix that
+gap as a side effect of this follow-up; tracked here as a known issue for a future session, not
+fixed.
+
+**Deliberately not added — `hil`:** a HIL node pauses a run until a human explicitly approves it
+via a separate action — would make every debug run through that path require manual intervention
+to finish. User chose to skip it to keep every debug run in this app fully automatic.
+
+**Verified live, with a temporary swap (immediately reverted):** the existing condition
+(`{{gt (len .sentiment) 0}}`) is always true with the mock LLM provider's canned non-empty
+replies, so the new false-branch (fork/join) can never be reached naturally through the real
+condition today. Temporarily swapped the true/false edge targets, ran a real debug run, confirmed
+`fork_1` (`branches=2`), both `llm_branch_a`/`llm_branch_b` completing with distinct real output,
+and `join_1` completing correctly after both converged — then restored the original true/false
+wiring immediately after. The saved draft's true/false semantics are unchanged from before this
+follow-up; only the previously-dead-ended false branch now has real nodes after it.
+
+**Known, accepted limitation:** with the condition and mock provider as they are today, the new
+fork/join nodes are not reachable through a normal debug run from the UI — only via the same
+temporary-swap method used to verify them here, or a future change to the condition expression
+(user declined that option, since it would change the app's existing behavior). Not blocking:
+fork/join's correctness is proven; reachability from this specific app's current condition is a
+separate, known non-issue the user accepted.
