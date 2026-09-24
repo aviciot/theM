@@ -80,6 +80,12 @@ type DebugStartResult struct {
 	// Lifecycle.StartAppFlow) — surfaced so the debug panel can display the
 	// bound to the user, not just enforce it silently.
 	ExpiresAt time.Time
+	// WorkflowID is the Temporal workflow ID for this run
+	// (appflow.WorkflowIDForRun's deterministic "appflow:{tenant}:{run}"
+	// format) — surfaced so the frontend can deep-link straight to this
+	// run in the Temporal Web UI without duplicating that ID format
+	// client-side.
+	WorkflowID string
 }
 
 // Start compiles the application's latest draft definition, validates it, and
@@ -201,7 +207,11 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 		return DebugStartResult{}, fmt.Errorf("start appflow workflow: %w", err)
 	}
 
-	return DebugStartResult{RunID: handle.RunID, ExpiresAt: startedAt.Add(appflow.DebugRunMaxLifetime)}, nil
+	return DebugStartResult{
+		RunID:      handle.RunID,
+		ExpiresAt:  startedAt.Add(appflow.DebugRunMaxLifetime),
+		WorkflowID: appflow.WorkflowIDForRun(handle.EPConfig.TenantID, handle.RunID),
+	}, nil
 }
 
 // resolveDraftAgentIDs fills agentByInstanceID with a live registry lookup for

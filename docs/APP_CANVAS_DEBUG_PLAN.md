@@ -852,3 +852,40 @@ re-verified live in a browser click-through after these specific changes (the bu
 found via a live click-through; these fixes themselves inherit the same "recommend a follow-up
 browser check" caveat every phase of this plan has carried). See `docs/LESSONS.md` for the
 agent-node decoration bug's own write-up.
+
+---
+
+## Post-completion follow-up 2: Temporal UI deep-link (2026-09-24)
+
+User request during the same live walkthrough: a link from the debug panel straight to this run
+in the Temporal Web UI, mirroring the existing pattern in `frontend/src/app/runs/page.tsx` (which
+already deep-links a run's root task to Temporal via `WorkflowId="ctx-{context_id}"`).
+
+**Backend:** `DebugStartResult`/`debugStartResponse` gained `WorkflowID`
+(`internal/admin/service/appflow_debug.go`, `internal/admin/appflow_debug.go`) — computed via
+`appflow.WorkflowIDForRun(handle.EPConfig.TenantID, handle.RunID)`, the same deterministic
+`"appflow:{tenant}:{run}"` format the workflow itself is actually started with
+(`internal/execution/lifecycle.go:781`). Returned in `POST .../debug/start`'s JSON response as
+`workflow_id` — no new endpoint, no new Temporal query; the ID is fully derivable server-side from
+data the handler already has, so there was no reason to make the frontend duplicate that format.
+
+**A real bug found while adding this, unrelated to the new field itself:** several existing tests
+constructed `execution.ExecutionHandle{RunID: "run-1"}` with `EPConfig` left `nil`. Two of the six
+pre-existing `Start` code paths already dereferenced `handle.EPConfig.TenantID` (the credential
+store write) but only when the draft had `llm`-kind nodes needing General mode, so most tests never
+exercised that line and the nil-EPConfig fixture went unnoticed. Adding this fix's own
+`handle.EPConfig.TenantID` reference at the very end of `Start` — reached by every code path,
+unconditionally — turned the latent gap into an immediate nil-pointer panic across most of the
+test file. Fixed by giving every fixture a real `EPConfig` (matching how the real `AdmitDebug`
+always populates it after a successful `epconfig.Load` — `Start` never reaches this line
+otherwise), not by adding a defensive nil-check for a state that can't occur in production code.
+
+**Frontend:** `AppFlowDebugPanel.tsx` renders a "View in Temporal" link (same relative-URL +
+`target="_blank"` pattern as `runs/page.tsx`) once `debug.workflowId` is set
+(`useAppFlowDebugSession.ts` threads the new field through session state).
+
+**Verified:** `go build`/`go vet`/`go test ./...` clean, full suite. Replayed a real
+`debug/start` call against the live, rebuilt `them-go-bridge` — response included
+`"workflow_id":"appflow:00000000-0000-0000-0000-000000000001:<run-id>"`, matching the format
+exactly. `npx tsc --noEmit` — 0 errors. `them-go-bridge` rebuilt and recreated via `up -d` (not
+`restart` — see `docs/LESSONS.md`'s stale-container entry for why that distinction matters).

@@ -78,6 +78,10 @@ type debugStartResponse struct {
 	// so the user knows the bounded lifetime, not just discover it via a
 	// timeout error later.
 	ExpiresAt string `json:"expires_at"`
+	// WorkflowID lets the frontend deep-link to this run in the Temporal Web
+	// UI (docs/APP_CANVAS_DEBUG_PLAN.md) without duplicating the ID format
+	// client-side.
+	WorkflowID string `json:"workflow_id"`
 }
 
 // Start handles POST /admin/applications/{id}/debug/start. Compiles and runs
@@ -121,7 +125,7 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "debug start failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, debugStartResponse{RunID: result.RunID, ExpiresAt: result.ExpiresAt.UTC().Format(time.RFC3339)})
+	writeJSON(w, http.StatusOK, debugStartResponse{RunID: result.RunID, ExpiresAt: result.ExpiresAt.UTC().Format(time.RFC3339), WorkflowID: result.WorkflowID})
 }
 
 // Step handles POST /admin/applications/{id}/debug/{run_id}/step — sends one

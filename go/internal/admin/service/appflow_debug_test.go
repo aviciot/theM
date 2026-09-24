@@ -179,13 +179,14 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 		app:   draftApp("chat"),
 		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
 	}
-	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", result.RunID)
+	assert.Equal(t, "appflow:tenant-1:run-1", result.WorkflowID, "WorkflowID must use handle.EPConfig.TenantID (server-derived), not the caller-supplied tenantID param — same authority rule as the credential store write a few lines above")
 	assert.True(t, lc.admitCalled)
 	assert.True(t, lc.startCalled)
 	assert.True(t, lc.lastDebug, "must always start with debug=true")
@@ -205,7 +206,7 @@ func TestAppFlowDebugService_Start_StepModeTrue_PropagatesToWorkflowInput(t *tes
 		app:   draftApp("chat"),
 		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
 	}
-	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
@@ -224,7 +225,7 @@ func TestAppFlowDebugService_Start_ExpiresAt_IsStartedAtPlusDebugRunMaxLifetime(
 		app:   draftApp("chat"),
 		draft: dal.AppDefinition{Definition: json.RawMessage(minimalDraftDoc), Status: "draft"},
 	}
-	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
@@ -312,7 +313,7 @@ func twoLLMDraftDAL() *fakeAppFlowDebugDAL {
 // consume a debug run slot.
 func TestAppFlowDebugService_Start_MissingRequiredOverride_FailsBeforeAdmit(t *testing.T) {
 	d := twoLLMDraftDAL()
-	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 

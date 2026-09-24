@@ -160,6 +160,18 @@ export function AppFlowDebugPanel({
             run {debug.runId.slice(0, 8)}…
           </span>
         )}
+        {debug.workflowId && (
+          <a
+            href={'/temporal/namespaces/default/workflows?query=' + encodeURIComponent(`WorkflowId="${debug.workflowId}"`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open in Temporal UI: ${debug.workflowId}`}
+            style={{ fontSize: '11px', color: '#5b7fff', fontFamily: 'monospace', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '3px' }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>open_in_new</span>
+            View in Temporal
+          </a>
+        )}
         {debug.expiresAt && (
           <span style={{ color: '#f59e0b', fontSize: '11px' }} title={new Date(debug.expiresAt).toLocaleString()}>
             ⏱ expires {formatExpiry(debug.expiresAt)}

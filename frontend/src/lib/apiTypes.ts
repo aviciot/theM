@@ -589,6 +589,9 @@ export interface AppFlowDebugStartResult {
   // ISO-8601 timestamp — when this run will be forcibly terminated
   // (enforced WorkflowRunTimeout, docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
   expires_at: string;
+  // Temporal workflow ID ("appflow:{tenant}:{run}") — lets the debug panel
+  // deep-link to this run in the Temporal Web UI.
+  workflow_id: string;
 }
 
 // Per-node LLM credential override for a debug run only

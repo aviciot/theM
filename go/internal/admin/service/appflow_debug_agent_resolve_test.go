@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -156,7 +157,7 @@ func TestAppFlowDebugService_Start_UnpublishedAgentDraft_NoLongerBlocked(t *test
 			return &registry.ComponentDefinition{ID: "agent-uuid-1", Kind: registry.KindAgent}, nil
 		},
 	}
-	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), reg)
 
@@ -173,7 +174,7 @@ func TestAppFlowDebugService_Start_UnpublishedAgentDraft_NilRegistry_StillBlocke
 		app:   draftApp("chat"),
 		draft: dal.AppDefinition{Definition: json.RawMessage(unpublishedAgentDraftDoc), Status: "draft"},
 	}
-	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
+	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 

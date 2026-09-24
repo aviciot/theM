@@ -22,6 +22,9 @@ export interface AppFlowDebugSessionState {
   // WorkflowRunTimeout, docs/APPFLOW_RUNTIME_PARAMS_PLAN.md). null until a
   // run has actually started.
   expiresAt: string | null;
+  // Temporal workflow ID ("appflow:{tenant}:{run}") for this run — lets the
+  // panel deep-link to the Temporal Web UI. null until a run has started.
+  workflowId: string | null;
   entryPointSlug: string;
   userMessage: string;
   // Step controls (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — set before
@@ -45,6 +48,7 @@ const INITIAL_STATE: AppFlowDebugSessionState = {
   running: false,
   runId: null,
   expiresAt: null,
+  workflowId: null,
   entryPointSlug: '',
   userMessage: '',
   stepMode: false,
@@ -148,7 +152,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     }
 
     setDebug(prev => ({
-      ...prev, running: true, error: null, done: false, runId: null, expiresAt: null,
+      ...prev, running: true, error: null, done: false, runId: null, expiresAt: null, workflowId: null,
       nodeStates: {}, nodeDetails: {}, nodeErrors: {},
     }));
 
@@ -160,8 +164,8 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       // Redis Stream from the beginning on subscribe (runstream.StreamFromRedis
       // replay+live), not a snapshot-only read, so no event is missed even if
       // the run has already finished by the time this WS opens.
-      const { run_id, expires_at } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides, debug.stepMode);
-      setDebug(prev => ({ ...prev, runId: run_id, expiresAt: expires_at }));
+      const { run_id, expires_at, workflow_id } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides, debug.stepMode);
+      setDebug(prev => ({ ...prev, runId: run_id, expiresAt: expires_at, workflowId: workflow_id }));
 
       const r = await fetch('/api/auth/token');
       if (!r.ok) throw new Error('Could not get auth token for the debug WS connection.');
