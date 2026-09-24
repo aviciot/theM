@@ -43,9 +43,11 @@ DB name and schema: **them** — never `odin`.
 
 ---
 
-## Long Answers
+## Answering Style
 
-Long explanations, detailed reviews, analysis reports, and migration plans must be written to Markdown files under `docs/`. Return only the file path and a one-paragraph summary in chat.
+Keep answers clear, friendly, and short — no walls of text. Get to the point, use plain language, and add a small example when it helps the user understand faster.
+
+If something genuinely needs a long write-up (a detailed review, analysis report, or migration plan), put the details in a Markdown file under `docs/` instead of dumping it in chat — then just give the file path and a one-paragraph summary in chat.
 
 ---
 
