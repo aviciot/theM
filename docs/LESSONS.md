@@ -1258,3 +1258,40 @@ one-time resolution step (like a name→ID lookup) is meaningful in more than on
 AND debug), write it so any caller can invoke it — encoding "call this on your way through publish"
 as literally the only way to run it is a design smell even if it works for the one caller that
 exists today.
+
+---
+
+## LLM/agent activities computed the real output, then threw it away when tracing (found 2026-09-24)
+
+**Symptom:** After the agent-resolution fix above unblocked debugging
+`stage2-graph-llm-condition-v2`, the live debug run completed successfully — but the App Canvas
+Debug Mode inspector showed, for the LLM node: "Sentiment Classifier · llm · llm_1 · Done · No
+output captured for this node yet." State was correctly `done`; the actual output was just never
+there to show.
+
+**Root cause:** `InlineLLMActivity` and `InvokeAgentActivity`
+(`go/internal/appflow/activities.go`) both call `a.emitTrace(ctx, ..., "node_done", "", ...)` —
+the detail argument is a **hardcoded empty string**, even though both activities already computed
+the real response (`responseText`/`text`) a few lines earlier and use it for other purposes right
+after (token streaming, the activity's own return value). Every other node kind that reports a
+real result — router (`"label="+l`), condition, fork/join — already puts that result into
+`detail`. LLM and agent were the only two kinds silently discarding theirs. A code comment on the
+original tests (`workflow_test.go`, AF-TR-01) even documented this as deliberate: "Phase 2 keeps
+LLM node detail empty — no prompt/response content is captured at this stage" — a real decision,
+just one that turned out to defeat the actual purpose of a debug inspector (showing you what a
+node produced).
+
+**Fix:** pass `responseText`/`text` instead of `""` on both `node_done` calls. No new plumbing —
+`emitTrace`'s `detail` parameter, the Redis Stream payload, the `them.run_steps.output` column,
+and the frontend's `AppFlowDebugInspector.tsx` rendering path all already existed and already
+worked correctly for other node kinds; LLM/agent just weren't using them. The existing
+`verbosity` gate (`"off"`/`"status"`/`"full"`) still applies unchanged — this fix doesn't bypass or
+weaken that control, it just stops throwing away data before the gate even sees it.
+
+**Watch for:** when an activity computes a value it's clearly proud of (uses it for streaming,
+returns it as the actual output), grep whether every other sibling call in the same file that
+reports a similar result is passing something non-trivial to the same parameter — a lone `""`
+where every neighbor passes real data is a strong signal something got dropped, not that this one
+case is special. Also: a comment stating "we deliberately don't capture X here" is worth
+re-examining the first time a feature (like a debug inspector) is actually built around needing X
+— a decision that made sense in isolation can become the wrong one once its consumer exists.

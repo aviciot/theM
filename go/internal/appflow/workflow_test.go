@@ -598,9 +598,13 @@ func tracePayloadsOfType(t *testing.T, pub *fakeStreamPub, wantType string) []ma
 	return out
 }
 
-// AF-TR-01: InlineLLMActivity emits node_start then node_done on success, with
-// kind="llm" and no detail (Phase 2 keeps LLM node detail empty — no
-// prompt/response content is captured at this stage).
+// AF-TR-01: InlineLLMActivity emits node_start then node_done on success,
+// with kind="llm". node_done's detail carries the LLM's real response text
+// (fixed 2026-09-24, docs/PLATFORM_AS_TENANT_PLAN.md Phase 6 — found live:
+// the App Canvas Debug Mode inspector showed "No output captured for this
+// node yet." for every LLM node because this activity hardcoded detail=""
+// on node_done, discarding responseText even though it was already computed
+// and used for token streaming a few lines later).
 func TestInlineLLMActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	caller := &fakeInlineLLMCaller{response: "hi"}
 	streamPub := &fakeStreamPub{}
@@ -625,6 +629,9 @@ func TestInlineLLMActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	}
 	if dones[0]["kind"] != "llm" {
 		t.Errorf("node_done kind: want %q, got %v", "llm", dones[0]["kind"])
+	}
+	if dones[0]["detail"] != "hi" {
+		t.Errorf("node_done detail: want the LLM's real response %q, got %v", "hi", dones[0]["detail"])
 	}
 }
 
@@ -651,6 +658,9 @@ func TestInlineLLMActivity_EmitsErrorTrace(t *testing.T) {
 }
 
 // AF-TR-03: InvokeAgentActivity emits node_start/node_done with kind="agent".
+// node_done's detail carries the agent's real response text (same fix and
+// same reason as AF-TR-01 above — this activity had the identical
+// discard-the-output-string bug).
 func TestInvokeAgentActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	streamPub := &fakeStreamPub{}
 	acts := &AppFlowActivities{
@@ -672,6 +682,9 @@ func TestInvokeAgentActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	}
 	if starts[0]["kind"] != "agent" {
 		t.Errorf("kind: want %q, got %v", "agent", starts[0]["kind"])
+	}
+	if dones[0]["detail"] != "hi" {
+		t.Errorf("node_done detail: want the agent's real response %q, got %v", "hi", dones[0]["detail"])
 	}
 }
 

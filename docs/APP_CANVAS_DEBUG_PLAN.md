@@ -166,6 +166,17 @@ branch, router's chosen label, fork's branch count, HIL's approval outcome) — 
 config, no `TraceMode`/redaction, no persistence. Goal: watch a real Graph-mode run's actual path,
 node by node, live. Nothing more.
 
+**Revised 2026-09-24 (Platform-as-Tenant Phase 6):** the "never a full prompt/response" framing
+below (§ "What was built") turned out to be the wrong boundary once the Debug Mode inspector
+(Phase 6, `AppFlowDebugInspector.tsx`) was actually built to *show* a node's captured output —
+LLM/agent nodes reported `state: done` with no output at all, a real regression in usefulness, not
+a safety feature. `InlineLLMActivity`/`InvokeAgentActivity` now pass their real
+`responseText`/`text` into `node_done`'s `detail`, matching what router/condition/fork already did
+from Phase 2 onward. The existing `verbosity` gate (`"off"`/`"status"`/`"full"`,
+`docs/APP_CANVAS_DEBUG_PLAN.md` Phase 4) is unchanged and still the control point for how much
+gets persisted — this fix only stops discarding data before that gate is even reached. See
+`docs/LESSONS.md`'s entry for the full detail.
+
 **Architecture investigated before implementing** (user asked for this explicitly — see the
 "do not assume the current proposed solution is correct" research request this session): Router,
 HIL, Agent, and Inline LLM already dispatch through real Temporal Activities (allowed to do I/O);

@@ -367,7 +367,7 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", err.Error(), input.Verbosity)
 		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
 	}
-	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", "", input.Verbosity)
+	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", text, input.Verbosity)
 	return AgentInvokeActivityOutput{ResponseText: text}, nil
 }
 
@@ -430,7 +430,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", err.Error(), input.Verbosity)
 		return InlineLLMActivityOutput{}, fmt.Errorf("inline llm %q: %w", input.NodeID, err)
 	}
-	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_done", "", input.Verbosity)
+	a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_done", responseText, input.Verbosity)
 
 	if input.Stream && a.StreamPub != nil && responseText != "" {
 		key := fmt.Sprintf("them:dash:run:%s:stream", input.RunID)

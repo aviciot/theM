@@ -623,13 +623,29 @@ but no `key_id` correctly reported "no usable key," third attempt with the boots
 `MainKey` id returned **200, a real run_id** — the exact original bug this whole plan started from,
 confirmed fixed end-to-end without ever publishing the app.
 
+**Bug 4, found continuing the live walkthrough after bug 3's fix:** the user actually clicked
+Debug in the browser (not just the direct API replay above) and reached the LLM node — the
+inspector showed `Sentiment Classifier · llm · llm_1 · Done · No output captured for this node
+yet.` `InlineLLMActivity`/`InvokeAgentActivity` (`go/internal/appflow/activities.go`) both
+hardcoded their `node_done` trace's `detail` to `""`, discarding the real `responseText`/`text`
+they'd already computed and used elsewhere in the same function (token streaming, the activity's
+own return value) — every other node kind that reports a result (router, condition, fork/join)
+already traced its real output from Phase 2 onward; LLM and agent were the two silent outliers.
+Original comment on the tests documented this as deliberate ("Phase 2 keeps LLM node detail
+empty"), but that decision predates the debug inspector actually being built to show output — see
+`docs/APP_CANVAS_DEBUG_PLAN.md`'s revised Phase 2 section. Fixed by passing the real value
+instead of `""`; 2 existing tests strengthened (`workflow_test.go` AF-TR-01/03) to assert the
+`detail` field. `go build`/`go vet`/`go test ./...` clean; rebuilt+restarted
+`them-dag-worker`/`them-dag-worker-2`/`them-dag-worker-debug` (this file is on the trigger map for
+all three).
+
 **Original Phase 6 goal — confirmed:** both halves. `avi`/`admin`'s Settings → LLM Providers now
 shows the bootstrap tenant's own 5 providers + MainKey via the tenant self-service screen (Phase 4);
-`stage2-graph-llm-condition-v2`'s debug panel can now actually start a run using that same key,
-without publishing (this phase's own fix, on top of Phase 4's). Three real, previously-unknown bugs
-found and fixed along the way, none of them regressions from Phases 1-5's own commits — see
-`docs/LESSONS.md` for the write-up on why each surfaced only under live use, not under any automated
-test that existed before this session.
+`stage2-graph-llm-condition-v2`'s debug panel can now actually start a run using that same key and
+show its real output, without publishing (this phase's own fixes, on top of Phase 4's). Four real,
+previously-unknown bugs found and fixed along the way, none of them regressions from Phases 1-5's
+own commits — see `docs/LESSONS.md` for the write-up on why each surfaced only under live use, not
+under any automated test that existed before this session.
 
 ---
 

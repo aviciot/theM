@@ -1,14 +1,18 @@
 # Current Session State — the-M
 # Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 COMPLETE -- the plan's original bug
-# confirmed fixed live. Along the way, found + fixed 3 real bugs: (1) Phase 3's RLS integration
+# confirmed fixed live. Along the way, found + fixed 4 real bugs: (1) Phase 3's RLS integration
 # test leaked fixture rows into the live DB every run (t.Cleanup-vs-defer ordering mistake,
 # go/internal/db/platform_as_tenant_rls_integration_test.go), (2) them-go-bridge was running a
 # stale binary despite a recent-looking image (rebuild+restart fixed it, no code change needed,
 # see docs/LESSONS.md), (3) App Canvas Debug Mode's long-standing "must publish before debugging
 # an agent node" limitation was a real design gap, now fixed by resolving agent IDs live at
 # debug-start time (go/internal/admin/service/appflow_debug.go's new resolveDraftAgentIDs) instead
-# of only at publish time -- see docs/APP_CANVAS_DEBUG_PLAN.md's updated Phase 5 section. All 6
-# Platform-as-Tenant phases now done. Next: pick a new thread -- no plan doc currently active.)
+# of only at publish time, (4) InlineLLMActivity/InvokeAgentActivity both hardcoded node_done's
+# detail to "" -- the debug inspector showed "Done" with no output for every LLM/agent node
+# because the real response was computed and used elsewhere but never traced (go/internal/appflow/
+# activities.go; see docs/APP_CANVAS_DEBUG_PLAN.md's updated Phase 2 section). All 6
+# Platform-as-Tenant phases now done; them-dag-worker/-2/-debug rebuilt+restarted for fix (4).
+# Next: pick a new thread -- no plan doc currently active.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -78,7 +82,7 @@ tenant self-service screen (Phase 4's fix), and `stage2-graph-llm-condition-v2`'
 now actually start a run using that key — verified with a real `POST .../debug/start` call
 against the live stack, `200` + a real `run_id`, on the app's still-unpublished draft.
 
-**Three real bugs found and fixed along the way, none of them Phase 1-5 regressions:**
+**Four real bugs found and fixed along the way, none of them Phase 1-5 regressions:**
 1. Phase 3's own RLS integration test (`go/internal/db/platform_as_tenant_rls_integration_test.go`)
    was leaking `rlsp3-*` fixture rows into the live database on every run — a `t.Cleanup`-vs-`defer`
    ordering bug (the pool closed before its own cleanup delete could use it). Fixed by moving the
@@ -93,12 +97,21 @@ against the live stack, `200` + a real `run_id`, on the app's still-unpublished 
    (`go/internal/admin/service/appflow_debug.go`'s new `resolveDraftAgentIDs`), reusing the exact
    same server-side registry lookup `PublishDefinition` already used — no publish required anymore.
    9 new tests (`appflow_debug_agent_resolve_test.go`).
+4. Continuing the same live debug run, the inspector showed "Done" for the LLM node but "No output
+   captured for this node yet." `InlineLLMActivity`/`InvokeAgentActivity`
+   (`go/internal/appflow/activities.go`) both hardcoded `node_done`'s trace detail to `""`,
+   discarding the real `responseText`/`text` they'd already computed and used elsewhere (token
+   streaming, the activity's own return value) — every other node kind (router, condition,
+   fork/join) already traced its real result. Fixed by passing the real value instead of `""`; 2
+   existing tests strengthened to assert it (`workflow_test.go`, AF-TR-01/03). See
+   `docs/LESSONS.md`'s new entry and `docs/APP_CANVAS_DEBUG_PLAN.md`'s revised Phase 2 section.
 
 `go build ./...` + `go vet ./...` clean. Full `go test ./...` — every package passes, including
 `internal/a2a` (an earlier full-suite run in this same session had it time out; re-run clean,
 confirmed a one-off environmental flake, not a regression — new row in `go/TEST_INDEX.md`).
-`them-go-bridge` rebuilt and restarted twice this session (once to fix bug 2 above, once after the
-agent-resolution fix); confirmed healthy both times.
+`them-go-bridge` rebuilt+restarted twice this session (bugs 2 and 3);
+`them-dag-worker`/`them-dag-worker-2`/`them-dag-worker-debug` all rebuilt+restarted for bug 4
+(per `go/CLAUDE.md`'s trigger map for `internal/appflow/activities.go`); confirmed healthy.
 
 **Phase 5 (tenant management UI) is done** — `/admin/tenants` (`frontend/src/app/admin/tenants/page.tsx`)
 now shows an amber "Platform" badge (shield icon, tooltip "the-M's own operating tenant — cannot
