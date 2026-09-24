@@ -139,6 +139,21 @@ Closed agent / external job ─┘         │
                                         └─ 6. return to caller
 ```
 
+**Clarification — one URL per tenant, not one URL per MCP server.** This
+design does *not* propose exposing a separate managed endpoint per
+registered MCP server (e.g. `/mcp/jira`, `/mcp/github`,
+`/mcp/filesystem`). There is exactly **one** the-M-facing entry point per
+tenant, matching the LLM Gateway's `POST /{tenant_slug}/llm/v1/chat/completions`
+shape (one path per tenant; which provider/model to use is a body field,
+not a different path per provider). For MCP, which server and which tool
+to call is likewise carried *inside* the request — a body field today via
+`them-mcp-service`'s `/internal/execute`, or the `Mcp-Method`/`Mcp-Name`
+headers the 2026-07-28 spec now defines (§1b) — not selected by hitting a
+different URL. Routing to the correct downstream MCP server happens
+*inside* `them-mcp-service`, after tenant/policy checks, same as it does
+today for internal callers in `executor.go`. See Part 3, which already
+says "no per-MCP-server gateway process."
+
 Two gaps to close, matching the earlier investigation:
 
 **Gap 1 — canvas agents already route through them-mcp-service, but it
@@ -188,10 +203,13 @@ investigation — today only a call-count metric exists, no content trail.
 
 ### 2e. Closing the "closed agent" blind spot
 
-Mirror the LLM Gateway's closed-agent pattern: issue closed agents a
-the-M-fronted MCP URL (`them-mcp-service`'s already-internal endpoint,
-exposed per-tenant with a the-M-issued token) instead of the raw MCP
-server URL + raw credential. the-M holds/brokers the real credential
+Mirror the LLM Gateway's closed-agent pattern: issue closed agents **one**
+the-M-fronted MCP URL per tenant (`them-mcp-service`'s already-internal
+endpoint, exposed with a the-M-issued token scoped to that tenant) instead
+of the raw MCP server URL + raw credential. This is a single shared
+endpoint for every MCP server the tenant has registered — not one URL per
+server (see the clarification in §2b) — with server/tool selected inside
+the request body or headers. the-M holds/brokers the real credential
 (reusing `them.app_mcp_credentials`) so the external script never sees it.
 This requires no new protocol work — it's the same "become the middleman"
 move already made for LLM traffic, applied to the MCP entry point.
