@@ -1,7 +1,8 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 1 COMPLETE — the-M's own "platform" LLM
-# provider/key rows migrated from tenant_id IS NULL to the bootstrap tenant. HEAD dc529235,
-# pushed. New plan doc: docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 1 of 6 done.)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 2 COMPLETE — platform-only NULL-tenant Go code
+# paths deleted; classify/synthesize/security_scan now resolve their "platform" fallback through the
+# bootstrap tenant via the same resolveSystemAgentRole every tenant uses. HEAD 9cf638a8, NOT yet
+# confirmed pushed this session — see note below. docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 2 of 6 done.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -9,8 +10,10 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `dc529235` — pushed to origin/main (confirm with `git log origin/main -1` before assuming;
-push again if this session's own commit hasn't landed yet).
+HEAD: `9cf638a8` — **push status unconfirmed this session**: `git log origin/main -1` did not
+return output in this environment (no confirmed network/remote access). Run
+`git log origin/main -1` and `git push origin main` at the start of the next session before
+assuming this commit (or `8b9511b5` before it) has landed on the remote.
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -24,6 +27,8 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+9cf638a8  feat(db): Platform-as-Tenant Phase 2 — backend consolidation
+8b9511b5  fix(ci): satisfy go vet lostcancel check in two context-cancellation tests
 dc529235  feat(db): Platform-as-Tenant Phase 1 — migrate platform LLM rows to bootstrap tenant
 91028cfa  fix(appflow): sync step cursor across fork so post-join node needs its own Step click
 efb443e3  docs: remove closed playground EP investigation doc
@@ -54,10 +59,22 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 1 of 6 COMPLETE.**
+**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 2 of 6 COMPLETE.**
 Read that plan doc end to end before continuing — especially the "Current-state map" section
-(researched + independently reviewed, corrections already folded in) and the "Phase 1 — COMPLETE"
-section for exactly what was and wasn't done.
+(researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE"
+and "Phase 2 — COMPLETE" sections for exactly what was and wasn't done in each.
+
+**First thing next session: confirm the push landed.** This session could not confirm
+`git log origin/main -1` succeeded (no confirmed network access in that environment) — run it, and
+`git push origin main` if `9cf638a8` (or `8b9511b5` before it) hasn't reached the remote yet, before
+starting Phase 3.
+
+**Next: Phase 3 (RLS verification) — NOT started.** Dedicated integration tests proving the
+bootstrap tenant's `llm_providers`/`llm_provider_keys` rows are correctly visible/invisible to other
+tenants' queries post-migration (decision 7: `llm_providers` rows ARE meant to be visible
+cross-tenant as defaults; `llm_provider_keys` rows are NOT). Phase 1's own manual `SET ROLE`
+verification already checked this once by hand — Phase 3's job is turning that into a permanent,
+automated regression test, not re-discovering it. Phase 2 did NOT touch RLS.
 
 **What this plan is:** the-M's own "platform-level" LLM provider/key config (used by classifier,
 card_synthesizer, security_scanner, and previously invisible to App Canvas Debug Mode's General-mode
@@ -86,18 +103,19 @@ another tenant context are rejected. `go test ./...` + `go test -tags=integratio
 ./internal/admin/...` both 0 failures against the live migrated DB. No Go/frontend code changed yet
 — Phase 1 was data-only by design.
 
-**Next: Phase 2 (backend consolidation) — NOT started.** Delete
-`GetProviderByNamePlatform`/`resolvePlatformSystemAgentRole`/`llm_provider_keys_platform.go`/
-`SystemAgentsHandler` and all call sites; point `classify.go`/`synthesize.go`/`security_scan_llm.go`'s
-inline platform-fallback blocks at the single tenant-scoped resolver; also fix the two
-NULL-tenant-convention consumers Phase 1's own review found and left alone on purpose
-(`dal/app_config.go`'s `GetProviderBaseURLs`, `dal/llm_providers.go`'s `ListProvidersForTenant`) —
-both still say `IS NULL` in application code and currently work by accident (no row has NULL
-anymore, so that branch just never matches) rather than by correctness. **Check this box's
-`them.config['system_agents']` before starting** — Phase 1 found none existed here, so no config
-migration was needed, but a different box might have one and would need that step Phase 1 skipped.
+**Phase 2 (backend consolidation) is done and tested** — `GetProviderByNamePlatform`/
+`resolvePlatformSystemAgentRole`/`llm_provider_keys_platform.go`/`SystemAgentsHandler` and all call
+sites deleted; `classify.go`/`synthesize.go`/`security_scan_llm.go` now resolve their platform
+fallback through `resolveSystemAgentRole` against the bootstrap tenant instead of a separate
+NULL-tenant/`them.config` path; `dal/app_config.go`'s `GetProviderBaseURLs` and
+`dal/llm_providers.go`'s `ListProvidersForTenant`/`ListProviders`/`CreateProvider` now reference
+`tenantctx.BootstrapTenantID` explicitly instead of `IS NULL`. See
+`docs/PLATFORM_AS_TENANT_PLAN.md`'s "Phase 2 — COMPLETE" section for full detail, including a real
+(if already-dead-by-the-time-found) uniqueness gap this phase's own test run surfaced and fixed by
+deleting 4 stale tests — not a live bug, but worth reading before assuming "all green" always means
+"nothing to look at."
 
-**One phase per session** — do not start Phase 3 in the same session as Phase 2, etc.
+**One phase per session** — do not start Phase 4 in the same session as Phase 3, etc.
 
 **Known, deliberately-deferred gap, unaffected by Phase 1 or 2:** the frontend's `isSuperAdmin`
 branch (`frontend/src/app/admin/settings/page.tsx`) still routes any `super_admin`-role session to

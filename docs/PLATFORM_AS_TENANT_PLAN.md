@@ -1,5 +1,5 @@
 # Platform-as-Tenant — Plan
-# Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 NEXT.
+# Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24). Phase 3 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -209,7 +209,7 @@ alternative. This plan is not overriding a considered decision.
 | Phase | What | Depends on |
 |---|---|---|
 | 1 — Data migration + RLS rewrite | ✅ **COMPLETE (2026-09-24)** — see "Phase 1 — COMPLETE" section below | Decisions above confirmed |
-| 2 — Backend consolidation | Delete `GetProviderByNamePlatform`/`resolvePlatformSystemAgentRole`/`llm_provider_keys_platform.go`/`SystemAgentsHandler` and all call sites, including the two Phase-1-migrated consumers above; point `classify.go`/`synthesize.go`/`security_scan_llm.go`'s fallback blocks at the single tenant-scoped resolver | Phase 1 |
+| 2 — Backend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 2 — COMPLETE" section below | Phase 1 |
 | 3 — RLS verification | Dedicated integration tests proving bootstrap-tenant LLM rows are invisible to other tenants' queries (or correctly visible, per decision 7's resolution), and vice versa, post-migration | Phase 1 |
 | 4 — Frontend consolidation | Remove `isSuperAdmin` branch from Settings → LLM Providers / System Agents; both screens always render the tenant-scoped view for the caller's own tenant | Phase 2 |
 | 5 — Tenant management UI | Ensure `/admin/tenants` list clearly marks the bootstrap/platform tenant as such (not hidden, but visually distinct) — no functional change to deletion guard, which already exists | Independent, can run anytime |
@@ -296,6 +296,67 @@ box's migration would need the config-copy step this one didn't.
 pre-migration) — kept in this session's scratchpad, not committed to the repo (contains no secrets
 beyond what's already encrypted in the DB itself, but scratchpad is the correct place for a
 point-in-time backup artifact, not version control).
+
+---
+
+## Phase 2 — COMPLETE (2026-09-24)
+
+Commit `9cf638a8`. Deleted the platform-only Go code paths per decision 3, now that Phase 1
+migrated their data to the bootstrap tenant:
+
+- **Deleted entirely**: `internal/admin/system_agents.go` (`SystemAgentsHandler`,
+  `/admin/system-agents` routes) + its integration test; `internal/admin/llm_provider_keys_platform.go`
+  (platform-owned key CRUD routes) + its test; `resolvePlatformSystemAgentRole` and
+  `platformSystemAgentRoleResolverDAL` (`system_agent_resolve.go`); `GetProviderByNamePlatform`
+  (`dal/llm_providers.go`); `GetPlatformProviderRow` (`service/llm_providers.go`). `router.go`'s
+  `platformGlobal` group no longer mounts `systemAgents.Routes`/`llmProviderKeys.PlatformRoutes`.
+- **`classify.go`/`synthesize.go`/`security_scan_llm.go`** no longer read
+  `them.config['system_agents']` at all — each now calls `resolveSystemAgentRole` once for
+  `tenantctx.BootstrapTenantID` (the "platform" fallback tier) and feeds that result in as the
+  fallback args of the real call for the caller's own tenant. One resolution function, two calls,
+  no separate platform code path.
+- **`dal/llm_providers.go`/`dal/app_config.go`**'s two Phase-1-flagged leftover `IS NULL` checks
+  (`ListProviders`, `ListProvidersForTenant`, `CreateProvider`, `GetProviderBaseURLs`) now reference
+  `tenantctx.BootstrapTenantID` explicitly instead of a NULL check that only "worked" because no row
+  has had a NULL `tenant_id` since Phase 1's migration.
+- **`them.config['system_agents']` migration**: confirmed (again, per Phase 1's flag) that this box
+  has no such row — nothing to migrate. A box that does have one still needs that step done manually
+  before/during a Phase 2 pass, since this code path is now deleted and can no longer read it.
+
+**Real bug found and fixed, not scope creep**: 4 `llm_provider_keys` integration tests
+(`TestDAL_ProviderKey_PlatformOwned_*`) exercised `CreateLLMProviderKey(TenantID: nil)` — a
+"platform-owned key" scenario that became unreachable from any HTTP route the moment
+`llm_provider_keys_platform.go` (the only caller that ever passed `nil`) was deleted in this same
+phase. One of the four (`NameUniqueAmongPlatformKeysOnly`) had also silently gone wrong as of Phase
+1: the old NULL-partial unique index (enforcing uniqueness among `tenant_id IS NULL` rows
+specifically) was replaced with a plain composite `UNIQUE(llm_provider_id, tenant_id, name)` index,
+and Postgres never treats two NULLs as equal in a unique index — so duplicate platform-owned key
+names silently stopped colliding. Confirmed live against this box's Postgres before concluding the
+code path is dead (not live-but-broken): deleted the 4 tests rather than resurrecting a partial
+index nothing calls into anymore. See `go/TEST_INDEX.md`'s "removed (Platform-as-Tenant Phase 2)"
+row for the full accounting (-4 tests, S2 total 86 → 82).
+
+**New tests**: `internal/admin/dal/platform_as_tenant_phase2_integration_test.go` (5 tests, all run
+live against this box's already-migrated Postgres) proves `ListProvidersForTenant` and
+`GetProviderBaseURLs` correctly fall back to the bootstrap tenant's rows for any other tenant, that
+the caller's own row still wins over the bootstrap default when both exist, and that the bootstrap
+tenant querying itself doesn't double-count its own row against itself.
+
+**Verified**: `go build ./...` + `go vet ./...` clean. `go test ./...` — 0 failures, full suite (58
+packages), run fresh in a throwaway `golang:1.25` container (no local Go toolchain in this
+environment) against the repo's `go.mod`. `go test -tags=integration ./internal/admin/...` — 0 new
+failures, run for real against this box's live, already-Phase-1-migrated `them-postgres` over the
+`them-network` Docker network; the only remaining failure is the pre-existing, unrelated
+`TestIntegration_CreateToken_201` panic already tracked in `docs/CURRENT.md` (a missing tenant
+context in an old test, not touched by any file this phase changed).
+
+**Explicitly not done this phase, unaffected**: the still-live super_admin-only
+`LLMProvidersHandler` CRUD surface (`/admin/llm-providers` — `List`/`Create`/`Get`/`Update`/`Delete`)
+was deliberately left in place — it's the frontend Settings screen's platform view, still used by
+the live UI until Phase 4 removes the `isSuperAdmin` branch that calls it. Its `Create` already
+writes to the bootstrap tenant's real `tenant_id` (not NULL) as of this phase's `CreateProvider`
+fix, so it needed no further change here. Deleting that handler now would break the live frontend
+before Phase 4 gives it a replacement — correctly out of Phase 2's scope per the phase table.
 
 ---
 
