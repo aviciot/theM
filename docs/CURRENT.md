@@ -1,7 +1,7 @@
 # Current Session State — the-M
-# Last updated: 2026-09-23 (App Canvas Debug Mode Phase 6 — Step controls with lockstep
-# multi-branch pausing. All 6 phases of docs/APP_CANVAS_DEBUG_PLAN.md now complete. HEAD 557254f2,
-# not yet pushed, on top of the AppFlow Runtime Params review follow-up round 2 (950a587f).)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 1 COMPLETE — the-M's own "platform" LLM
+# provider/key rows migrated from tenant_id IS NULL to the bootstrap tenant. HEAD dc529235,
+# pushed. New plan doc: docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 1 of 6 done.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -9,8 +9,8 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `557254f2` — **not yet pushed** (no push credentials available/confirmed this session; push
-when convenient with `git push origin main`).
+HEAD: `dc529235` — pushed to origin/main (confirm with `git log origin/main -1` before assuming;
+push again if this session's own commit hasn't landed yet).
 
 **Note:** the remote reports the GitHub repo has moved to `https://github.com/aviciot/theM.git`
 (capitalization change). The push to the old `them.git` URL still succeeds (GitHub redirects), but
@@ -24,6 +24,11 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+dc529235  feat(db): Platform-as-Tenant Phase 1 — migrate platform LLM rows to bootstrap tenant
+91028cfa  fix(appflow): sync step cursor across fork so post-join node needs its own Step click
+efb443e3  docs: remove closed playground EP investigation doc
+935a3320  config(keycloak): point frontendUrl at LAN IP instead of localhost
+5f1353d4  docs(current): record Phase 6 completion — App Canvas Debug Mode plan done
 557254f2  feat(app-canvas): Debug Mode Phase 6 — Step controls with lockstep multi-branch pausing
 950a587f  docs: record c1f01aa2 review follow-up — bounded debug lifetime + UI wiring
 79ec09ef  feat(app-canvas): wire model selector + Base URL field into debug credential picker
@@ -49,35 +54,76 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**App Canvas Debug Mode is now fully complete — all 6 phases of `docs/APP_CANVAS_DEBUG_PLAN.md`
-done, most recently Phase 6 (Step controls) this session.** See that doc's "Phase 6 — Step
-controls — COMPLETE (2026-09-23)" section for full implementation detail: a shared tick-generation
-counter + `workflow.Await` (not a signal per paused branch — verified against the Temporal Go SDK's
-source that a named signal channel is FIFO, one `SignalWorkflow` call wakes exactly one blocked
-`Receive`, never all of them), a new `POST /admin/applications/{id}/debug/{run_id}/step` route, a
-new `node_paused` trace event, and a frontend Step button + side-panel inspector
-(`AppFlowDebugInspector.tsx`). Proven against a real Temporal workflow test environment, including a
-2-fork-branch lockstep test. 8 new tests, `go/TEST_INDEX.md` S1-163 (1475→1483). `go test ./...` 0
-failures; `go test -race` on touched packages shows only the pre-existing documented
-`TestForkJoin_EmitsTraceForAllNodes` flake, none of the 6 new tests. `npx tsc --noEmit` 0 errors.
+**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 1 of 6 COMPLETE.**
+Read that plan doc end to end before continuing — especially the "Current-state map" section
+(researched + independently reviewed, corrections already folded in) and the "Phase 1 — COMPLETE"
+section for exactly what was and wasn't done.
 
-**Not yet pushed this session** (HEAD `557254f2`) — push with `git push origin main` when
-convenient (`git pull --rebase origin main` first per the note above if another session has also
-advanced `main`).
+**What this plan is:** the-M's own "platform-level" LLM provider/key config (used by classifier,
+card_synthesizer, security_scanner, and previously invisible to App Canvas Debug Mode's General-mode
+credential picker for apps owned by the-M's own bootstrap tenant) was represented as a parallel
+`tenant_id IS NULL` convention on `them.llm_providers`/`them.llm_provider_keys`, with a full
+duplicate set of DAL/service/handler/frontend code alongside the tenant-scoped equivalents every
+normal tenant uses. This plan removes that duplication: the-M's own bootstrap tenant
+(`00000000-0000-0000-0000-000000000001`, `is_bootstrap = true`) becomes the-M's real operating
+tenant, using the exact same tenant-scoped code path as everyone else.
 
-**Not done — no live browser click-through**, same standing limitation as every phase of this plan
-(no browser-automation tool, no headless Chromium system libs without interactive sudo in this
-environment). Recommend, before trusting this fully in front of real users: a manual logged-in
-walkthrough — start a step-mode debug run on a flow with a fork, click Step repeatedly, confirm both
-branches visibly pause and advance together on the canvas (not just one), and confirm the inspector
-panel shows correct per-node detail when clicking a paused/done node.
+**Origin:** found live, this session, while walkthrough-testing App Canvas Debug Mode Phase 6
+together with the user — `stage2-graph-llm-condition-v2` (owned by the bootstrap tenant) had no
+usable key in the debug panel's General mode, and Settings → LLM Providers had no UI path for a
+super_admin to reach the bootstrap tenant's own self-service screen (always showed the platform-wide
+view instead, even for a super_admin whose own tenant membership IS the bootstrap tenant).
 
-**No new phase of this plan is planned.** The next task should come from elsewhere in `docs/STATUS.md`
-or a fresh user request — do not invent further App Canvas Debug Mode work without a new requirement.
-Per this session's own discipline (one focused task per session, handover once it's complete and
-tested), this is a good point to close this session and open a new one. Suggested first prompt for
-the next session: **"Read `docs/CURRENT.md`'s START HERE section and `docs/STATUS.md`, then tell me
-what's the highest-priority next task."**
+**Phase 1 (data + RLS) is done and verified live** — `db/110_platform_as_bootstrap_tenant.sql`,
+committed and pushed as `dc529235`. 5 `llm_providers` rows + 1 `llm_provider_keys` row ("MainKey")
+moved from `tenant_id IS NULL` to the bootstrap tenant; partial unique indexes replaced with normal
+ones; `llm_providers_read`'s RLS policy rewritten to name the bootstrap tenant instead of checking
+`IS NULL` (confirmed with the user: keep cross-tenant visibility of platform-default providers —
+`llm_provider_keys`' own policy needed no change, confirmed asymmetric by a dedicated review pass).
+Verified via `SET ROLE them_app` role-switching (not just reading the policy SQL): other tenants see
+the bootstrap tenant's provider defaults but not its keys; writes to bootstrap-owned rows from
+another tenant context are rejected. `go test ./...` + `go test -tags=integration
+./internal/admin/...` both 0 failures against the live migrated DB. No Go/frontend code changed yet
+— Phase 1 was data-only by design.
+
+**Next: Phase 2 (backend consolidation) — NOT started.** Delete
+`GetProviderByNamePlatform`/`resolvePlatformSystemAgentRole`/`llm_provider_keys_platform.go`/
+`SystemAgentsHandler` and all call sites; point `classify.go`/`synthesize.go`/`security_scan_llm.go`'s
+inline platform-fallback blocks at the single tenant-scoped resolver; also fix the two
+NULL-tenant-convention consumers Phase 1's own review found and left alone on purpose
+(`dal/app_config.go`'s `GetProviderBaseURLs`, `dal/llm_providers.go`'s `ListProvidersForTenant`) —
+both still say `IS NULL` in application code and currently work by accident (no row has NULL
+anymore, so that branch just never matches) rather than by correctness. **Check this box's
+`them.config['system_agents']` before starting** — Phase 1 found none existed here, so no config
+migration was needed, but a different box might have one and would need that step Phase 1 skipped.
+
+**One phase per session** — do not start Phase 3 in the same session as Phase 2, etc.
+
+**Known, deliberately-deferred gap, unaffected by Phase 1 or 2:** the frontend's `isSuperAdmin`
+branch (`frontend/src/app/admin/settings/page.tsx`) still routes any `super_admin`-role session to
+the platform-only screen with no path to the bootstrap tenant's own self-service screen — that's
+Phase 4's job specifically. A normal browser session as `avi`/`admin` still cannot reach
+`/admin/my/llm-providers`'s UI today, even though the backend data now supports it correctly.
+
+**Also still open, found during the same walkthrough, tracked separately (not part of this plan):**
+the App Canvas Debug Mode credential picker's Custom-mode fields are free-text (provider/model as
+plain `<input>`s) instead of dropdowns like General mode, and there's no visual "this will be used"
+confirmation before clicking Run/Start — both real UX gaps in
+`frontend/src/app/admin/applications/components/AppFlowLLMCredentialField.tsx`, not yet a plan doc,
+not yet scheduled.
+
+**Also still true, deferred, not part of this plan:** the user still has not re-saved the bootstrap
+tenant's Anthropic `allowed_models` — their earlier attempt landed on the pre-migration platform row
+and never took effect on data; this is a user follow-up action once Phase 4 makes the tenant
+self-service screen reachable (or a direct API call, if unblocking sooner is wanted).
+
+---
+
+**Prior thread, fully complete, no further work planned:** App Canvas Debug Mode
+(`docs/APP_CANVAS_DEBUG_PLAN.md`) — all 6 phases done as of `557254f2` (Step controls), plus one
+review-found fix (`91028cfa` — a fork/join step-cursor staleness bug caught by the user's own review,
+not by Phase 6's original tests). See that plan doc for full detail if this thread needs revisiting;
+do not start new work on it without a new concrete requirement.
 
 **CI fixed earlier this session (2026-09-23):** `.github/workflows/ci.yml` had been broken since the
 Python→Go migration — it referenced a nonexistent `docker-compose.local.yml` and the removed
