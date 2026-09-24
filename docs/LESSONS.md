@@ -1187,3 +1187,74 @@ multi-round review session where the same numbers get carried forward in convers
 constant from its source file rather than trusting a value stated earlier in the same session or a
 prior round's summary.
 component actually read it at runtime."
+
+---
+
+## A rebuilt Docker image can still run a stale binary if the running container was never restarted (found 2026-09-24)
+
+**Symptom:** `PUT /admin/my/llm-providers/{name}` (Settings → LLM Providers → Save allowed models)
+returned a plain 404 `{"error":"not found"}` for the bootstrap tenant's own Anthropic row —
+verified the row existed, the JWT's `tenant_id` claim was correct, the SQL query worked fine via
+direct `psql`, and the route/handler/service code on disk was already correct (matched Phase 2's
+`GetProviderByNameForTenant(ctx, name, tenantctx.BootstrapTenantID)` fix from earlier the same
+session). Every static check passed; the request still 404'd.
+
+**Root cause:** `them-go-bridge`'s running container had not been rebuilt/restarted since an
+earlier commit landed this session (most likely Phase 2's `dal/llm_providers.go` fix). `docker
+inspect`'s image `Created` timestamp looked recent (a few hours old) — this was misleading: the
+image being "recent" only means *some* build happened recently, not that it contains the *latest*
+committed source. Confirmed by adding a temporary debug log inside the failing code path,
+rebuilding + restarting, and observing the exact same request succeed — with the debug log itself
+never firing, and zero net diff on the file once removed. The old binary was simply running old
+logic that no longer exists in git history in any form still checked in.
+
+**Fix:** `docker compose ... build them-go-bridge && docker compose ... up -d them-go-bridge`.
+
+**Watch for:** after any Go source change lands (commit, or even before commit in the same
+session), if `them-go-bridge` isn't rebuilt+restarted as part of that same change, later manual
+`curl`/browser verification against the live container is silently testing old code — a passing
+`go test ./...` run proves the source is correct, never that the *running service* reflects it.
+This project's own `CLAUDE.md` trigger map already says to rebuild+restart specific workers after
+touching their packages (e.g. `them-dag-worker` after `internal/temporal/`) — this incident is the
+same principle applied to `them-go-bridge` itself, which has no dedicated trigger-map row today
+because nearly every `internal/admin/` change implies it. Before trusting *any* live/manual
+verification result (not just automated tests) as evidence a fix works, rebuild + restart the
+specific container being tested first, even if it "was already rebuilt earlier this session."
+
+---
+
+## Agent-node resolution being tied to publish time was a real design gap, not just an inconvenience (found 2026-09-24)
+
+**Symptom:** `stage2-graph-llm-condition-v2`'s Debug button failed with `validate: [unresolved_agent]
+agent node has no resolved agent_id` — already a documented "known limitation" in
+`docs/APP_CANVAS_DEBUG_PLAN.md` (an agent-kind canvas node's real `agents.id` is only stamped into
+the definition JSON's `_resolved_agent_ids` map by `PublishDefinition`, at publish time). The
+existing framing treated this as an acceptable, if annoying, side effect of "debug runs the draft
+directly, no publish required" being the Phase 5 design decision. The user pushed back hard on
+that framing: requiring a real publish (which makes the canvas the actual live version real users
+hit) just to test a draft is not an acceptable trade-off, regardless of how the limitation is
+labeled in a doc.
+
+**Root cause:** the only code path that ever resolved an agent's component-registry name/version
+tuple into its real `agents.id` UUID was `PublishDefinition`'s own resolution loop
+(`RegistryResolver.ResolveForPublish` + `AgentExists`, `internal/admin/service/publish.go`).
+Nothing else in the codebase ever called that same lookup at any other time — so any code path
+that runs a draft without going through publish first (debug being the only one that existed) had
+no way to fill in an agent node's ID.
+
+**Fix:** added `AppFlowDebugService.resolveDraftAgentIDs`
+(`internal/admin/service/appflow_debug.go`), which calls the *exact same* `RegistryResolver.
+ResolveForPublish` + `AgentExists` pair `PublishDefinition` already uses, just invoked at
+debug-start time for any agent-kind component the publish-time stamp didn't already cover. Same
+server-side, tamper-proof lookup (the client never supplies the ID) — just triggered at a second
+point in time, not a new or weaker guarantee.
+
+**Watch for:** when a limitation is framed as "known and documented," that's not the same as
+"acceptable" — a doc entry recording a gap is not a decision that the gap should stay. If a
+workaround for a known limitation would require a genuinely risky or confusing action from the
+user (here: publish something not meant to go live yet, just to test it), that is itself a signal
+the underlying gap needs a real fix, not just better documentation of the workaround. Also: when a
+one-time resolution step (like a name→ID lookup) is meaningful in more than one workflow (publish
+AND debug), write it so any caller can invoke it — encoding "call this on your way through publish"
+as literally the only way to run it is a design smell even if it works for the one caller that
+exists today.

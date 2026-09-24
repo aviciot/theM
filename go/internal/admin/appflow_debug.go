@@ -31,9 +31,13 @@ type AppFlowDebugHandler struct {
 // (e.g. NewAgentsHandler). temporal sends the debug Step signal
 // (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — same TemporalSignaler
 // HILApprovalsHandler already uses; nil disables the Step route only (Start
-// still works, since Run-All debug sessions never need a signal).
-func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte, temporal TemporalSignaler) *AppFlowDebugHandler {
-	return &AppFlowDebugHandler{db: db, svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey), temporal: temporal}
+// still works, since Run-All debug sessions never need a signal). reg is the
+// same RegistryResolver NewDefinitionsHandlerWithRegistry uses — passing nil
+// means an unpublished draft with agent nodes still fails with
+// unresolved_agent (pre-existing behavior); passing a real resolver lets
+// Start resolve agent nodes live, without requiring a publish first.
+func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte, temporal TemporalSignaler, reg service.RegistryResolver) *AppFlowDebugHandler {
+	return &AppFlowDebugHandler{db: db, svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey, reg), temporal: temporal}
 }
 
 // AppRoutes mounts the debug-start and debug-step routes. Must be registered

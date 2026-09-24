@@ -1,8 +1,8 @@
 # Platform-as-Tenant — Plan
 # Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24).
 # Phase 3 COMPLETE (2026-09-24). Phase 4 COMPLETE (2026-09-24). Phase 5 COMPLETE (2026-09-24).
-# Phase 6 IN PROGRESS (2026-09-24) — found and fixed a real test-cleanup bug live; UI
-# walkthrough still pending user confirmation.
+# Phase 6 COMPLETE (2026-09-24) — original bug confirmed fixed live, plus 3 bugs found and
+# fixed along the way (see "Phase 6 — COMPLETE" section).
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -216,7 +216,7 @@ alternative. This plan is not overriding a considered decision.
 | 3 — RLS verification | ✅ **COMPLETE (2026-09-24)** — see "Phase 3 — COMPLETE" section below | Phase 1 |
 | 4 — Frontend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 4 — COMPLETE" section below | Phase 2 |
 | 5 — Tenant management UI | ✅ **COMPLETE (2026-09-24)** — see "Phase 5 — COMPLETE" section below | Independent, can run anytime |
-| 6 — Verification | 🔶 **IN PROGRESS (2026-09-24)** — see "Phase 6 — IN PROGRESS" section below | All above |
+| 6 — Verification | ✅ **COMPLETE (2026-09-24)** — see "Phase 6 — COMPLETE" section below | All above |
 
 **One phase per session**, same discipline as every other plan this session referenced. Do not
 start Phase 2 in the same session as Phase 1, etc., unless explicitly told otherwise.
@@ -519,7 +519,7 @@ absent for that tenant specifically.
 
 ---
 
-## Phase 6 — IN PROGRESS (2026-09-24)
+## Phase 6 — COMPLETE (2026-09-24)
 
 Started the planned re-verification walkthrough. The user's first live check (Settings → LLM
 Providers as `avi`/`admin`) immediately surfaced a real, unrelated bug: a provider row named
@@ -567,12 +567,69 @@ rather than chased down, per this session's scope. The pre-existing, already-doc
 `TestRLS_TwoTenantFullIsolation`/`TestRLS_CatalogVerification` schema-drift failures from Phase 3
 still fail, unchanged — not caused by or related to this fix.
 
-**Still outstanding for Phase 6 (not yet done):** the actual UI walkthrough this phase exists for
-— confirming Settings → LLM Providers/System Agents render correctly for `avi`/`admin` (Phase 4's
-claim) and that `stage2-graph-llm-condition-v2`'s (or an equivalent bootstrap-tenant app's) debug
-panel General mode shows a usable key (the original bug this whole plan started from). The user
-has started this check live; continuing once they report back what they see next (past the
-`rlsp3-*` provider, which is now gone after this fix and a page refresh).
+**Bug 2, found continuing the walkthrough: "Save allowed models" → 404.** After the leaked-row fix,
+the user tried Settings → LLM Providers → Save allowed models and got a plain 404. Traced by
+replaying the exact `PUT /admin/my/llm-providers/anthropic` call directly (`them-frontend`'s Node,
+against `them-go-bridge` over the Docker network, with a freshly-issued admin JWT) — reproduced the
+404 outside the browser, ruling out a frontend bug. Added a temporary debug log inside
+`UpsertForTenant`'s `service.ErrNotFound` branch, rebuilt+restarted `them-go-bridge`, and the *exact
+same request with no functional code change* returned 200. Root cause: **`them-go-bridge` had not
+been rebuilt/restarted since an earlier commit this session** (very likely Phase 2's `dal/
+llm_providers.go` fix, which changed `ListProvidersForTenant`/`GetProviderBaseURLs` off the old
+`tenant_id IS NULL` check) — the container's image timestamp looked recent, but its binary was
+stale relative to the actual committed source. Removed the debug log (zero net diff on
+`service/llm_providers.go` — confirmed via `git diff`), rebuilt clean, restarted — the same PUT now
+returns 200 and persists `allowed_models` correctly. No code fix needed here; the lesson is
+operational (see `docs/LESSONS.md`).
+
+**Bug 3, found continuing the walkthrough: `stage2-graph-llm-condition-v2`'s debug panel → `validate:
+[unresolved_agent] agent node has no resolved agent_id`.** This is the exact, already-documented
+"known limitation" from `docs/APP_CANVAS_DEBUG_PLAN.md`'s Phase 5 section: an agent-kind canvas
+node's real `agents.id` is only stamped into the definition JSON (`_resolved_agent_ids`) by
+`PublishDefinition` at publish time — a draft that has never been published has no such stamp, so
+debug (which intentionally runs the draft directly, no publish required) fails for any canvas that
+has an agent node, even though the whole point of debug mode is to test unpublished work. The user
+correctly rejected "just publish it to unblock debugging" as unacceptable process, and asked for the
+real fix: **resolve the agent live, at debug-start time, instead of only at publish time.**
+
+Implemented in `go/internal/admin/service/appflow_debug.go`: new `AppFlowDebugService.
+resolveDraftAgentIDs`, called right after `appflow.ResolveAgentByInstanceID` (which reads the
+publish-time stamp) and before `appflow.Compile`. For every `kind=agent` component in the draft
+that the stamp didn't already cover, it calls the *exact same* `RegistryResolver.
+ResolveForPublish` + `AgentExists` check `PublishDefinition` itself uses (`internal/admin/service/
+publish.go`) — same server-side, tamper-proof lookup, just invoked now instead of only at a publish
+that may never happen. `NewAppFlowDebugService` gained a `RegistryResolver` parameter (nil-tolerant
+— a nil registry preserves the exact prior behavior, `unresolved_agent`); `NewAppFlowDebugHandler`
+and its `router.go` call site were updated to pass the same `registry.NewResolver(&
+registryQuerierAdapter{dbq})` instance `NewDefinitionsHandlerWithRegistry` already constructs.
+
+9 new tests in `go/internal/admin/service/appflow_debug_agent_resolve_test.go`: nil-registry no-op
+(old behavior preserved), live resolution of an unpublished agent node, an already-stamped
+instance_id is never re-resolved or overwritten, a registry resolve failure or missing `agents` row
+leaves the node correctly unresolved (falls through to the same `unresolved_agent` message), a real
+`AgentExists` DB error propagates rather than being swallowed, non-agent components never trigger a
+registry call, and two full `Start`-level end-to-end tests — one proving the exact previously-broken
+scenario (unpublished agent-node draft) now succeeds, one proving the nil-registry fallback still
+fails exactly as before. `go build ./...` + `go vet ./...` clean. Full `go test ./...` — every
+package passes, including `internal/a2a` (confirming Phase 6's earlier full-suite timeout there was
+a one-off environmental flake, not a real regression — see `go/TEST_INDEX.md`'s new row).
+
+**Verified live against the real app, not just tests:** rebuilt + restarted `them-go-bridge`,
+replayed the exact `POST /admin/applications/{id}/debug/start` call for
+`stage2-graph-llm-condition-v2` (still unpublished, real draft, no changes made to it) — first
+attempt correctly asked for the entry point's LLM node's own `llm_overrides` entry (progressed past
+agent resolution entirely, no `unresolved_agent`), second attempt with a real `llm_overrides` entry
+but no `key_id` correctly reported "no usable key," third attempt with the bootstrap tenant's real
+`MainKey` id returned **200, a real run_id** — the exact original bug this whole plan started from,
+confirmed fixed end-to-end without ever publishing the app.
+
+**Original Phase 6 goal — confirmed:** both halves. `avi`/`admin`'s Settings → LLM Providers now
+shows the bootstrap tenant's own 5 providers + MainKey via the tenant self-service screen (Phase 4);
+`stage2-graph-llm-condition-v2`'s debug panel can now actually start a run using that same key,
+without publishing (this phase's own fix, on top of Phase 4's). Three real, previously-unknown bugs
+found and fixed along the way, none of them regressions from Phases 1-5's own commits — see
+`docs/LESSONS.md` for the write-up on why each surfaced only under live use, not under any automated
+test that existed before this session.
 
 ---
 

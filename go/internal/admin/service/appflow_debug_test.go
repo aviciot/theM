@@ -83,6 +83,11 @@ type fakeAppFlowDebugDAL struct {
 	providerErr error
 	key         dal.LLMProviderKey
 	keyErr      error
+
+	// AgentExists fakes — see the AgentExists method below for defaults.
+	agentExists    bool
+	agentExistsSet bool
+	agentExistsErr error
 }
 
 func (f *fakeAppFlowDebugDAL) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
@@ -103,6 +108,22 @@ func (f *fakeAppFlowDebugDAL) GetLLMProviderKey(_ context.Context, _ int64, _ *s
 
 func (f *fakeAppFlowDebugDAL) GetDefaultLLMProviderKey(_ context.Context, _ int64, _ *string) (dal.LLMProviderKey, error) {
 	return f.key, f.keyErr
+}
+
+// AgentExists is unused by every existing test in this file (all pass a nil
+// registry to NewAppFlowDebugService, so resolveDraftAgentIDs never calls
+// it) — defaults to "exists" so any incidental call is harmless. Set
+// agentExists/agentExistsErr to override for a specific test. See
+// appflow_debug_agent_resolve_test.go for the tests that actually exercise
+// this.
+func (f *fakeAppFlowDebugDAL) AgentExists(_ context.Context, _ string) (bool, error) {
+	if f.agentExistsErr != nil {
+		return false, f.agentExistsErr
+	}
+	if f.agentExistsSet {
+		return f.agentExists, nil
+	}
+	return true, nil
 }
 
 // fakeAppFlowDebugCredentialStore records every Set call — used to assert
@@ -160,7 +181,7 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 	}
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
 	require.NoError(t, err)
@@ -186,7 +207,7 @@ func TestAppFlowDebugService_Start_StepModeTrue_PropagatesToWorkflowInput(t *tes
 	}
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, true)
 	require.NoError(t, err)
@@ -205,7 +226,7 @@ func TestAppFlowDebugService_Start_ExpiresAt_IsStartedAtPlusDebugRunMaxLifetime(
 	}
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	before := time.Now()
 	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
@@ -223,7 +244,7 @@ func TestAppFlowDebugService_Start_AppNotFound(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{appErr: pgx.ErrNoRows}
 	lc := &fakeAppFlowDebugStarter{}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil, false)
 	require.Error(t, err)
@@ -236,7 +257,7 @@ func TestAppFlowDebugService_Start_EPSlugNotFound(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{app: draftApp("other-slug")}
 	lc := &fakeAppFlowDebugStarter{}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil, false)
 	require.Error(t, err)
@@ -248,7 +269,7 @@ func TestAppFlowDebugService_Start_NoDraftSaved(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{app: draftApp("chat"), draftErr: pgx.ErrNoRows}
 	lc := &fakeAppFlowDebugStarter{}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hi", 7, nil, false)
 	require.Error(t, err)
@@ -264,7 +285,7 @@ func TestAppFlowDebugService_Start_EPMissingFromCompiledDraft(t *testing.T) {
 	}
 	lc := &fakeAppFlowDebugStarter{}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	// minimalDraftDoc only defines entry point "chat", but the application row
 	// (draftApp) is stubbed with a matching slug — force a mismatch by asking
@@ -293,7 +314,7 @@ func TestAppFlowDebugService_Start_MissingRequiredOverride_FailsBeforeAdmit(t *t
 	d := twoLLMDraftDAL()
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1"}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	// Only llm_1 has an override — llm_2 does not.
 	overrides := map[string]LLMOverrideInput{
@@ -312,7 +333,7 @@ func TestAppFlowDebugService_Start_CustomMode_UsesLiteralKey_PerNode(t *testing.
 	d := twoLLMDraftDAL()
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	overrides := map[string]LLMOverrideInput{
 		"llm_1": {Mode: "custom", Provider: "anthropic", Model: "claude-haiku-4-5-20251001", APIKey: "sk-node-1"},
@@ -344,7 +365,7 @@ func TestAppFlowDebugService_Start_GeneralMode_NoUsableKey_FailsClearly(t *testi
 	d.providerErr = pgx.ErrNoRows // "no anthropic provider configured for this tenant"
 	lc := &fakeAppFlowDebugStarter{}
 	credStore := &fakeAppFlowDebugCredentialStore{}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	overrides := map[string]LLMOverrideInput{
 		"llm_1": {Mode: "general", Provider: "anthropic"},
@@ -364,7 +385,7 @@ func TestAppFlowDebugService_Start_CredentialStoreWriteFails_SurfacesError(t *te
 	d := twoLLMDraftDAL()
 	lc := &fakeAppFlowDebugStarter{handle: &execution.ExecutionHandle{RunID: "run-1", EPConfig: &epconfig.EPConfig{TenantID: "tenant-1"}}}
 	credStore := &fakeAppFlowDebugCredentialStore{err: assert.AnError}
-	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"))
+	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
 	overrides := map[string]LLMOverrideInput{
 		"llm_1": {Mode: "custom", Provider: "anthropic", APIKey: "sk-test"},

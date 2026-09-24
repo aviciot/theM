@@ -328,16 +328,25 @@ Research before starting Phase 5 found the plan above assumed two things that do
   400-line guideline — new debug-state styling and Run/Debug controls land in new sibling files,
   not added to those two directly.
 
-**Known limitation, found while writing Phase 5's service-layer tests:** a draft canvas containing
-agent nodes cannot be debugged until it has been **published at least once**.
+**Known limitation, found while writing Phase 5's service-layer tests — FIXED 2026-09-24
+(Platform-as-Tenant Phase 6, `docs/PLATFORM_AS_TENANT_PLAN.md`):** a draft canvas containing agent
+nodes could not be debugged until it had been **published at least once**.
 `appflow.ResolveAgentByInstanceID` reads a `_resolved_agent_ids` map that is only stamped into the
 definition JSON by `PublishDefinition` at publish time — a draft that has never been published has
-no such stamp, so `Validate` correctly rejects it with `unresolved_agent`, even though "debug the
+no such stamp, so `Validate` correctly rejected it with `unresolved_agent`, even though "debug the
 draft directly, no publish required" was this phase's whole design decision. Flows made entirely of
-inline nodes (LLM, Condition, Router, etc. — no agent components) are unaffected, since they need no
-such resolution. Not fixed in Phase 5 — flagged for a later session; a fix would need either
-stamping `_resolved_agent_ids` on every save (not just publish) or having the debug-start endpoint
-resolve agent instance IDs itself from the live component registry instead of trusting the stamp.
+inline nodes (LLM, Condition, Router, etc. — no agent components) were unaffected, since they need
+no such resolution.
+
+**Fixed** by `AppFlowDebugService.resolveDraftAgentIDs` (`internal/admin/service/
+appflow_debug.go`) — resolves any agent-kind component the publish-time stamp didn't already cover,
+live, using the exact same `RegistryResolver.ResolveForPublish` + `AgentExists` pair
+`PublishDefinition` itself uses (same server-side, tamper-proof lookup, just invoked at debug-start
+time too, not only at publish). No stamping-on-every-save needed — this took the second of the two
+options originally proposed here. See `docs/PLATFORM_AS_TENANT_PLAN.md`'s "Phase 6 — COMPLETE"
+section for the live end-to-end verification (a real, still-unpublished app's debug/start call went
+from `unresolved_agent` to a real run, without ever publishing it) and `docs/LESSONS.md` for why
+this was a real design gap and not just an acceptable documented limitation.
 
 ---
 

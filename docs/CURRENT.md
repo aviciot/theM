@@ -1,11 +1,14 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 IN PROGRESS -- live UI walkthrough found a
-# real bug: Phase 3's RLS integration test leaked fixture rows into the live DB on every run
-# because of a t.Cleanup-vs-defer ordering mistake (pool closed before its own cleanup delete
-# could use it). Fixed in go/internal/db/platform_as_tenant_rls_integration_test.go; leaked rows
-# deleted; full go test ./... clean except a confirmed-unrelated internal/a2a timeout (new flaky
-# row in TEST_INDEX.md). docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 5 done + 6 in progress. Next:
-# finish the Phase 6 UI walkthrough (Settings screens + App Canvas debug panel).)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 COMPLETE -- the plan's original bug
+# confirmed fixed live. Along the way, found + fixed 3 real bugs: (1) Phase 3's RLS integration
+# test leaked fixture rows into the live DB every run (t.Cleanup-vs-defer ordering mistake,
+# go/internal/db/platform_as_tenant_rls_integration_test.go), (2) them-go-bridge was running a
+# stale binary despite a recent-looking image (rebuild+restart fixed it, no code change needed,
+# see docs/LESSONS.md), (3) App Canvas Debug Mode's long-standing "must publish before debugging
+# an agent node" limitation was a real design gap, now fixed by resolving agent IDs live at
+# debug-start time (go/internal/admin/service/appflow_debug.go's new resolveDraftAgentIDs) instead
+# of only at publish time -- see docs/APP_CANVAS_DEBUG_PLAN.md's updated Phase 5 section. All 6
+# Platform-as-Tenant phases now done. Next: pick a new thread -- no plan doc currently active.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -62,17 +65,40 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 5 of 6 COMPLETE.**
-Read that plan doc end to end before continuing — especially the "Current-state map" section
-(researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE"
-through "Phase 5 — COMPLETE" sections for exactly what was and wasn't done in each.
+**Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`) is DONE — all 6 of 6 phases complete.**
+No active thread right now — next session should pick a new task, or start a new plan doc for
+whatever's next. Read `docs/PLATFORM_AS_TENANT_PLAN.md` end to end if touching anything
+`llm_providers`/`llm_provider_keys`/system-agent-role/debug-mode related, even though the plan
+itself is closed — it has the full current-state map for how those pieces fit together now.
 
-**Next: Phase 6 (verification) — NOT started, and the last phase of this plan.** Re-run the App
-Canvas Debug Mode walkthrough that originally surfaced this whole plan — confirm
-`stage2-graph-llm-condition-v2`'s debug panel General mode now shows the bootstrap tenant's own
-keys/models correctly. Depends on all prior phases (all now done). This phase is pure
-verification — no code changes expected unless it finds a new bug, in which case scope that
-finding as its own follow-up rather than silently expanding Phase 6.
+**Phase 6 (verification) is done** — re-ran the App Canvas Debug Mode walkthrough that originally
+surfaced this whole plan, live, with the user. Confirmed both halves of the original bug are
+fixed: Settings → LLM Providers now shows the bootstrap tenant's own 5 providers + MainKey via the
+tenant self-service screen (Phase 4's fix), and `stage2-graph-llm-condition-v2`'s debug panel can
+now actually start a run using that key — verified with a real `POST .../debug/start` call
+against the live stack, `200` + a real `run_id`, on the app's still-unpublished draft.
+
+**Three real bugs found and fixed along the way, none of them Phase 1-5 regressions:**
+1. Phase 3's own RLS integration test (`go/internal/db/platform_as_tenant_rls_integration_test.go`)
+   was leaking `rlsp3-*` fixture rows into the live database on every run — a `t.Cleanup`-vs-`defer`
+   ordering bug (the pool closed before its own cleanup delete could use it). Fixed by moving the
+   `Close` into `mustSuperPool` via `t.Cleanup` instead of a caller-side `defer`.
+2. `them-go-bridge` was running a stale binary — a recent-looking image ≠ a rebuilt one. Rebuilding
+   + restarting fixed a "Save allowed models → 404" symptom with **zero code change**. See
+   `docs/LESSONS.md`'s new entry — don't trust live/manual verification without rebuilding first.
+3. App Canvas Debug Mode's long-standing "must publish before debugging a canvas with an agent
+   node" limitation (`docs/APP_CANVAS_DEBUG_PLAN.md`) was a real design gap, not an acceptable
+   documented trade-off — the user pushed back on "just publish it" as an unacceptable workflow.
+   Fixed by resolving agent IDs live at debug-start time
+   (`go/internal/admin/service/appflow_debug.go`'s new `resolveDraftAgentIDs`), reusing the exact
+   same server-side registry lookup `PublishDefinition` already used — no publish required anymore.
+   9 new tests (`appflow_debug_agent_resolve_test.go`).
+
+`go build ./...` + `go vet ./...` clean. Full `go test ./...` — every package passes, including
+`internal/a2a` (an earlier full-suite run in this same session had it time out; re-run clean,
+confirmed a one-off environmental flake, not a regression — new row in `go/TEST_INDEX.md`).
+`them-go-bridge` rebuilt and restarted twice this session (once to fix bug 2 above, once after the
+agent-resolution fix); confirmed healthy both times.
 
 **Phase 5 (tenant management UI) is done** — `/admin/tenants` (`frontend/src/app/admin/tenants/page.tsx`)
 now shows an amber "Platform" badge (shield icon, tooltip "the-M's own operating tenant — cannot

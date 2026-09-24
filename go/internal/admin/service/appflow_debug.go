@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/debugcred"
 	"github.com/aviciot/them/internal/execution"
+	"github.com/aviciot/them/internal/registry"
 )
 
 // AppFlowDebugStarter is the minimal execution.Lifecycle surface this service
@@ -28,6 +30,10 @@ type AppFlowDebugStarter interface {
 type AppFlowDebugDAL interface {
 	GetApplication(ctx context.Context, tenantID, id string) (dal.Application, error)
 	GetLatestDraftDefinition(ctx context.Context, tenantID, appID string) (dal.AppDefinition, error)
+	// AgentExists backs resolveDraftAgentIDs' live agent lookup — same check
+	// PublishDefinition uses before trusting a resolved component_definitions
+	// row also has a matching agents row.
+	AgentExists(ctx context.Context, id string) (bool, error)
 	AppFlowDebugCredentialDAL
 }
 
@@ -48,13 +54,22 @@ type AppFlowDebugService struct {
 	lc        AppFlowDebugStarter
 	credStore AppFlowDebugCredentialStore
 	fernetKey []byte
+	// registry resolves agent instance_ids that have no _resolved_agent_ids
+	// stamp yet (i.e. the draft has never been published) — see
+	// resolveDraftAgentIDs. nil is tolerated (tests, or a deployment with no
+	// registry wired) — an unpublished draft with agent nodes will then still
+	// report unresolved_agent, same as before this field existed.
+	registry RegistryResolver
 }
 
 // NewAppFlowDebugService creates an AppFlowDebugService. fernetKey decrypts
 // General-mode LLM provider keys — pass the same key internal/admin's
 // resolveSystemAgentRole already uses (see appflow_debug_credentials.go).
-func NewAppFlowDebugService(db AppFlowDebugDAL, lc AppFlowDebugStarter, credStore AppFlowDebugCredentialStore, fernetKey []byte) *AppFlowDebugService {
-	return &AppFlowDebugService{dal: db, lc: lc, credStore: credStore, fernetKey: fernetKey}
+// reg is the same RegistryResolver DefinitionService uses to resolve agent
+// components at publish time — passing nil disables live agent resolution
+// for debug (unpublished drafts with agent nodes will report unresolved_agent).
+func NewAppFlowDebugService(db AppFlowDebugDAL, lc AppFlowDebugStarter, credStore AppFlowDebugCredentialStore, fernetKey []byte, reg RegistryResolver) *AppFlowDebugService {
+	return &AppFlowDebugService{dal: db, lc: lc, credStore: credStore, fernetKey: fernetKey, registry: reg}
 }
 
 // DebugStartResult is returned to the caller on a successful debug start.
@@ -105,6 +120,14 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 
 	agentByInstanceID, err := appflow.ResolveAgentByInstanceID(draft.Definition)
 	if err != nil {
+		return DebugStartResult{}, unprocessable(fmt.Sprintf("resolve agents: %v", err))
+	}
+	// A draft that has never been published has no _resolved_agent_ids stamp
+	// (that's only written by PublishDefinition) — resolve any agent-kind
+	// component live, the same server-side registry lookup publish uses, so
+	// debug never requires publishing first (docs/APP_CANVAS_DEBUG_PLAN.md's
+	// "known limitation, found while writing Phase 5's service-layer tests").
+	if err := s.resolveDraftAgentIDs(ctx, tenantID, draft.Definition, agentByInstanceID); err != nil {
 		return DebugStartResult{}, unprocessable(fmt.Sprintf("resolve agents: %v", err))
 	}
 	spec, err := appflow.Compile(draft.Definition, agentByInstanceID)
@@ -179,4 +202,51 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 	}
 
 	return DebugStartResult{RunID: handle.RunID, ExpiresAt: startedAt.Add(appflow.DebugRunMaxLifetime)}, nil
+}
+
+// resolveDraftAgentIDs fills agentByInstanceID with a live registry lookup for
+// every agent-kind component in defJSON that ResolveAgentByInstanceID's
+// publish-time stamp didn't already cover (i.e. this draft has never been
+// published, or was edited since). Mutates agentByInstanceID in place;
+// existing entries are never overwritten, so a stamp from a real prior
+// publish still wins if present.
+//
+// This intentionally reuses the exact same server-side lookup
+// (RegistryResolver.ResolveForPublish) that PublishDefinition uses to build
+// _resolved_agent_ids — never a client-supplied ID — so a debug run gets the
+// identical tamper-proof guarantee a published run has, just computed now
+// instead of at a publish that may never happen.
+func (s *AppFlowDebugService) resolveDraftAgentIDs(ctx context.Context, tenantID string, defJSON []byte, agentByInstanceID map[string]string) error {
+	if s.registry == nil {
+		return nil
+	}
+	var doc struct {
+		Components []componentInstance `json:"components"`
+	}
+	if err := json.Unmarshal(defJSON, &doc); err != nil {
+		return fmt.Errorf("parse definition: %w", err)
+	}
+	for _, comp := range doc.Components {
+		if comp.DefinitionRef.Kind != registry.KindAgent {
+			continue
+		}
+		if _, already := agentByInstanceID[comp.InstanceID]; already {
+			continue
+		}
+		cd, err := s.registry.ResolveForPublish(ctx, tenantID, comp.DefinitionRef, comp.DefinitionID)
+		if err != nil {
+			// Leave unresolved — appflow.Validate will report unresolved_agent
+			// with a clear message, same as an actually-missing agent today.
+			continue
+		}
+		exists, err := s.dal.AgentExists(ctx, cd.ID)
+		if err != nil {
+			return fmt.Errorf("check agent %q: %w", comp.InstanceID, err)
+		}
+		if !exists {
+			continue
+		}
+		agentByInstanceID[comp.InstanceID] = cd.ID
+	}
+	return nil
 }

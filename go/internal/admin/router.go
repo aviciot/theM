@@ -207,7 +207,7 @@ func BuildRouter(
 				// (tenant-scoped). Nil when Temporal isn't configured — no route
 				// mounted rather than a handler that always 503s.
 				if appFlowDebugLifecycle != nil {
-					debugApp := NewAppFlowDebugHandler(dbq, appFlowDebugLifecycle, debugcred.New(redis), fernetKey, temporalSig)
+					debugApp := NewAppFlowDebugHandler(dbq, appFlowDebugLifecycle, debugcred.New(redis), fernetKey, temporalSig, registry.NewResolver(&registryQuerierAdapter{dbq}))
 					tenantScoped.Post("/applications/{id}/debug/start", debugApp.Start)
 					tenantScoped.Post("/applications/{id}/debug/{run_id}/step", debugApp.Step)
 				}
