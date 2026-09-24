@@ -170,9 +170,6 @@ export function AppFlowDebugPanel({
             ✗ {debug.error}
           </span>
         )}
-        {!debug.error && debug.done && (
-          <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Run complete</span>
-        )}
       </div>
       <div style={{ marginTop: 6, color: '#475569', fontSize: '10px' }}>
         Runs the saved draft directly on the isolated debug worker pool — no publish required.
@@ -181,6 +178,22 @@ export function AppFlowDebugPanel({
         the run is terminated and any per-node credentials are cleared after that, or immediately
         once the run finishes.
       </div>
+
+      {!debug.error && debug.done && (
+        // A prominent completion banner, not just small toolbar text — added
+        // after a live walkthrough where a fast run (an echo agent completing
+        // in single-digit milliseconds) finished with no clear signal to the
+        // user that the flow had actually reached its end.
+        <div style={{
+          marginTop: 10, padding: '8px 12px', borderRadius: 8,
+          background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.4)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#4ade80' }}>check_circle</span>
+          <span style={{ color: '#4ade80', fontSize: '13px', fontWeight: 700 }}>Debug run complete</span>
+          <span style={{ color: '#94a3b8', fontSize: '11px' }}>— every reached node finished. Click a node to inspect its output.</span>
+        </div>
+      )}
 
       {credentialSpecs.length > 0 && (
         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>

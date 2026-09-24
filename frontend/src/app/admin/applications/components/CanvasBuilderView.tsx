@@ -175,6 +175,7 @@ export function CanvasBuilderView({
   // decorateNodes (see useAppFlowDebugSession.ts).
   const appFlowDebug = useAppFlowDebugSession({ appId: app.id, nodes });
   const debugDecoratedNodes = useMemo(() => appFlowDebug.decorateNodes(nodes), [nodes, appFlowDebug]);
+  const debugDecoratedEdges = useMemo(() => appFlowDebug.decorateEdges(edges), [edges, appFlowDebug]);
 
 
   useEffect(() => {
@@ -559,7 +560,7 @@ export function CanvasBuilderView({
             <ReactFlowProvider>
               <CanvasInnerWithDrop
                 nodes={debugDecoratedNodes}
-                edges={edges}
+                edges={debugDecoratedEdges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={handleConnect}

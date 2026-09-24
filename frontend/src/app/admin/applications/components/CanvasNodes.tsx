@@ -164,20 +164,23 @@ export function OrchestratorNode({ id, data, selected }: { id: string; data: Orc
 }
 
 // ── AgentNode ─────────────────────────────────────────────────────────────────
-export function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+export function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string; _debug?: AppFlowNodeDebugInfo }; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
   const dir = useAppLayoutDir();
   const targetPos = dir === 'LR' ? Position.Left : Position.Top;
   const isInternal = data.tags?.includes('internal') ?? false;
   const hasError = data._error || data._shake;
-  const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green;
+  const dbgState = data._debug?.state;
+  const dbgAccent = dbgState ? debugAccent[dbgState] : null;
+  const dbgGlow = dbgState ? debugGlow[dbgState] : null;
+  const accent = dbgAccent ?? (hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green);
   const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(74,222,128,0.35)';
   const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(74,222,128,0.10)';
   const displayName = (data as unknown as Record<string, unknown>).display_name as string | undefined || data.displayName;
   const icon = data.icon || agentIconForLibrary({ slug: data.name, icon: data.icon } as any);
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
-      title={data._errorMsg || undefined}>
+      title={data._debug?.error || data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -200,8 +203,8 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
           width: 56, height: 56, borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
-          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
-          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          border: dbgAccent ? `2px solid ${dbgAccent}` : selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: dbgGlow ?? (selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none'),
           transition: 'all 0.18s ease',
         }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
@@ -210,6 +213,15 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
         <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
           {displayName}
         </div>
+        {dbgState === 'done' && data._debug?.detail && (
+          <div style={{ fontSize: 9, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data._debug.detail}</div>
+        )}
+        {dbgState === 'running' && (
+          <div style={{ fontSize: 9, color: '#60a5fa' }}>running…</div>
+        )}
+        {dbgState === 'paused' && (
+          <div style={{ fontSize: 9, color: '#c084fc' }}>⏸ paused</div>
+        )}
       </div>
     </div>
   );

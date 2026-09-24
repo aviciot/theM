@@ -1295,3 +1295,41 @@ where every neighbor passes real data is a strong signal something got dropped, 
 case is special. Also: a comment stating "we deliberately don't capture X here" is worth
 re-examining the first time a feature (like a debug inspector) is actually built around needing X
 — a decision that made sense in isolation can become the wrong one once its consumer exists.
+
+---
+
+## A canvas node type was missing from a decoration function's allowlist since it was first written (found 2026-09-24)
+
+**Symptom:** continuing the same live App Canvas Debug Mode walkthrough (right after the previous
+two fixes), the user stepped through a real debug run and reported "no response from agent in
+debug" — an agent-kind canvas node showed absolutely no visual change at all: no border color, no
+glow, no output, nothing, even though the backend had genuinely executed it (confirmed via
+`them.run_steps`: real output, correct timing, `status: completed`).
+
+**Root cause:** `useAppFlowDebugSession.ts`'s `decorateNodes` — the function that attaches live
+`_debug` state onto canvas nodes for `CanvasNodes.tsx` to render — filtered on `n.type !==
+'inline' && n.type !== 'flowControl'`, silently skipping everything else. Agent-kind nodes use
+`type === 'agent'`, a third node type that was simply never added to that allowlist, going all the
+way back to when this function was first written (Phase 5). On top of that, `AgentNode` itself
+had no rendering branch for `_debug` at all — even if the data had reached it, there was nothing
+to draw. Two bugs stacked in the same direction (data never attached, and no renderer to use it if
+it had been), so the node looked completely inert regardless of whether the run reached it.
+
+**Why it went unnoticed until now:** every one of this plan's — and the parent App Canvas Debug
+Mode plan's — prior phases explicitly recorded "not live-verified, no browser-automation tool
+available" as a standing limitation. This was the first real interactive click-through session
+either plan ever got. A positive/negative allowlist check (`type !== X && type !== Y`) silently
+drops any future type C without ever raising an error — it just quietly does nothing for it,
+which is exactly the shape of bug that only surfaces the first time someone actually looks at type
+C's behavior with their own eyes.
+
+**Fix:** added `'agent'` to `decorateNodes`'s allowlist; added the same border/glow/state-label
+overlay `FlowControlNode`/`InlineNode` already had to `AgentNode` (`CanvasNodes.tsx`) — reusing
+the existing `debugAccent`/`debugGlow` maps rather than inventing new styling.
+
+**Watch for:** an explicit allowlist of type strings (`type === 'a' || type === 'b'`) is a good
+pattern for "only these specific kinds get this treatment" — but it is only as complete as
+whoever wrote it remembered every kind that existed *at the time*. When a new node/component type
+is added to a canvas system later, grep every existing allowlist-style check across the type's
+sibling handling (decoration, validation, serialization) rather than assuming "it'll just fall
+through safely" — a silent no-op is much harder to notice than an error would have been.

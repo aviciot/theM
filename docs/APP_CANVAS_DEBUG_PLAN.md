@@ -806,3 +806,41 @@ test-environment proof above.
 
 **Plan status: all 6 phases complete**, including this post-completion review fix. No further
 phases planned on this thread unless new requirements surface.
+
+---
+
+## Post-completion follow-up: agent-node debug visibility + step-run UX (2026-09-24)
+
+Found live during Platform-as-Tenant Phase 6's re-verification walkthrough — the first real
+browser click-through this whole plan ever got (every prior phase's "not live-verified" note is
+why these went unnoticed until now).
+
+**Bug: agent-kind nodes never received any `_debug` decoration at all.** `useAppFlowDebugSession.
+ts`'s `decorateNodes` only applied `_debug` to `type === 'inline'` or `type === 'flowControl'`
+canvas nodes — `type === 'agent'` was missing from that list since the function was first written
+(Phase 5). A real debug run's agent node completed successfully on the backend (confirmed via
+`them.run_steps` — real output, correct timing) but the canvas showed **no state change
+whatsoever**: no border color, no glow, no output text, nothing — `AgentNode` (`CanvasNodes.tsx`)
+didn't even have a rendering path for `_debug` to begin with. Fixed both: `decorateNodes` now
+includes `type === 'agent'`, and `AgentNode` got the same border/glow/label overlay
+`FlowControlNode`/`InlineNode` already had.
+
+**UX gap 1: no visual indication of which wire was actually taken.** The user asked for this
+directly after watching a condition branch resolve with no sense of which path the run actually
+followed. Added `decorateEdges` (`useAppFlowDebugSession.ts`) — highlights (animated, green) any
+edge whose source node has run, matching the taken branch label (`sourceHandle`/`data.label`
+against the source node's own `node_done` detail, e.g. `branch=true`) for condition/router edges,
+or unconditionally for a plain single-target edge. Wired into `CanvasBuilderView.tsx` alongside
+the existing node decoration.
+
+**UX gap 2: no clear "the flow is done" signal.** A completion state already existed (`debug.done`
+→ small "✓ Run complete" text in the toolbar row) but was easy to miss, especially for a fast run
+(an `a2a_echo` agent completes in single-digit milliseconds — nothing to visually track mid-flight,
+so the run appears to finish "instantly" with no clear before/after). Replaced with a full-width
+banner (`AppFlowDebugPanel.tsx`) that's actually hard to miss.
+
+**Verified:** `npx tsc --noEmit` — 0 errors. No Go files touched, no Go test run needed. Not yet
+re-verified live in a browser click-through after these specific changes (the bug they fix WAS
+found via a live click-through; these fixes themselves inherit the same "recommend a follow-up
+browser check" caveat every phase of this plan has carried). See `docs/LESSONS.md` for the
+agent-node decoration bug's own write-up.

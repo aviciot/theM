@@ -4,7 +4,7 @@ import { themApi } from '@/lib/api';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import { getBridgeWs } from '../../playground/playgroundTypes';
 import type { AppFlowDebugNodeState, AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
-import type { Node } from '@xyflow/react';
+import type { Node, Edge } from '@xyflow/react';
 
 // useAppFlowDebugSession — App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md
 // Phase 5). Unlike the agent builder's useDebugSession.ts (a full client-side
@@ -262,13 +262,18 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     }));
   }, []);
 
-  // Decorates inline/flow-control nodes with `_debug` for CanvasNodes.tsx's
-  // overlay — kept here (not inline in CanvasBuilderView.tsx) since that file
-  // is already over the 400-line file-size guideline.
+  // Decorates inline/flow-control/agent nodes with `_debug` for
+  // CanvasNodes.tsx's overlay — kept here (not inline in
+  // CanvasBuilderView.tsx) since that file is already over the 400-line
+  // file-size guideline. Agent nodes were missing from this list entirely
+  // until Platform-as-Tenant Phase 6's live walkthrough found it: an
+  // agent-kind node completed a real debug run but never showed any state
+  // change at all on the canvas — not a timing issue, decorateNodes simply
+  // never applied `_debug` to `type === 'agent'` nodes in the first place.
   const decorateNodes = useCallback((baseNodes: Node[]): Node[] => {
     if (!debug.active) return baseNodes;
     return baseNodes.map(n => {
-      if (n.type !== 'inline' && n.type !== 'flowControl') return n;
+      if (n.type !== 'inline' && n.type !== 'flowControl' && n.type !== 'agent') return n;
       const state = debug.nodeStates[n.id];
       if (!state) return n;
       return {
@@ -277,6 +282,40 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
           ...n.data,
           _debug: { state, detail: debug.nodeDetails[n.id], error: debug.nodeErrors[n.id] },
         },
+      };
+    });
+  }, [debug]);
+
+  // Decorates edges so the taken path lights up as the run progresses — the
+  // user asked for this explicitly after a live walkthrough where a
+  // completed run gave no visual sense of which wire was actually followed.
+  // An edge is "active" once its source node has reported real progress
+  // (running/paused/done/error — anything past idle) AND, for a
+  // condition/router edge carrying a branch label (sourceHandle
+  // "ctrl-out-{label}" or data.label — see CanvasHelpers.ts's canvasToDoc),
+  // that label matches the source node's own node_done detail
+  // ("branch=<label>"). A plain (unlabeled) edge has only one candidate
+  // target, so no branch match is needed — it lights up as soon as its
+  // source has run at all.
+  const decorateEdges = useCallback((baseEdges: Edge[]): Edge[] => {
+    if (!debug.active) return baseEdges;
+    return baseEdges.map(e => {
+      const sourceState = debug.nodeStates[e.source];
+      if (!sourceState || sourceState === 'idle' || sourceState === 'pending') return e;
+      const branchLabel = e.sourceHandle?.startsWith('ctrl-out-')
+        ? e.sourceHandle.slice('ctrl-out-'.length)
+        : (e.data as Record<string, unknown> | undefined)?.label as string | undefined;
+      if (branchLabel) {
+        const detail = debug.nodeDetails[e.source] ?? '';
+        const takenBranch = detail.startsWith('branch=') ? detail.slice('branch='.length) : undefined;
+        if (takenBranch !== branchLabel) return e;
+      }
+      const active = sourceState === 'done' || sourceState === 'running' || sourceState === 'paused';
+      if (!active) return e;
+      return {
+        ...e,
+        animated: true,
+        style: { ...e.style, stroke: '#4ade80', strokeWidth: 2.5 },
       };
     });
   }, [debug]);
@@ -295,5 +334,6 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     step,
     reset,
     decorateNodes,
+    decorateEdges,
   };
 }

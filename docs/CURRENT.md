@@ -1,18 +1,27 @@
 # Current Session State — the-M
 # Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 COMPLETE -- the plan's original bug
-# confirmed fixed live. Along the way, found + fixed 4 real bugs: (1) Phase 3's RLS integration
-# test leaked fixture rows into the live DB every run (t.Cleanup-vs-defer ordering mistake,
-# go/internal/db/platform_as_tenant_rls_integration_test.go), (2) them-go-bridge was running a
-# stale binary despite a recent-looking image (rebuild+restart fixed it, no code change needed,
-# see docs/LESSONS.md), (3) App Canvas Debug Mode's long-standing "must publish before debugging
-# an agent node" limitation was a real design gap, now fixed by resolving agent IDs live at
-# debug-start time (go/internal/admin/service/appflow_debug.go's new resolveDraftAgentIDs) instead
-# of only at publish time, (4) InlineLLMActivity/InvokeAgentActivity both hardcoded node_done's
-# detail to "" -- the debug inspector showed "Done" with no output for every LLM/agent node
-# because the real response was computed and used elsewhere but never traced (go/internal/appflow/
-# activities.go; see docs/APP_CANVAS_DEBUG_PLAN.md's updated Phase 2 section). All 6
-# Platform-as-Tenant phases now done; them-dag-worker/-2/-debug rebuilt+restarted for fix (4).
-# Next: pick a new thread -- no plan doc currently active.)
+# confirmed fixed live. This was the first real interactive browser click-through either this
+# plan or the parent App Canvas Debug Mode plan ever got (every prior phase recorded "not
+# live-verified" as a standing limitation) -- as a direct result, found + fixed 5 real bugs along
+# the way: (1) Phase 3's RLS integration test leaked fixture rows into the live DB every run
+# (t.Cleanup-vs-defer ordering mistake, go/internal/db/platform_as_tenant_rls_integration_test.go),
+# (2) them-go-bridge was running a stale binary despite a recent-looking image (rebuild+restart
+# fixed it, no code change needed), (3) App Canvas Debug Mode's long-standing "must publish before
+# debugging an agent node" limitation was a real design gap, now fixed by resolving agent IDs live
+# at debug-start time (go/internal/admin/service/appflow_debug.go's new resolveDraftAgentIDs)
+# instead of only at publish time, (4) InlineLLMActivity/InvokeAgentActivity both hardcoded
+# node_done's detail to "" -- the debug inspector showed "Done" with no output for every LLM/agent
+# node (go/internal/appflow/activities.go), (5) agent-kind canvas nodes were completely missing
+# from decorateNodes' allowlist since it was first written -- an agent node showed ZERO visual
+# debug state at all, not even the border/glow every other node type got (frontend/src/app/admin/
+# applications/hooks/useAppFlowDebugSession.ts + CanvasNodes.tsx's AgentNode). Also added, per
+# direct user request during the walkthrough: live edge/wire highlighting for the branch actually
+# taken, and a prominent "Debug run complete" banner (previously a small easy-to-miss toolbar
+# text) -- see docs/APP_CANVAS_DEBUG_PLAN.md's new "Post-completion follow-up" section and
+# docs/LESSONS.md for the full write-ups. All 6 Platform-as-Tenant phases now done;
+# them-dag-worker/-2/-debug rebuilt+restarted for fix (4). Next: pick a new thread -- no plan doc
+# currently active. Frontend changes (5 + the two UX additions) not yet re-verified live in a
+# fresh browser session -- recommend one more click-through before trusting them fully.)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
