@@ -161,6 +161,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 
 | Changed | Run |
 |---|---|
+| `internal/db/db.go` (`Pools`, `BeginTenantTx`, `BeginAdminTx`) or any `db/0*_*.sql` RLS policy migration | `go test ./internal/db/...` + `go test -tags=integration ./internal/db/...` (needs live Postgres — role-attribute, GUC-isolation, two-tenant, catalog, and Platform-as-Tenant RLS checks) |
 | `internal/config/config.go` | `go test ./internal/config/...` |
 | `internal/health/health.go` | `go test ./internal/health/...` |
 | `internal/server/server.go` | `go test ./internal/server/...` |

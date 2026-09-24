@@ -116,6 +116,17 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 3. ~~**Managed-app run attribution gap**~~ — **FIXED** (commit `b660657`, 2026-09-10). `billingTenantID = req.TenantID` (caller's token) is now used for quota, run record, session, and Redis metrics. Temporal workflow still receives `resolvedCfg.TenantID` for LLM key lookup. See `go/internal/execution/lifecycle.go` and `request.go`.
 
+4. **Two pre-existing `go/internal/db` RLS integration tests fail on live schema drift** (found
+   2026-09-24 while verifying Platform-as-Tenant Phase 3, unrelated to that plan — confirmed by
+   reproducing with the new Phase 3 test file removed entirely): `TestRLS_TwoTenantFullIsolation`
+   fails seeding `them.component_definitions` — `constraint
+   "component_definitions_kind_namespace_name_version_key" does not exist` (renamed/dropped without
+   updating the test). `TestRLS_CatalogVerification`'s CV-02 fails — three tables
+   (`tenant_roles`, `tenant_role_grants`, `tenant_role_mappings`) have `relrowsecurity=true` but are
+   missing `FORCE ROW LEVEL SECURITY`. Neither touches `llm_providers`/`llm_provider_keys`. Needs its
+   own session to fix (or confirm the FORCE-RLS gap is intentional for those three tables, in which
+   case the test's expectation needs updating instead).
+
 ---
 
 ## Deployment environments

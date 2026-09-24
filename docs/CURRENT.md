@@ -1,8 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 2 COMPLETE — platform-only NULL-tenant Go code
-# paths deleted; classify/synthesize/security_scan now resolve their "platform" fallback through the
-# bootstrap tenant via the same resolveSystemAgentRole every tenant uses. HEAD 47407692, pushed.
-# docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 2 of 6 done.)
+# Last updated: 2026-09-24 (Platform-as-Tenant Phase 3 COMPLETE — dedicated RLS-enforced regression
+# tests for decision 7's asymmetric visibility, run via them_app/BeginTenantTx against the live
+# migrated DB. New known issue found (unrelated, not fixed): two pre-existing internal/db RLS tests
+# fail on unrelated schema drift. docs/PLATFORM_AS_TENANT_PLAN.md, 6 phases, 3 of 6 done. Next: Phase 4
+# (frontend consolidation).)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -56,17 +57,31 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 2 of 6 COMPLETE.**
+**Active thread: Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`), Phase 3 of 6 COMPLETE.**
 Read that plan doc end to end before continuing — especially the "Current-state map" section
-(researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE"
-and "Phase 2 — COMPLETE" sections for exactly what was and wasn't done in each.
+(researched + independently reviewed, corrections already folded in), and the "Phase 1 — COMPLETE",
+"Phase 2 — COMPLETE", and "Phase 3 — COMPLETE" sections for exactly what was and wasn't done in each.
 
-**Next: Phase 3 (RLS verification) — NOT started.** Dedicated integration tests proving the
-bootstrap tenant's `llm_providers`/`llm_provider_keys` rows are correctly visible/invisible to other
-tenants' queries post-migration (decision 7: `llm_providers` rows ARE meant to be visible
-cross-tenant as defaults; `llm_provider_keys` rows are NOT). Phase 1's own manual `SET ROLE`
-verification already checked this once by hand — Phase 3's job is turning that into a permanent,
-automated regression test, not re-discovering it. Phase 2 did NOT touch RLS.
+**Next: Phase 4 (frontend consolidation) — NOT started.** Remove the `isSuperAdmin` branch from
+Settings → LLM Providers / System Agents (`frontend/src/app/admin/settings/page.tsx`) so both
+screens always render the tenant-scoped view for the caller's own tenant. Depends on Phase 2
+(done). This is the phase that actually closes the original bug this whole plan started from — a
+`super_admin` session as `avi`/`admin` still cannot reach `/admin/my/llm-providers`'s UI today,
+even though Phases 1-3 made the backend/RLS data and tests fully correct underneath it.
+
+**Phase 3 (RLS verification) is done** — `go/internal/db/platform_as_tenant_rls_integration_test.go`,
+4 new tests run via `them_app`/`BeginTenantTx` (real RLS enforcement, not the BYPASSRLS admin pool
+Phase 2's own tests used) against this box's live, already-migrated Postgres. Confirms decision 7's
+asymmetric visibility exactly as designed: `llm_providers` rows ARE visible cross-tenant (read-only)
+as platform defaults; `llm_provider_keys` rows are NOT, at all, to any other tenant. Turns Phase 1's
+one-time manual `SET ROLE` check into a permanent regression test. Full detail, including a real
+GRANT-level finding this phase's own test-writing surfaced (`them_app` has SELECT-only on both
+tables — neither table's write RLS policy is reachable via `them_app` for any tenant; every real
+write goes through the Admin/BYPASSRLS pool) and a **new, unrelated, not-yet-fixed issue** (two
+pre-existing `internal/db` RLS tests — `TestRLS_TwoTenantFullIsolation`,
+`TestRLS_CatalogVerification` — fail on schema drift unrelated to this plan: a stale
+`component_definitions` constraint name, and three `tenant_role_*` tables missing `FORCE ROW LEVEL
+SECURITY`), in `docs/PLATFORM_AS_TENANT_PLAN.md`'s "Phase 3 — COMPLETE" section.
 
 **What this plan is:** the-M's own "platform-level" LLM provider/key config (used by classifier,
 card_synthesizer, security_scanner, and previously invisible to App Canvas Debug Mode's General-mode

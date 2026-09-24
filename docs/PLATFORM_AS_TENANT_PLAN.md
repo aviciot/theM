@@ -1,5 +1,6 @@
 # Platform-as-Tenant — Plan
-# Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24). Phase 3 NEXT.
+# Status: PLANNED, phased. Phase 1 COMPLETE (2026-09-24). Phase 2 COMPLETE (2026-09-24).
+# Phase 3 COMPLETE (2026-09-24). Phase 4 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -210,7 +211,7 @@ alternative. This plan is not overriding a considered decision.
 |---|---|---|
 | 1 — Data migration + RLS rewrite | ✅ **COMPLETE (2026-09-24)** — see "Phase 1 — COMPLETE" section below | Decisions above confirmed |
 | 2 — Backend consolidation | ✅ **COMPLETE (2026-09-24)** — see "Phase 2 — COMPLETE" section below | Phase 1 |
-| 3 — RLS verification | Dedicated integration tests proving bootstrap-tenant LLM rows are invisible to other tenants' queries (or correctly visible, per decision 7's resolution), and vice versa, post-migration | Phase 1 |
+| 3 — RLS verification | ✅ **COMPLETE (2026-09-24)** — see "Phase 3 — COMPLETE" section below | Phase 1 |
 | 4 — Frontend consolidation | Remove `isSuperAdmin` branch from Settings → LLM Providers / System Agents; both screens always render the tenant-scoped view for the caller's own tenant | Phase 2 |
 | 5 — Tenant management UI | Ensure `/admin/tenants` list clearly marks the bootstrap/platform tenant as such (not hidden, but visually distinct) — no functional change to deletion guard, which already exists | Independent, can run anytime |
 | 6 — Verification | Re-run the App Canvas Debug Mode Phase 6 walkthrough that surfaced this gap — confirm `stage2-graph-llm-condition-v2`'s debug panel General mode now shows the bootstrap tenant's own keys/models correctly | All above |
@@ -357,6 +358,79 @@ the live UI until Phase 4 removes the `isSuperAdmin` branch that calls it. Its `
 writes to the bootstrap tenant's real `tenant_id` (not NULL) as of this phase's `CreateProvider`
 fix, so it needed no further change here. Deleting that handler now would break the live frontend
 before Phase 4 gives it a replacement — correctly out of Phase 2's scope per the phase table.
+
+---
+
+## Phase 3 — COMPLETE (2026-09-24)
+
+New `go/internal/db/platform_as_tenant_rls_integration_test.go`, 4 tests, turning Phase 1's one-time
+manual `SET ROLE` verification into a permanent regression test — run via `them_app`/`BeginTenantTx`
+(real RLS enforcement), not the BYPASSRLS admin pool Phase 2's own tests used:
+
+- **`TestRLS_BootstrapTenant_LLMProviders_VisibleCrossTenant_ReadOnly`** — another tenant's
+  `TenantTx` SELECTs the bootstrap tenant's `llm_providers` row fine (per decision 7's `OR tenant_id
+  = <bootstrap-uuid>` clause), but its UPDATE/DELETE attempts affect 0 rows, confirmed unchanged via
+  the Admin pool afterward.
+- **`TestRLS_BootstrapTenant_LLMProviderKeys_InvisibleCrossTenant`** — the asymmetric half of
+  decision 7: another tenant's `TenantTx` sees **0 rows** of the bootstrap tenant's
+  `llm_provider_keys`, both by direct id and by the provider-id list shape the real DAL uses — no
+  bootstrap-visibility clause exists on `llm_provider_keys_tenant_isolation`, unlike
+  `llm_providers_read`.
+- **`TestRLS_BootstrapTenant_LLMProviderKeys_OwnTenantSeesOwnKey`** — control case: the bootstrap
+  tenant acting as itself still sees its own key normally, proving the invisibility above is scoped
+  to other tenants, not a broken policy hiding the row from its own owner too.
+
+**Real finding surfaced while writing these tests, not a regression, not in scope to fix here:**
+`them_app` has only `SELECT` GRANTed on both `them.llm_providers` and `them.llm_provider_keys` (see
+`db/070_rls_roles.sql` / `db/077_rls_phase_g.sql` / `db/105_llm_provider_keys.sql`) — neither table's
+`_write`/`_tenant_isolation` RLS policy is reachable via `them_app`/`BeginTenantTx` for **any**
+tenant, bootstrap included. Every real write to these tables
+(`LLMProviderService.UpsertTenantProvider`/`CreateProvider`, the provider-key service methods) goes
+through the Admin (BYPASSRLS) pool — confirmed by tracing `cmd/them/main.go`'s
+`admin.NewPgxQuerier(rlsPools.Admin)` wiring into `NewLLMProvidersHandler`, and by grep confirming no
+`BeginTenantTx` call site anywhere touches either table. This means the write-side RLS policies are
+currently pure defense-in-depth, never exercised by the app's actual write path — captured as
+**`TestRLS_BootstrapTenant_LLMProviders_AppRoleHasNoWriteGrant`**, which proves both halves: the
+Admin-pool write path still works correctly for the bootstrap tenant's own row post-`db/110`, and a
+raw `them_app` UPDATE attempt fails at the GRANT level (`42501`) before RLS is ever evaluated. Not a
+bug — matches this codebase's established pattern of `them_admin`-only writes for platform-config
+tables — but worth knowing before assuming `them_app` grants mirror RLS policy intent 1:1 (same
+category of gap as `[[feedback_rls_vs_privileges]]`).
+
+**Verified live, not assumed:** ran via a throwaway `golang:1.25` container on `them-network`
+against this box's live `them-postgres` (no local Go toolchain in this environment — same as every
+other session on this plan): `go build -tags=integration ./...` clean; `go test ./...` (full unit
+suite, 0 failures, unaffected as expected — Phase 3 added only a new integration-tagged file);
+`go test -tags=integration -run TestRLS_BootstrapTenant ./internal/db/...` — all 4 new tests passed.
+Also ran the full pre-existing `internal/db` integration suite to check for regressions:
+`TestRLS_TwoTenantFullIsolation` and `TestRLS_CatalogVerification` both fail, but confirmed
+**pre-existing and unrelated** — reproduced with the new test file removed entirely (moved to
+scratchpad, reran, same two failures, restored). Both are schema drift unrelated to this plan:
+`TestRLS_TwoTenantFullIsolation` fails on a stale constraint name
+(`component_definitions_kind_namespace_name_version_key` no longer exists) and
+`TestRLS_CatalogVerification`'s CV-02 fails on three unrelated tables
+(`tenant_roles`/`tenant_role_grants`/`tenant_role_mappings`) missing `FORCE ROW LEVEL SECURITY` —
+neither touches `llm_providers`/`llm_provider_keys` or any file this phase changed. Not fixed here;
+worth a dedicated cleanup pass, tracked as a new known issue below rather than silently ignored.
+
+`go/TEST_INDEX.md` updated: new S2-18 row (4 tests), S2 total 82 → 86; new trigger-map row for
+`internal/db/db.go` / RLS policy migrations (previously had none, despite `internal/db`'s existing
+non-integration tests already having 100% pass rate — the package trigger row itself was missing).
+`go/CLAUDE.md`'s trigger map given a matching new row for the same package, per this project's
+"trigger maps must stay in sync with INDEX.md" rule.
+
+**New known issue, found but not fixed this phase (see above):** `TestRLS_TwoTenantFullIsolation`
+and `TestRLS_CatalogVerification` (`go/internal/db/rls_integration_test.go`) currently fail against
+this box's live schema — both pre-existing, both unrelated to Platform-as-Tenant. Needs its own
+session: `component_definitions`' unique constraint was apparently renamed/dropped without updating
+this test, and three `tenant_role_*` tables need `FORCE ROW LEVEL SECURITY` applied (or the test's
+expectation adjusted, if excluding them from FORCE is intentional — needs the same "verify, don't
+assume" discipline decision 6/7 of this plan already applied to `llm_providers`).
+
+**Not done / out of scope for Phase 3, per the phase table:** frontend consolidation (Phase 4) —
+the `isSuperAdmin` branch in `settings/page.tsx` is completely untouched by this phase; a normal
+browser session as `avi`/`admin` still cannot reach `/admin/my/llm-providers`'s UI. Tenant management
+UI (Phase 5) and the App Canvas Debug Mode re-verification (Phase 6) are also untouched.
 
 ---
 
