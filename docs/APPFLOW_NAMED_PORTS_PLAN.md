@@ -1,5 +1,5 @@
 # AppFlow Named Data Ports — Plan
-# Status: PLANNED, phased. Phase 0 + open questions + Phase 1 + Phase 2 COMPLETE. Phase 3 NEXT.
+# Status: PLANNED, phased. Phase 0 + open questions + Phases 1-3 COMPLETE. Phase 4 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -213,6 +213,20 @@ plan/implement/test/commit cycle)
    `appFlowVars.ts` + `InlinePortsSection.tsx`, mount read-only inside `InlineNodePanel.tsx` for
    `llm`/`condition`. No drag-to-connect, no handle changes, no registry-shape risk. **Good
    natural pause point to demo to the user before committing to Phases 4/5's bigger surface.**
+   **DONE 2026-09-25** — new `frontend/src/app/admin/applications/components/cbv/appFlowVars.ts`
+   (`extractInlineNodeVars` for `llm`/`condition` only, confirmed empty reads/writes for every
+   other kind; `upstreamAppFlowVarSources` composing `src/lib/graphWalk.ts`'s
+   `reachablePredecessors`) and `cbv/panels/InlinePortsSection.tsx` (read-only "Reads" chip list,
+   ported from the agent builder's `StepDataFlowSection.tsx` minus `PortAliasField`/rename/delete,
+   which stay out of scope until Phase 5). Mounted inside `InlineNodePanel.tsx` right after the
+   display-name field, in both the `llm` and `condition` branches. New test file
+   `cbv/__tests__/appFlowVars.test.js` (11 tests, plain-`node`/`assert` convention matching Phase
+   2's tests). Verified: `tsc --noEmit` clean project-wide, all 52 existing+new frontend tests
+   passing (26 nodeVars + 7 templateVars + 8 graphWalk + 11 appFlowVars), full `next build`
+   production build succeeds, and the live dev container (bind-mounted, hot-reloading) compiled
+   the touched builder route with no errors after the edit — **not** visually verified in a
+   browser (no browser-automation tool available in this session); a manual click-through by the
+   user is recommended before treating Phase 3 as fully done from a UX standpoint.
 4. **Data-port handles on the canvas node** — add data-in/data-out `<Handle>` elements to
    `InlineNode`, gated on kind. No wiring logic yet — handles exist and are visually inspectable
    via reused `PortsPopover`, but dragging onto them doesn't yet do anything beyond a plain edge.

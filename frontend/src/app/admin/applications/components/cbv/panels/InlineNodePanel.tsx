@@ -3,6 +3,7 @@ import type { Node, Edge } from '@xyflow/react';
 import type { InlineNodeData } from '../../../types';
 import { C } from '../../../constants';
 import { fieldStyle } from './panelShared';
+import { InlinePortsSection } from './InlinePortsSection';
 
 // ── InlineNodePanel (LLM + Condition) ────────────────────────────────────────
 
@@ -75,6 +76,8 @@ export function InlineNodePanel({
         </div>
 
         {displayNameField}
+
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} />
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider / Model</label>
@@ -165,6 +168,8 @@ export function InlineNodePanel({
         </div>
 
         {displayNameField}
+
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} />
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Expression</label>
