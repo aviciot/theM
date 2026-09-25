@@ -1,18 +1,8 @@
 # Current Session State — the-M
-# Last updated: 2026-09-24 (Platform-as-Tenant Phase 6 + App Canvas Debug Mode follow-ups all
-# COMPLETE and live-verified (5 real bugs found + fixed during the first real browser
-# click-through either plan ever got — full detail in docs/APP_CANVAS_DEBUG_PLAN.md's
-# "Post-completion follow-up" sections and docs/LESSONS.md). NEW ACTIVE THREAD started same
-# session: docs/APPFLOW_NAMED_PORTS_PLAN.md — App Canvas's llm/condition nodes need real named
-# data ports (drag-to-connect, auto-naming, upstream-source visibility) ported from the agent
-# builder's mature pattern, found live when a Condition node's panel gave zero visibility into
-# what variables were even available to it. Phase 0 (research + full plan) is COMPLETE — read
-# that doc before starting Phase 1. Long-term direction (not this plan's scope, but why it
-# matters): App Canvas may eventually replace the agent builder entirely — prefer porting agent
-# builder's patterns over inventing AppFlow-specific ones. Next: Phase 1 (backend registry
-# metadata only, go/internal/appflow/noderegistry.go) — but FIRST get the user's explicit
-# sign-off on the plan doc's two open questions (scope narrowed to only llm/condition; drag-drop
-# target ambiguity for multi-field nodes) before writing any code.)
+# Last updated: 2026-09-25 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-4 complete (Phase 4's
+# visible port dots were built then REVERTED same session per live user feedback — see that
+# doc's Phase 4 entry). Phase 5 (the real drag-to-connect wiring) is fully spec'd and confirmed
+# with the user but NOT YET IMPLEMENTED — start there next session, do not re-derive the spec.
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -20,11 +10,9 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `79fa7956` — pushed to `origin/main`. Remote URL updated this session to
-`https://github.com/aviciot/theM.git` — confirmed for real this time: pushing to the old
-`them.git` URL still succeeds (GitHub redirects) but returns "This repository moved. Please use
-the new location: https://github.com/aviciot/theM.git" on every push. `git remote set-url origin`
-run to point at the real location directly; `git fetch origin` confirmed the new URL works.
+HEAD: `8e6785fc` (local; not yet pushed this session — ask before pushing, per this project's
+git rules). Remote is `origin` → `aviciot/theM` on GitHub (credentials already configured in the
+remote URL from a prior session).
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -34,6 +22,13 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+8e6785fc  fix(appflow): remove extra data-port dots from llm/condition nodes
+6c8261de  feat(appflow): Phase 4 — data-port handles on llm/condition, guard real wiring
+33bc72e4  feat(appflow): Phase 3 — read-only "Reads" panel for llm/condition nodes
+95b01c56  feat(appflow): Phase 2 — extract shared templateVars/graphWalk helpers
+737ce858  docs(claude): make chat answers short and friendly by default
+4b7ca19e  feat(appflow): Phase 1 named data ports — llm output port registry metadata
+a78c3ca9  docs: plan AppFlow named data ports (Phase 0 complete)
 79fa7956  docs(current): record Platform-as-Tenant Phase 3 completion
 d5ad1575  feat(db): Platform-as-Tenant Phase 3 — RLS verification
 47407692  docs(current): record Platform-as-Tenant Phase 2 completion
@@ -69,17 +64,48 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phase 0 (research + plan) COMPLETE, Phase 1
-NOT started.** Read that doc end to end first. Before writing any code, get the user's explicit
-answer on its two open questions: (1) confirm the scope is narrowed to only `llm`/`condition`
-node kinds getting real named ports — every other AppFlow kind (`router`/`hil`/`fork`/`join`/
-`agent`/`orchestrator`/`middleware`) doesn't touch the runtime's shared `FlowVars` bag today, so a
-port on them would be fake; (2) resolve the drag-drop-target ambiguity for multi-field nodes
-(does dropping a wire onto the node card itself work, defaulting to one field, or must the drop
-land inside the open side panel next to the specific field?) — this changes the interaction
-model, not just internals, and was flagged as needing the user's decision specifically, not a
-default to assume. Once both are confirmed, start with Phase 1 (backend registry metadata only,
-`go/internal/appflow/noderegistry.go` — zero runtime behavior change, safest phase to start with).
+**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-4 COMPLETE, Phase 5 NEXT (spec
+confirmed with user, not yet implemented).** Read that doc end to end first — do not re-derive
+the Phase 5 spec, it is already fully written out and user-confirmed in the doc's Phase 5 entry.
+
+**Quick summary of what's done:**
+- Phase 1: `llm` node's registry metadata (`go/internal/appflow/noderegistry.go`) got
+  `OutputPorts` aliasing `output_var`. Zero runtime change.
+- Phase 2: `extractTemplateVars`/`reachablePredecessors`/`reachableSuccessors` extracted to
+  `frontend/src/lib/templateVars.ts` + `graphWalk.ts`; agent builder's `nodeVars.ts` re-exports.
+- Phase 3: read-only "Reads" panel section (`cbv/appFlowVars.ts` + `cbv/panels/
+  InlinePortsSection.tsx`) mounted in `InlineNodePanel.tsx` for `llm`/`condition`. **Live-verified
+  by the user in the browser** — confirmed both the red "unresolved" and cyan "from 🧠 <node>"
+  resolved states render correctly.
+- Phase 4: attempted to add visible data-port `<Handle>` dots to `InlineNode` — **built, then
+  reverted same session** after the user clarified (live, in the browser) that the intent was
+  never a separate always-visible dot per port; it's one wire per connection, same 2 handles as
+  today, with a picker menu handling multiplicity (that's Phase 5). The revert is commit
+  `8e6785fc`. One real bug WAS found and fixed permanently during this phase and is still true
+  today: `validateConnection` (`CanvasInner.tsx`) never inspected handle IDs at all — a guard
+  rejecting any `data-`-prefixed handle ID was added and kept (currently a no-op since nothing
+  produces that ID anymore, but harmless and correct to leave in place).
+- **A real deployment bug was hit and fixed this session, unrelated to the port work itself but
+  worth remembering**: after Phase 1's Go change, `them-go-bridge` was not rebuilt/restarted, so
+  the live `/admin/node-types` response didn't include the new `output_ports` field for over a
+  day of subsequent work — silently made Phase 4's dot invisible and caused a confusing debugging
+  detour. Rebuilt via `docker compose ... build them-go-bridge` + `up -d them-go-bridge`, confirmed
+  fixed via a direct `wget` against the endpoint before resuming UI verification. **Lesson: after
+  any `go/` change in this kind of session, rebuild+restart `them-go-bridge` before doing ANY live
+  UI verification that depends on it** — don't assume the running container picked it up.
+
+**Phase 5 next task — do not skip re-reading the doc's Phase 5 section, this summary is not a
+substitute for it:** real drag-to-connect wiring. Confirmed UX: no new handles (reuse the 2
+existing ones); dragging from `llm`'s single output straight to a target; **no picker on the
+source side** (llm only ever has one output var); target-side popover only appears if the target
+has >1 nameable field (`llm`: system+user prompt; `condition`: never ambiguous, auto-binds to
+`expression`). Data model: `input_aliases: {alias: underlying_var}` inside the node's already-
+opaque `config` object — confirmed zero serialization-layer changes needed
+(`CanvasHelpers.ts`'s `canvasToDoc`/`docToCanvas` pass `config` through whole, no allowlist).
+**No Go/backend changes needed for Phase 5** — confirmed with the user. One loose end not yet
+resolved: the user described wanting a clickable count badge on a wire showing how many ports are
+mapped across it (e.g. "5") — not yet explicitly confirmed as in-scope for Phase 5's first cut;
+ask before building it, don't assume either way.
 
 **Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`) is DONE — all 6 of 6 phases complete.**
 No further work planned on that thread. Read it end to end if touching anything

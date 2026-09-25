@@ -1,7 +1,9 @@
 # AppFlow Named Data Ports — Plan
-# Status: PLANNED, phased. Phase 0 + open questions + Phases 1-4 COMPLETE. Phase 5 NEXT.
+# Status: PLANNED, phased. Phase 0 + open questions + Phases 1-4 COMPLETE (Phase 4's visible
+# handles later reverted per live user feedback — see Phase 4 entry below). Phase 5 spec
+# confirmed with user 2026-09-25, NOT YET IMPLEMENTED — start here next session.
 # Owner: platform
-# Last updated: 2026-09-24
+# Last updated: 2026-09-25
 
 ---
 
@@ -248,10 +250,79 @@ plan/implement/test/commit cycle)
    64 frontend tests passing (58 prior + 6 new), full `next build` succeeds. Not visually verified
    in a browser — confirm the new dot(s) render sensibly on an `llm` node's card and that dragging
    onto them shows the rejection message, not a silent connection.
-5. **Drag-to-connect wiring + rename/delete** (the bigger, real half) — `useInlinePortWiring.ts`:
-   connect-start ghost-port preview, connect-commit (rewrite template text + `input_aliases`),
-   rename (find/replace in text), delete. Needs to locate and hook into whatever currently owns
-   `onConnect` for the App Canvas (not yet located precisely — quick grep at implementation time).
+
+   **CORRECTED 2026-09-25, live in the browser** — the visible 3rd dot from this phase was wrong.
+   User's original ask was never "add a separate always-visible dot per data port" — it was one
+   wire per connection, same as today's single in/out dot pair, with a picker menu handling
+   multiplicity (see Phase 5 below). The extra `dataInPorts`/`dataOutPorts` `<Handle>` elements
+   added to `InlineNode` were **reverted** (commit `8e6785fc`) — `llm`/`condition` nodes are back
+   to exactly 2 handles, matching every other node kind. `validateConnection`'s `data-` prefix
+   guard was **kept** (harmless no-op today, becomes load-bearing again in Phase 5 if any code
+   path ever produces a literal `data-*` handle ID — it currently doesn't, since there's no
+   `<Handle id="data-...">` anywhere anymore). **Lesson for Phase 5**: do not add new always-on
+   `<Handle>` elements per named port. The 2 existing handles (plain control in/out) are also the
+   drag points for data-port wiring — see Phase 5's revised design below, which reuses them rather
+   than adding new ones.
+
+5. **Drag-to-connect wiring + rename/delete** (the bigger, real half) — **REVISED SPEC,
+   2026-09-25, confirmed with user, NOT YET IMPLEMENTED, this is the next task:**
+
+   **UX, confirmed with user:**
+   - No new handles. The user drags from the *existing* single output dot on an `llm` node (same
+     dot already used for control-flow wiring) toward another `llm`/`condition` node.
+   - **Source side has no picker** — `llm` only ever has one output var (`output_var`), so there's
+     nothing to choose on the source end. Skip straight to the target.
+   - **Target side**: on drop, if the target has more than one nameable field (`llm`: system
+     prompt + user prompt; `condition`: only `expression`, so never ambiguous — auto-bind
+     immediately, no picker), show a small popover at the drop point listing the candidate fields
+     by label. User picks one; the binding commits to that field.
+   - This is a asymmetric version of the plan's original Q2 answer (Section "Open questions",
+     item 2) — the source-side half of that answer is now moot given LLM nodes never have more
+     than one output var, so only the target-side popover is actually needed. Re-confirmed
+     explicitly with the user 2026-09-25 rather than assumed.
+   - The existing wire visually looks identical to a control-flow wire (same line, no new handle
+     shape) — per user's "one wire, one dot per side" correction above. **Open follow-up, not yet
+     resolved:** the user separately described wanting a small clickable count badge on a wire
+     when it carries N port mappings (e.g. "5"), to inspect the mapping without opening the panel.
+     Not yet designed in detail — flag this to the user again before Phase 5 implementation if it
+     wasn't explicitly re-confirmed as in/out of Phase 5's first cut.
+
+   **Data model** (unchanged from the original Phase 0 research, still correct): `input_aliases:
+   {alias: underlying_flowvars_key}` inside the node's `config` object. Confirmed via direct code
+   read (2026-09-25 research pass) that `config: Record<string, unknown>` is genuinely untyped at
+   the TS level today (`types.ts`'s `InlineNodeData`/`FlowControlNodeData`), and both
+   `canvasToDoc`/`docToCanvas` (`CanvasHelpers.ts` lines ~146, ~210-215) spread/pass the whole
+   `config` object through with no field allowlist — so adding `input_aliases` inside it needs
+   zero serialization-layer changes, confirming the plan's original claim.
+
+   **Mechanics to build:**
+   - `frontend/src/app/admin/applications/components/cbv/useInlinePortWiring.ts` (new): owns the
+     connect-commit logic — writing `input_aliases` into the target node's `config`, and (per the
+     plan's original alias semantics) rewriting `{{.oldName}}` occurrences in the target's
+     prompt/expression text to the chosen alias if the user later renames it. Rename/delete reuse
+     the "find/replace in text" pattern from `PortAliasField`'s caller side in the agent builder
+     (NOT `PortAliasField` itself — that component is generically reusable for the rename-input UI
+     piece, per Phase 0 research, but the binding-record wiring around it is agentgen-specific and
+     was correctly not ported in Phase 3).
+   - **No `onConnectStart` exists in AppFlow today** (confirmed via grep, 2026-09-25) — only a
+     plain `onConnect` (`CanvasInner.tsx` prop, wired from `CanvasBuilderView.tsx:572`). Phase 5
+     needs to add `onConnectStart`/`onConnectEnd` (or intercept inside the existing `onConnect`
+     handler in `CanvasBuilderView.tsx:414`) to detect "this connection touches an `llm`/`condition`
+     target with >1 nameable field" and open the popover before committing the edge — likely by
+     deferring `addEdge`/`setEdges` until the popover's choice is made, rather than committing
+     synchronously inside `handleConnect` as today.
+   - **Coordinates**: React Flow's connect lifecycle does hand back a raw mouse/touch event, but
+     nothing in this codebase captures `clientX/clientY` from it today (confirmed: agent builder's
+     `onPipeConnectStart` discards its event arg entirely). Phase 5 will need to read the event
+     manually to position the popover at the actual drop point.
+   - **Relax `validateConnection`'s Phase-4 guard**: the `data-` prefix rejection
+     (`CanvasInner.tsx` lines ~37-43) is currently a no-op (nothing produces a `data-*` handle ID
+     since Phase 4's handles were reverted) — Phase 5 does not need to "relax" it since it was
+     never blocking anything real to begin with. Leave it in place as a defensive fallback unless
+     it becomes genuinely obsolete.
+   - **No Go/backend changes needed** — confirmed with the user 2026-09-25. `input_aliases` lives
+     entirely inside the frontend-owned, backend-opaque `config` object; the Go runtime already
+     ignores unknown config keys (per Phase 0's original research).
 6. **(Optional, propose but do not build without explicit separate approval)** — a warning-level
    `ValidationError` in `validate.go` for an `llm`/`condition` node referencing a var nothing
    upstream ever writes. Not part of the user's original ask (UI visibility, not a new compiler
