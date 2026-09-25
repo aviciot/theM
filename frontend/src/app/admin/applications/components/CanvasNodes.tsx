@@ -4,7 +4,7 @@ import type { EntryPointData, OrchestratorData, AgentData, MiddlewareData, FlowC
 import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
 import { useAppLayoutDir } from '../AppLayoutContext';
-import { getNodeDef, resolveOutputPorts, resolveInputPorts } from '@/lib/nodeRegistry';
+import { getNodeDef, resolveOutputPorts } from '@/lib/nodeRegistry';
 import type { AppFlowNodeDebugInfo } from '../types';
 
 // ── App Canvas Debug Mode overlay (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───
@@ -382,15 +382,6 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
   const meta = { emoji: nodeDef.emoji, color: nodeDef.border, label: nodeDef.label };
   const outputPorts = resolveOutputPorts(nodeDef, data.config ?? {});
   const controlPorts = outputPorts.filter(p => p.kind === 'control' && p.id !== 'ctrl-out');
-  // Named data ports (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 4) — visible on
-  // llm's static output_ports (from Phase 1's registry metadata) and, once
-  // input_aliases exist (Phase 5), condition/llm's committed input aliases.
-  // Not wired up yet: validateConnection rejects any "data-"-prefixed handle
-  // until Phase 5.
-  const dataOutPorts = outputPorts.filter(p => p.kind === 'data');
-  const dataInPorts = resolveInputPorts(nodeDef, ((data.config ?? {}) as { input_aliases?: Record<string, string> }).input_aliases
-    ? Object.keys((data.config as { input_aliases?: Record<string, string> }).input_aliases ?? {})
-    : []);
   const hasError = data._error || data._shake;
   const dbgState = data._debug?.state;
   const dbgAccent = dbgState ? debugAccent[dbgState] : null;
@@ -418,26 +409,6 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
         >✕</button>
       )}
       <Handle type="target" position={targetPos} style={handleStyle} />
-      {dataInPorts.map((port, i) => {
-        // Data-in handles share the target edge with the plain control-in
-        // handle above. Nudge them along the cross-axis (perpendicular to
-        // the edge) so they don't visually collapse onto the control handle
-        // or each other — same percentage-spread idea as control-out below,
-        // offset to the "second half" of the edge (55%-95%) so a lone
-        // control-in handle at the edge's true center (50%) never overlaps.
-        const spreadPct = `${55 + (40 / (dataInPorts.length + 1)) * (i + 1)}%`;
-        const spreadStyle = targetPos === Position.Left ? { top: spreadPct } : { left: spreadPct };
-        return (
-          <Handle
-            key={port.id}
-            type="target"
-            id={port.id}
-            position={targetPos}
-            style={{ ...handleStyle, background: port.color, ...spreadStyle }}
-            title={port.label}
-          />
-        );
-      })}
       <div
         className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
         style={{
@@ -495,23 +466,6 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
       ) : (
         <Handle type="source" position={sourcePos} style={handleStyle} />
       )}
-      {dataOutPorts.map((port, i) => {
-        // Same cross-axis nudge as dataInPorts above, so a data-out handle
-        // (e.g. llm's "output" port, from Phase 1's registry metadata) never
-        // collapses onto the plain control-out handle.
-        const spreadPct = `${55 + (40 / (dataOutPorts.length + 1)) * (i + 1)}%`;
-        const spreadStyle = sourcePos === Position.Right ? { top: spreadPct } : { left: spreadPct };
-        return (
-          <Handle
-            key={port.id}
-            type="source"
-            id={port.id}
-            position={sourcePos}
-            style={{ ...handleStyle, background: port.color, ...spreadStyle }}
-            title={port.label}
-          />
-        );
-      })}
     </div>
   );
 }
