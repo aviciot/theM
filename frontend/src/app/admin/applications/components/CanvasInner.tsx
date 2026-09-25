@@ -32,7 +32,16 @@ export function validateConnection(
   targetId: string,
   edges: Edge[],
   sourceHandle?: string | null,
+  targetHandle?: string | null,
 ): string | null {
+  // Named data ports (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 4) are visible on
+  // llm/condition nodes but not wired up yet — drag-to-connect lands in Phase
+  // 5. Reject here rather than silently creating a plain control edge, which
+  // would be wrong (a data port drag is not a "run after" relationship).
+  if (sourceHandle?.startsWith('data-') || targetHandle?.startsWith('data-')) {
+    return `Named data port wiring isn't available yet`;
+  }
+
   const src = NODE_PORTS[sourceType];
   const tgt = NODE_PORTS[targetType];
   if (!src || !tgt) return `Unknown node type`;

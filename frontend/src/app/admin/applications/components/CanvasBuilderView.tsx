@@ -415,7 +415,7 @@ export function CanvasBuilderView({
     const srcNode = nodes.find(n => n.id === conn.source);
     const tgtNode = nodes.find(n => n.id === conn.target);
     if (!srcNode || !tgtNode) return;
-    const err = validateConnection(srcNode.type ?? '', tgtNode.type ?? '', conn.source ?? '', conn.target ?? '', edges, conn.sourceHandle);
+    const err = validateConnection(srcNode.type ?? '', tgtNode.type ?? '', conn.source ?? '', conn.target ?? '', edges, conn.sourceHandle, conn.targetHandle);
     if (err) return;
     setEdges(es => addEdge({ ...conn, type: 'default' }, es));
     setIsDirty(true);

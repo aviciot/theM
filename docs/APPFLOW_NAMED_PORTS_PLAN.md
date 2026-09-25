@@ -1,5 +1,5 @@
 # AppFlow Named Data Ports — Plan
-# Status: PLANNED, phased. Phase 0 + open questions + Phases 1-3 COMPLETE. Phase 4 NEXT.
+# Status: PLANNED, phased. Phase 0 + open questions + Phases 1-4 COMPLETE. Phase 5 NEXT.
 # Owner: platform
 # Last updated: 2026-09-24
 
@@ -230,7 +230,24 @@ plan/implement/test/commit cycle)
 4. **Data-port handles on the canvas node** — add data-in/data-out `<Handle>` elements to
    `InlineNode`, gated on kind. No wiring logic yet — handles exist and are visually inspectable
    via reused `PortsPopover`, but dragging onto them doesn't yet do anything beyond a plain edge.
-   Isolates the trickiest layout math from state-mutation logic.
+   Isolates the trickiest layout math from state-mutation logic. **DONE 2026-09-25** — research
+   found `InlineNode` has no fixed card height (unlike agent builder's `StepNode.tsx`, which grows
+   its card to fit a pixel-based port rail), so handles use the existing percentage-spread pattern
+   (same idea as `controlPorts`'s `100/(N+1)*(i+1)` formula) instead, offset into a 55-95% band so
+   they never collide with `llm`'s single anonymous control-out at 50% (verified: only `llm` has
+   `OutputPorts` per Phase 1, so `dataOutPorts` is non-empty only for `llm`; `dataInPorts` is
+   empty for both kinds today since `input_aliases` don't exist until Phase 5 — the code path
+   exists but currently renders nothing, exactly matching "no wiring yet"). **Real gap found and
+   closed in the same phase**: `validateConnection` (`CanvasInner.tsx`) never inspected handle IDs
+   at all — it would have silently accepted a drag onto/from any new `data-*` handle as an
+   ordinary control edge, which is wrong (a data port is not a "run after" relationship). Added a
+   guard rejecting any connection where either handle ID starts with `data-`, with message "Named
+   data port wiring isn't available yet"; `handleConnect` (`CanvasBuilderView.tsx`) now also passes
+   `conn.targetHandle` through (previously never used). New test file
+   `components/__tests__/validateConnection.test.js` (6 tests). Verified: `tsc --noEmit` clean, all
+   64 frontend tests passing (58 prior + 6 new), full `next build` succeeds. Not visually verified
+   in a browser — confirm the new dot(s) render sensibly on an `llm` node's card and that dragging
+   onto them shows the rejection message, not a silent connection.
 5. **Drag-to-connect wiring + rename/delete** (the bigger, real half) — `useInlinePortWiring.ts`:
    connect-start ghost-port preview, connect-commit (rewrite template text + `input_aliases`),
    rename (find/replace in text), delete. Needs to locate and hook into whatever currently owns
