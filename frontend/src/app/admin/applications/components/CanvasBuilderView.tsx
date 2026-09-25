@@ -25,6 +25,8 @@ import { exportAppDefinition, parseImportedAppDefinition } from './CanvasExportI
 import { AppFlowDebugPanel } from './AppFlowDebugPanel';
 import { AppFlowDebugInspector } from './AppFlowDebugInspector';
 import { useAppFlowDebugSession } from '../hooks/useAppFlowDebugSession';
+import { PortBindingPopover } from './cbv/PortBindingPopover';
+import { isBindableSource, resolveDropTarget, commitInlinePortBinding, type NameableField } from './cbv/useInlinePortWiring';
 
 // Which RF node component (and canvas palette section) each appflow node_type
 // renders as. This split is a frontend/UI concern, not portable node metadata
@@ -99,6 +101,13 @@ export function CanvasBuilderView({
   const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
   const [mcpExpanded, setMcpExpanded] = useState<Record<string, boolean>>({});
   const [executionBackend, setExecutionBackend] = useState<'local' | 'temporal' | undefined>(undefined);
+  // Phase 5 named data ports (docs/APPFLOW_NAMED_PORTS_PLAN.md): when a drop
+  // lands on a target with >1 nameable field, the binding can't commit inside
+  // handleConnect (no field chosen yet) — stash it here and resolve on the
+  // subsequent onConnectEnd, which is the only lifecycle point that hands
+  // back real screen coordinates for the popover.
+  const [pendingPortBinding, setPendingPortBinding] = useState<{ sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
+  const [portPopover, setPortPopover] = useState<{ x: number; y: number; sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -420,6 +429,26 @@ export function CanvasBuilderView({
     setEdges(es => addEdge({ ...conn, type: 'default' }, es));
     setIsDirty(true);
     setLogoResult('none');
+
+    // Phase 5 named data ports: llm is the only kind that ever writes a
+    // FlowVar, so it's the only source a data binding can come from. Every
+    // other source→llm/condition connection is a plain control edge only.
+    if (isBindableSource(srcNode)) {
+      const resolution = resolveDropTarget(tgtNode);
+      if (resolution.kind === 'auto') {
+        commitInlinePortBinding(srcNode, tgtNode.id, resolution.field, setNodes);
+      } else if (resolution.kind === 'ambiguous') {
+        setPendingPortBinding({ sourceNode: srcNode, targetNodeId: tgtNode.id, fields: resolution.fields });
+      }
+    }
+  }
+
+  function handleConnectEnd(event: MouseEvent | TouchEvent) {
+    if (!pendingPortBinding) return;
+    const { sourceNode, targetNodeId, fields } = pendingPortBinding;
+    setPendingPortBinding(null);
+    const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+    setPortPopover({ x: point.clientX, y: point.clientY, sourceNode, targetNodeId, fields });
   }
 
   function handleDropOnCanvas(e: DragEvent<HTMLDivElement>, rfInstance: ReturnType<typeof useReactFlow>) {
@@ -570,6 +599,7 @@ export function CanvasBuilderView({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={handleConnect}
+                onConnectEnd={handleConnectEnd}
                 onDropWithInstance={handleDropOnCanvas}
                 onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
                 selectedNode={selectedNode}
@@ -686,6 +716,19 @@ export function CanvasBuilderView({
             </div>
           </div>
         </div>
+      )}
+
+      {portPopover && (
+        <PortBindingPopover
+          x={portPopover.x}
+          y={portPopover.y}
+          fields={portPopover.fields}
+          onPick={field => {
+            commitInlinePortBinding(portPopover.sourceNode, portPopover.targetNodeId, field, setNodes);
+            setPortPopover(null);
+          }}
+          onDismiss={() => setPortPopover(null)}
+        />
       )}
     </div>
   );

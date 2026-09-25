@@ -204,13 +204,14 @@ export function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPicke
 
 // ── CanvasInner ───────────────────────────────────────────────────────────────
 export function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onToggleLayout, layoutDir, onNodesDelete, logoState,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onConnectEnd, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onToggleLayout, layoutDir, onNodesDelete, logoState,
 }: {
   nodes: Node[];
   edges: Edge[];
   onNodesChange: any;
   onEdgesChange: any;
   onConnect: (c: Connection) => void;
+  onConnectEnd?: (event: MouseEvent | TouchEvent) => void;
   onDrop: (e: DragEvent<HTMLDivElement>) => void;
   onDragOver: (e: DragEvent<HTMLDivElement>) => void;
   selectedNode: Node | null;
@@ -339,6 +340,7 @@ export function CanvasInner({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
         onDrop={onDrop}
         onDragOver={onDragOver}
         nodeTypes={NODE_TYPES}

@@ -1,8 +1,9 @@
 # Current Session State — the-M
-# Last updated: 2026-09-25 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-4 complete (Phase 4's
+# Last updated: 2026-09-25 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-5 complete (Phase 4's
 # visible port dots were built then REVERTED same session per live user feedback — see that
-# doc's Phase 4 entry). Phase 5 (the real drag-to-connect wiring) is fully spec'd and confirmed
-# with the user but NOT YET IMPLEMENTED — start there next session, do not re-derive the spec.
+# doc's Phase 4 entry). Phase 5 (the real drag-to-connect wiring) is now implemented and tested —
+# see that doc's Phase 5 "DONE" entry for full detail. Only Phase 6 (optional, not yet approved)
+# remains on that thread. Not yet live-browser-verified — see this file's Phase 5 section below.
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -64,9 +65,17 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-4 COMPLETE, Phase 5 NEXT (spec
-confirmed with user, not yet implemented).** Read that doc end to end first — do not re-derive
-the Phase 5 spec, it is already fully written out and user-confirmed in the doc's Phase 5 entry.
+**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-5 COMPLETE.** Only Phase 6
+(optional static-validation pass, not yet approved) remains, and it's explicitly opt-in — do not
+start it without asking first. Read that doc's Phase 5 "DONE" entry before touching this feature
+again; it has the full implementation map (new files, the `onConnect`/`onConnectEnd` coordinate
+trick, collision-naming rule, text-insertion rule). **Not yet live-browser-verified** — recommend
+a real click-through next session before trusting it fully: drag a wire from an `llm` node's
+output to a `condition` node (should auto-bind silently, no popover), then drag `llm` → `llm`
+(should show a small 2-option popover — System Prompt / User Prompt — positioned at the actual
+drop point), then open the target's Reads panel and confirm the new alias appears, its inline
+rename (click the alias text) works, and its ✕ delete button removes both the alias and its
+`{{.alias}}` reference from the prompt text.
 
 **Quick summary of what's done:**
 - Phase 1: `llm` node's registry metadata (`go/internal/appflow/noderegistry.go`) got
@@ -94,18 +103,27 @@ the Phase 5 spec, it is already fully written out and user-confirmed in the doc'
   any `go/` change in this kind of session, rebuild+restart `them-go-bridge` before doing ANY live
   UI verification that depends on it** — don't assume the running container picked it up.
 
-**Phase 5 next task — do not skip re-reading the doc's Phase 5 section, this summary is not a
-substitute for it:** real drag-to-connect wiring. Confirmed UX: no new handles (reuse the 2
-existing ones); dragging from `llm`'s single output straight to a target; **no picker on the
-source side** (llm only ever has one output var); target-side popover only appears if the target
-has >1 nameable field (`llm`: system+user prompt; `condition`: never ambiguous, auto-binds to
-`expression`). Data model: `input_aliases: {alias: underlying_var}` inside the node's already-
-opaque `config` object — confirmed zero serialization-layer changes needed
-(`CanvasHelpers.ts`'s `canvasToDoc`/`docToCanvas` pass `config` through whole, no allowlist).
-**No Go/backend changes needed for Phase 5** — confirmed with the user. One loose end not yet
-resolved: the user described wanting a clickable count badge on a wire showing how many ports are
-mapped across it (e.g. "5") — not yet explicitly confirmed as in-scope for Phase 5's first cut;
-ask before building it, don't assume either way.
+**Phase 5 — DONE 2026-09-25.** Real drag-to-connect wiring, implemented exactly per the
+user-confirmed spec: no new handles (reuses the 2 existing control ones); dragging from `llm`'s
+single output straight to a target; no picker on the source side (llm only ever has one output
+var); a small popover at the drop point on the target side only when the target has >1 nameable
+field (`llm`: system+user prompt; `condition`: never ambiguous, auto-binds to `expression`). Data
+model: `input_aliases: {alias: underlying_var}` inside the node's already-opaque `config` object —
+confirmed zero serialization-layer changes needed. New files: `cbv/useInlinePortWiring.ts` (bind/
+rename/delete logic, agent-builder-matching collision suffixing `output`/`output_2`/...),
+`cbv/PortBindingPopover.tsx`, `cbv/panels/PortAliasField.tsx` (ported from the agent builder).
+`InlinePortsSection.tsx`'s Reads panel gained inline rename + delete for any dragged-in alias.
+Solved the "how do you get drop coordinates" gap the spec flagged as open: `onConnect` fires
+before `onConnectEnd` in xyflow v12's own lifecycle (confirmed by reading `@xyflow/system`'s
+source), so `handleConnect` stashes a pending popover request and `handleConnectEnd` reads
+`event.clientX/clientY` off the very next callback to position it. The count-badge loose end was
+explicitly confirmed out of scope for this pass — still deferred. Full detail, including the exact
+collision-naming and text-insertion rules confirmed live with the user before writing code, in
+`docs/APPFLOW_NAMED_PORTS_PLAN.md`'s Phase 5 "DONE" entry. 27 new tests (78 total), `npx tsc
+--noEmit` clean project-wide. `npx next build` blocked by a pre-existing environment permission
+issue unrelated to this change (`.next/trace` owned by a different local user) — not a regression,
+not retried destructively. **Not live-browser-verified** — see this file's "START HERE" section
+above for the exact walkthrough to run next session.
 
 **Platform-as-Tenant (`docs/PLATFORM_AS_TENANT_PLAN.md`) is DONE — all 6 of 6 phases complete.**
 No further work planned on that thread. Read it end to end if touching anything

@@ -1,7 +1,7 @@
 # AppFlow Named Data Ports — Plan
-# Status: PLANNED, phased. Phase 0 + open questions + Phases 1-4 COMPLETE (Phase 4's visible
-# handles later reverted per live user feedback — see Phase 4 entry below). Phase 5 spec
-# confirmed with user 2026-09-25, NOT YET IMPLEMENTED — start here next session.
+# Status: Phases 0-5 COMPLETE (Phase 4's visible handles were reverted per live user feedback —
+# see Phase 4 entry below; Phase 5, the real drag-to-connect wiring, is now implemented). Only
+# Phase 6 (optional static-validation pass) remains, not yet approved.
 # Owner: platform
 # Last updated: 2026-09-25
 
@@ -323,6 +323,72 @@ plan/implement/test/commit cycle)
    - **No Go/backend changes needed** — confirmed with the user 2026-09-25. `input_aliases` lives
      entirely inside the frontend-owned, backend-opaque `config` object; the Go runtime already
      ignores unknown config keys (per Phase 0's original research).
+
+   **DONE 2026-09-25 — implemented as specced above, with two collision/insertion details
+   confirmed live with the user before writing code (not assumed):**
+   - **Collision naming**: confirmed to match the agent builder's own `onPipeConnectStart` exactly
+     — the alias defaults to the source's `output_var` (usually `"output"`); if the target already
+     has an `input_aliases` entry with that name, the new binding gets a numeric suffix
+     (`output_2`, `output_3`, ...). The alias itself never embeds the source node's name/id — "which
+     node is this from" is answered by the existing Phase 3 Reads panel's "from 🧠 &lt;NodeName&gt;"
+     label, not by the variable name.
+   - **Text insertion**: confirmed to append `{{.alias}}` to the end of the target field's existing
+     text (`" {{.alias}}"` if non-empty, or just `{{.alias}}` if empty) — never replaces/destroys
+     text the user already typed.
+   - **Count badge** (the one open follow-up from the spec): confirmed explicitly out of scope for
+     this pass — deferred, not built.
+
+   **Mechanics actually built**, matching the spec's file list:
+   - `cbv/useInlinePortWiring.ts` (new) — `isBindableSource` (true only for `llm`, the only kind
+     that ever writes a FlowVar), `resolveDropTarget` (`'none' | 'auto' | 'ambiguous'`, per the
+     spec's `nameableFields` table: `llm` → system_prompt+user_prompt, `condition` → expression
+     only), `commitInlinePortBinding` (writes `input_aliases` + appends the template ref),
+     `renameInlinePortAlias`/`deleteInlinePortAlias` (rewrite/strip `{{.alias}}` occurrences across
+     every nameable field on the node).
+   - `cbv/PortBindingPopover.tsx` (new) — the drop-point popover for the `llm`-target ambiguous
+     case; positioned via `position: fixed` at the raw `clientX`/`clientY` from the connect gesture.
+   - `cbv/panels/PortAliasField.tsx` (new) — the click-to-rename UI piece ported from the agent
+     builder's `StepDataFlowSection.tsx` (same component, sanitization rule unchanged), exactly as
+     Phase 0 research flagged as reusable; the binding-record wiring around it was NOT reused
+     (agentgen-specific), matching the plan's original call.
+   - `cbv/panels/InlinePortsSection.tsx` (modified) — Phase 3's read-only Reads panel gained
+     rename (via `PortAliasField`) and delete (✕ button) for any var that's a real `input_aliases`
+     entry; vars typed directly into prompt/expression text (never dragged in) stay read-only,
+     matching the agent builder's own is-it-dynamic distinction. Also now resolves aliases via
+     `appFlowVars.ts`'s new `resolveAlias()` before looking up the upstream source, so an aliased
+     var (e.g. `output_2`) still correctly shows "from 🧠 &lt;SourceNode&gt;" instead of appearing
+     unresolved.
+   - `CanvasBuilderView.tsx`'s `handleConnect` (modified, not replaced) — after the existing
+     edge-validation/creation logic runs unchanged, a new block checks `isBindableSource(srcNode)`;
+     `'auto'` commits immediately, `'ambiguous'` stashes a `pendingPortBinding` in state. **Solved
+     the coordinate problem the spec flagged as unresolved**: `onConnect` (`Connection`-only, no
+     event) fires strictly before `onConnectEnd` (`(event, connectionState)`) in xyflow v12's own
+     connect lifecycle (confirmed by reading `@xyflow/system`'s `onPointerDown` source directly,
+     not assumed) — so a new `handleConnectEnd` reads `event.clientX/clientY` off the *next*
+     lifecycle callback and only then opens the popover, using the pending state stashed a moment
+     earlier in `handleConnect`. `CanvasInner.tsx`/`CanvasInnerWithDrop` gained a passthrough
+     `onConnectEnd` prop to carry this through to the underlying `<ReactFlow>`.
+   - **Phase-4 guard left untouched**, per the spec's own note — still a harmless no-op, still in
+     place as a defensive fallback.
+   - **`appFlowVars.ts` gained one new export**, `resolveAlias(node, varName)` — not in the
+     original file list, needed once Phase 5 started writing `input_aliases` for real: without it,
+     the Reads panel would look up an aliased var's source by its display alias (`output_2`)
+     instead of its real FlowVars key (`output`) and incorrectly report it as unresolved.
+
+   27 new unit tests (14 in new `cbv/__tests__/useInlinePortWiring.test.js`, 2 added to
+   `cbv/__tests__/appFlowVars.test.js` for `resolveAlias`), following the existing
+   plain-`node`/`assert` convention (no test runner configured in this frontend yet). All 78
+   frontend tests passing project-wide (64 prior + 14 new). `npx tsc --noEmit` clean, zero errors,
+   full project. `npx next build` **not run this session** — blocked by a pre-existing environment
+   permission error unrelated to this change (`.next/trace` owned by a different local user than
+   the one running this session; `tsc --noEmit`'s full-project clean pass is the authoritative
+   compile-correctness signal used instead). **Not visually verified in a browser** — same standing
+   limitation as every phase of this plan: no browser-automation tool available in this
+   environment. Recommend a real click-through before trusting the popover positioning/interaction
+   fully: drag `llm` → `condition` (should auto-bind, no popover), drag `llm` → `llm` (should show
+   the 2-field popover positioned at the actual drop point), then open the Reads panel and confirm
+   rename (click the alias text) and delete (✕) both work and correctly rewrite the prompt text.
+
 6. **(Optional, propose but do not build without explicit separate approval)** — a warning-level
    `ValidationError` in `validate.go` for an `llm`/`condition` node referencing a var nothing
    upstream ever writes. Not part of the user's original ask (UI visibility, not a new compiler

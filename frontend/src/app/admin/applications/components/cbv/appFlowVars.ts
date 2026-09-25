@@ -14,6 +14,14 @@
  *
  * Semantics derived from go/internal/appflow/workflow.go's `case "llm"` /
  * `case "condition"`. Keep in sync when runtime behavior changes.
+ *
+ * Phase 5 (docs/APPFLOW_NAMED_PORTS_PLAN.md) adds `input_aliases:
+ * {alias: underlying_flowvars_key}` inside a node's `config` — a purely
+ * cosmetic rename layer. `reads` below is always the raw template var names
+ * (what's actually typed in the prompt/expression text, e.g. `output_2`);
+ * `resolveAlias` is exported for callers that need the real FlowVars key an
+ * alias points at, e.g. to look up its upstream writer by the source node's
+ * real `output_var` rather than by the display alias.
  */
 
 import type { Node, Edge } from '@xyflow/react';
@@ -29,6 +37,13 @@ interface InlineLikeData {
   node_type: string;
   display_name?: string;
   config?: Record<string, unknown>;
+}
+
+/** `input_aliases[alias] ?? alias` — a var with no alias entry is its own FlowVars key. */
+export function resolveAlias(node: Node, varName: string): string {
+  const d = node.data as unknown as InlineLikeData;
+  const aliases = (d.config?.input_aliases as Record<string, string>) ?? {};
+  return aliases[varName] ?? varName;
 }
 
 /**

@@ -77,7 +77,7 @@ export function InlineNodePanel({
 
         {displayNameField}
 
-        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} />
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} />
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider / Model</label>
@@ -169,7 +169,7 @@ export function InlineNodePanel({
 
         {displayNameField}
 
-        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} />
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} />
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Expression</label>

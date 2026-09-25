@@ -57,6 +57,12 @@ function extractInlineNodeVars(node) {
   return { reads: [], writes: [] };
 }
 
+function resolveAlias(node, varName) {
+  const d = node.data ?? {};
+  const aliases = (d.config ?? {}).input_aliases ?? {};
+  return aliases[varName] ?? varName;
+}
+
 function upstreamAppFlowVarSources(nodeId, allNodes, edges) {
   const predIds = reachablePredecessors(nodeId, edges);
   const result = new Map();
@@ -191,6 +197,20 @@ test('does not include vars written by unreachable nodes', () => {
 test('var with no reachable upstream writer is correctly absent from the map', () => {
   const map = upstreamAppFlowVarSources('D', gNodes, gEdges);
   assert.ok(!map.has('nonexistent_var'));
+});
+
+// ── resolveAlias ────────────────────────────────────────────────────────────────
+
+console.log('\nresolveAlias:');
+
+test('a var with no input_aliases entry resolves to itself', () => {
+  const n = node('a', 'llm', {});
+  assert.equal(resolveAlias(n, 'output'), 'output');
+});
+
+test('an aliased var resolves to its underlying FlowVars key', () => {
+  const n = node('a', 'llm', { input_aliases: { output_2: 'output' } });
+  assert.equal(resolveAlias(n, 'output_2'), 'output');
 });
 
 // ── Summary ───────────────────────────────────────────────────────────────────

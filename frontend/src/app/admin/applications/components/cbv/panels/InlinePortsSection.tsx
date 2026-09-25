@@ -2,27 +2,33 @@
 import type { Node, Edge } from '@xyflow/react';
 import { C } from '../../../constants';
 import { getNodeDef } from '@/lib/nodeRegistry';
-import { extractInlineNodeVars, upstreamAppFlowVarSources } from '../appFlowVars';
+import { extractInlineNodeVars, upstreamAppFlowVarSources, resolveAlias } from '../appFlowVars';
+import { renameInlinePortAlias, deleteInlinePortAlias } from '../useInlinePortWiring';
+import { PortAliasField } from './PortAliasField';
 
-// ── InlinePortsSection — read-only "READS" panel for llm/condition ──────────
+// ── InlinePortsSection — "READS" panel for llm/condition ─────────────────────
 //
-// Phase 3 of docs/APPFLOW_NAMED_PORTS_PLAN.md: surfaces which FlowVars a node
-// reads and where each one is written upstream, mirroring the agent builder's
-// StepDataFlowSection — but read-only (no rename/delete; that's Phase 5's
-// drag-to-connect wiring). AppFlow has no compiled contract like agentgen's
-// StepContract, so "unresolved" here always means "no upstream node writes
-// this var" via a graph walk, never a compiler-reported error.
+// Phase 3 of docs/APPFLOW_NAMED_PORTS_PLAN.md built this read-only, mirroring
+// the agent builder's StepDataFlowSection. Phase 5 adds rename/delete for any
+// var that's a drag-created `input_aliases` entry — vars typed directly into
+// the prompt/expression text (never dragged in) stay read-only, matching the
+// agent builder's own is-it-dynamic distinction. AppFlow has no compiled
+// contract like agentgen's StepContract, so "unresolved" here always means
+// "no upstream node writes this var" via a graph walk, never a
+// compiler-reported error.
 
 interface Props {
   selectedNode: Node;
   nodes: Node[];
   edges: Edge[];
+  setNodes: (updater: (ns: Node[]) => Node[]) => void;
 }
 
-export function InlinePortsSection({ selectedNode, nodes, edges }: Props) {
+export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Props) {
   const thisNode = nodes.find(n => n.id === selectedNode.id) ?? selectedNode;
   const { reads } = extractInlineNodeVars(thisNode);
   const varSrcMap = upstreamAppFlowVarSources(selectedNode.id, nodes, edges);
+  const inputAliases = ((thisNode.data as unknown as { config?: Record<string, unknown> }).config?.input_aliases as Record<string, string>) ?? {};
 
   const nodeType = (thisNode.data as unknown as { node_type: string }).node_type;
   const emptyHint = nodeType === 'condition'
@@ -35,8 +41,9 @@ export function InlinePortsSection({ selectedNode, nodes, edges }: Props) {
         Reads {reads.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400, textTransform: 'none' }}>— {emptyHint}</span>}
       </div>
       {[...new Set(reads)].map(v => {
-        const src = varSrcMap.get(v);
+        const src = varSrcMap.get(resolveAlias(thisNode, v));
         const unresolved = !src;
+        const isAlias = v in inputAliases;
         return (
           <div
             key={v}
@@ -57,7 +64,23 @@ export function InlinePortsSection({ selectedNode, nodes, edges }: Props) {
                 </>
               )}
               {unresolved && <span style={{ color: '#f87171', fontSize: 10 }}>— not written by any upstream node</span>}
+              {isAlias && (
+                <button
+                  onClick={() => deleteInlinePortAlias(thisNode.id, v, setNodes)}
+                  title={`Remove ${v} binding`}
+                  style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: 12, lineHeight: 1, padding: '0 2px', display: 'flex', alignItems: 'center' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                >✕</button>
+              )}
             </div>
+            {isAlias && (
+              <PortAliasField
+                nodeId={thisNode.id}
+                alias={v}
+                onRename={(nodeId, oldAlias, newAlias) => renameInlinePortAlias(nodeId, oldAlias, newAlias, setNodes)}
+              />
+            )}
           </div>
         );
       })}
