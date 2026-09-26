@@ -24,7 +24,12 @@ export function PortAliasField({ nodeId, alias, onRename }: Props) {
 
   function commit() {
     setEditing(false);
-    const clean = draft.trim().replace(/[^a-z0-9_]/gi, '_').replace(/^[0-9]/, '_$&');
+    // Loosened from an earlier [a-z0-9_]-only rule so readable defaults like
+    // "LLM2_output" survive untouched. A literal `.` must still become `_`
+    // though (not just whitespace/braces/quotes) — {{.aliasName}} is real Go
+    // text/template syntax against a flat map[string]string; a dot inside the
+    // name would parse as chained field access, not a literal map key.
+    const clean = draft.trim().replace(/[\s{}"'`.]+/g, '_').replace(/^[0-9]/, '_$&');
     if (clean && clean !== alias) onRename(nodeId, alias, clean);
     else setDraft(alias);
   }

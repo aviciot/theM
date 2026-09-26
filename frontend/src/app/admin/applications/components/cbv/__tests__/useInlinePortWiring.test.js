@@ -6,6 +6,12 @@
  *
  * Inlines the pure functions (no TypeScript runtime needed), following the
  * convention established by appFlowVars.test.js.
+ *
+ * REVISED 2026-09-26: input_aliases now stores {alias: {source_node_id,
+ * source_var}} — a reference to the source NODE, not a copy of its
+ * output_var's name. See useInlinePortWiring.ts's module doc for the live
+ * user feedback that drove this (renames not propagating, same-named
+ * outputs being indistinguishable).
  */
 
 'use strict';
@@ -42,11 +48,20 @@ function getInputAliases(node) {
   return cfg.input_aliases ?? {};
 }
 
-function uniqueAlias(desired, existing) {
-  if (!(desired in existing)) return desired;
+function sanitizeAliasChars(s) {
+  // A literal `.` must become `_`: {{.aliasName}} is real Go text/template
+  // syntax against a flat map[string]string — a dot inside the name would
+  // parse as chained field access, not a literal map key.
+  return s.trim().replace(/[\s{}"'`.]+/g, '_');
+}
+
+function defaultAliasFor(sourceNode, sourceVar, existing) {
+  const label = sourceNode.data.display_name || sourceNode.id;
+  const base = sanitizeAliasChars(`${label}_${sourceVar}`);
+  if (!(base in existing)) return base;
   let i = 2;
-  while (`${desired}_${i}` in existing) i++;
-  return `${desired}_${i}`;
+  while (`${base}_${i}` in existing) i++;
+  return `${base}_${i}`;
 }
 
 function appendTemplateRef(text, alias) {
@@ -64,7 +79,7 @@ function commitInlinePortBinding(sourceNode, targetNodeId, field, setNodes) {
     const nd = n.data;
     const cfg = nd.config ?? {};
     const existingAliases = cfg.input_aliases ?? {};
-    const alias = uniqueAlias(sourceVar, existingAliases);
+    const alias = defaultAliasFor(sourceNode, sourceVar, existingAliases);
     const currentText = cfg[field.key] || '';
     return {
       ...n,
@@ -72,7 +87,7 @@ function commitInlinePortBinding(sourceNode, targetNodeId, field, setNodes) {
         ...nd,
         config: {
           ...cfg,
-          input_aliases: { ...existingAliases, [alias]: sourceVar },
+          input_aliases: { ...existingAliases, [alias]: { source_node_id: sourceNode.id, source_var: sourceVar } },
           [field.key]: appendTemplateRef(currentText, alias),
         },
       },
@@ -128,6 +143,17 @@ function deleteInlinePortAlias(nodeId, alias, setNodes) {
   }));
 }
 
+function resolveBinding(node, varName, allNodes) {
+  const aliases = getInputAliases(node);
+  const binding = aliases[varName];
+  if (!binding) return null;
+  const sourceNode = allNodes.find(n => n.id === binding.source_node_id);
+  if (!sourceNode) return null;
+  const sourceCfg = sourceNode.data.config ?? {};
+  const liveVar = sourceCfg.output_var || 'output';
+  return { sourceNode, liveVar, boundVar: binding.source_var, drifted: liveVar !== binding.source_var };
+}
+
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
 let passed = 0;
@@ -145,8 +171,8 @@ function test(name, fn) {
   }
 }
 
-function node(id, node_type, config = {}) {
-  return { id, data: { node_type, config } };
+function node(id, node_type, config = {}, display_name) {
+  return { id, data: { node_type, config, display_name: display_name ?? id } };
 }
 
 // setNodes-shaped helper: takes an updater fn (ns => ns2), runs it against `nodes`, returns ns2.
@@ -193,38 +219,80 @@ test('undefined target resolves to none', () => {
 
 console.log('\ncommitInlinePortBinding:');
 
-test('binds source output_var as a new alias, appends {{.alias}} to an empty field', () => {
-  const source = node('src', 'llm', { output_var: 'summary' });
+test('binds a reference to the source NODE (id + var), not a copy of the var name', () => {
+  const source = node('src', 'llm', { output_var: 'summary' }, 'Summarizer');
   const target = node('tgt', 'condition', { expression: '' });
   const field = { key: 'expression', label: 'Expression' };
 
   const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit));
   const updated = result.find(n => n.id === 'tgt');
-  assert.deepEqual(updated.data.config.input_aliases, { summary: 'summary' });
-  assert.equal(updated.data.config.expression, '{{.summary}}');
+  const aliases = updated.data.config.input_aliases;
+  const [alias, binding] = Object.entries(aliases)[0];
+  assert.equal(binding.source_node_id, 'src');
+  assert.equal(binding.source_var, 'summary');
+  assert.equal(updated.data.config.expression, `{{.${alias}}}`);
+});
+
+test('default alias is "<SourceDisplayName>_output_var" (never dotted — see module doc)', () => {
+  const source = node('src', 'llm', { output_var: 'summary' }, 'Summarizer');
+  const target = node('tgt', 'condition', {});
+  const field = { key: 'expression', label: 'Expression' };
+
+  const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit));
+  const updated = result.find(n => n.id === 'tgt');
+  assert.deepEqual(Object.keys(updated.data.config.input_aliases), ['Summarizer_summary']);
 });
 
 test('appends to existing non-empty field text rather than replacing it', () => {
-  const source = node('src', 'llm', { output_var: 'summary' });
+  const source = node('src', 'llm', { output_var: 'summary' }, 'Summarizer');
   const target = node('tgt', 'llm', { user_prompt: 'Given the context,' });
   const field = { key: 'user_prompt', label: 'User Prompt' };
 
   const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit));
   const updated = result.find(n => n.id === 'tgt');
-  assert.equal(updated.data.config.user_prompt, 'Given the context, {{.summary}}');
+  assert.equal(updated.data.config.user_prompt, 'Given the context, {{.Summarizer_summary}}');
 });
 
 test('defaults source var to "output" when output_var is unset', () => {
-  const source = node('src', 'llm', {});
+  const source = node('src', 'llm', {}, 'LLM1');
   const target = node('tgt', 'condition', {});
   const field = { key: 'expression', label: 'Expression' };
 
   const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit));
-  assert.deepEqual(result.find(n => n.id === 'tgt').data.config.input_aliases, { output: 'output' });
+  const aliases = result.find(n => n.id === 'tgt').data.config.input_aliases;
+  assert.deepEqual(aliases['LLM1_output'], { source_node_id: 'src', source_var: 'output' });
 });
 
-test('collision: second binding of the same var name gets a numeric suffix, matching agent builder', () => {
-  const source = node('src', 'llm', { output_var: 'output' });
+test('two different source nodes both named their output "out" stay distinguishable', () => {
+  const src1 = node('src1', 'llm', { output_var: 'out' }, 'LLM1');
+  const src2 = node('src2', 'llm', { output_var: 'out' }, 'LLM2');
+  const target = node('tgt', 'condition', {});
+
+  let nodes = [src1, src2, target];
+  nodes = runSetNodes(nodes, commit => commitInlinePortBinding(src1, 'tgt', { key: 'expression', label: 'Expression' }, commit));
+  nodes = runSetNodes(nodes, commit => commitInlinePortBinding(src2, 'tgt', { key: 'expression', label: 'Expression' }, commit));
+
+  const aliases = nodes.find(n => n.id === 'tgt').data.config.input_aliases;
+  assert.equal(aliases['LLM1_out'].source_node_id, 'src1');
+  assert.equal(aliases['LLM2_out'].source_node_id, 'src2');
+});
+
+test('generated alias never contains a literal dot, even if the source display name has one', () => {
+  // Regression test: {{.aliasName}} is real Go text/template syntax against a
+  // flat map[string]string (go/internal/appflow/inline.go). A dot inside the
+  // alias would parse as chained field access ({{.A.B}}), not a literal map
+  // key — silently breaking at runtime instead of failing loudly here.
+  const source = node('src', 'llm', { output_var: 'output' }, 'Acme, Inc. Summarizer');
+  const target = node('tgt', 'condition', {});
+  const field = { key: 'expression', label: 'Expression' };
+
+  const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit));
+  const [alias] = Object.keys(result.find(n => n.id === 'tgt').data.config.input_aliases);
+  assert.ok(!alias.includes('.'), `alias "${alias}" must not contain a literal dot`);
+});
+
+test('collision: two bindings from the SAME source/var pair still get distinct aliases via numeric suffix', () => {
+  const source = node('src', 'llm', { output_var: 'output' }, 'LLM1');
   let target = node('tgt', 'llm', { user_prompt: '' });
 
   let nodes = [source, target];
@@ -232,9 +300,43 @@ test('collision: second binding of the same var name gets a numeric suffix, matc
   nodes = runSetNodes(nodes, commit => commitInlinePortBinding(source, 'tgt', { key: 'system_prompt', label: 'System Prompt' }, commit));
 
   const updated = nodes.find(n => n.id === 'tgt');
-  assert.deepEqual(updated.data.config.input_aliases, { output: 'output', output_2: 'output' });
-  assert.equal(updated.data.config.user_prompt, '{{.output}}');
-  assert.equal(updated.data.config.system_prompt, '{{.output_2}}');
+  assert.deepEqual(Object.keys(updated.data.config.input_aliases).sort(), ['LLM1_output', 'LLM1_output_2']);
+  assert.equal(updated.data.config.user_prompt, '{{.LLM1_output}}');
+  assert.equal(updated.data.config.system_prompt, '{{.LLM1_output_2}}');
+});
+
+// ── resolveBinding (live rename propagation) ──────────────────────────────────
+
+console.log('\nresolveBinding:');
+
+test('resolves to the source\'s CURRENT output_var, not a frozen copy', () => {
+  const source = node('src', 'llm', { output_var: 'summary' }, 'Summarizer');
+  const target = node('tgt', 'condition', { input_aliases: { Summarizer_summary: { source_node_id: 'src', source_var: 'summary' } } });
+
+  const binding = resolveBinding(target, 'Summarizer_summary', [source, target]);
+  assert.equal(binding.liveVar, 'summary');
+  assert.equal(binding.drifted, false);
+});
+
+test('detects drift after the source renames its output_var, but still resolves correctly', () => {
+  const renamedSource = node('src', 'llm', { output_var: 'sentiment' }, 'Summarizer'); // renamed after binding
+  const target = node('tgt', 'condition', { input_aliases: { Summarizer_summary: { source_node_id: 'src', source_var: 'summary' } } });
+
+  const binding = resolveBinding(target, 'Summarizer_summary', [renamedSource, target]);
+  assert.equal(binding.liveVar, 'sentiment');
+  assert.equal(binding.boundVar, 'summary');
+  assert.equal(binding.drifted, true);
+  assert.equal(binding.sourceNode.id, 'src');
+});
+
+test('returns null when the source node no longer exists', () => {
+  const target = node('tgt', 'condition', { input_aliases: { Ghost_output: { source_node_id: 'deleted', source_var: 'output' } } });
+  assert.equal(resolveBinding(target, 'Ghost_output', [target]), null);
+});
+
+test('returns null for a var that is not a drag-created alias', () => {
+  const target = node('tgt', 'condition', { input_aliases: {} });
+  assert.equal(resolveBinding(target, 'typed_var', [target]), null);
 });
 
 // ── renameInlinePortAlias ──────────────────────────────────────────────────────
@@ -243,20 +345,20 @@ console.log('\nrenameInlinePortAlias:');
 
 test('renames the alias key and rewrites every {{.alias}} occurrence in the node\'s text fields', () => {
   const target = node('tgt', 'llm', {
-    input_aliases: { output: 'output' },
-    system_prompt: 'You know {{.output}}.',
-    user_prompt: 'Also: {{.output}}',
+    input_aliases: { LLM1_output: { source_node_id: 'src', source_var: 'output' } },
+    system_prompt: 'You know {{.LLM1_output}}.',
+    user_prompt: 'Also: {{.LLM1_output}}',
   });
 
-  const result = runSetNodes([target], commit => renameInlinePortAlias('tgt', 'output', 'sentiment', commit));
+  const result = runSetNodes([target], commit => renameInlinePortAlias('tgt', 'LLM1_output', 'sentiment', commit));
   const updated = result.find(n => n.id === 'tgt');
-  assert.deepEqual(updated.data.config.input_aliases, { sentiment: 'output' });
+  assert.deepEqual(Object.keys(updated.data.config.input_aliases), ['sentiment']);
+  assert.equal(updated.data.config.input_aliases.sentiment.source_node_id, 'src');
   assert.equal(updated.data.config.system_prompt, 'You know {{.sentiment}}.');
   assert.equal(updated.data.config.user_prompt, 'Also: {{.sentiment}}');
 });
 
 test('no-op when old and new alias are identical (setNodes never called)', () => {
-  const target = node('tgt', 'llm', { input_aliases: { output: 'output' }, user_prompt: '{{.output}}' });
   let called = false;
   renameInlinePortAlias('tgt', 'output', 'output', () => { called = true; });
   assert.equal(called, false);
@@ -274,10 +376,10 @@ console.log('\ndeleteInlinePortAlias:');
 
 test('removes the alias entry and strips {{.alias}} (with leading space) from text fields', () => {
   const target = node('tgt', 'llm', {
-    input_aliases: { output: 'output' },
-    user_prompt: 'Given the context, {{.output}}',
+    input_aliases: { LLM1_output: { source_node_id: 'src', source_var: 'output' } },
+    user_prompt: 'Given the context, {{.LLM1_output}}',
   });
-  const result = runSetNodes([target], commit => deleteInlinePortAlias('tgt', 'output', commit));
+  const result = runSetNodes([target], commit => deleteInlinePortAlias('tgt', 'LLM1_output', commit));
   const updated = result.find(n => n.id === 'tgt');
   assert.deepEqual(updated.data.config.input_aliases, {});
   assert.equal(updated.data.config.user_prompt, 'Given the context,');
@@ -285,12 +387,15 @@ test('removes the alias entry and strips {{.alias}} (with leading space) from te
 
 test('leaves other aliases and their template refs untouched', () => {
   const target = node('tgt', 'llm', {
-    input_aliases: { a: 'a', b: 'b' },
+    input_aliases: {
+      a: { source_node_id: 'src_a', source_var: 'a' },
+      b: { source_node_id: 'src_b', source_var: 'b' },
+    },
     user_prompt: '{{.a}} and {{.b}}',
   });
   const result = runSetNodes([target], commit => deleteInlinePortAlias('tgt', 'a', commit));
   const updated = result.find(n => n.id === 'tgt');
-  assert.deepEqual(updated.data.config.input_aliases, { b: 'b' });
+  assert.deepEqual(Object.keys(updated.data.config.input_aliases), ['b']);
   // Only the leading space directly attached to the deleted {{.a}} ref is
   // stripped — a leftover leading space before "and" is a cosmetic artifact
   // of appendTemplateRef's own space-prefixing convention, not a bug.

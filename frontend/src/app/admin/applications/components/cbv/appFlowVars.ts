@@ -16,17 +16,19 @@
  * `case "condition"`. Keep in sync when runtime behavior changes.
  *
  * Phase 5 (docs/APPFLOW_NAMED_PORTS_PLAN.md) adds `input_aliases:
- * {alias: underlying_flowvars_key}` inside a node's `config` — a purely
- * cosmetic rename layer. `reads` below is always the raw template var names
- * (what's actually typed in the prompt/expression text, e.g. `output_2`);
- * `resolveAlias` is exported for callers that need the real FlowVars key an
- * alias points at, e.g. to look up its upstream writer by the source node's
- * real `output_var` rather than by the display alias.
+ * {alias: {source_node_id, source_var}}` inside a node's `config` — a
+ * purely cosmetic rename layer, stored as a reference to the source NODE
+ * (not a copy of its output_var's name), so a later rename of the source's
+ * output_var is picked up live. `reads` below is always the raw template var
+ * names (what's actually typed in the prompt/expression text, e.g.
+ * `LLM2.output`); `resolveBinding` is exported for callers that need to
+ * resolve an alias to its live source, e.g. the Reads panel.
  */
 
 import type { Node, Edge } from '@xyflow/react';
 import { extractTemplateVars } from '@/lib/templateVars';
 import { reachablePredecessors } from '@/lib/graphWalk';
+import { getInputAliases } from './useInlinePortWiring';
 
 export interface AppFlowNodeVars {
   reads: string[];
@@ -39,11 +41,28 @@ interface InlineLikeData {
   config?: Record<string, unknown>;
 }
 
-/** `input_aliases[alias] ?? alias` — a var with no alias entry is its own FlowVars key. */
-export function resolveAlias(node: Node, varName: string): string {
-  const d = node.data as unknown as InlineLikeData;
-  const aliases = (d.config?.input_aliases as Record<string, string>) ?? {};
-  return aliases[varName] ?? varName;
+export interface ResolvedBinding {
+  sourceNode: Node;
+  liveVar: string;      // the source node's CURRENT output_var — always fresh, never a frozen copy
+  boundVar: string;     // the var name that was true at bind time (for drift detection)
+  drifted: boolean;     // true if the source's output_var was renamed after this alias was bound
+}
+
+/**
+ * Resolve an alias on `node` to its live source, by looking the source node
+ * up fresh in `allNodes` every call — never trusting a copied string. Returns
+ * null if the var isn't a drag-created alias, or its source node no longer
+ * exists (e.g. deleted, or a hand-edited import referencing an unknown id).
+ */
+export function resolveBinding(node: Node, varName: string, allNodes: Node[]): ResolvedBinding | null {
+  const aliases = getInputAliases(node);
+  const binding = aliases[varName];
+  if (!binding) return null;
+  const sourceNode = allNodes.find(n => n.id === binding.source_node_id);
+  if (!sourceNode) return null;
+  const sourceCfg = (sourceNode.data as unknown as InlineLikeData).config ?? {};
+  const liveVar = (sourceCfg.output_var as string) || 'output';
+  return { sourceNode, liveVar, boundVar: binding.source_var, drifted: liveVar !== binding.source_var };
 }
 
 /**

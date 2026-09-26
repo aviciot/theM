@@ -2,8 +2,8 @@
 import type { Node, Edge } from '@xyflow/react';
 import { C } from '../../../constants';
 import { getNodeDef } from '@/lib/nodeRegistry';
-import { extractInlineNodeVars, upstreamAppFlowVarSources, resolveAlias } from '../appFlowVars';
-import { renameInlinePortAlias, deleteInlinePortAlias } from '../useInlinePortWiring';
+import { extractInlineNodeVars, upstreamAppFlowVarSources, resolveBinding } from '../appFlowVars';
+import { renameInlinePortAlias, deleteInlinePortAlias, getInputAliases } from '../useInlinePortWiring';
 import { PortAliasField } from './PortAliasField';
 
 // ── InlinePortsSection — "READS" panel for llm/condition ─────────────────────
@@ -16,6 +16,13 @@ import { PortAliasField } from './PortAliasField';
 // contract like agentgen's StepContract, so "unresolved" here always means
 // "no upstream node writes this var" via a graph walk, never a
 // compiler-reported error.
+//
+// REVISED 2026-09-26: a dragged-in alias resolves its source via
+// resolveBinding() — a live node-id lookup, not a frozen copied string — so
+// renaming the source's output_var is picked up automatically here without
+// needing to touch the alias itself. Vars typed directly into text (never
+// dragged in) have no node reference to resolve, so they still fall back to
+// the graph-walk heuristic (upstreamAppFlowVarSources) exactly as before.
 
 interface Props {
   selectedNode: Node;
@@ -28,7 +35,7 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
   const thisNode = nodes.find(n => n.id === selectedNode.id) ?? selectedNode;
   const { reads } = extractInlineNodeVars(thisNode);
   const varSrcMap = upstreamAppFlowVarSources(selectedNode.id, nodes, edges);
-  const inputAliases = ((thisNode.data as unknown as { config?: Record<string, unknown> }).config?.input_aliases as Record<string, string>) ?? {};
+  const inputAliases = getInputAliases(thisNode);
 
   const nodeType = (thisNode.data as unknown as { node_type: string }).node_type;
   const emptyHint = nodeType === 'condition'
@@ -41,9 +48,18 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
         Reads {reads.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400, textTransform: 'none' }}>— {emptyHint}</span>}
       </div>
       {[...new Set(reads)].map(v => {
-        const src = varSrcMap.get(resolveAlias(thisNode, v));
-        const unresolved = !src;
         const isAlias = v in inputAliases;
+        const binding = isAlias ? resolveBinding(thisNode, v, nodes) : null;
+        // Aliased var: resolved via its live node reference. Typed-in var: falls
+        // back to the graph-walk heuristic (no reference to resolve from).
+        const heuristicSrc = isAlias ? undefined : varSrcMap.get(v);
+        const unresolved = isAlias ? !binding : !heuristicSrc;
+        const srcLabel = binding
+          ? (binding.sourceNode.data as unknown as { display_name?: string }).display_name || binding.sourceNode.id
+          : heuristicSrc?.label;
+        const srcNodeType = binding
+          ? (binding.sourceNode.data as unknown as { node_type: string }).node_type
+          : heuristicSrc?.node_type;
         return (
           <div
             key={v}
@@ -55,15 +71,15 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px' }}>
               <code style={{ color: unresolved ? '#f87171' : C.cyan, fontSize: 11, fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
-              {src && (
+              {srcLabel && srcNodeType && (
                 <>
                   <span style={{ color: C.textMuted, fontSize: 10 }}>from</span>
                   <span style={{ color: '#94a3b8', fontSize: 10 }}>
-                    {getNodeDef(src.node_type, 'appflow').emoji} {src.label}
+                    {getNodeDef(srcNodeType, 'appflow').emoji} {srcLabel}
                   </span>
                 </>
               )}
-              {unresolved && <span style={{ color: '#f87171', fontSize: 10 }}>— not written by any upstream node</span>}
+              {unresolved && <span style={{ color: '#f87171', fontSize: 10 }}>— {isAlias ? 'source node no longer exists' : 'not written by any upstream node'}</span>}
               {isAlias && (
                 <button
                   onClick={() => deleteInlinePortAlias(thisNode.id, v, setNodes)}
@@ -74,6 +90,11 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
                 >✕</button>
               )}
             </div>
+            {binding?.drifted && (
+              <div style={{ padding: '3px 8px 5px', fontSize: 10, color: '#f59e0b', borderTop: '1px dashed rgba(245,158,11,0.2)' }}>
+                ⚠ source's output var is now <code>{binding.liveVar}</code> (was <code>{binding.boundVar}</code> when bound) — still resolves correctly, no action needed
+              </div>
+            )}
             {isAlias && (
               <PortAliasField
                 nodeId={thisNode.id}

@@ -6,6 +6,10 @@
  * Inlines the pure functions from appFlowVars.ts (no TypeScript runtime
  * needed) plus their two dependencies from src/lib/. When a test runner
  * (vitest/jest) is added, migrate to importing directly.
+ *
+ * resolveBinding (this file's replacement for an earlier resolveAlias) is
+ * tested in useInlinePortWiring.test.js instead, since it's tightly coupled
+ * to that module's binding-commit shape.
  */
 
 'use strict';
@@ -55,12 +59,6 @@ function extractInlineNodeVars(node) {
   }
 
   return { reads: [], writes: [] };
-}
-
-function resolveAlias(node, varName) {
-  const d = node.data ?? {};
-  const aliases = (d.config ?? {}).input_aliases ?? {};
-  return aliases[varName] ?? varName;
 }
 
 function upstreamAppFlowVarSources(nodeId, allNodes, edges) {
@@ -199,19 +197,9 @@ test('var with no reachable upstream writer is correctly absent from the map', (
   assert.ok(!map.has('nonexistent_var'));
 });
 
-// ── resolveAlias ────────────────────────────────────────────────────────────────
-
-console.log('\nresolveAlias:');
-
-test('a var with no input_aliases entry resolves to itself', () => {
-  const n = node('a', 'llm', {});
-  assert.equal(resolveAlias(n, 'output'), 'output');
-});
-
-test('an aliased var resolves to its underlying FlowVars key', () => {
-  const n = node('a', 'llm', { input_aliases: { output_2: 'output' } });
-  assert.equal(resolveAlias(n, 'output_2'), 'output');
-});
+// (resolveBinding — the ID-based alias resolver that replaced resolveAlias —
+// is covered in useInlinePortWiring.test.js, alongside the binding-commit
+// logic it's paired with.)
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 

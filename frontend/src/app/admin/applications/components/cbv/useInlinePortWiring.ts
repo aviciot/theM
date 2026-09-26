@@ -8,12 +8,23 @@
  * both a control-flow edge AND (when the target is llm/condition) a candidate
  * data binding, since llm is the only kind that ever writes a FlowVar.
  *
- * Binding storage: `input_aliases: {alias: underlying_flowvars_key}` inside
- * the target node's already-opaque `config` object (confirmed zero
+ * Binding storage: `input_aliases: {alias: {source_node_id, source_var}}`
+ * inside the target node's already-opaque `config` object (confirmed zero
  * serialization-layer changes needed — CanvasHelpers.ts passes `config`
- * through whole). Renaming/deleting an alias also rewrites `{{.alias}}`
- * occurrences in the node's own text fields so the alias and the template
- * text never drift apart.
+ * through whole; node IDs are stable across export/import, confirmed by
+ * reading CanvasHelpers.ts/CanvasExportImport.ts directly — instance_id
+ * round-trips unchanged).
+ *
+ * REVISED 2026-09-26, live user feedback on the first cut: the original
+ * version stored `{alias: sourceOutputVarName}` — a copied string, not a
+ * reference. That broke two things at once: (1) renaming the source's
+ * `output_var` never propagated anywhere, since nothing remembered *which
+ * node* the copied name came from; (2) two different `llm` nodes both
+ * outputting a var literally named "output" were indistinguishable except by
+ * numeric suffix. Storing the source node's id fixes both — the source's
+ * *current* output_var is always looked up live (see appFlowVars.ts's
+ * `resolveBinding`), and the default alias can be derived from the source's
+ * own display name instead of a bare suffix.
  */
 
 import type { Node } from '@xyflow/react';
@@ -23,8 +34,14 @@ export interface NameableField {
   label: string;  // shown in the popover
 }
 
+export interface PortBinding {
+  source_node_id: string;
+  source_var: string; // which field on the source this pointed at when bound (llm only ever has one: output_var)
+}
+
 interface InlineLikeData {
   node_type: string;
+  display_name?: string;
   config?: Record<string, unknown>;
 }
 
@@ -62,17 +79,35 @@ export function resolveDropTarget(targetNode: Node | undefined): DropResolution 
   return { kind: 'ambiguous', fields };
 }
 
-function getInputAliases(node: Node): Record<string, string> {
+export function getInputAliases(node: Node): Record<string, PortBinding> {
   const cfg = (node.data as unknown as InlineLikeData).config ?? {};
-  return (cfg.input_aliases as Record<string, string>) ?? {};
+  return (cfg.input_aliases as Record<string, PortBinding>) ?? {};
 }
 
-/** `output`, `output_2`, `output_3`... — same suffix scheme the agent builder's onPipeConnectStart uses. */
-function uniqueAlias(desired: string, existing: Record<string, string>): string {
-  if (!(desired in existing)) return desired;
+/**
+ * `{{.aliasName}}` is executed by Go's real text/template (confirmed by
+ * reading go/internal/appflow/inline.go directly) against FlowVars, a flat
+ * map[string]string. A literal `.` inside the alias would NOT mean "the map
+ * key containing a dot" — Go's template dotted-field syntax reads it as
+ * chained field access ({{.A.B}} = "field B of field A"), which fails against
+ * a flat string map. So a `.` must never appear in an alias — loosened from
+ * an earlier [a-z0-9_]-only rule, but a dot specifically must still become
+ * `_`, alongside whitespace/braces/quotes.
+ */
+function sanitizeAliasChars(s: string): string {
+  return s.trim().replace(/[\s{}"'`.]+/g, '_');
+}
+
+/** `<SourceDisplayName>_output` — falls back to a numeric suffix only if two
+ * source nodes genuinely share the same display name (rare, already an
+ * existing ambiguity elsewhere on the canvas). */
+function defaultAliasFor(sourceNode: Node, sourceVar: string, existing: Record<string, PortBinding>): string {
+  const label = (sourceNode.data as unknown as InlineLikeData).display_name || sourceNode.id;
+  const base = sanitizeAliasChars(`${label}_${sourceVar}`);
+  if (!(base in existing)) return base;
   let i = 2;
-  while (`${desired}_${i}` in existing) i++;
-  return `${desired}_${i}`;
+  while (`${base}_${i}` in existing) i++;
+  return `${base}_${i}`;
 }
 
 function appendTemplateRef(text: string, alias: string): string {
@@ -82,10 +117,9 @@ function appendTemplateRef(text: string, alias: string): string {
 }
 
 /**
- * Commit a data-port binding: source's output_var becomes a new alias on the
- * target, appended into `field`'s text. Idempotent against re-dragging the
- * same source→target→field combination is not attempted — each drop creates
- * a fresh alias, matching the agent builder's own behavior.
+ * Commit a data-port binding: a reference to the source node (not a copy of
+ * its output_var's name) becomes a new alias on the target, appended into
+ * `field`'s text.
  */
 export function commitInlinePortBinding(
   sourceNode: Node,
@@ -100,8 +134,8 @@ export function commitInlinePortBinding(
     if (n.id !== targetNodeId) return n;
     const nd = n.data as unknown as InlineLikeData;
     const cfg = nd.config ?? {};
-    const existingAliases = (cfg.input_aliases as Record<string, string>) ?? {};
-    const alias = uniqueAlias(sourceVar, existingAliases);
+    const existingAliases = (cfg.input_aliases as Record<string, PortBinding>) ?? {};
+    const alias = defaultAliasFor(sourceNode, sourceVar, existingAliases);
     const currentText = (cfg[field.key] as string) || '';
     return {
       ...n,
@@ -109,7 +143,7 @@ export function commitInlinePortBinding(
         ...nd,
         config: {
           ...cfg,
-          input_aliases: { ...existingAliases, [alias]: sourceVar },
+          input_aliases: { ...existingAliases, [alias]: { source_node_id: sourceNode.id, source_var: sourceVar } },
           [field.key]: appendTemplateRef(currentText, alias),
         },
       } as unknown as Record<string, unknown>,

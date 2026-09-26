@@ -1,9 +1,14 @@
 # Current Session State — the-M
-# Last updated: 2026-09-25 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-5 complete (Phase 4's
+# Last updated: 2026-09-26 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-5 complete (Phase 4's
 # visible port dots were built then REVERTED same session per live user feedback — see that
-# doc's Phase 4 entry). Phase 5 (the real drag-to-connect wiring) is now implemented and tested —
-# see that doc's Phase 5 "DONE" entry for full detail. Only Phase 6 (optional, not yet approved)
-# remains on that thread. Not yet live-browser-verified — see this file's Phase 5 section below.
+# doc's Phase 4 entry). Phase 5 (the real drag-to-connect wiring) is implemented and tested,
+# including a 2026-09-26 follow-up round that fixed 4 real bugs found during the user's first
+# live browser click-through (stale-closure popover bug, copied-string vs. real node-id binding,
+# a Go-text/template dot-in-alias bug caught by reading the runtime source, plus a confirmed
+# by-design decision on dismiss-without-choosing behavior) — see that doc's Phase 5 "DONE" entry
+# and its "Follow-up fixes" block for full detail. Only Phase 6 (optional, not yet approved)
+# remains on that thread. Not yet re-verified live after the follow-up round — see this file's
+# "START HERE" section below for the exact walkthrough to run next.
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -65,17 +70,27 @@ a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps c
 
 ## START HERE — next session
 
-**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-5 COMPLETE.** Only Phase 6
-(optional static-validation pass, not yet approved) remains, and it's explicitly opt-in — do not
-start it without asking first. Read that doc's Phase 5 "DONE" entry before touching this feature
-again; it has the full implementation map (new files, the `onConnect`/`onConnectEnd` coordinate
-trick, collision-naming rule, text-insertion rule). **Not yet live-browser-verified** — recommend
-a real click-through next session before trusting it fully: drag a wire from an `llm` node's
-output to a `condition` node (should auto-bind silently, no popover), then drag `llm` → `llm`
-(should show a small 2-option popover — System Prompt / User Prompt — positioned at the actual
-drop point), then open the target's Reads panel and confirm the new alias appears, its inline
-rename (click the alias text) works, and its ✕ delete button removes both the alias and its
-`{{.alias}}` reference from the prompt text.
+**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-5 COMPLETE, including a 2026-09-26
+follow-up round from the user's first real browser click-through.** Only Phase 6 (optional
+static-validation pass, not yet approved) remains, and it's explicitly opt-in — do not start it
+without asking first. Read that doc's Phase 5 "DONE" entry (both the original write-up and the
+"Follow-up fixes, 2026-09-26" block right after it) before touching this feature again — 4 real
+bugs were found live and fixed: a stale-closure bug that broke the popover on rapid successive
+drags (fixed with a ref); `input_aliases` storing a copied var-name string instead of a real
+reference to the source node (fixed — now `{alias: {source_node_id, source_var}}`, so renaming a
+source's `output_var` propagates live and same-named outputs from different nodes stay
+distinguishable); and a subtler one caught only by reading the actual Go runtime
+(`go/internal/appflow/inline.go`) — `{{.aliasName}}` is real Go `text/template` syntax against a
+flat `map[string]string`, so an early attempt at a dotted default alias (`LLM2.output`) would have
+silently mis-resolved at runtime (a dot means chained field access to Go's template engine, not a
+literal map key); fixed by using `_` as the joiner instead, with a dedicated regression test.
+**Not yet re-verified live after this follow-up round** — recommend re-running the browser
+walkthrough once more: drag `llm` → `condition` (should auto-bind silently, no popover), then
+`llm` → `llm` immediately after (should show the 2-option popover — System Prompt / User Prompt —
+positioned at the actual drop point; confirm this works even right after the first drag, not just
+in isolation), then open the target's Reads panel and confirm the alias, its inline rename, its ✕
+delete, and — new this round — an amber "drifted" notice if you rename the source node's Output
+Variable field after the binding was made.
 
 **Quick summary of what's done:**
 - Phase 1: `llm` node's registry metadata (`go/internal/appflow/noderegistry.go`) got

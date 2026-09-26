@@ -106,7 +106,16 @@ export function CanvasBuilderView({
   // handleConnect (no field chosen yet) — stash it here and resolve on the
   // subsequent onConnectEnd, which is the only lifecycle point that hands
   // back real screen coordinates for the popover.
-  const [pendingPortBinding, setPendingPortBinding] = useState<{ sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
+  //
+  // Uses a ref, not state: found live (2026-09-26) that back-to-back drags in
+  // the same gesture-pair sequence (e.g. llm→condition immediately followed
+  // by llm→llm) could read a stale `null` here — ReactFlow's own
+  // onConnect/onConnectEnd handlers are plain closures re-registered on
+  // render, and the very next pointer-up can fire before React has committed
+  // a state update from the previous one. A ref has no such render-timing
+  // gap: handleConnect writes it synchronously, handleConnectEnd always
+  // reads the value as of that exact moment.
+  const pendingPortBindingRef = useRef<{ sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
   const [portPopover, setPortPopover] = useState<{ x: number; y: number; sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
 
   function startCompPanelResize(e: React.MouseEvent) {
@@ -433,20 +442,25 @@ export function CanvasBuilderView({
     // Phase 5 named data ports: llm is the only kind that ever writes a
     // FlowVar, so it's the only source a data binding can come from. Every
     // other source→llm/condition connection is a plain control edge only.
+    // Clear any leftover pending request from a previous connect gesture
+    // before deciding this one, so a plain/auto connection right after an
+    // ambiguous one that was never resolved can't accidentally reuse it.
+    pendingPortBindingRef.current = null;
     if (isBindableSource(srcNode)) {
       const resolution = resolveDropTarget(tgtNode);
       if (resolution.kind === 'auto') {
         commitInlinePortBinding(srcNode, tgtNode.id, resolution.field, setNodes);
       } else if (resolution.kind === 'ambiguous') {
-        setPendingPortBinding({ sourceNode: srcNode, targetNodeId: tgtNode.id, fields: resolution.fields });
+        pendingPortBindingRef.current = { sourceNode: srcNode, targetNodeId: tgtNode.id, fields: resolution.fields };
       }
     }
   }
 
   function handleConnectEnd(event: MouseEvent | TouchEvent) {
-    if (!pendingPortBinding) return;
-    const { sourceNode, targetNodeId, fields } = pendingPortBinding;
-    setPendingPortBinding(null);
+    const pending = pendingPortBindingRef.current;
+    if (!pending) return;
+    pendingPortBindingRef.current = null;
+    const { sourceNode, targetNodeId, fields } = pending;
     const point = 'changedTouches' in event ? event.changedTouches[0] : event;
     setPortPopover({ x: point.clientX, y: point.clientY, sourceNode, targetNodeId, fields });
   }

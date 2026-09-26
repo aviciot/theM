@@ -389,6 +389,71 @@ plan/implement/test/commit cycle)
    the 2-field popover positioned at the actual drop point), then open the Reads panel and confirm
    rename (click the alias text) and delete (✕) both work and correctly rewrite the prompt text.
 
+   **Follow-up fixes, 2026-09-26, all from the user's own first live click-through (this plan's
+   first real browser verification) — 4 real bugs found, all fixed same session:**
+
+   1. **Popover didn't reopen on a second `llm→llm` drag right after an `llm→condition` one.**
+      Root cause: the hand-off between `handleConnect` and `handleConnectEnd`
+      (`CanvasBuilderView.tsx`) used React state (`pendingPortBinding`), and ReactFlow's own
+      connect handlers are plain closures re-registered on render — a second pointer-up in quick
+      succession could fire before React committed the previous state update, reading a stale
+      `null`. Fixed by switching to a `useRef` (`pendingPortBindingRef`) — a ref has no
+      render-timing gap, so `handleConnectEnd` always reads exactly what `handleConnect` wrote a
+      moment earlier. Also now explicitly clears the ref at the top of every `handleConnect` call,
+      so an unresolved ambiguous request from one gesture can never leak into the next.
+
+   2. **Root cause of two other reports turned out to be the same underlying gap**: `input_aliases`
+      was storing `{alias: "output_var_name"}` — a **copy of the name**, not a reference to the
+      source node. That's why (a) renaming a source's `output_var` never propagated to anything
+      reading it downstream, and (b) two different `llm` nodes both outputting a var literally
+      named `"out"` were indistinguishable except by an opaque numeric suffix. **Fixed at the
+      root**, not patched per-symptom: `input_aliases` now stores `{alias: {source_node_id,
+      source_var}}` — a real reference to the source node (confirmed safe to key by node id, since
+      `instance_id` round-trips unchanged through export/import — see `CanvasHelpers.ts`/
+      `CanvasExportImport.ts`). `appFlowVars.ts`'s `resolveAlias` was replaced by `resolveBinding`,
+      which looks the source node up **fresh, every call** — never trusting a frozen string — and
+      returns whether the source's live `output_var` has drifted from what it was at bind time
+      (surfaced as a small amber notice in the Reads panel, not silently hidden). Default alias
+      naming changed from a bare `output`/`output_2` suffix scheme to `<SourceDisplayName>_<var>`
+      (e.g. `Summarizer_output`) — falls back to a numeric suffix only on a genuine same-var,
+      same-source rebind, or a genuine same-display-name collision between two different sources.
+
+   3. **Real bug caught by cross-checking against the actual Go runtime, not assumed**: the first
+      cut of fix #2 defaulted to a **dotted** alias like `LLM2.output`. `{{.aliasName}}` is executed
+      by real Go `text/template` (`go/internal/appflow/inline.go`) against `FlowVars`, a flat
+      `map[string]string` — a literal `.` inside the alias does NOT mean "the map key containing a
+      dot"; Go's template dotted-field syntax reads `{{.A.B}}` as chained field access ("field B of
+      field A"), which does not resolve against a flat string map. Caught by reading
+      `go/internal/appflow/inline.go` directly before shipping, not by assuming the string was
+      opaque. Fixed: the alias-name sanitizer (both the auto-generated default and the manual
+      rename field, `PortAliasField.tsx`) now folds a literal `.` to `_` alongside
+      whitespace/braces/quotes — default naming became `<SourceDisplayName>_<var>` (underscore
+      joiner), never dotted. A regression test (`generated alias never contains a literal dot...`)
+      pins this down explicitly.
+
+   4. **Popover-dismissed-without-choosing behavior, confirmed with the user**: the edge/wire
+      itself still gets created (same as any other connection — it represents "run after" order,
+      independent of any data binding), but no `input_aliases` entry is written at all if the
+      popover is dismissed without picking a field. Confirmed this is correct as originally built —
+      no code change needed here, just an explicit design confirmation logged for the record.
+
+   5. **User also proposed an "internal staging parameter"** — auto-creating a placeholder input on
+      the target when a drop is dismissed unchosen, usable later without being referenced anywhere
+      yet. Explicitly decided **not** to build this: the whole model's rule is "a variable exists
+      only if it's actually referenced in the node's own text" — an unused placeholder would be
+      invisible dead weight with no way to tell used from forgotten. Logged as a possible separate
+      future feature ("internal vars") if ever wanted — confirmed no existing foundation for it
+      anywhere in the codebase (checked via grep before saying so).
+
+   9 new/updated tests covering the ID-based binding shape, drift detection, and the dot-sanitizer
+   regression (test count changed net vs. the first cut — see `useInlinePortWiring.test.js`'s
+   current total). All frontend tests passing, `npx tsc --noEmit` clean project-wide. Still not
+   independently browser-verified again after this round — recommend re-running the same
+   walkthrough once more, focusing specifically on: rapid llm→condition then llm→llm drags back to
+   back (bug #1), renaming a source's output_var and confirming the Reads panel's amber drift
+   notice appears on downstream nodes (bug #2), and typing a `.` into a manual alias rename to
+   confirm it's folded to `_` instead of silently breaking the binding (bug #3).
+
 6. **(Optional, propose but do not build without explicit separate approval)** — a warning-level
    `ValidationError` in `validate.go` for an `llm`/`condition` node referencing a var nothing
    upstream ever writes. Not part of the user's original ask (UI visibility, not a new compiler

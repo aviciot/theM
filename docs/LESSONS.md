@@ -3,6 +3,15 @@
 
 ---
 
+## 2026-09-26 — A dotted default value silently breaks Go text/template, caught only by reading the runtime source
+
+**Symptom:** none in production — caught before shipping, during Phase 5 of `docs/APPFLOW_NAMED_PORTS_PLAN.md` (AppFlow named data-port wiring). A first-cut fix generated default port-binding alias names like `LLM2.output` (readable, traces back to the source node).
+**Root cause:** `{{.aliasName}}` in AppFlow's `llm`/`condition` node text is executed by real Go `text/template` (`go/internal/appflow/inline.go`'s `renderFlowTemplate`) against `FlowVars`, a flat `map[string]string`. A literal `.` inside the alias is NOT "the map key that happens to contain a dot" — Go's template dotted-field syntax parses `{{.A.B}}` as chained field access ("field `B` of field `A`"), which does not resolve against a flat string map. A dotted alias would have silently mis-resolved (or errored) the first time a user actually used it, not at write time.
+**Fix:** the alias-name sanitizer (both the auto-generated default in `useInlinePortWiring.ts` and the manual rename field in `PortAliasField.tsx`) folds a literal `.` to `_` alongside whitespace/braces/quotes. Default alias naming uses `<SourceDisplayName>_<var>` (underscore joiner), never dotted. A dedicated regression test (`generated alias never contains a literal dot...`) pins this down so it can't silently regress.
+**Watch for:** any time a frontend feature generates a string that gets interpolated into a Go `text/template` string (here: AppFlow's `{{.x}}` FlowVars templates; also true of agentgen's equivalent), **read the actual template-execution code** (`Parse`/`Execute` call site + the data type it executes against) before assuming a "just a string key" model — don't reason about Go template syntax from the `{{.x}}` shape alone. A `map[string]string` and a nested struct look identical in `{{.x}}` prose but behave completely differently the moment the key contains a `.`.
+
+---
+
 ## 2026-09-10 — Bank SSO login fails: "IdP token exchange failed"
 
 **Symptom:** Logging in via bank SSO returns `{"detail":"IdP token exchange failed"}`. Keycloak logs show `error="invalid_client_credentials"` for the `them-m` client in the `bank` realm.
