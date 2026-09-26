@@ -204,6 +204,26 @@ against Go source if it seems wrong."
   (`panels/__tests__/inlinePortsSection.test.js`). Does not touch the
   aliased-binding or graph-walk-heuristic paths for any other var — narrowly
   scoped to this one case.
+- **General-mode debug credential with `provider: "mock"` — FIXED 2026-09-26,
+  user request**: picking Mock in the debug panel's General mode failed with
+  "no usable key for provider 'mock' on this tenant". Root cause: a real
+  `them.llm_providers` row named `mock` already existed for the bootstrap
+  tenant (id 18, enabled), but had zero rows in `them.llm_provider_keys` —
+  `resolveLLMOverride`'s General-mode path always requires a real saved key
+  row for whatever provider is picked, no special-case for mock. **Not a
+  code bug — missing seed data.** Fixed by creating a placeholder key via the
+  real tenant self-service API (`POST /admin/my/llm-providers/mock/keys`,
+  same route a real provider's key would use), not a raw SQL insert — key id
+  265, name "MockKey", `is_default: true`. Verified live: re-ran Step 2's
+  app in General mode with `provider: "mock"`, no `key_id` needed (default
+  key resolves automatically) — got a real mock canned reply, ran the full
+  pipeline correctly. **Note**: an unused, never-applied migration file
+  (`db/112_seed_mock_provider.sql`) was written before discovering the row
+  already existed and just needed a key — it uses the wrong (pre-
+  Platform-as-Tenant) `tenant_id IS NULL` convention and was never run
+  against the DB. It should be deleted (blocked by a permission
+  restriction on `rm` in this session) before the next commit touching
+  `db/` — flagged here so it isn't mistaken for a real pending migration.
 - **Mock provider still requires a non-empty api_key in Custom debug mode**:
   `resolveLLMOverride` (`go/internal/admin/service/appflow_debug_credentials.go`
   line 52) rejects `provider: "mock"` with an empty `api_key`, even though

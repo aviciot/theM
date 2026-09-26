@@ -194,6 +194,16 @@ first.**
    - `"general"` — uses a real saved tenant key. `key_id` is the
      `them.llm_provider_keys.id` row (query it, or ask the user — don't
      guess/hardcode across sessions, key IDs are per-environment).
+     **`provider: "mock"` now works in General mode too** (fixed
+     2026-09-26, user request) — the bootstrap tenant has a `mock` provider
+     row (id 18) with a default key ("MockKey", id 265, placeholder
+     `api_key`, since mock never actually uses one). `resolveLLMOverride`
+     (`go/internal/admin/service/appflow_debug_credentials.go`) always looks
+     up a real saved key row regardless of provider name — there is no
+     special-case for `mock`, it just needed a row to find, same as any
+     other provider. If this fix is missing in a different environment,
+     recreate it via `POST /admin/my/llm-providers/mock/keys` with any
+     placeholder `api_key` — not a code change, just missing seed data.
    - `"custom"` — a one-off key for this run only:
      `{"mode": "custom", "provider": "mock", "model": "mock", "api_key": "unused"}`.
      **Known inconsistency**: `provider: "mock"` still requires a non-empty
