@@ -50,6 +50,8 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/llmresolve"
+	"github.com/aviciot/them/internal/middleware"
+	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
 )
@@ -174,6 +176,29 @@ func run() error {
 		cryptoKey:  cryptoKey,
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}
+	// File Guard (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): same
+	// construction pattern cmd/them/main.go already uses — nil storage
+	// client (S3 not configured) means FileGate.Intercept fails open
+	// (scanning disabled), never blocks agent responses. dag-worker never
+	// constructed a FileGate before this phase.
+	var fileGateStore middleware.Store
+	if cfg.S3Endpoint != "" {
+		if sc, scErr := storage.New(storage.Config{
+			Endpoint:         cfg.S3Endpoint,
+			AccessKey:        cfg.S3AccessKey,
+			SecretKey:        cfg.S3SecretKey,
+			QuarantineBucket: cfg.S3QuarantineBucket,
+			ArtifactsBucket:  cfg.S3ArtifactsBucket,
+		}); scErr != nil {
+			log.Warn("storage client init failed — File Guard will fail-open", "err", scErr)
+		} else {
+			fileGateStore = sc
+			log.Info("storage client initialised for File Guard", "endpoint", cfg.S3Endpoint)
+		}
+	} else {
+		log.Warn("THE_M_S3_ENDPOINT not set — File Guard will fail-open for all apps")
+	}
+	fileGate := &appFlowFileGateAdapter{gate: middleware.NewFileGate(middleware.NewPgxQuerier(rlsPools.Admin), fileGateStore)}
 	appFlowActs := &appflow.AppFlowActivities{
 		LLMCaller:        llmCaller,
 		InlineLLM:        llmCaller,
@@ -182,6 +207,7 @@ func run() error {
 		StreamPub:        streamPub,
 		AgentInvoker:     agentCaller,
 		DebugCredCleaner: debugCredStore,
+		FileGate:         fileGate,
 	}
 	appFlowTaskQueue := appflow.AppFlowTaskQueue
 	if cfg.AppFlowTaskQueueOverride != "" {
@@ -202,6 +228,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InvokeAgentActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowInvokeAgentActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.FileGateActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowFileGateActivityName,
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InlineLLMActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowInlineLLMActivityName,
@@ -953,6 +982,36 @@ func decodeAgentSendMessageResponse(body io.Reader) (appflow.AgentInvokeResult, 
 }
 
 var _ appflow.AgentInvoker = (*pgxAgentA2ACaller)(nil)
+
+// appFlowFileGateAdapter bridges middleware.FileGate to the
+// appflow.FileGateChecker interface (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// Phase 2) — same bridging pattern cmd/them/main.go's fileGateAdapter
+// already uses for the a2a.FileInterceptor interface.
+type appFlowFileGateAdapter struct {
+	gate *middleware.FileGate
+}
+
+func (a *appFlowFileGateAdapter) Intercept(ctx context.Context, in appflow.FileGateCheckInput) (appflow.FileGateCheckOutput, error) {
+	gr, err := a.gate.Intercept(ctx, middleware.GateInput{
+		DownloadURL:   in.FileURL,
+		FileName:      in.FileName,
+		ContentType:   in.FileContentType,
+		ApplicationID: in.ApplicationID,
+		RunID:         in.RunID,
+		TenantID:      in.TenantID,
+		AgentSlug:     in.AgentSlug,
+		NodeID:        in.NodeID,
+	})
+	if err != nil {
+		return appflow.FileGateCheckOutput{}, err
+	}
+	return appflow.FileGateCheckOutput{
+		ArtifactID: gr.ArtifactID,
+		ScanStatus: gr.ScanStatus,
+	}, nil
+}
+
+var _ appflow.FileGateChecker = (*appFlowFileGateAdapter)(nil)
 
 // pgxRunStatusUpdater implements appflow.RunStatusUpdater using pgxpool.
 type pgxRunStatusUpdater struct {

@@ -221,6 +221,13 @@ type AppFlowActivities struct {
 	// May be nil — FinalizeRunActivity treats a nil cleaner as a no-op, same as
 	// the other nil-safe dependencies on this struct.
 	DebugCredCleaner DebugCredCleaner
+	// FileGate scans a file part an agent node returned (Phase 2 of
+	// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md) against that node's own
+	// middleware_wirings File Guard config, if any. May be nil — a node with
+	// a file response then behaves exactly as before this phase (file
+	// recognized and traced, never scanned) when no gate is configured, same
+	// nil-safe convention as every other optional dependency on this struct.
+	FileGate FileGateChecker
 }
 
 // DebugCredCleaner deletes every per-node debug credential override for one
@@ -419,6 +426,63 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 		FileName:        result.FileName,
 		FileContentType: result.FileContentType,
 	}, nil
+}
+
+// FileGateCheckInput is the input to AppFlowFileGateActivity — Phase 2 of
+// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md. NodeID is the specific canvas
+// node instance that produced the file (not just the agent's slug) so two
+// canvas instances of the same agent can carry independent File Guard
+// wirings — see middleware.FileGate's own doc comment on this.
+type FileGateCheckInput struct {
+	RunID           string `json:"run_id"`
+	TenantID        string `json:"tenant_id"`
+	ApplicationID   string `json:"application_id"`
+	NodeID          string `json:"node_id"`
+	AgentSlug       string `json:"agent_slug"`
+	FileURL         string `json:"file_url"`
+	FileName        string `json:"file_name"`
+	FileContentType string `json:"file_content_type"`
+	Verbosity       string `json:"verbosity,omitempty"`
+}
+
+// FileGateCheckOutput is returned by AppFlowFileGateActivity.
+type FileGateCheckOutput struct {
+	// ArtifactID is the quarantine_artifacts UUID (empty when scanning is
+	// disabled for this node/app — see ScanStatus).
+	ArtifactID string `json:"artifact_id,omitempty"`
+	// ScanStatus is "pending" (file was queued for scanning) or "disabled"
+	// (no wiring/app config enables scanning for this node — fail-open,
+	// matching FileGate's own documented fail-open behavior throughout).
+	ScanStatus string `json:"scan_status"`
+}
+
+// FileGateChecker is the interface AppFlowFileGateActivity depends on.
+// Implemented by *middleware.FileGate — defined as its own small interface
+// here (matching AgentInvoker/InlineLLMCaller's existing pattern) so this
+// package doesn't need to import internal/middleware (which pulls in the
+// MinIO storage client) just for this one method's signature.
+type FileGateChecker interface {
+	Intercept(ctx context.Context, in FileGateCheckInput) (FileGateCheckOutput, error)
+}
+
+// FileGateActivity scans a file an agent node returned against that node's
+// File Guard wiring, if any (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
+// Real I/O (downloads the file, writes to object storage, enqueues an async
+// scan) — cannot run inline in deterministic workflow code, same rule
+// documented for renderFlowTemplate/LLM calls. A nil FileGate dependency is
+// a safe no-op: the file was already recognized and traced by
+// InvokeAgentActivity (Phase 1); this activity only adds scanning on top,
+// never gates whether the file is recognized at all.
+func (a *AppFlowActivities) FileGateActivity(ctx context.Context, input FileGateCheckInput) (FileGateCheckOutput, error) {
+	if a.FileGate == nil {
+		return FileGateCheckOutput{ScanStatus: "disabled"}, nil
+	}
+	out, err := a.FileGate.Intercept(ctx, input)
+	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "file guard check failed: "+err.Error(), input.Verbosity)
+		return FileGateCheckOutput{}, fmt.Errorf("appflow: file gate check for node %q: %w", input.NodeID, err)
+	}
+	return out, nil
 }
 
 // InlineLLMActivity renders an inline LLM node's prompts and calls the

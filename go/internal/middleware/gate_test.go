@@ -286,6 +286,76 @@ func TestFileGate_WiringOverride_Enabled(t *testing.T) {
 	}
 }
 
+// TestFileGate_NodeIDScoping verifies the real bug fixed 2026-09-26
+// (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): before this fix,
+// loadWiringCfg only ever looked up by agent.slug, so two canvas instances
+// of the SAME agent would share (or collide on) one wiring — even though
+// them.middleware_wirings already had a real node_id column with its own
+// unique index specifically to support independent per-instance wirings.
+// This test proves node_id now actually distinguishes them: node "llm_a"
+// resolves to an ENABLED wiring, node "llm_b" (same agent slug) resolves to
+// a DISABLED one, because the fake DB keys its response on the node_id
+// query argument, not just the agent slug.
+func TestFileGate_NodeIDScoping(t *testing.T) {
+	db := &nodeScopedWiringDB{}
+	store := &fakeStore{}
+	g := middleware.NewFileGate(db, store)
+
+	// Same AgentSlug, different NodeID — must resolve independently.
+	resA, err := g.InterceptInline(context.Background(), middleware.GateInput{
+		FileName:      "a.pdf",
+		ApplicationID: "app-scoped",
+		RunID:         "00000000-0000-0000-0000-000000000020",
+		AgentSlug:     "shared-agent",
+		NodeID:        "llm_a",
+	}, []byte("data"))
+	if err != nil {
+		t.Fatalf("unexpected error for node llm_a: %v", err)
+	}
+	if resA.ScanStatus != "pending" {
+		t.Errorf("node llm_a: expected pending (its own wiring is enabled), got %q", resA.ScanStatus)
+	}
+
+	resB, err := g.InterceptInline(context.Background(), middleware.GateInput{
+		FileName:      "b.pdf",
+		ApplicationID: "app-scoped",
+		RunID:         "00000000-0000-0000-0000-000000000021",
+		AgentSlug:     "shared-agent",
+		NodeID:        "llm_b",
+	}, []byte("data"))
+	if err != nil {
+		t.Fatalf("unexpected error for node llm_b: %v", err)
+	}
+	if resB.ScanStatus != "disabled" {
+		t.Errorf("node llm_b: expected disabled (its own wiring is disabled, must NOT inherit llm_a's), got %q", resB.ScanStatus)
+	}
+}
+
+// nodeScopedWiringDB simulates two middleware_wirings rows for the same
+// agent slug ("shared-agent"), one per node_id: "llm_a" is enabled,
+// "llm_b" is disabled. Query's node_id argument is the 3rd variadic arg
+// per loadWiringCfg's `appID, agentSlug, nodeID` call order.
+type nodeScopedWiringDB struct{}
+
+func (d *nodeScopedWiringDB) Exec(_ context.Context, _ string, _ ...any) error { return nil }
+
+func (d *nodeScopedWiringDB) QueryRow(_ context.Context, _ string, _ ...any) middleware.SingleRowScanner {
+	return &fakeRow{val: `{"enabled":true,"processors":{"av_scan":{"enabled":true,"max_file_mb":5}}}`}
+}
+
+func (d *nodeScopedWiringDB) Query(_ context.Context, _ string, args ...any) (middleware.RowScanner, error) {
+	nodeID, _ := args[2].(string)
+	defCfg := `{"enabled":true,"processors":{"av_scan":{"enabled":true,"max_file_mb":5}}}`
+	switch nodeID {
+	case "llm_a":
+		return &fakeWiringRows{rows: []wiringRow{{enabled: true, defConfig: defCfg, override: `{}`}}}, nil
+	case "llm_b":
+		return &fakeWiringRows{rows: []wiringRow{{enabled: false, defConfig: defCfg, override: `{}`}}}, nil
+	default:
+		return &fakeWiringRows{}, nil
+	}
+}
+
 // wiringEnabledDB returns an enabled wiring row when Query is called (wiring lookup),
 // and an enabled app-level config when QueryRow is called (fallback path).
 type wiringEnabledDB struct {

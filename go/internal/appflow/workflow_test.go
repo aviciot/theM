@@ -306,6 +306,84 @@ func TestInvokeAgentActivity_NilInvoker(t *testing.T) {
 	}
 }
 
+// fakeFileGate implements FileGateChecker for tests.
+type fakeFileGate struct {
+	result    FileGateCheckOutput
+	err       error
+	lastInput FileGateCheckInput
+	callCount int
+}
+
+func (f *fakeFileGate) Intercept(_ context.Context, in FileGateCheckInput) (FileGateCheckOutput, error) {
+	f.callCount++
+	f.lastInput = in
+	return f.result, f.err
+}
+
+// AF-WF-18: FileGateActivity with a nil FileGate dependency is a safe no-op
+// (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — a file is still
+// recognized and traced by InvokeAgentActivity (Phase 1); this activity
+// only ever ADDS scanning on top when a gate is actually configured.
+func TestFileGateActivity_NilGate_NoOp(t *testing.T) {
+	acts := &AppFlowActivities{FileGate: nil}
+	out, err := acts.FileGateActivity(context.Background(), FileGateCheckInput{
+		NodeID:  "agent-1",
+		FileURL: "https://example.com/report.pdf",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ScanStatus != "disabled" {
+		t.Errorf("ScanStatus = %q, want %q for a nil gate", out.ScanStatus, "disabled")
+	}
+}
+
+// AF-WF-19: FileGateActivity delegates to the configured FileGate and
+// passes NodeID through unchanged — the scoping key the Phase 2 fix in
+// gate.go's loadWiringCfg actually uses to distinguish two canvas
+// instances of the same agent.
+func TestFileGateActivity_DelegatesToGate(t *testing.T) {
+	gate := &fakeFileGate{result: FileGateCheckOutput{ArtifactID: "artifact-1", ScanStatus: "pending"}}
+	acts := &AppFlowActivities{FileGate: gate}
+	out, err := acts.FileGateActivity(context.Background(), FileGateCheckInput{
+		RunID:    "run-1",
+		NodeID:   "agent-1",
+		FileURL:  "https://example.com/report.pdf",
+		FileName: "report.pdf",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ScanStatus != "pending" || out.ArtifactID != "artifact-1" {
+		t.Errorf("out = %+v, want the gate's real result passed through", out)
+	}
+	if gate.callCount != 1 {
+		t.Fatalf("want 1 call to the gate, got %d", gate.callCount)
+	}
+	if gate.lastInput.NodeID != "agent-1" {
+		t.Errorf("NodeID = %q, want it passed through unchanged", gate.lastInput.NodeID)
+	}
+}
+
+// AF-WF-20: FileGateActivity surfaces a real gate error (wrapped, with
+// node context) rather than swallowing it — a scan-infrastructure failure
+// must not silently look like "scanning disabled".
+func TestFileGateActivity_GateError_Propagates(t *testing.T) {
+	gate := &fakeFileGate{err: errors.New("storage unavailable")}
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{FileGate: gate, StreamPub: streamPub}
+	_, err := acts.FileGateActivity(context.Background(), FileGateCheckInput{
+		RunID:  "run-1",
+		NodeID: "agent-1",
+	})
+	if err == nil {
+		t.Fatal("expected an error to propagate from the gate")
+	}
+	if !strings.Contains(err.Error(), "storage unavailable") {
+		t.Errorf("error = %v, want it to mention the underlying gate error", err)
+	}
+}
+
 // AF-WF-07: findJoinNode locates the join from a fork's branches.
 func TestFindJoinNode_Basic(t *testing.T) {
 	nodeByID := map[string]*AppFlowNode{

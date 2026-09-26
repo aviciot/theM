@@ -190,7 +190,8 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/appflow/workflow.go`, `nodes.go`, `graph.go` | `go test ./internal/appflow/...` — workflow code: must stay deterministic across replays (no I/O, no wall clock, no randomness) |
 | `internal/appflow/activities.go` | `go test ./internal/appflow/...` + **restart them-dag-worker AND them-dag-worker-2** (two replicas, activities register at startup on each) — and no credential may be added to an activity INPUT type (persisted in Temporal history; guarded by AF-WF-14) |
 | `internal/appflow/inline.go` | `go test ./internal/appflow/...` — and if a condition-expression example was added to the canvas properties panel, add a matching AF-IN-02b case |
-| `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` |
+| `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` + **restart them-dag-worker, them-dag-worker-2, AND them-dag-worker-debug** (all 3 replicas run this same binary) |
+| `internal/middleware/gate.go` (FileGate — scans A2A file artifacts against `middleware_wirings`) | `go test ./internal/middleware/...` — if the `resolveSecCfg`/`loadWiringCfg` scoping precedence changes, also `go test ./internal/appflow/...` (its `FileGateActivity` depends on this behavior) |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |
 | `internal/admin/dal/` (any file) | `go test ./internal/admin/...` |
 | `internal/transport/transport.go` | `go test ./internal/ws/... ./internal/sse/...` |

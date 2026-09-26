@@ -222,19 +222,130 @@ run. Phase 2 (the File Guard hook) will need a way to actually produce a
 file-returning test agent to verify itself, or a live one is a pre-existing
 prerequisite worth resolving before Phase 2 starts.
 
-### Phase 2 — hook FileGate into the agent node's execution path
+### Phase 2 — hook FileGate into the agent node's execution path — DONE (2026-09-26)
+
+**REVISED 2026-09-26 — real scoping bug found before writing code, and a
+generality requirement confirmed with the user.**
+
+**Scoping bug found**: `them.middleware_wirings` already has a real `node_id`
+column with its own unique index (`uq_mw_wiring_app_node`, confirmed via
+`\d them.middleware_wirings`) — the schema was clearly built to support one
+wiring per specific canvas node instance. But `FileGate.loadWiringCfg`'s
+actual runtime query (`go/internal/middleware/gate.go` line 259) only ever
+looks up by `(application_id, agent.slug)` — it never reads `node_id` at
+all. So today, if the same agent is dragged onto one canvas twice, both
+instances would share (or collide on) one wiring, not get independent guard
+configs — the data model's own intent is silently unenforceable. This phase
+fixes `loadWiringCfg`'s query to also match on `node_id` when present
+(falling back to slug-only for a wiring created before `node_id` existed).
+
+**Generality requirement, confirmed with the user**: File Guard must be
+buildable once and reused, not built agent-specific and redone later when
+LLM nodes gain file-carrying responses (a separate, not-yet-scoped gap —
+today's Anthropic/OpenAI client code in this repo only ever parses
+text/tool_use/tool_result blocks, never an image/file block, even though the
+real provider APIs can return one). Concretely: one shared helper —
+"does this specific canvas node (`node_id`) have an enabled file-guard
+wiring, and if so, intercept this file" — called from two places:
+`workflow.go`'s `case "agent"` (real today, since agent responses can now
+carry a file per Phase 1) and, later, whatever case handles an LLM
+response once that separate gap is closed (not built in this phase, but the
+shared helper is written so plugging it in there requires no redesign).
+
 - `workflow.go`'s `case "agent"`: after `InvokeAgentActivity` returns, if the
-  output carries a recognized file part AND the target agent has a
-  `middleware_wirings` row (scoped by `node_id`, falling back to
-  `agent_id`-only per `loadWiringCfg`'s existing precedence) for
-  `file-guard`, call `FileGate.Intercept` (via a new activity — `gate.go`
-  does real I/O, so it cannot run inline in workflow code, same
-  determinism rule already documented for `renderFlowTemplate`/LLM calls).
-  Blocked files return a non-retryable failure or route to a "blocked" trace
-  state — exact behavior (block vs. warn) already comes from the wiring's
-  own `mode` config field, no new decision needed there.
-- Not part of this phase: PII guard, cache middleware — explicitly deferred
-  per the scope decision above.
+  output carries a recognized file part, call the new shared helper (see
+  below) with `node.ID` (not just the resolved agent's slug). Blocked files
+  return a non-retryable failure or route to a "blocked" trace state — exact
+  behavior (block vs. warn) already comes from the wiring's own `mode`
+  config field, no new decision needed there.
+- New shared activity (real I/O — `gate.go` cannot run inline in
+  deterministic workflow code, same rule already documented for
+  `renderFlowTemplate`/LLM calls) wrapping `FileGate.Intercept`, taking
+  `NodeID` (not just `AgentSlug`) so the fixed `loadWiringCfg` query above
+  can actually use it.
+- Not part of this phase: PII guard, cache middleware, or the LLM-side call
+  site itself (blocked on the separate LLM-file-recognition gap) —
+  explicitly deferred per the scope decision above. Only the *shared helper*
+  needs to be written generically now; wiring it into the LLM case is future
+  work once that prerequisite exists.
+
+**Implemented exactly as revised above:**
+- `go/internal/middleware/gate.go`: `GateInput` gained `NodeID`;
+  `resolveSecCfg`/`loadWiringCfg` widened to `(ctx, appID, nodeID, agentSlug)`
+  — the SQL now matches `mw.node_id = $3 OR mw.node_id IS NULL OR mw.node_id
+  = ''` with `ORDER BY (mw.node_id = $3) DESC` so an exact node-scoped
+  wiring is preferred when one exists, while a legacy slug-only wiring
+  (`node_id IS NULL`) still resolves correctly. New test
+  `TestFileGate_NodeIDScoping` proves two canvas instances of the same agent
+  (same `AgentSlug`, different `NodeID`) now genuinely resolve independent
+  configs — one enabled, one disabled, neither leaking into the other.
+- `go/internal/appflow/activities.go`: new `FileGateChecker` interface (same
+  small-local-interface pattern as `AgentInvoker`/`InlineLLMCaller`, so this
+  package doesn't need to import `internal/middleware`'s MinIO dependency),
+  new `FileGateCheckInput`/`FileGateCheckOutput` types, new
+  `AppFlowActivities.FileGate` field (nil-safe — a nil gate is a documented
+  no-op, matching every other optional dependency on this struct), new
+  `FileGateActivity` method. 3 new tests (`AF-WF-18/19/20`): nil-gate no-op,
+  real delegation with `NodeID` passed through unchanged, and error
+  propagation (a scan-infrastructure failure must not silently look like
+  "scanning disabled").
+- `go/internal/appflow/workflow.go`: new `AppFlowFileGateActivityName`
+  constant; `case "agent"` now calls the new activity, scoped by `node.ID`,
+  only when `agentOut.PartKind == "file"` — a text-only response (the
+  overwhelmingly common case today) never even reaches this code path. A
+  gate error fails the run non-retryably; the file's own URL/name aren't
+  used to change `accumulated` in this phase (that's a future decision, not
+  needed for the guard check itself to work).
+- `go/cmd/dag-worker/main.go`: new `appFlowFileGateAdapter` bridging
+  `middleware.FileGate` to `appflow.FileGateChecker` (same bridging pattern
+  `cmd/them/main.go`'s existing `fileGateAdapter` already uses for the A2A
+  server's `FileInterceptor` interface) — `dag-worker` never constructed a
+  `FileGate` at all before this phase. Same fail-open construction as
+  `cmd/them/main.go`: no `THE_M_S3_ENDPOINT` configured → nil storage client
+  → File Guard scanning disabled, never blocks a run. New activity
+  registered on the AppFlow worker.
+- `docker-compose.dev.yml`: added the 5 `THE_M_S3_*` env vars (same
+  `them-minio`-style defaults `them-go-bridge` already uses) to all 3
+  dag-worker containers (`them-dag-worker`, `-2`, `-debug`) — confirmed
+  missing before this phase, which would have silently kept File Guard
+  fail-open in dev even after all the Go code above shipped.
+
+**Real, pre-existing, unrelated gap found and deliberately NOT touched**:
+`docker-compose.hetzner.yml` has **zero** S3/MinIO configuration anywhere —
+not just for `dag-worker`, but for `them-go-bridge` too (the binary whose
+File Guard code for the classic Orchestrator path has existed for a while).
+File Guard has apparently never been wired up for the actual Hetzner
+production deployment at all. Confirmed with the user not to guess
+production secrets/endpoints — left the hetzner compose file untouched.
+**This is a real, standing gap, worth a dedicated follow-up** whenever File
+Guard needs to actually run in production, not something this session's
+scope should silently paper over with fabricated defaults.
+
+4 new tests total (1 in `internal/middleware` — `TestFileGate_NodeIDScoping`;
+3 in `internal/appflow`'s activity tests — `AF-WF-18/19/20`), plus Phase 1's
+8, so 12 new tests across both phases combined this session. `go build
+./...`, `go vet ./...`, and the full `go test ./...` all clean via the same
+`golang:1.25` container method Phase 1 used.
+
+**Verified live**: `them-dag-worker` rebuilt (own Dockerfile build stage
+re-ran the full suite, 0 failures) and all 3 replicas
+(`them-dag-worker`/`-2`/`-debug`) force-recreated. Logs confirm all 3
+started healthy and — for the first time — `them-dag-worker`'s own log line
+`"storage client initialised for File Guard" endpoint="http://them-minio:9000"`,
+proving the new S3/MinIO env vars actually took effect (previously this
+binary never even attempted to connect). Re-ran an existing app's debug flow
+(a real text-only agent response) to confirm zero regression: completes
+exactly as before, the new File Guard check correctly never fires for a
+text response (only `PartKind == "file"` triggers it).
+
+**Not yet tested live**: same standing gap as Phase 1 — no real agent in
+this environment currently returns an actual file, so the File Guard hook
+itself (the `case "agent"` → `FileGateActivity` → `FileGate.Intercept` →
+ClamAV scan path) has only been proven via unit tests with fakes, not a real
+end-to-end debug run with a genuine file artifact. Building a
+file-returning test agent (or reusing an existing one, if one exists
+somewhere in this repo's test fixtures) would be needed to close this gap
+before fully trusting Phase 2 in front of a real user.
 
 ### Phase 3 — frontend: attach a File Guard wiring to an agent node
 - New "Guards" section in the `agent` node's properties panel

@@ -63,6 +63,18 @@ type GateInput struct {
 	// When non-empty, gate checks middleware_wirings for a per-agent config
 	// before falling back to applications.security_config.
 	AgentSlug string
+
+	// NodeID identifies the specific canvas node instance that produced the
+	// file (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2). When non-empty,
+	// takes priority over AgentSlug in middleware_wirings resolution — lets
+	// two canvas instances of the same agent have independent wirings
+	// (them.middleware_wirings.node_id + its own unique index,
+	// uq_mw_wiring_app_node, already existed for this; the runtime lookup
+	// just never read it until this fix). AgentSlug remains the fallback for
+	// wirings created before node_id existed, and for callers (e.g. the
+	// classic Orchestrator's event-bus path) that have no canvas node
+	// concept at all.
+	NodeID string
 }
 
 // GateResult is returned by Intercept / InterceptInline.
@@ -101,7 +113,7 @@ func NewFileGate(db GateQuerier, store Store) *FileGate {
 // The returned ArtifactID is the quarantine_artifacts UUID; it becomes a
 // run_artifacts UUID only after a clean scan (same UUID is reused).
 func (g *FileGate) Intercept(ctx context.Context, in GateInput) (GateResult, error) {
-	cfg, err := g.resolveSecCfg(ctx, in.ApplicationID, in.AgentSlug)
+	cfg, err := g.resolveSecCfg(ctx, in.ApplicationID, in.NodeID, in.AgentSlug)
 	if err != nil {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
@@ -127,7 +139,7 @@ func (g *FileGate) Intercept(ctx context.Context, in GateInput) (GateResult, err
 // InterceptInline processes an already-decoded file artifact (bytes in memory).
 // Equivalent to Intercept but skips the HTTP fetch step.
 func (g *FileGate) InterceptInline(ctx context.Context, in GateInput, data []byte) (GateResult, error) {
-	cfg, err := g.resolveSecCfg(ctx, in.ApplicationID, in.AgentSlug)
+	cfg, err := g.resolveSecCfg(ctx, in.ApplicationID, in.NodeID, in.AgentSlug)
 	if err != nil {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
@@ -239,13 +251,14 @@ func (g *FileGate) cleanupQuarantine(ctx context.Context, key string) error {
 }
 
 // resolveSecCfg returns the effective security config for a file interception.
-// When agentSlug is non-empty it first checks middleware_wirings for a per-agent
-// wiring on this application; if found, merges wiring.config_override over the
-// builtin file-guard defaults. Falls back to applications.security_config
-// (the legacy app-level toggle) when no wiring exists or agentSlug is empty.
-func (g *FileGate) resolveSecCfg(ctx context.Context, appID, agentSlug string) (SecurityConfig, error) {
-	if agentSlug != "" {
-		cfg, found, err := g.loadWiringCfg(ctx, appID, agentSlug)
+// When agentSlug or nodeID is non-empty it first checks middleware_wirings
+// for a matching wiring on this application; if found, merges
+// wiring.config_override over the builtin file-guard defaults. Falls back
+// to applications.security_config (the legacy app-level toggle) when no
+// wiring exists or neither identifier is set.
+func (g *FileGate) resolveSecCfg(ctx context.Context, appID, nodeID, agentSlug string) (SecurityConfig, error) {
+	if nodeID != "" || agentSlug != "" {
+		cfg, found, err := g.loadWiringCfg(ctx, appID, nodeID, agentSlug)
 		if err == nil && found {
 			return cfg, nil
 		}
@@ -253,11 +266,22 @@ func (g *FileGate) resolveSecCfg(ctx context.Context, appID, agentSlug string) (
 	return g.loadSecCfg(ctx, appID)
 }
 
-// loadWiringCfg looks up a middleware_wirings row for (application_id, agent.slug)
-// with kind='guard'. Returns (config, true, nil) when a wiring is found and enabled.
+// loadWiringCfg looks up a middleware_wirings row for this application,
+// scoped by the specific canvas node instance (nodeID) when provided —
+// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2. Before this fix, lookup
+// was by agent.slug only: them.middleware_wirings already had a real node_id
+// column with its own unique index (uq_mw_wiring_app_node) specifically to
+// let two canvas instances of the same agent carry independent wirings, but
+// this query never read it — two boxes on one canvas sharing (or
+// colliding on) a single wiring, not the schema's actual intent.
+//
+// A node_id-scoped row sorts first when both exist for the same agent
+// (ORDER BY node_id match DESC); a legacy wiring created before node_id
+// existed (node_id IS NULL) still resolves correctly via the agentSlug
+// fallback. Returns (config, true, nil) when a wiring is found and enabled.
 // Returns (zero, false, nil) when no wiring exists (caller should fall back).
-func (g *FileGate) loadWiringCfg(ctx context.Context, appID, agentSlug string) (SecurityConfig, bool, error) {
-	cacheKey := appID + ":" + agentSlug
+func (g *FileGate) loadWiringCfg(ctx context.Context, appID, nodeID, agentSlug string) (SecurityConfig, bool, error) {
+	cacheKey := appID + ":" + nodeID + ":" + agentSlug
 	g.cacheMu.Lock()
 	if cached, ok := g.cache[cacheKey]; ok && time.Now().Before(cached.expiry) {
 		g.cacheMu.Unlock()
@@ -266,7 +290,9 @@ func (g *FileGate) loadWiringCfg(ctx context.Context, appID, agentSlug string) (
 	g.cacheMu.Unlock()
 
 	// Query wiring: join agents to resolve slug → agent_id; join middleware_defs
-	// to get the builtin defaults; merge with config_override.
+	// to get the builtin defaults; merge with config_override. Matches either
+	// this exact node_id or (as a fallback) any wiring for the agent on this
+	// app — an exact node_id match is preferred via ORDER BY when both exist.
 	const q = `
 SELECT
     mw.enabled,
@@ -276,12 +302,14 @@ FROM them.middleware_wirings mw
 JOIN them.agents             a  ON a.id  = mw.agent_id
 JOIN them.middleware_defs    md ON md.id = mw.def_id
 WHERE mw.application_id = $1::uuid
-  AND a.slug            = $2
+  AND (a.slug = $2 OR $2 = '')
+  AND (mw.node_id = $3 OR mw.node_id IS NULL OR mw.node_id = '')
   AND md.kind           = 'guard'
   AND md.slug           = 'file-guard'
+ORDER BY (mw.node_id = $3) DESC
 LIMIT 1`
 
-	rows, err := g.db.Query(ctx, q, appID, agentSlug)
+	rows, err := g.db.Query(ctx, q, appID, agentSlug, nodeID)
 	if err != nil {
 		return SecurityConfig{}, false, err
 	}

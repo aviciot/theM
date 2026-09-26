@@ -43,6 +43,10 @@ const (
 	// AppFlowInvokeAgentActivityName is the registered name for the agent invocation activity.
 	AppFlowInvokeAgentActivityName = "AppFlowInvokeAgentActivity"
 
+	// AppFlowFileGateActivityName is the registered name for the File Guard
+	// scan activity (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
+	AppFlowFileGateActivityName = "AppFlowFileGateActivity"
+
 	// AppFlowInlineLLMActivityName is the registered name for the inline LLM node activity.
 	AppFlowInlineLLMActivityName = "AppFlowInlineLLMActivity"
 
@@ -457,6 +461,34 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			// Accumulate the agent's response for downstream nodes.
 			if agentOut.ResponseText != "" {
 				accumulated = agentOut.ResponseText
+			}
+			// File Guard check (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md):
+			// only when the agent actually returned a recognized file part —
+			// a text-only response (the overwhelmingly common case today) never
+			// even calls this activity. Scoped by this exact canvas node
+			// instance (node.ID), not just the agent, so two boxes using the
+			// same agent can carry independent File Guard configs. A blocked
+			// file fails the run non-retryably; a scan-pending or
+			// scanning-disabled result is traced but does not change
+			// `accumulated` — the file's own URL/name are what a downstream
+			// node would need, not something this phase changes yet.
+			if agentOut.PartKind == "file" {
+				var gateOut FileGateCheckOutput
+				gateErr := workflow.ExecuteActivity(ctx, AppFlowFileGateActivityName, FileGateCheckInput{
+					RunID:           input.RunID,
+					TenantID:        input.TenantID,
+					ApplicationID:   input.ApplicationID,
+					NodeID:          node.ID,
+					FileURL:         agentOut.FileURL,
+					FileName:        agentOut.FileName,
+					FileContentType: agentOut.FileContentType,
+					Verbosity:       input.LogVerbosity,
+				}).Get(ctx, &gateOut)
+				if gateErr != nil {
+					out.Status = "failed"
+					retErr = fmt.Errorf("agent %q: file guard check: %w", node.ID, gateErr)
+					return
+				}
 			}
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
