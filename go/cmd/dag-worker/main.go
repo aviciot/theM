@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/jackc/pgx/v5/pgxpool"
 	temporalactivity "go.temporal.io/sdk/activity"
 	temporalworker "go.temporal.io/sdk/worker"
@@ -811,7 +813,16 @@ type pgxAgentA2ACaller struct {
 // InvokeByID calls the A2A agent identified by agentID via A2A v1.0 SendMessage.
 // Uses protobuf-JSON wire format with "ROLE_USER" enum string and A2A-Version: 1.0
 // header required by the A2A SDK v1.1 version validator.
-func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (string, error) {
+//
+// Phase 1 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md: the response's parts
+// used to be decoded into a hand-rolled struct with only a `Text string`
+// field — a file/data/raw part (all 3 are real, valid A2A response shapes;
+// confirmed via the vendored SDK, go/vendor/github.com/a2aproject/a2a-go/v2/a2a/core.go)
+// silently decoded to an empty string, no error, nothing logged. Now decodes
+// the artifact's parts as real a2a.Part values (the SDK's own Part.UnmarshalJSON
+// correctly recognizes all 4 kinds) and returns whichever kind the first part
+// actually was, instead of assuming text.
+func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (appflow.AgentInvokeResult, error) {
 	// Resolve agent endpoint + auth token from DB (scoped by tenant for security).
 	row := c.pool.QueryRow(ctx,
 		`SELECT COALESCE(endpoint_url,''), COALESCE(auth_token_encrypted,'')
@@ -820,10 +831,10 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		agentID, tenantID)
 	var endpointURL, authTokenEnc string
 	if err := row.Scan(&endpointURL, &authTokenEnc); err != nil {
-		return "", fmt.Errorf("agentA2ACaller: resolve agent %s: %w", agentID, err)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: resolve agent %s: %w", agentID, err)
 	}
 	if endpointURL == "" {
-		return "", fmt.Errorf("agentA2ACaller: agent %s has no endpoint_url", agentID)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: agent %s has no endpoint_url", agentID)
 	}
 
 	authToken := ""
@@ -850,12 +861,12 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("agentA2ACaller: marshal request: %w", err)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, strings.NewReader(string(reqBody)))
 	if err != nil {
-		return "", fmt.Errorf("agentA2ACaller: build request: %w", err)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("A2A-Version", "1.0")
@@ -867,23 +878,37 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("agentA2ACaller: http: %w", err)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: http: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("agentA2ACaller: agent returned HTTP %d", resp.StatusCode)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: agent returned HTTP %d", resp.StatusCode)
 	}
 
-	// Parse A2A v1.0 JSON-RPC response.
-	// Non-streaming SendMessage returns: result.task.artifacts[].parts[].text
+	return decodeAgentSendMessageResponse(resp.Body)
+}
+
+// decodeAgentSendMessageResponse parses a non-streaming A2A v1.0 SendMessage
+// JSON-RPC response body: result.task.artifacts[].parts[]. Extracted from
+// InvokeByID as a standalone, pure function (no DB/HTTP dependency) so it's
+// unit-testable directly — InvokeByID's own DB lookup + HTTP call plumbing
+// otherwise makes the whole method impractical to unit test.
+//
+// Parts decode as real a2a.Part values (the SDK's own Part.UnmarshalJSON),
+// not a hand-rolled struct with only a `Text string` field — the previous
+// version of this code silently decoded a file/data/raw part to an empty
+// string, no error, nothing logged (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// Phase 1). Classifies the first non-empty part found, in priority order
+// text > file > data > raw — text stays first so today's only real-world
+// case (every canvas-built agent tested this session returns plain text) is
+// completely unaffected by this change.
+func decodeAgentSendMessageResponse(body io.Reader) (appflow.AgentInvokeResult, error) {
 	var rpcResp struct {
 		Result *struct {
 			Task *struct {
 				Artifacts []struct {
-					Parts []struct {
-						Text string `json:"text"`
-					} `json:"parts"`
+					Parts []*a2a.Part `json:"parts"`
 				} `json:"artifacts"`
 			} `json:"task"`
 		} `json:"result"`
@@ -891,24 +916,40 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		return "", fmt.Errorf("agentA2ACaller: decode response: %w", err)
+	if err := json.NewDecoder(body).Decode(&rpcResp); err != nil {
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: decode response: %w", err)
 	}
 	if rpcResp.Error != nil {
-		return "", fmt.Errorf("agentA2ACaller: agent error: %s", rpcResp.Error.Message)
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: agent error: %s", rpcResp.Error.Message)
 	}
 
-	// Extract text from first artifact/part.
 	if rpcResp.Result != nil && rpcResp.Result.Task != nil {
 		for _, artifact := range rpcResp.Result.Task.Artifacts {
 			for _, p := range artifact.Parts {
-				if p.Text != "" {
-					return p.Text, nil
+				if p == nil {
+					continue
+				}
+				if text := p.Text(); text != "" {
+					return appflow.AgentInvokeResult{ResponseText: text}, nil
+				}
+				if url := p.URL(); url != "" {
+					return appflow.AgentInvokeResult{
+						PartKind:        "file",
+						FileURL:         string(url),
+						FileName:        p.Filename,
+						FileContentType: p.MediaType,
+					}, nil
+				}
+				if data := p.Data(); data != nil {
+					return appflow.AgentInvokeResult{PartKind: "data"}, nil
+				}
+				if raw := p.Raw(); raw != nil {
+					return appflow.AgentInvokeResult{PartKind: "raw"}, nil
 				}
 			}
 		}
 	}
-	return "", nil
+	return appflow.AgentInvokeResult{}, nil
 }
 
 var _ appflow.AgentInvoker = (*pgxAgentA2ACaller)(nil)

@@ -1,14 +1,13 @@
 # Current Session State — the-M
-# Last updated: 2026-09-26 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-5 complete (Phase 4's
-# visible port dots were built then REVERTED same session per live user feedback — see that
-# doc's Phase 4 entry). Phase 5 (the real drag-to-connect wiring) is implemented and tested,
-# including a 2026-09-26 follow-up round that fixed 4 real bugs found during the user's first
-# live browser click-through (stale-closure popover bug, copied-string vs. real node-id binding,
-# a Go-text/template dot-in-alias bug caught by reading the runtime source, plus a confirmed
-# by-design decision on dismiss-without-choosing behavior) — see that doc's Phase 5 "DONE" entry
-# and its "Follow-up fixes" block for full detail. Only Phase 6 (optional, not yet approved)
-# remains on that thread. Not yet re-verified live after the follow-up round — see this file's
-# "START HERE" section below for the exact walkthrough to run next.
+# Last updated: 2026-09-26 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-5 complete AND
+# live-browser-verified (all 4 steps of docs/APP_CANVAS_VERIFICATION_PLAN.md's build-up
+# checked directly by the user in the real UI: LLM->Agent, Condition true/false branching,
+# Fork/Join, and the named-port drag-to-connect feature itself). New /app-canvas skill
+# created capturing build/debug knowledge for future sessions. Also same session: a new
+# thread, docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md — Phase 1 DONE (AppFlow's agent-calling
+# path now recognizes all 4 real A2A response part kinds — text/file/data/raw — instead of
+# silently dropping anything but text; found while investigating whether File Guard could be
+# wired into App Canvas). Phases 2-3 (File Guard hook + frontend config UI) not started.
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---

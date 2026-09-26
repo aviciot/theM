@@ -100,9 +100,30 @@ type AgentInvokeActivityInput struct {
 }
 
 // AgentInvokeActivityOutput is returned by AppFlowInvokeAgentActivity.
+//
+// Phase 1 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md: previously this only
+// ever carried ResponseText, because the caller (pgxAgentA2ACaller) only
+// ever looked for a text part in the agent's A2A response — a file/data/raw
+// part was silently dropped, no error, nothing traced. The new fields let a
+// recognized non-text part survive into the workflow instead of vanishing.
+// Every field is additive; a text-only response (every real agent call
+// tested so far) leaves every new field at its zero value, unchanged
+// behavior from before this phase.
 type AgentInvokeActivityOutput struct {
-	// ResponseText is the agent's plain-text reply.
+	// ResponseText is the agent's plain-text reply. Empty when the agent's
+	// first part was a non-text kind instead (PartKind != "" and != "text").
 	ResponseText string `json:"response_text"`
+	// PartKind is "" for a text-only response (the overwhelmingly common
+	// case today), or "file"/"data"/"raw" when the first part recognized in
+	// the response was one of those kinds instead. Only "file" gets any
+	// special handling downstream so far (Phase 2's File Guard hook) —
+	// "data"/"raw" are recognized and traced but not yet acted on, per the
+	// plan's explicitly-out-of-scope note.
+	PartKind string `json:"part_kind,omitempty"`
+	// FileURL/FileName/FileContentType are populated only when PartKind == "file".
+	FileURL         string `json:"file_url,omitempty"`
+	FileName        string `json:"file_name,omitempty"`
+	FileContentType string `json:"file_content_type,omitempty"`
 }
 
 // InlineLLMActivityInput is the input to AppFlowInlineLLMActivity.
@@ -210,10 +231,25 @@ type DebugCredCleaner interface {
 	DeleteAllForRun(ctx context.Context, tenantID, runID string) error
 }
 
+// AgentInvokeResult is what AgentInvoker.InvokeByID returns — widened in
+// Phase 1 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md from a bare string so a
+// recognized non-text A2A response part (file/data/raw) can be surfaced
+// instead of silently discarded. Mirrors AgentInvokeActivityOutput's new
+// fields exactly (InvokeAgentActivity copies this 1:1) — kept as a separate
+// type since AgentInvoker is implemented outside this package (dag-worker's
+// pgxAgentA2ACaller) and shouldn't need to import the activity I/O types.
+type AgentInvokeResult struct {
+	ResponseText    string
+	PartKind        string // "" (text) | "file" | "data" | "raw"
+	FileURL         string
+	FileName        string
+	FileContentType string
+}
+
 // AgentInvoker calls a specific agent by its DB UUID via A2A.
-// Implemented by the dag-worker's agentA2ACaller.
+// Implemented by the dag-worker's pgxAgentA2ACaller.
 type AgentInvoker interface {
-	InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (string, error)
+	InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (AgentInvokeResult, error)
 }
 
 // RunStatusUpdater updates a run's terminal status in the DB.
@@ -362,13 +398,27 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 			"EmptyAgentID", nil,
 		)
 	}
-	text, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.UserMessage)
+	result, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.UserMessage)
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", err.Error(), input.Verbosity)
 		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
 	}
-	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", text, input.Verbosity)
-	return AgentInvokeActivityOutput{ResponseText: text}, nil
+	// Trace detail: the text reply when there is one, or a short marker for
+	// a recognized non-text part so the trace/debug panel shows something
+	// meaningful instead of a blank "Done" (the same gap fixed for LLM nodes
+	// earlier this session — see docs/CURRENT.md's bug #4 for that history).
+	traceDetail := result.ResponseText
+	if traceDetail == "" && result.PartKind != "" {
+		traceDetail = fmt.Sprintf("[%s response, no text]", result.PartKind)
+	}
+	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", traceDetail, input.Verbosity)
+	return AgentInvokeActivityOutput{
+		ResponseText:    result.ResponseText,
+		PartKind:        result.PartKind,
+		FileURL:         result.FileURL,
+		FileName:        result.FileName,
+		FileContentType: result.FileContentType,
+	}, nil
 }
 
 // InlineLLMActivity renders an inline LLM node's prompts and calls the

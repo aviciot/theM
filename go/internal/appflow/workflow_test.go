@@ -245,11 +245,15 @@ func TestFinalizeRunActivity_Debug_CleanupErrorDoesNotFailActivity(t *testing.T)
 
 type fakeAgentInvoker struct {
 	response string
+	result   AgentInvokeResult // takes priority over `response` when PartKind is set
 	err      error
 }
 
-func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _ string) (string, error) {
-	return f.response, f.err
+func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _ string) (AgentInvokeResult, error) {
+	if f.result.PartKind != "" {
+		return f.result, f.err
+	}
+	return AgentInvokeResult{ResponseText: f.response}, f.err
 }
 
 // AF-WF-04: InvokeAgentActivity returns agent response text on success.
@@ -685,6 +689,53 @@ func TestInvokeAgentActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	}
 	if dones[0]["detail"] != "hi" {
 		t.Errorf("node_done detail: want the agent's real response %q, got %v", "hi", dones[0]["detail"])
+	}
+}
+
+// AF-WF-07: InvokeAgentActivity carries a recognized file part through to
+// AgentInvokeActivityOutput's new fields (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// Phase 1) — previously ResponseText was the only field, and a non-text
+// A2A response was silently indistinguishable from "agent said nothing".
+func TestInvokeAgentActivity_CarriesFilePartThrough(t *testing.T) {
+	streamPub := &fakeStreamPub{}
+	acts := &AppFlowActivities{
+		AgentInvoker: &fakeAgentInvoker{result: AgentInvokeResult{
+			PartKind:        "file",
+			FileURL:         "https://example.com/report.pdf",
+			FileName:        "report.pdf",
+			FileContentType: "application/pdf",
+		}},
+		StreamPub: streamPub,
+	}
+	out, err := acts.InvokeAgentActivity(context.Background(), AgentInvokeActivityInput{
+		RunID:   "run-file-1",
+		NodeID:  "agent-1",
+		AgentID: "agent-uuid-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.PartKind != "file" {
+		t.Errorf("PartKind = %q, want %q", out.PartKind, "file")
+	}
+	if out.FileURL != "https://example.com/report.pdf" {
+		t.Errorf("FileURL = %q, not carried through", out.FileURL)
+	}
+	if out.FileName != "report.pdf" || out.FileContentType != "application/pdf" {
+		t.Errorf("FileName/FileContentType not carried through: %+v", out)
+	}
+	if out.ResponseText != "" {
+		t.Errorf("ResponseText = %q, want empty for a file-only response", out.ResponseText)
+	}
+	// The trace's node_done detail should show a meaningful marker, not a
+	// blank string (the same class of bug already fixed for LLM/agent text
+	// responses earlier this session — see docs/CURRENT.md's bug #4).
+	dones := tracePayloadsOfType(t, streamPub, "node_done")
+	if len(dones) != 1 {
+		t.Fatalf("want 1 node_done, got %d", len(dones))
+	}
+	if dones[0]["detail"] != "[file response, no text]" {
+		t.Errorf("node_done detail = %v, want a non-blank file marker", dones[0]["detail"])
 	}
 }
 
