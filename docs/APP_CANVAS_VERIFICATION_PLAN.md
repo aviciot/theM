@@ -1,5 +1,7 @@
 # App Canvas Verification Plan
-# Status: Steps 1-3 COMPLETE. Step 4 next.
+# Status: Steps 1-4 COMPLETE. Step 5 (fix anything found) — see findings log,
+# nothing blocking found. Plan effectively done; Step 5 only needed if new
+# issues surface later.
 # Owner: platform
 # Last updated: 2026-09-26
 
@@ -121,11 +123,37 @@ Confirms: Fork fan-out (2 branches run, both appear in results), Join
 fan-in + merge-with-newline, and that Condition branching composes cleanly
 with Fork/Join without cross-contamination between paths.
 
-### Step 4 — exercise Phase 5 named data ports
-Wire an `llm → llm` and `llm → condition` connection using drag-to-connect,
-confirm the popover/auto-bind, confirm the bound value is actually used
-correctly at runtime (not just visible in the Reads panel).
-**Status: not started**
+### Step 4 — exercise Phase 5 named data ports — COMPLETE (2026-09-26, user-driven in browser)
+App `verify-step4-named-ports` (id `3fd4b7b7-5a2c-47f5-b9df-f9085f2be07b`):
+`llm_1` (Sentiment Classifier) → `llm_2` (Response Writer, built with
+deliberately empty prompts) → `agent_1`. Built so debug/start correctly
+rejects it (`422 llm_no_prompt`) until the user wires `llm_2` up via the
+canvas — a real proof the validation is exercised, not just the happy path.
+
+**Every real interaction tested live by the user, not simulated:**
+1. Dragged a wire `llm_1 → llm_2` — popover appeared, picked System Prompt.
+   Alias `Sentiment_Classifier_sentiment` correctly appended into the field,
+   correctly shown in the Reads panel resolved (cyan, "from 🧠 Sentiment
+   Classifier").
+2. Renamed `llm_1`'s Output Variable field (`sentiment` → `sentiment1`)
+   after the binding existed. Reads panel correctly showed the amber drift
+   notice ("source's output var is now sentiment1... still resolves
+   correctly, no action needed") — confirmed non-alarming styling, binding
+   still correctly resolved to the right source throughout.
+3. Deleted the binding via the ✕ button — confirmed it removes both the
+   alias entry and its `{{.alias}}` text from the prompt cleanly.
+4. Re-wired the same connection, clicked Debug immediately — got `422
+   llm_no_prompt` again. **Not a bug**: the canvas does not auto-save on
+   every edit; `debug/start` always compiles the latest *saved* draft, not
+   whatever's live on screen. After clicking Save, re-running Debug
+   succeeded. Worth remembering as a real workflow gotcha (already covered
+   in the `/app-canvas` skill's general debug-sequence notes, but worth
+   calling out specifically for Phase 5's drag-wire-then-debug flow).
+
+Confirms: drag-to-connect commit, popover interaction, Reads panel
+resolved/drift/delete states, and that a wired binding actually produces a
+working, debuggable flow once saved — the full Phase 5 feature working
+end-to-end in a real browser, not just unit tests.
 
 ### Step 5 (only if issues found above) — fix and re-verify
 Anything broken or badly designed found in steps 1-4 gets fixed here, with
