@@ -1,7 +1,7 @@
 'use client';
 import type { Node, Edge } from '@xyflow/react';
 import { C } from '../../constants';
-import type { MCPServer } from '@/lib/api';
+import type { MCPServer, Agent } from '@/lib/api';
 import { OrchestratorNodePanel } from './panels/OrchestratorNodePanel';
 import { AgentNodePanel } from './panels/AgentNodePanel';
 import { EntryPointNodePanel } from './panels/EntryPointNodePanel';
@@ -16,6 +16,7 @@ interface Props {
   selectedNode: Node | null;
   nodes: Node[];
   edges: Edge[];
+  agents: Agent[];
   openSections: Record<string, boolean>;
   setOpenSections: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   availableMCPServers: MCPServer[];
@@ -33,7 +34,7 @@ interface Props {
 }
 
 export function CanvasNodePropertiesPanel({
-  appId, selectedNode, nodes, edges,
+  appId, selectedNode, nodes, edges, agents,
   openSections, setOpenSections,
   availableMCPServers, mcpExpanded, setMcpExpanded,
   configPanelText, setConfigPanelText, configPanelErr, setConfigPanelErr,
@@ -70,8 +71,10 @@ export function CanvasNodePropertiesPanel({
   if (selectedNode.type === 'agent') {
     return (
       <AgentNodePanel
+        appId={appId}
         selectedNode={selectedNode}
         nodes={nodes}
+        agents={agents}
         configPanelText={configPanelText}
         setConfigPanelText={setConfigPanelText}
         configPanelErr={configPanelErr}

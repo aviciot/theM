@@ -665,6 +665,7 @@ export function CanvasBuilderView({
                 selectedNode={selectedNode}
                 nodes={nodes}
                 edges={edges}
+                agents={agents}
                 openSections={openSections}
                 setOpenSections={setOpenSections}
                 availableMCPServers={availableMCPServers}

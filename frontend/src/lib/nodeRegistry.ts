@@ -30,6 +30,21 @@ export interface AppParamDecl {
   default_value?: string;
 }
 
+/**
+ * One config field on a node/middleware definition — mirrors Go's
+ * nodedefs.ConfigFieldDoc exactly (go/internal/nodedefs/nodedefs.go).
+ * Used by docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 3's Guards section
+ * to render File Guard's real config form instead of a hardcoded field
+ * list — the field shape is documented server-side, not duplicated here.
+ */
+export interface ConfigFieldDecl {
+  key: string;
+  type: 'string' | 'int' | 'bool' | 'object' | 'array';
+  required: boolean;
+  description: string;
+  example?: string;
+}
+
 /** One named data port on a node type. Port IDs are permanent stable identifiers. */
 export interface PortDef {
   id: string;              // stable binding handle (e.g. "output", "from_var")
@@ -61,7 +76,7 @@ export interface NodeTypeInfo {
    * getNodeDef(type, family) when a family is known (app canvas always knows
    * it's asking for the appflow family).
    */
-  family: 'agentgen' | 'appflow';
+  family: 'agentgen' | 'appflow' | 'middleware';
   version: number;
   label: string;
   description: string;
@@ -82,6 +97,11 @@ export interface NodeTypeInfo {
   input_field?: string;
   executable: boolean;
   app_params?: AppParamDecl[];
+  /** Config fields declared server-side (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+   * Phase 3) — e.g. file-guard's enabled/mode/max_file_size_mb/etc. Was
+   * already returned by GET /admin/node-types but had no frontend type or
+   * consumer until this phase. */
+  config_fields?: ConfigFieldDecl[];
   /** Static input data ports. Absent for types with dynamic inputs or no data inputs. */
   input_ports?: PortDef[];
   /** Static output data ports. Absent for types with dynamic outputs or no data outputs. */

@@ -1,5 +1,5 @@
 # AppFlow A2A Response Kinds + File Guard Plan
-# Status: Phase 1 COMPLETE. Phases 2-3 not yet started.
+# Status: Phases 1-3 COMPLETE. Not yet live-browser-verified (Phase 3's UI).
 # Owner: platform
 # Last updated: 2026-09-26
 
@@ -347,22 +347,64 @@ file-returning test agent (or reusing an existing one, if one exists
 somewhere in this repo's test fixtures) would be needed to close this gap
 before fully trusting Phase 2 in front of a real user.
 
-### Phase 3 — frontend: attach a File Guard wiring to an agent node
-- New "Guards" section in the `agent` node's properties panel
-  (`frontend/src/app/admin/applications/components/cbv/panels/` — exact
-  file TBD, likely a new `AgentGuardsSection.tsx` mounted alongside the
-  agent panel's existing content).
-- Renders `file-guard`'s `config_fields` (fetched live via `GET
-  /admin/node-types`, matching this session's confirmed self-documenting
-  pattern — no new frontend-hardcoded field list) as a real form: enabled
-  toggle, mode (block/warn), max file size, allowed/blocked types, notify
-  toggle.
-- Wired to the existing `middleware_wirings` CRUD routes
-  (`POST`/`PUT`/`DELETE /admin/applications/{id}/middleware-wirings...`),
-  scoped to the selected agent node's `node_id` — no new backend route
-  needed, this is a pure frontend addition reusing existing APIs.
-- New tests: at minimum the same plain-node/assert convention used
-  throughout this session's other AppFlow frontend work.
+### Phase 3 — frontend: attach a File Guard wiring to an agent node — DONE (2026-09-26)
+
+**Real gap found before writing code, wider than the plan assumed**:
+`config_fields` (the field-shape data `file-guard` already has server-side)
+had **no frontend type and zero consumers anywhere** — `NodeTypeInfo`
+(`frontend/src/lib/nodeRegistry.ts`) never declared it, and `family` was
+typed `'agentgen' | 'appflow'` only, excluding `'middleware'` entirely even
+though the backend has genuinely been returning `family: "middleware"`
+entries since an earlier session (`74bd54a7`). So "renders config_fields,
+matching this session's confirmed self-documenting pattern" wasn't actually
+reusing an existing frontend pattern — it was the first place in the
+frontend ever to consume this field. Fixed the type gap first (new
+`ConfigFieldDecl` interface mirroring Go's `nodedefs.ConfigFieldDoc` exactly,
+widened `family` union) rather than working around it.
+
+**Second real gap found**: an `agent` canvas node's data
+(`AgentNodeData`) never carried the agent's real DB UUID — only
+`definition_ref.name` (the slug) and `definition_id` (a different table's
+UUID, `component_definitions.id`, not `agents.id`). `middleware_wirings`'
+create route requires a real `agents.id`. Resolved without any new backend
+route: `CanvasBuilderView` already receives the full `agents: Agent[]` list
+as a prop (each with both `id` and `slug`) — threaded it down through
+`CanvasNodePropertiesPanel` → `AgentNodePanel` → the new section, which
+looks up `agents.find(a => a.slug === definition_ref.name)`.
+
+**Built:**
+- `frontend/src/lib/nodeRegistry.ts`: new `ConfigFieldDecl` type, `family`
+  widened to include `'middleware'`, `NodeTypeInfo` gained `config_fields`.
+- `frontend/src/app/admin/applications/components/cbv/panels/AgentGuardsSection.tsx`
+  (new): a "Guards" section — enabled toggle, and (when enabled) a real form
+  for `file-guard`'s 6 real config fields (`enabled`, `mode`,
+  `max_file_size_mb`, `allowed_types`, `blocked_types`, `notify_on_fail`),
+  rendered generically from `config_fields` (string/int/bool/array field
+  types handled), not a hardcoded list. Wired to the existing
+  `themApi.createMiddlewareWiring`/`updateMiddlewareWiring`/
+  `listMiddlewareWirings` calls — no new backend route needed, exactly as
+  planned. Scoped by `node_id: selectedNode.id` (Phase 2's scoping fix is
+  what makes this actually take effect independently per canvas instance).
+  PII/Prompt-Injection guard deliberately not rendered — no real backend
+  logic exists for it (confirmed this session), showing a working-looking
+  form for it would misrepresent what it does.
+- `AgentNodePanel.tsx`/`CanvasNodePropertiesPanel.tsx`/`CanvasBuilderView.tsx`:
+  threaded `agents: Agent[]` down to the new section (only `AgentNodePanel`
+  needed it before this phase; now needs it for the slug→UUID lookup above).
+
+`npx tsc --noEmit` clean, zero errors, full project. All existing frontend
+tests (79) still pass. `npx next build` blocked by the same pre-existing
+`.next` permission issue from earlier this session (unrelated, not
+retried destructively) — `tsc`'s full-project clean pass is the
+authoritative signal used instead, same precedent as earlier phases.
+
+**Not live-browser-verified** — no browser-automation tool available in
+this environment, same standing limitation as every other frontend phase
+this session. Recommend a real click-through before trusting it fully:
+select an `agent` node on a canvas that has at least one file-returning or
+plain agent wired in, confirm the Guards section appears below the existing
+Config field, toggle Enabled, fill in the config fields, Save, reload the
+canvas, and confirm the saved state persists and re-populates correctly.
 
 ---
 

@@ -3,12 +3,16 @@ import type { Node } from '@xyflow/react';
 import type { AgentNodeData } from '../../../types';
 import { C } from '../../../constants';
 import { fieldStyle, chipStyle } from './panelShared';
+import { AgentGuardsSection } from './AgentGuardsSection';
+import type { Agent } from '@/lib/api';
 
 // ── AgentNodePanel ────────────────────────────────────────────────────────────
 
 interface Props {
+  appId: string;
   selectedNode: Node;
   nodes: Node[];
+  agents: Agent[];
   configPanelText: string;
   setConfigPanelText: React.Dispatch<React.SetStateAction<string>>;
   configPanelErr: boolean;
@@ -19,7 +23,7 @@ interface Props {
 }
 
 export function AgentNodePanel({
-  selectedNode, nodes,
+  appId, selectedNode, nodes, agents,
   configPanelText, setConfigPanelText, configPanelErr, setConfigPanelErr,
   setNodes, setIsDirty, showToast,
 }: Props) {
@@ -55,6 +59,9 @@ export function AgentNodePanel({
             } catch { setConfigPanelErr(true); showToast('Invalid JSON', false); }
           }}
         />
+      </div>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+        <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} />
       </div>
     </div>
   );
