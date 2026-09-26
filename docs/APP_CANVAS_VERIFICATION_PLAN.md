@@ -1,5 +1,5 @@
 # App Canvas Verification Plan
-# Status: Steps 1-2 COMPLETE. Step 3 next.
+# Status: Steps 1-3 COMPLETE. Step 4 next.
 # Owner: platform
 # Last updated: 2026-09-26
 
@@ -85,10 +85,41 @@ labelled connections), real (non-mock) LLM debug credential resolution via
 ever executes (the untaken branch's agent is skipped entirely, not run and
 discarded).
 
-### Step 3 — add Fork/Join
-EntryPoint → LLM → Condition → false branch → Fork → 2 parallel LLM
-branches → Join → Agent.
-**Status: not started**
+### Step 3 — add Fork/Join — COMPLETE (2026-09-26)
+App `verify-step3-forkjoin` (id `f16d79e8-f6e0-4eb8-96aa-63188a8d3f17`):
+EntryPoint → LLM (sentiment) → Condition → [true: `agent_true`, unchanged
+from Step 2] [false: Fork → `llm_branch_a` (summarize) + `llm_branch_b`
+(extract keywords), both parallel → Join → `agent_false`].
+
+**Real bug found and fixed in the same pass, caught by the platform's own
+validation (not a silent failure)**: first attempt used
+`definition_ref.kind: "inline"` for `fork_1`/`join_1`, copying the pattern
+from `llm`/`condition`. Rejected by `debug/start` with `422
+unknown_inline_node`. Root cause, confirmed by reading
+`go/internal/appflow/compiler.go`'s `compileNode`: `fork`/`join`/`router`/
+`hil` use a **different** `definition_ref.kind`, `"flow_control"` — only
+`llm`/`condition` actually use `"inline"`. Fixed by changing both nodes'
+`kind` and pushing a corrected revision 2 (definitions are versioned;
+`debug/start` always compiles the latest draft, no need to recreate the
+app). **Corrected the `/app-canvas` skill file itself**, which had
+propagated this same wrong claim — caught before it could mislead a future
+session.
+
+**Both branches re-verified after the fix, two separate real runs**:
+- Negative input → `llm_1`→`"NEGATIVE"` → `cond_1`→`branch=false` →
+  `fork_1`→`branches=2` → `llm_branch_a`→`"Negative"` (summarize) +
+  `llm_branch_b`→`"negative"` (keywords), both completed → `join_1`
+  completed → `agent_false`→`"Negative"\nnegative"` — **the two branch
+  outputs merged with a newline**, exactly matching the documented Join
+  behavior.
+- Positive input (re-run, unchanged from Step 2's logic) → still correctly
+  routes straight to `agent_true`, Fork/Join/branch nodes correctly absent
+  from `node_results` entirely — confirms adding Fork/Join to the false
+  path didn't disturb the true path at all.
+
+Confirms: Fork fan-out (2 branches run, both appear in results), Join
+fan-in + merge-with-newline, and that Condition branching composes cleanly
+with Fork/Join without cross-contamination between paths.
 
 ### Step 4 — exercise Phase 5 named data ports
 Wire an `llm → llm` and `llm → condition` connection using drag-to-connect,
@@ -147,6 +178,13 @@ against Go source if it seems wrong."
   substitute. Worth a `run_status`/`done` field on this endpoint if direct
   polling (not just the WS stream) is ever a first-class supported way to
   drive debug runs.
+- **`fork`/`join`/`router`/`hil` need `definition_ref.kind: "flow_control"`,
+  NOT `"inline"`**: only `llm`/`condition` use `"inline"`. Using `"inline"`
+  for a fork/join node is rejected by `debug/start` with a clear `422
+  unknown_inline_node` (not a silent failure) — but easy to get wrong by
+  pattern-matching off an `llm`/`condition` example, exactly what happened
+  here. Fixed in the `/app-canvas` skill file, which had the same wrong
+  claim before this was caught.
 - **`.input` incorrectly shown as "unresolved" (red) when read directly off
   the Entry Point — FIXED 2026-09-26**: found live by the user testing
   `verify-step2-condition` themselves in the browser. `llm_1`'s Reads panel

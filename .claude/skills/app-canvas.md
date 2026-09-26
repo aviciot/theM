@@ -103,8 +103,15 @@ Top-level shape (`schema_version: 2`):
   "config": { "node_type": "llm", "display_name": "...", /* fields per §1's config_fields */ }
 }
 ```
-- `kind: "inline"` for `llm`/`condition`/`fork`/`join`/`router`/`hil` (appflow
-  family) — `namespace` is always `"builtin"`.
+- `kind: "inline"` for `llm`/`condition` ONLY. `kind: "flow_control"` for
+  `fork`/`join`/`router`/`hil` — a DIFFERENT `definition_ref.kind`, not
+  `"inline"` (confirmed 2026-09-26 the hard way: using `"inline"` for a
+  `fork`/`join` node fails validation with `unknown_inline_node` —
+  `go/internal/appflow/compiler.go`'s `compileNode` switches on
+  `DefinitionRef.Kind` first, and only `"inline"` name-switches into
+  `llm`/`condition`; `"flow_control"` is the separate branch that
+  name-switches into `router`/`hil`/`fork`/`join`). `namespace` is always
+  `"builtin"` for both cases.
 - `kind: "agent"` for an agent component, e.g.:
   ```json
   { "instance_id": "agent_1",
