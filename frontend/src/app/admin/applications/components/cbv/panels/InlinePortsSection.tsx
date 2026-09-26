@@ -37,6 +37,17 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
   const varSrcMap = upstreamAppFlowVarSources(selectedNode.id, nodes, edges);
   const inputAliases = getInputAliases(thisNode);
 
+  // `.input` is special-filled by the Entry Point at the start of every run
+  // (go/internal/appflow/workflow.go's `accumulated := input.UserMessage`) —
+  // it's never "written" by any node the way an llm's output_var is, so the
+  // graph-walk heuristic below has nothing to find and always reports it
+  // unresolved even when the wire from the Entry Point is right there on
+  // the canvas. Special-case it: resolved whenever this node has a direct
+  // incoming edge from an entryPoint-kind node.
+  const hasDirectEntryPointEdge = edges.some(e =>
+    e.target === thisNode.id && nodes.find(n => n.id === e.source)?.type === 'entryPoint'
+  );
+
   const nodeType = (thisNode.data as unknown as { node_type: string }).node_type;
   const emptyHint = nodeType === 'condition'
     ? 'fill in the expression to see consumed vars'
@@ -49,15 +60,21 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
       </div>
       {[...new Set(reads)].map(v => {
         const isAlias = v in inputAliases;
+        const isEntryPointInput = v === 'input' && hasDirectEntryPointEdge;
         const binding = isAlias ? resolveBinding(thisNode, v, nodes) : null;
-        // Aliased var: resolved via its live node reference. Typed-in var: falls
-        // back to the graph-walk heuristic (no reference to resolve from).
-        const heuristicSrc = isAlias ? undefined : varSrcMap.get(v);
-        const unresolved = isAlias ? !binding : !heuristicSrc;
-        const srcLabel = binding
+        // Aliased var: resolved via its live node reference. Entry-point
+        // `.input`: always resolved, no upstream node "writes" it. Typed-in
+        // var: falls back to the graph-walk heuristic.
+        const heuristicSrc = isAlias || isEntryPointInput ? undefined : varSrcMap.get(v);
+        const unresolved = isEntryPointInput ? false : isAlias ? !binding : !heuristicSrc;
+        const srcLabel = isEntryPointInput
+          ? 'Entry Point'
+          : binding
           ? (binding.sourceNode.data as unknown as { display_name?: string }).display_name || binding.sourceNode.id
           : heuristicSrc?.label;
-        const srcNodeType = binding
+        const srcNodeType = isEntryPointInput
+          ? 'entryPoint'
+          : binding
           ? (binding.sourceNode.data as unknown as { node_type: string }).node_type
           : heuristicSrc?.node_type;
         return (
