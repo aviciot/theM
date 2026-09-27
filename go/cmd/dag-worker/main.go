@@ -934,16 +934,29 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 	// doc comment for why. A nil fileGate (e.g. in tests, or a genuinely
 	// misconfigured worker) just skips the scan — same fail-open posture
 	// FileGate itself already documents everywhere else.
-	if result.PartKind == "raw" && len(rawBytes) > 0 && c.fileGate != nil {
-		if _, gateErr := c.fileGate.InterceptInline(ctx, appflow.FileGateCheckInput{
-			TenantID:        tenantID,
-			ApplicationID:   applicationID,
-			NodeID:          nodeID,
-			RunID:           runID,
-			FileName:        result.FileName,
-			FileContentType: result.FileContentType,
-		}, rawBytes); gateErr != nil {
-			return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: file guard check for node %q: %w", nodeID, gateErr)
+	//
+	// The scan's outcome (ScanStatus/ArtifactID) is threaded back onto
+	// result so InvokeAgentActivity's trace line can show it — found live
+	// this session: without this, a raw-bytes file's File Guard scan ran
+	// (genuinely quarantined + scanned in the DB) but was completely
+	// invisible in the debug log, indistinguishable from "never scanned."
+	if result.PartKind == "raw" && len(rawBytes) > 0 {
+		if c.fileGate == nil {
+			result.FileGateScanStatus = "disabled"
+		} else {
+			gateOut, gateErr := c.fileGate.InterceptInline(ctx, appflow.FileGateCheckInput{
+				TenantID:        tenantID,
+				ApplicationID:   applicationID,
+				NodeID:          nodeID,
+				RunID:           runID,
+				FileName:        result.FileName,
+				FileContentType: result.FileContentType,
+			}, rawBytes)
+			if gateErr != nil {
+				return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: file guard check for node %q: %w", nodeID, gateErr)
+			}
+			result.FileGateScanStatus = gateOut.ScanStatus
+			result.FileGateArtifactID = gateOut.ArtifactID
 		}
 	}
 

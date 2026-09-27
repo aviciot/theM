@@ -124,6 +124,11 @@ type AgentInvokeActivityOutput struct {
 	FileURL         string `json:"file_url,omitempty"`
 	FileName        string `json:"file_name,omitempty"`
 	FileContentType string `json:"file_content_type,omitempty"`
+	// FileGateScanStatus/FileGateArtifactID surface the inline raw-bytes
+	// scan's outcome (PartKind=="raw" only) so the debug trace can show it —
+	// see AgentInvokeResult's doc comment.
+	FileGateScanStatus string `json:"file_gate_scan_status,omitempty"`
+	FileGateArtifactID string `json:"file_gate_artifact_id,omitempty"`
 }
 
 // InlineLLMActivityInput is the input to AppFlowInlineLLMActivity.
@@ -251,6 +256,16 @@ type AgentInvokeResult struct {
 	FileURL         string
 	FileName        string
 	FileContentType string
+	// FileGateScanStatus/FileGateArtifactID are set only when PartKind=="raw"
+	// and InvokeByID ran an inline File Guard scan (see FileGateChecker's doc
+	// comment on why raw bytes are scanned inline, not via a separate
+	// activity). Empty when no scan ran (text/file/data response, or no
+	// FileGate configured) — InvokeAgentActivity uses this to add the scan
+	// outcome to its own trace line, since the inline scan itself has no
+	// access to emitTrace (found live: without this, a raw-bytes file's scan
+	// was invisible in the debug log even though it genuinely ran).
+	FileGateScanStatus string
+	FileGateArtifactID string
 }
 
 // AgentInvoker calls a specific agent by its DB UUID via A2A.
@@ -427,13 +442,18 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 	if traceDetail == "" && result.PartKind != "" {
 		traceDetail = fmt.Sprintf("[%s response, no text]", result.PartKind)
 	}
+	if result.FileGateScanStatus != "" {
+		traceDetail += fmt.Sprintf(" — File Guard: %s", result.FileGateScanStatus)
+	}
 	a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_done", traceDetail, input.Verbosity)
 	return AgentInvokeActivityOutput{
-		ResponseText:    result.ResponseText,
-		PartKind:        result.PartKind,
-		FileURL:         result.FileURL,
-		FileName:        result.FileName,
-		FileContentType: result.FileContentType,
+		ResponseText:       result.ResponseText,
+		PartKind:           result.PartKind,
+		FileURL:            result.FileURL,
+		FileName:           result.FileName,
+		FileContentType:    result.FileContentType,
+		FileGateScanStatus: result.FileGateScanStatus,
+		FileGateArtifactID: result.FileGateArtifactID,
 	}, nil
 }
 

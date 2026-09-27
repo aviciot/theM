@@ -3,6 +3,33 @@
 
 ---
 
+## 2026-09-27 — Rebuilding "them-dag-worker" silently left debug runs on stale code
+
+**Symptom:** a trace-detail fix (adding a "File Guard: pending/clean/blocked" suffix to the agent
+node's debug-log line) compiled clean, passed `go test ./...`, and was confirmed live via a direct
+API debug run — except the debug log kept showing the OLD output with no File Guard mention at
+all, run after run, even after rebuilding and restarting `them-dag-worker`.
+**Root cause:** `them-dag-worker`, `them-dag-worker-2`, and `them-dag-worker-debug` all build from
+the same `Dockerfile.dag-worker`, but each is a **separate compose service** and therefore gets its
+own separately-tagged image (`them_gateway-them-dag-worker`, `...-2`, `...-debug`). Running
+`docker compose build them-dag-worker` only rebuilds that one image tag — `them-dag-worker-debug`'s
+image is untouched. Every App Canvas **debug** run (`debug/start`) uses Temporal task queue
+`appflow-dag-debug`, which only `them-dag-worker-debug` polls — so all debug-mode testing was
+silently running the pre-fix binary while production traffic (`appflow-dag`, served by the other
+two, which HAD been rebuilt) would have shown the fix correctly.
+**Fix:** always rebuild all 3 images explicitly by naming all 3 services:
+`docker compose build them-dag-worker them-dag-worker-2 them-dag-worker-debug`, then restart all 3.
+`go/CLAUDE.md`'s trigger map updated to say this explicitly instead of implying one rebuild covers
+all replicas.
+**Watch for:** "same Dockerfile" does NOT mean "same image" in Docker Compose — each service name is
+its own build target/tag by default. When debugging "my fix isn't showing up" after a rebuild,
+check `docker inspect <container> --format '{{.State.StartedAt}}'` AND confirm which task
+queue/container actually served the specific request (grep logs for the request's own run_id or a
+unique marker) before assuming the binary is current — a healthy, recently-restarted container can
+still be running stale code if it was rebuilt from the wrong service name.
+
+---
+
 ## 2026-09-26 — A dotted default value silently breaks Go text/template, caught only by reading the runtime source
 
 **Symptom:** none in production — caught before shipping, during Phase 5 of `docs/APPFLOW_NAMED_PORTS_PLAN.md` (AppFlow named data-port wiring). A first-cut fix generated default port-binding alias names like `LLM2.output` (readable, traces back to the source node).

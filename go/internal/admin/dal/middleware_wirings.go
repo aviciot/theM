@@ -108,7 +108,14 @@ WHERE  mw.id = $1::uuid AND mw.application_id = $2::uuid`
 	return w, nil
 }
 
-// CreateMiddlewareWiring inserts a new wiring row. Returns the created row.
+// CreateMiddlewareWiring inserts a new wiring row, or updates the existing
+// one in place if a wiring for this (application_id, agent_id, position)
+// already exists — them.middleware_wirings enforces that triple unique
+// (uq_mw_wiring_app_agent_pos). A caller can legitimately hit this (e.g. the
+// App Canvas Guards section creating a wiring for a node whose existing
+// wiring predates node_id and so didn't match on node_id lookup) — that's a
+// real "this wiring already exists, update it" case, not an error condition,
+// so it must not surface as a raw unique-violation 500.
 func CreateMiddlewareWiring(ctx context.Context, db Querier, appID string, in MiddlewareWiringInput) (MiddlewareWiring, error) {
 	enabled := true
 	if in.Enabled != nil {
@@ -126,6 +133,11 @@ SELECT $1::uuid, $2::uuid, md.id, $3, $4::jsonb, $5,
        CASE WHEN $6 = '' THEN NULL ELSE $6 END
 FROM   them.middleware_defs md
 WHERE  md.slug = $7
+ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_agent_pos DO UPDATE
+SET    config_override = EXCLUDED.config_override,
+       enabled         = EXCLUDED.enabled,
+       node_id         = EXCLUDED.node_id,
+       updated_at      = now()
 RETURNING id::text`
 
 	var id string
