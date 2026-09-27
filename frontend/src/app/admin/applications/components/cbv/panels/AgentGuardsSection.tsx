@@ -231,7 +231,7 @@ function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast }: Gua
       {enabled && configFields.filter(field => field.key !== 'enabled').map(field => (
         <div key={field.key} style={{ marginBottom: 8 }}>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>
-            {field.key}{field.required && ' *'}
+            {field.key}{field.required && ' *'}{field.placeholder && ' (placeholder)'}
           </label>
           {field.options ? (
             <select

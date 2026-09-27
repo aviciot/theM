@@ -20,6 +20,11 @@ type ConfigFieldDoc struct {
 	// file-guard's "mode" is only ever "block" or "warn"). Omitted for
 	// fields with no fixed value set.
 	Options []string `json:"options,omitempty"`
+	// Placeholder marks a field that is stored/round-tripped but has no
+	// real runtime effect yet (e.g. pii_redact's llm_assist — reserved for
+	// a future LLM-judge-based detection pass, not implemented). The UI
+	// must visibly mark it as such rather than silently implying it works.
+	Placeholder bool `json:"placeholder,omitempty"`
 }
 
 // NodeExample is a short worked example for a node type, used in the LLM system prompt.

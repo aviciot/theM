@@ -45,6 +45,8 @@ export interface ConfigFieldDecl {
   example?: string;
   /** Fixed set of valid values, when present — render a select, not free text. */
   options?: string[];
+  /** True for a field that's stored but has no real runtime effect yet — render with a "(placeholder)" marker, not as a working toggle. */
+  placeholder?: boolean;
 }
 
 /** One named data port on a node type. Port IDs are permanent stable identifiers. */
