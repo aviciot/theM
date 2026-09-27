@@ -52,6 +52,7 @@ func (p *Pipeline) Run(
 	var results []Result
 	current := part
 	hadError := false
+	hadFlag := false
 
 	for _, name := range names {
 		proc := p.reg.Get(name)
@@ -77,6 +78,9 @@ func (p *Pipeline) Run(
 		}
 		if r.Outcome == "error" {
 			hadError = true
+		}
+		if r.Outcome == "flagged" {
+			hadFlag = true
 		}
 
 		results = append(results, r)
@@ -105,7 +109,19 @@ func (p *Pipeline) Run(
 		}
 	}
 
+	// finalStatus was, for a long time, only ever "clean" or "error" here —
+	// a non-blocking "flagged" outcome (pii_redact/prompt_inject's warn
+	// mode, or redact mode's own non-blocking flag) fell through to "clean"
+	// silently, even though this struct's own doc comment always claimed
+	// FinalStatus could be "flagged". Found live testing a PII Guard demo:
+	// mode=warn genuinely detected PII (confirmed via the processor's own
+	// Result.Outcome=="flagged") but TextGate's Categories string showed
+	// "pii_redact:clean" — no way to tell a real "nothing found" apart from
+	// "found it, but the outcome got lost on the way out."
 	finalStatus := "clean"
+	if hadFlag {
+		finalStatus = "flagged"
+	}
 	if hadError {
 		finalStatus = "error"
 	}

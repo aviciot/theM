@@ -11,6 +11,7 @@ package appflow
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	temporalerr "go.temporal.io/sdk/temporal"
@@ -447,6 +448,14 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "agent":
+			// guardNotes collects non-blocking Text Guard flags (mode=warn,
+			// or mode=redact's own flagged status) from BOTH the input and
+			// output phase checks below, so a single node_done re-trace at
+			// the end can show everything that happened on this node — a
+			// warn-mode flag on input must not get silently lost just
+			// because it happened before InvokeAgentActivity's own trace.
+			var guardNotes []string
+
 			// Text Guards input-phase check (docs/APPFLOW_TEXT_GUARDS_PLAN.md
 			// Phase 4's direction field): only a guard wired with
 			// direction:"both" actually does anything here — TextGate.Check
@@ -476,6 +485,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				accumulated = textIn.Text
+				if strings.Contains(textIn.Categories, ":flagged") {
+					guardNotes = append(guardNotes, "input: "+textIn.Categories)
+				}
 			}
 			// Call agent via A2A HTTP through InvokeAgentActivity.
 			var agentOut AgentInvokeActivityOutput
@@ -528,6 +540,22 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				accumulated = textOut.Text
+				if strings.Contains(textOut.Categories, ":flagged") {
+					guardNotes = append(guardNotes, "output: "+textOut.Categories)
+				}
+			}
+			// A non-blocking flag (mode=warn, or mode=redact — both set
+			// Categories without Blocked) must still be visible somewhere:
+			// warn mode changes nothing else at all (no redaction, no
+			// failure), so without this the guard would look like it did
+			// nothing. Re-emits node_done with the FINAL text (already
+			// includes InvokeAgentActivity's own trace) plus every guard note
+			// collected across BOTH phases — never a bare replacement, since
+			// persistTrace's node_done UPDATE overwrites `output` wholesale,
+			// not append-only.
+			if len(guardNotes) > 0 {
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done",
+					fmt.Sprintf("%s — Text Guard: %s", accumulated, strings.Join(guardNotes, ", ")), input.LogVerbosity)
 			}
 			// File Guard check (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md):
 			// only when the agent actually returned a recognized file part —
@@ -574,6 +602,10 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				model = input.LLMModel
 			}
 
+			// guardNotes collects non-blocking Text Guard flags from BOTH
+			// phases — see the agent case's identical comment for why.
+			var guardNotes []string
+
 			// Text Guards input-phase check (docs/APPFLOW_TEXT_GUARDS_PLAN.md
 			// Phase 4's direction field) — same "only a guard wired
 			// direction:'both' does anything" contract as the agent case.
@@ -607,6 +639,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				accumulated = textIn.Text
+				if strings.Contains(textIn.Categories, ":flagged") {
+					guardNotes = append(guardNotes, "input: "+textIn.Categories)
+				}
 			}
 			vars["input"] = accumulated
 
@@ -661,6 +696,16 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				llmOut.ResponseText = textOut.Text
+				if strings.Contains(textOut.Categories, ":flagged") {
+					guardNotes = append(guardNotes, "output: "+textOut.Categories)
+				}
+			}
+			// Same non-blocking-flag visibility fix as the agent case — see
+			// its own comment for why this can't just append onto the
+			// original node_done in place.
+			if len(guardNotes) > 0 {
+				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done",
+					fmt.Sprintf("%s — Text Guard: %s", llmOut.ResponseText, strings.Join(guardNotes, ", ")), input.LogVerbosity)
 			}
 			outVar := llmOut.OutputVar
 			if outVar == "" {

@@ -1,10 +1,11 @@
 # AppFlow Text Guards Plan (PII Redaction + Prompt-Injection Detection)
-# Status: ALL 4 PHASES DONE. Verified live end-to-end via a real debug run
-# (input-phase block). Not yet live-BROWSER-verified (no browser-automation
-# tool in this environment, same standing limitation as every other
-# frontend phase this session) — recommend a real click-through: select an
-# llm node, confirm the Guards section shows PII Guard + Prompt-Injection
-# Guard (no File Guard), toggle one on, save, reload, confirm it persists.
+# Status: ALL 4 PHASES DONE + live-browser-verified by the user via a
+# purpose-built demo app (agent -> condition -> fork/join with PII Guard
+# attached, docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md-style live click-through).
+# One real bug found and fixed during that verification: Pipeline.Run's
+# FinalStatus silently collapsed a non-blocking "flagged" outcome (mode=warn)
+# to "clean" -- see docs/LESSONS.md's 2026-09-27 entry. Mode=block/redact/warn
+# and direction=output/both all independently confirmed working live.
 # Owner: platform
 # Last updated: 2026-09-27
 

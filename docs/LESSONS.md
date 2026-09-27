@@ -3,6 +3,48 @@
 
 ---
 
+## 2026-09-27 — A shared pipeline's "clean vs flagged" status was silently wrong since day one
+
+**Symptom:** building a PII Guard demo app with `mode="warn"`, the guard genuinely detected an
+email (confirmed directly: `pii.Detector.Process` returns `Outcome:"flagged"` for this exact
+input+config, verified both in an isolated unit test AND via a live debug trace print inside the
+running container) — but the run showed completely normal output, no trace mention of PII at all,
+indistinguishable from the guard doing nothing. Spent a long stretch chasing this as a stale-binary
+/ deployment problem (rebuilt all 3 dag-worker images multiple times, including `--no-cache`, before
+finding the real cause) — that instinct was reasonable given this session's earlier real staleness
+bugs, but this time the deployed code genuinely was current.
+**Root cause:** `internal/middleware/pipeline.go`'s `Pipeline.Run` derives its final, non-blocking
+status with `finalStatus := "clean"; if hadError { finalStatus = "error" }` — it never checked
+whether any processor's `Result.Outcome` was `"flagged"`. `PipelineResult`'s own doc comment always
+listed `"flagged"` as a real possible value, but the code to actually produce it (for the
+non-blocking case) was simply never written. `mode="block"` never hit this bug (blocking has its
+own separate, correct early-return path using `r.Outcome` directly); `mode="redact"`'s own text
+substitution wasn't broken either, since `Modified` is applied to `current` unconditionally, before
+the buggy status line — only the status *label* was silently wrong, for every non-blocking flagged
+result, since the feature shipped.
+**Fix:** added a `hadFlag` bool alongside the existing `hadError`, set when any processor's
+`Outcome == "flagged"`; `finalStatus` becomes `"flagged"` when set (still overridden by `"error"`,
+same precedence `hadError` already had). One existing test
+(`TestPipeline_ModifiedPartPassedToNext`) had encoded the bug as if it were intended behavior —
+its own assertion literally said `"expected clean (flagged but not blocking)"` — corrected instead
+of left alone.
+**Watch for:** when a shared, reused engine (`Pipeline.Run` serves both `av_scan`'s
+clean/infected/error model and pii_redact/prompt_inject's clean/flagged/error model) has a status
+enum wider than what the original author's own test cases exercised, grep for literal outcome
+strings the code CAN produce (`grep -rn 'Outcome:' internal/middleware/*/`) and confirm each one has
+at least one test walking it all the way through to the aggregate result — not just the individual
+processor's own return value. A processor returning the right `Result` proves nothing about whether
+the thing that aggregates results across processors actually preserves it. And: before assuming
+"my rebuild didn't take effect" a second or third time in the same investigation, prove the binary
+is stale with something more direct than `strings | grep <symbol-name>` — Go's compiler strips
+unused function names/doc comments from a normal (non-debug) build, so a missing symbol name in
+`strings` output proves nothing; a literal string LITERAL actually referenced by a live code path
+(an error message, a log field) is the only reliable signal, and even then, cross-check the
+container's actual running image ID (`docker inspect <container> --format '{{.Image}}'`) against
+the freshest build's image ID before trusting either signal.
+
+---
+
 ## 2026-09-27 — Two silent data-corruption bugs found live while adding llm-node guard wirings
 
 **Symptom 1:** `ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_node DO UPDATE` failed

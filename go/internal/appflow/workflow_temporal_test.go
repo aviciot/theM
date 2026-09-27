@@ -578,3 +578,44 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_TextGateBlocksInput_NeverI
 		s.Fail("the agent must never be invoked once its input is blocked")
 	}
 }
+
+// AF-TR-W13: a non-blocking Text Guard flag (mode="warn", or any mode that
+// sets Categories without Blocked) must still show up somewhere in the
+// trace — found live this session testing the PII Guard demo app:
+// mode=warn produced a completely normal-looking run with zero visible
+// indication anything was flagged, indistinguishable from the guard doing
+// nothing at all. Proves the fix: a second node_done trace event carries
+// the guard's Categories string, without the run failing or the text
+// changing (warn mode changes neither).
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_TextGateWarnFlag_VisibleInTrace_RunStillSucceeds() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{response: "call me at 555-123-4567"}
+	s.acts.TextGate = &fakeTextGate{byPhase: map[string]TextGateCheckOutput{
+		"input":  {Text: "hi"}, // direction:"output" (default) -- input phase is clean
+		"output": {Text: "call me at 555-123-4567", Categories: "pii_redact:flagged"}, // warn mode never changes the text
+	}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-agent-warn",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           singleAgentSpec(),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError(), "warn mode must never fail the run")
+
+	var out AppFlowWorkflowOutput
+	s.NoError(s.env.GetWorkflowResult(&out))
+	s.Equal("call me at 555-123-4567", out.FinalText, "warn mode must never change the text")
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	found := false
+	for _, d := range dones {
+		if detail, ok := d["detail"].(string); ok && detail == "call me at 555-123-4567 — Text Guard: output: pii_redact:flagged" {
+			found = true
+		}
+	}
+	s.True(found, "expected a node_done trace mentioning the warn-mode flag; dones=%+v", dones)
+}

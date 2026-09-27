@@ -40,6 +40,16 @@ func (p *modifyProcessor) Process(_ context.Context, part middleware.Part, _ jso
 	return middleware.Result{Outcome: "flagged", Modified: &modified}, nil
 }
 
+// flagProcessor reports flagged without modifying anything — matches
+// pii_redact/prompt_inject's real warn-mode shape (something was detected,
+// nothing changed, not blocked).
+type flagProcessor struct{ name string }
+
+func (p *flagProcessor) Name() string { return p.name }
+func (p *flagProcessor) Process(_ context.Context, _ middleware.Part, _ json.RawMessage) (middleware.Result, error) {
+	return middleware.Result{Outcome: "flagged", Detail: map[string]any{"categories": map[string]int{"email": 1}}}, nil
+}
+
 func newReg(procs ...middleware.Processor) *middleware.Registry {
 	r := middleware.NewRegistry()
 	for _, p := range procs {
@@ -185,6 +195,28 @@ func TestPipeline_AllClean_ReturnsClean(t *testing.T) {
 	}
 }
 
+// TestPipeline_FlaggedNotBlocked_SurfacesInFinalStatus is a regression test
+// for a real bug found live testing a PII Guard demo app's mode="warn":
+// Run's non-blocking fallthrough only ever checked hadError, so a processor
+// reporting Outcome="flagged" without Block (pii_redact/prompt_inject's
+// warn mode, or redact mode's own non-blocking flag) was silently reported
+// as FinalStatus="clean" — genuinely indistinguishable from nothing having
+// been detected at all, even though PipelineResult's own doc comment always
+// claimed "flagged" was a real possible value.
+func TestPipeline_FlaggedNotBlocked_SurfacesInFinalStatus(t *testing.T) {
+	reg := newReg(&flagProcessor{name: "pii_redact"})
+	p := middleware.NewPipeline(reg)
+	piiRaw, _ := json.Marshal(middleware.PIIRedactConfig{Enabled: true, Mode: "warn"})
+	cfg := middleware.SecurityConfig{
+		Enabled:    true,
+		Processors: map[string]json.RawMessage{"pii_redact": piiRaw},
+	}
+	res := p.Run(context.Background(), middleware.Part{Kind: "text", Text: "email a@b.com"}, []string{"pii_redact"}, cfg, nil)
+	if res.FinalStatus != "flagged" {
+		t.Fatalf("expected flagged, got %s", res.FinalStatus)
+	}
+}
+
 func TestPipeline_BlockStopsFurtherProcessors(t *testing.T) {
 	ran := false
 	second := &cleanProcessor{name: "pii_redact"}
@@ -242,11 +274,22 @@ func TestPipeline_ModifiedPartPassedToNext(t *testing.T) {
 	res := p.Run(context.Background(),
 		middleware.Part{Kind: "text", Text: "my SSN is 123-45-6789"},
 		[]string{"pii_redact", "audit_capture"}, cfg, nil)
-	if res.FinalStatus != "clean" {
-		t.Fatalf("expected clean (flagged but not blocking), got %s", res.FinalStatus)
+	// modifyProcessor reports Outcome:"flagged" (not blocking) — FinalStatus
+	// must surface that, not silently collapse it to "clean". Was a real
+	// bug (docs/APPFLOW_TEXT_GUARDS_PLAN.md follow-up, found live testing a
+	// PII Guard demo app): Run's non-blocking fallthrough only ever checked
+	// hadError, so a genuinely flagged-but-not-blocked result (pii_redact's
+	// warn/redact modes) was silently reported as "clean" — this test's own
+	// prior assertion (`expected clean (flagged but not blocking)`) had
+	// encoded that bug as if it were the intended behavior.
+	if res.FinalStatus != "flagged" {
+		t.Fatalf("expected flagged (a processor reported Outcome=flagged without blocking), got %s", res.FinalStatus)
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(res.Results))
+	}
+	if res.FinalPart.Text != "[REDACTED]" {
+		t.Fatalf("expected the modified text to still be applied, got %q", res.FinalPart.Text)
 	}
 }
 
