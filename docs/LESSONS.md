@@ -1454,6 +1454,16 @@ app," not "fix a canvas rendering gap." The real gap — agent nodes can't be a 
 outgoing edge in the UI, even though the runtime has no such restriction — is unfixed, tracked
 here for a future session.
 
+**Fixed for real, 2026-09-27**: hit again while building a PII Guard demo app (`agent_intake` →
+`cond_pii_check`, an agent node genuinely used mid-flow) — same symptom, same root cause. This
+time fixed properly instead of worked around: `AgentNode` (`CanvasNodes.tsx`) gained a `sourcePos`
+derivation and a `<Handle type="source" .../>`, copied verbatim from `MiddlewareNode`'s existing
+working pattern (both target and source handles, direction-aware via `useAppLayoutDir()`). No
+backend change needed — the runtime never had this restriction, confirmed again. `tsc --noEmit`
+and all 79 existing frontend tests (including `validateConnection.test.js`, whose fixture already
+listed `agent: { emits: ['result'] }` — the validation *logic* layer already allowed this, only
+the visual `Handle` was missing) pass unchanged.
+
 **Watch for:** when a node type's canvas component was written before that node type was ever
 used in a particular position (source vs. leaf), don't assume the missing capability is a design
 decision — check whether the *runtime* actually enforces that restriction (`go/internal/appflow`

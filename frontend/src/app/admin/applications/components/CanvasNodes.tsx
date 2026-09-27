@@ -168,6 +168,7 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
   const { deleteElements } = useReactFlow();
   const dir = useAppLayoutDir();
   const targetPos = dir === 'LR' ? Position.Left : Position.Top;
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const isInternal = data.tags?.includes('internal') ?? false;
   const hasError = data._error || data._shake;
   const dbgState = data._debug?.state;
@@ -223,6 +224,7 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
           <div style={{ fontSize: 9, color: '#c084fc' }}>⏸ paused</div>
         )}
       </div>
+      <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
   );
 }
