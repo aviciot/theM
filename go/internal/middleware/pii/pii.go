@@ -61,6 +61,18 @@ var categories = []category{
 	},
 }
 
+// CategoryNames returns every detectable PII category name, in the fixed
+// order they're checked — used both by PIIRedactConfig.Categories callers
+// (to validate a config's category list) and the App Canvas Guards UI (to
+// build the checklist of which categories to scan for).
+func CategoryNames() []string {
+	names := make([]string, len(categories))
+	for i, c := range categories {
+		names[i] = c.name
+	}
+	return names
+}
+
 // Detector implements middleware.Processor using regex pattern matching.
 type Detector struct{}
 
@@ -89,9 +101,27 @@ func (d *Detector) Process(_ context.Context, part middleware.Part, cfgRaw json.
 		mode = "redact"
 	}
 
+	// Empty Categories means "scan everything" (fail-open to scanning more,
+	// not less) — only filter down when the config explicitly names a
+	// subset.
+	var active []category
+	if len(cfg.Categories) == 0 {
+		active = categories
+	} else {
+		wanted := make(map[string]bool, len(cfg.Categories))
+		for _, name := range cfg.Categories {
+			wanted[name] = true
+		}
+		for _, c := range categories {
+			if wanted[c.name] {
+				active = append(active, c)
+			}
+		}
+	}
+
 	found := map[string]int{}
 	redacted := part.Text
-	for _, c := range categories {
+	for _, c := range active {
 		matches := c.pattern.FindAllString(redacted, -1)
 		if len(matches) == 0 {
 			continue

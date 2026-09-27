@@ -233,7 +233,27 @@ function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast }: Gua
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>
             {field.key}{field.required && ' *'}{field.placeholder && ' (placeholder)'}
           </label>
-          {field.options ? (
+          {field.type === 'array' && field.options ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {field.options.map(opt => {
+                const selected = Array.isArray(configDraft[field.key]) ? (configDraft[field.key] as string[]) : [];
+                const checked = selected.includes(opt);
+                return (
+                  <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: C.text, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={e => updateField(
+                        field.key,
+                        e.target.checked ? [...selected, opt] : selected.filter(v => v !== opt),
+                      )}
+                    />
+                    {opt}
+                  </label>
+                );
+              })}
+            </div>
+          ) : field.options ? (
             <select
               style={selectStyle}
               value={typeof configDraft[field.key] === 'string' ? (configDraft[field.key] as string) : ''}

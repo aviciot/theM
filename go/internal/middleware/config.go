@@ -33,6 +33,12 @@ type PIIRedactConfig struct {
 	// "input"-only is not offered: if you pay the cost to scan input you
 	// always want output scanned too.
 	Direction string `json:"direction"` // "output" | "both"
+	// Categories restricts which PII categories pii.Detector actually
+	// checks for — one or more of "email", "phone", "credit_card", "ssn"
+	// (pii.CategoryNames()). Empty/omitted means all categories (fail-open
+	// to "scan everything," not "scan nothing" — matches this project's
+	// other optional-field conventions).
+	Categories []string `json:"categories,omitempty"`
 }
 
 // PromptInjectConfig is the config shape for the prompt_inject processor.
