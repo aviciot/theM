@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { Node } from '@xyflow/react';
 import { C } from '../../../constants';
-import { fieldStyle, sectionHdrStyle } from './panelShared';
+import { fieldStyle, selectStyle, sectionHdrStyle } from './panelShared';
 import { getCachedNodeTypesByFamily } from '@/lib/nodeRegistry';
 import type { ConfigFieldDecl } from '@/lib/nodeRegistry';
 import { themApi, type Agent, type MiddlewareWiring } from '@/lib/api';
@@ -66,12 +66,28 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
     );
   }
 
+  const enabled = wiring?.enabled ?? false;
+
+  // file-guard's own config_fields also declare an "enabled" key (the
+  // wiring-independent "is this guard active" flag inside config_override).
+  // That's redundant with the wiring-level `enabled` column this section
+  // already renders as the single top-level checkbox — rather than show two
+  // "Enabled" toggles, config_override.enabled is kept silently in sync with
+  // the wiring's own enabled state and hidden from the rendered form.
+  function withEnabledSynced(nextEnabled: boolean) {
+    return { ...configDraft, enabled: nextEnabled };
+  }
+
   async function handleToggleEnabled(nextEnabled: boolean) {
     if (!agent) return;
     setSaving(true);
     try {
+      const syncedConfig = withEnabledSynced(nextEnabled);
       if (wiring) {
-        const updated = await themApi.updateMiddlewareWiring(appId, wiring.id, { enabled: nextEnabled });
+        const updated = await themApi.updateMiddlewareWiring(appId, wiring.id, {
+          enabled: nextEnabled,
+          config_override: syncedConfig,
+        });
         setWiring(updated);
       } else {
         const created = await themApi.createMiddlewareWiring(appId, {
@@ -79,10 +95,11 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
           def_slug: FILE_GUARD_SLUG,
           node_id: selectedNode.id,
           enabled: nextEnabled,
-          config_override: configDraft,
+          config_override: syncedConfig,
         });
         setWiring(created);
       }
+      setConfigDraft(syncedConfig);
       showToast(nextEnabled ? 'File Guard enabled' : 'File Guard disabled', true);
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : 'Failed to save guard setting', false);
@@ -95,8 +112,9 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
     if (!agent) return;
     setSaving(true);
     try {
+      const syncedConfig = withEnabledSynced(enabled);
       if (wiring) {
-        const updated = await themApi.updateMiddlewareWiring(appId, wiring.id, { config_override: configDraft });
+        const updated = await themApi.updateMiddlewareWiring(appId, wiring.id, { config_override: syncedConfig });
         setWiring(updated);
       } else {
         const created = await themApi.createMiddlewareWiring(appId, {
@@ -104,10 +122,11 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
           def_slug: FILE_GUARD_SLUG,
           node_id: selectedNode.id,
           enabled: true,
-          config_override: configDraft,
+          config_override: syncedConfig,
         });
         setWiring(created);
       }
+      setConfigDraft(syncedConfig);
       showToast('Guard config saved', true);
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : 'Failed to save guard config', false);
@@ -128,8 +147,6 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
       </div>
     );
   }
-
-  const enabled = wiring?.enabled ?? false;
 
   return (
     <div>
@@ -158,12 +175,23 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
         </div>
       )}
 
-      {enabled && configFields.map(field => (
+      {enabled && configFields.filter(field => field.key !== 'enabled').map(field => (
         <div key={field.key} style={{ marginBottom: 8 }}>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>
             {field.key}{field.required && ' *'}
           </label>
-          {field.type === 'bool' ? (
+          {field.options ? (
+            <select
+              style={selectStyle}
+              value={typeof configDraft[field.key] === 'string' ? (configDraft[field.key] as string) : ''}
+              onChange={e => updateField(field.key, e.target.value)}
+            >
+              <option value="" disabled>Select…</option>
+              {field.options.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          ) : field.type === 'bool' ? (
             <input
               type="checkbox"
               checked={Boolean(configDraft[field.key])}

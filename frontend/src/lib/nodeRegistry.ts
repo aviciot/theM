@@ -43,6 +43,8 @@ export interface ConfigFieldDecl {
   required: boolean;
   description: string;
   example?: string;
+  /** Fixed set of valid values, when present — render a select, not free text. */
+  options?: string[];
 }
 
 /** One named data port on a node type. Port IDs are permanent stable identifiers. */

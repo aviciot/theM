@@ -702,6 +702,9 @@ Registry of middleware component types (builtin and tenant-scoped). Migration: `
 | emoji | TEXT | visual emoji for canvas node (e.g. `🛡️`) — added by `db/097` |
 | color | TEXT | accent hex color for canvas node (e.g. `#f59e0b`) — added by `db/097` |
 | bg_color | TEXT | background color for canvas node (e.g. `rgba(245,158,11,0.08)`) — added by `db/097` |
+| edges | JSONB | `{min_in,max_in,min_out,max_out}` node-contract shape — added by `db/102` |
+| input_ports / output_ports | JSONB | named data ports — added by `db/102` |
+| config_fields | JSONB | array of `{key,type,required,description,example,options?}` — added by `db/102`; `options` (fixed value set, e.g. file-guard's `mode: ["block","warn"]`) added by `db/112`, tells the frontend to render a select instead of free text |
 | tenant_id | UUID FK→auth_service.users | NULL for builtins |
 | created_at / updated_at | TIMESTAMPTZ | |
 
@@ -865,6 +868,7 @@ Key relationships:
 | `db/097_middleware_defs_visual.sql` | Phase 1 middleware node registry: adds `emoji TEXT`, `color TEXT`, `bg_color TEXT` to `them.middleware_defs`. Seeds File Guard with `🛡️` / `#f59e0b` / `rgba(245,158,11,0.08)`. |
 | `db/101_app_flow_llm_overrides.sql` | Node Registry Phase 1: `them.app_flow_llm_overrides` table — per-app, per-node provider+model override for app-canvas inline LLM nodes, applied at workflow start ahead of the canvas-compiled value. |
 | `db/103_run_steps_appflow_trace.sql` | App Canvas Debug Mode Phase 3: `them.run_steps` gains `node_id`/`node_kind` (nullable) for AppFlow DAG node traces + a partial unique index on `(run_id, node_id) WHERE node_id IS NOT NULL`. Also drops the broken `tool_call_id TEXT NOT NULL` column (never populated by its writer — every insert should have been failing). |
+| `db/112_file_guard_mode_options.sql` | UX fix found live-testing the Guards section (App Canvas): file-guard's `mode` config field was free text with only 2 valid runtime values (`block`/`warn`), letting a user silently misconfigure it with a typo. Adds `"options": ["block", "warn"]` to that one field inside `them.middleware_defs.config_fields` — new generic `options` sub-key (`internal/nodedefs.ConfigFieldDoc.Options`), frontend renders a `<select>` when present instead of an `<input>`. |
 
 ---
 

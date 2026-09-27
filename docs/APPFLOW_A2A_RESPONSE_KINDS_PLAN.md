@@ -463,6 +463,45 @@ plain agent wired in, confirm the Guards section appears below the existing
 Config field, toggle Enabled, fill in the config fields, Save, reload the
 canvas, and confirm the saved state persists and re-populates correctly.
 
+#### Phase 3 UX review — 2 real issues found on first user click-through, fixed 2026-09-27
+
+The user's first real look at this section (on `verify-step6-fileguard`, a
+pre-built app with a live `file-guard` wiring already attached to `agent_1`)
+surfaced two genuine defects this session's unit/type-check testing could
+never have caught, since they're pure UX judgment calls, not logic bugs:
+
+1. **Two "Enabled" checkboxes shown at once.** `file-guard`'s own
+   `config_fields` happens to declare a field literally named `enabled` (its
+   "is this guard active" flag inside `config_override`), and the generic
+   field-renderer dutifully rendered it — right next to the section's own
+   top-level "Enabled" checkbox (`wiring.enabled`, the DB column), which
+   already means almost the same thing. Confusing, redundant, and a real
+   risk of the two silently disagreeing (e.g. wiring-level on, config-level
+   off). Fixed: `AgentGuardsSection.tsx` now filters `enabled` out of the
+   rendered field list entirely, and keeps `config_override.enabled`
+   silently synced to `wiring.enabled` on every save (`withEnabledSynced`
+   helper) so nothing downstream that reads `config_override.enabled`
+   directly can ever see it drift from the one visible toggle.
+2. **`mode` was free text, not a dropdown**, despite the field's own
+   description explicitly saying only `"block"`/`"warn"` are real values —
+   a user could type `"blockk"` and silently misconfigure the wiring, no
+   validation anywhere. Fixed generically, not hardcoded: `ConfigFieldDoc`
+   (`go/internal/nodedefs/nodedefs.go`) gained an `Options []string` field;
+   `db/112_file_guard_mode_options.sql` sets `mode`'s `options` to
+   `["block", "warn"]` inside the existing `config_fields` JSONB (only that
+   one field — every other field's `options` stays absent, unaffected).
+   Frontend's `ConfigFieldDecl` (`nodeRegistry.ts`) mirrors the new key;
+   `AgentGuardsSection.tsx` renders a `<select>` (reusing the existing
+   `selectStyle`) whenever `field.options` is present, falling through to
+   the prior type-based rendering otherwise — so any future config field
+   with a fixed value set gets a dropdown for free, no per-field special
+   case needed.
+
+Verified: `go build`/`go vet`/`go test ./...` clean, `npx tsc --noEmit`
+clean, all 79 existing frontend tests still pass, migration applied live
+and `GET /admin/node-types` confirmed returning the new `options` key for
+`mode`. `them-go-bridge` and `them-frontend` rebuilt and restarted.
+
 ---
 
 ## Explicitly out of scope

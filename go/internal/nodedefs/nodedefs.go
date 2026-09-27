@@ -10,11 +10,16 @@ package nodedefs
 // ConfigFieldDoc documents one config JSON key for a node type.
 // Used by the LLM prompt builder to explain what each field does.
 type ConfigFieldDoc struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"` // "string" | "int" | "bool" | "object" | "array"
-	Required    bool   `json:"required"`
-	Description string `json:"description"`
-	Example     string `json:"example,omitempty"`
+	Key         string   `json:"key"`
+	Type        string   `json:"type"` // "string" | "int" | "bool" | "object" | "array"
+	Required    bool     `json:"required"`
+	Description string   `json:"description"`
+	Example     string   `json:"example,omitempty"`
+	// Options, when non-empty, is the fixed set of valid values for a
+	// "string" field — the UI must render a select, not free text (e.g.
+	// file-guard's "mode" is only ever "block" or "warn"). Omitted for
+	// fields with no fixed value set.
+	Options []string `json:"options,omitempty"`
 }
 
 // NodeExample is a short worked example for a node type, used in the LLM system prompt.
