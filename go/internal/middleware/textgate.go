@@ -71,6 +71,10 @@ type TextGateResult struct {
 	// visibility, same "don't silently scan with zero visibility" lesson
 	// from this session's File Guard trace fix.
 	Results []Result
+	// Categories is a short human-readable summary of what ran and matched,
+	// e.g. "pii_redact:flagged prompt_inject:clean" — for the workflow trace
+	// line, same spirit as FileGateCheckOutput's ScanStatus.
+	Categories string
 }
 
 // Check runs pii_redact then prompt_inject (in that order — matches
@@ -85,6 +89,7 @@ func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (Te
 	part := Part{Kind: "text", Text: text}
 
 	var allResults []Result
+	var categoryParts []string
 	current := part
 	for _, defSlug := range []string{"pii_redact", "prompt_inject"} {
 		if g.reg.Get(defSlug) == nil {
@@ -109,17 +114,32 @@ func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (Te
 		pr := pipeline.Run(ctx, current, []string{defSlug}, wrapSingleProcessorConfig(defSlug, cfgRaw), nil)
 		allResults = append(allResults, pr.Results...)
 		current = pr.FinalPart
+		categoryParts = append(categoryParts, defSlug+":"+pr.FinalStatus)
 
 		if pr.FinalStatus == "flagged" {
 			for _, r := range pr.Results {
 				if r.Block {
-					return TextGateResult{Text: current.Text, Blocked: true, Results: allResults}, nil
+					return TextGateResult{
+						Text: current.Text, Blocked: true, Results: allResults,
+						Categories: joinCategoryParts(categoryParts),
+					}, nil
 				}
 			}
 		}
 	}
 
-	return TextGateResult{Text: current.Text, Results: allResults}, nil
+	return TextGateResult{Text: current.Text, Results: allResults, Categories: joinCategoryParts(categoryParts)}, nil
+}
+
+func joinCategoryParts(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += " "
+		}
+		out += p
+	}
+	return out
 }
 
 // wrapSingleProcessorConfig builds the minimal SecurityConfig Pipeline.Run

@@ -1,6 +1,6 @@
 # AppFlow Text Guards Plan (PII Redaction + Prompt-Injection Detection)
-# Status: Phases 1-2 DONE (backend: TextGate + pii/promptguard processors +
-# DB migration). Phase 3 (workflow wiring) and Phase 4 (UI) not started.
+# Status: Phases 1-3 DONE (backend + workflow wiring). Phase 4 (Guards UI)
+# not started. Not yet live-browser-verified.
 # Owner: platform
 # Last updated: 2026-09-27
 
@@ -188,23 +188,67 @@ for, not a false alarm.
 Combined Phase 1+2: 22 new tests (`S1-172`), `go build`/`go vet`/`go test
 ./...` all clean.
 
-### Phase 3 — wire into AppFlow's `llm` and `agent` cases
-- `workflow.go`'s `case "llm"`: after the LLM activity returns text, call
-  the new synchronous text-guard activity (new Temporal activity, since
-  this is real I/O — a DB config lookup at minimum — same "can't run
-  inline in deterministic workflow code" rule already documented for
-  `renderFlowTemplate`/agent calls). Blocked text fails the run
-  non-retryably (mode: block) or the redacted text replaces `accumulated`
-  (mode: redact) — exact per-mode behavior needs a config field decision
-  (see Phase 4).
-- `workflow.go`'s `case "agent"`: same call, alongside (not instead of) the
-  existing File Guard file-part check — an agent response can carry BOTH
-  a text reply worth guarding AND a file part in the same response (the
-  a2a-stream multi-artifact case already proven this session shows both
-  can coexist).
-- New trace line, same convention as this session's File Guard trace fix —
-  show "PII Guard: redacted (2 categories)" or "Prompt Guard: blocked" in
-  the debug log, not silently invisible.
+### Phase 3 — wire into AppFlow's `llm` and `agent` cases — DONE (2026-09-27)
+
+**Implemented as specced.** New `AppFlowTextGateActivityName` constant +
+`AppFlowActivities.TextGate`/`TextGateActivity` (mirrors
+`FileGate`/`FileGateActivity`'s exact nil-safe pattern — a nil `TextGate`
+means text passes through completely unguarded, same as a nil `FileGate`
+never scanning a file). `workflow.go`'s `case "llm"` calls
+`TextGateActivity` right after the LLM activity returns, BEFORE the text is
+written into `vars[outVar]`/`accumulated` — a downstream node never sees
+unredacted text. `case "agent"` calls it right after `InvokeAgentActivity`
+returns and `accumulated` is set, running alongside (not instead of) the
+existing File Guard file-part check below it — an agent response can carry
+BOTH a text reply worth guarding AND a file part in the same response (the
+a2a-stream multi-artifact case already proven earlier this session shows
+both can coexist).
+
+A blocked result (`TextGateCheckOutput.Blocked`) fails the run
+non-retryably via `temporalerr.NewNonRetryableApplicationError`, same
+pattern `case "condition"`'s error paths already use — includes
+`Categories` in the error message (e.g. "prompt_inject:flagged") so the
+failure is diagnosable, not a bare "blocked." A redacted (not blocked)
+result replaces `agentOut.ResponseText`/`llmOut.ResponseText` in place
+before it's written to `accumulated`/`vars`, so the guard is invisible to
+every node downstream — they just see already-safe text.
+
+5 new tests: 3 activity-level (`workflow_test.go`, AF-WF-21/22/23, same
+`fakeFileGate`-style pattern as File Guard's own activity tests) plus 2
+real end-to-end tests via the actual Temporal test-environment
+(`workflow_temporal_test.go`'s `AppFlowTraceWorkflowTestSuite`, AF-TR-W10/
+W11) — `TestLLMNode_TextGateBlocks_FailsWorkflowNonRetryably` proves a
+block genuinely fails the whole workflow (via a single-node spec with
+nothing downstream to silently swallow it), and
+`TestAgentNode_TextGateRedacts_ReplacesAccumulatedText` proves the redacted
+text actually lands in `AppFlowWorkflowOutput.FinalText`, not just the
+activity's own return value.
+
+`cmd/dag-worker/main.go`: `pii`/`promptguard` processors registered into a
+new `*middleware.Registry` constructed and used inside dag-worker itself
+(per Phase 1's design decision — NOT inside `cmd/middleware-worker`, which
+only ever runs `av_scan`'s async file path); new `appFlowTextGateAdapter`
+bridging `middleware.TextGate` to `appflow.TextGateChecker`, same bridging
+pattern `appFlowFileGateAdapter` already uses for File Guard.
+
+**Real deployment gotcha hit again, same lesson as earlier this session**:
+all 3 dag-worker images (`them-dag-worker`, `-2`, `-debug`) had to be
+rebuilt and restarted explicitly by name — see `docs/LESSONS.md`'s
+2026-09-27 entry (3 separate compose services/image tags share one
+Dockerfile; rebuilding only `them-dag-worker` silently leaves the other
+two, including the debug-mode one, on stale code).
+
+`go build`/`go vet`/`go test ./...` all clean.
+
+**Not yet tested live** — no live debug run has been done against a real
+app with a text-guard wiring attached and enabled (the DB rows exist as of
+Phase 2, but no UI exists yet to attach a wiring to an `llm`/`agent` node —
+that's Phase 4's job). Unlike File Guard's equivalent gap, this one can't
+be closed via the admin API the way `verify-step6-fileguard`'s File Guard
+wiring was manually seeded, because the Guards UI component doesn't
+generalize to `llm` nodes yet — Phase 4 needs to land, or a wiring needs to
+be manually inserted via SQL, before this can be proven end-to-end with a
+real run.
 
 ### Phase 4 — App Canvas UI
 - Generalize `AgentGuardsSection.tsx` to also render for `llm` nodes (today

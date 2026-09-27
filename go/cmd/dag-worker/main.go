@@ -51,6 +51,8 @@ import (
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/llmresolve"
 	"github.com/aviciot/them/internal/middleware"
+	"github.com/aviciot/them/internal/middleware/pii"
+	"github.com/aviciot/them/internal/middleware/promptguard"
 	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
@@ -201,6 +203,15 @@ func run() error {
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
 		fileGate:   fileGate,
 	}
+	// Text Guards (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3): pii/promptguard
+	// processors run synchronously, in-process, inside dag-worker itself —
+	// NOT inside them-middleware-worker (that binary only ever runs av_scan's
+	// async file-scanning path; see textgate.go's own doc comment on why
+	// text redaction can't be async).
+	textGateReg := middleware.NewRegistry()
+	textGateReg.Register(pii.New())
+	textGateReg.Register(promptguard.New())
+	textGate := &appFlowTextGateAdapter{gate: middleware.NewTextGate(middleware.NewPgxQuerier(rlsPools.Admin), textGateReg)}
 	appFlowActs := &appflow.AppFlowActivities{
 		LLMCaller:        llmCaller,
 		InlineLLM:        llmCaller,
@@ -210,6 +221,7 @@ func run() error {
 		AgentInvoker:     agentCaller,
 		DebugCredCleaner: debugCredStore,
 		FileGate:         fileGate,
+		TextGate:         textGate,
 	}
 	appFlowTaskQueue := appflow.AppFlowTaskQueue
 	if cfg.AppFlowTaskQueueOverride != "" {
@@ -233,6 +245,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.FileGateActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowFileGateActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.TextGateActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowTextGateActivityName,
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.InlineLLMActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowInlineLLMActivityName,
@@ -1111,6 +1126,27 @@ func toGateInput(in appflow.FileGateCheckInput) middleware.GateInput {
 		NodeID:        in.NodeID,
 	}
 }
+
+// appFlowTextGateAdapter bridges middleware.TextGate to the
+// appflow.TextGateChecker interface (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// Phase 3) — same bridging pattern appFlowFileGateAdapter already uses.
+type appFlowTextGateAdapter struct {
+	gate *middleware.TextGate
+}
+
+func (a *appFlowTextGateAdapter) Check(ctx context.Context, in appflow.TextGateCheckInput) (appflow.TextGateCheckOutput, error) {
+	tr, err := a.gate.Check(ctx, middleware.TextGateInput{
+		ApplicationID: in.ApplicationID,
+		NodeID:        in.NodeID,
+		AgentSlug:     in.AgentSlug,
+	}, in.Text)
+	if err != nil {
+		return appflow.TextGateCheckOutput{}, err
+	}
+	return appflow.TextGateCheckOutput{Text: tr.Text, Blocked: tr.Blocked, Categories: tr.Categories}, nil
+}
+
+var _ appflow.TextGateChecker = (*appFlowTextGateAdapter)(nil)
 
 var _ appflow.FileGateChecker = (*appFlowFileGateAdapter)(nil)
 

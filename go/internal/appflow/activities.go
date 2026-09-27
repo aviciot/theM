@@ -233,6 +233,12 @@ type AppFlowActivities struct {
 	// recognized and traced, never scanned) when no gate is configured, same
 	// nil-safe convention as every other optional dependency on this struct.
 	FileGate FileGateChecker
+	// TextGate runs PII redaction / prompt-injection detection against text
+	// an llm or agent node produced (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase
+	// 3), scoped by that node's own middleware_wirings config, if any. May
+	// be nil — a node's text then passes through completely unguarded, same
+	// nil-safe convention as FileGate.
+	TextGate TextGateChecker
 }
 
 // DebugCredCleaner deletes every per-node debug credential override for one
@@ -522,6 +528,63 @@ func (a *AppFlowActivities) FileGateActivity(ctx context.Context, input FileGate
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "file guard check failed: "+err.Error(), input.Verbosity)
 		return FileGateCheckOutput{}, fmt.Errorf("appflow: file gate check for node %q: %w", input.NodeID, err)
+	}
+	return out, nil
+}
+
+// TextGateCheckInput is the input to AppFlowTextGateActivity — Phase 3 of
+// docs/APPFLOW_TEXT_GUARDS_PLAN.md. NodeID scopes the wiring lookup to this
+// exact canvas node instance, same precedent as FileGateCheckInput.
+type TextGateCheckInput struct {
+	RunID         string `json:"run_id"`
+	ApplicationID string `json:"application_id"`
+	NodeID        string `json:"node_id"`
+	AgentSlug     string `json:"agent_slug,omitempty"`
+	Text          string `json:"text"`
+	Verbosity     string `json:"verbosity,omitempty"`
+}
+
+// TextGateCheckOutput is returned by AppFlowTextGateActivity.
+type TextGateCheckOutput struct {
+	// Text is the (possibly redacted) text — equal to the input text when
+	// nothing matched or no guard is enabled for this node.
+	Text string `json:"text"`
+	// Blocked is true when a guard's mode is "block" and something matched.
+	// The caller must fail the run, not silently continue with the original
+	// text.
+	Blocked bool `json:"blocked"`
+	// Categories summarizes what was found, for trace visibility — e.g.
+	// "pii:email,phone" — same "don't scan with zero visibility" lesson as
+	// File Guard's trace fix earlier this session. Empty when nothing ran
+	// or nothing matched.
+	Categories string `json:"categories,omitempty"`
+}
+
+// TextGateChecker is the interface AppFlowTextGateActivity depends on.
+// Implemented by *middleware.TextGate — its own small interface here
+// (matching FileGateChecker/AgentInvoker's existing pattern) so this
+// package doesn't need to import internal/middleware's processor registry
+// just for this one method's signature.
+type TextGateChecker interface {
+	Check(ctx context.Context, in TextGateCheckInput) (TextGateCheckOutput, error)
+}
+
+// TextGateActivity runs PII redaction / prompt-injection detection against
+// text an llm or agent node produced, against that node's own
+// middleware_wirings config, if any (Phase 3 of
+// docs/APPFLOW_TEXT_GUARDS_PLAN.md). Real I/O (a DB config lookup at
+// minimum) — cannot run inline in deterministic workflow code, same rule
+// documented for FileGateActivity/renderFlowTemplate. A nil TextGate
+// dependency is a safe no-op: the node's text passes through completely
+// unguarded, same nil-safe convention as FileGate.
+func (a *AppFlowActivities) TextGateActivity(ctx context.Context, input TextGateCheckInput) (TextGateCheckOutput, error) {
+	if a.TextGate == nil {
+		return TextGateCheckOutput{Text: input.Text}, nil
+	}
+	out, err := a.TextGate.Check(ctx, input)
+	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "text_guard", "node_error", "text guard check failed: "+err.Error(), input.Verbosity)
+		return TextGateCheckOutput{}, fmt.Errorf("appflow: text gate check for node %q: %w", input.NodeID, err)
 	}
 	return out, nil
 }

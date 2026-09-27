@@ -47,6 +47,11 @@ const (
 	// scan activity (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
 	AppFlowFileGateActivityName = "AppFlowFileGateActivity"
 
+	// AppFlowTextGateActivityName is the registered name for the PII/
+	// prompt-injection text guard activity (Phase 3 of
+	// docs/APPFLOW_TEXT_GUARDS_PLAN.md).
+	AppFlowTextGateActivityName = "AppFlowTextGateActivity"
+
 	// AppFlowInlineLLMActivityName is the registered name for the inline LLM node activity.
 	AppFlowInlineLLMActivityName = "AppFlowInlineLLMActivity"
 
@@ -462,6 +467,37 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			if agentOut.ResponseText != "" {
 				accumulated = agentOut.ResponseText
 			}
+			// Text Guards check (Phase 3 of docs/APPFLOW_TEXT_GUARDS_PLAN.md):
+			// only when there's real text to guard — a file/data/raw-only
+			// response has nothing for pii_redact/prompt_inject to scan.
+			// Runs AFTER File Guard's own check below intentionally: PII in a
+			// filename/URL is a different, much smaller surface than PII in a
+			// full text response, and File Guard's own async job path is
+			// independent of this synchronous one either way.
+			if agentOut.ResponseText != "" {
+				var textOut TextGateCheckOutput
+				textErr := workflow.ExecuteActivity(ctx, AppFlowTextGateActivityName, TextGateCheckInput{
+					RunID:         input.RunID,
+					ApplicationID: input.ApplicationID,
+					NodeID:        node.ID,
+					Text:          agentOut.ResponseText,
+					Verbosity:     input.LogVerbosity,
+				}).Get(ctx, &textOut)
+				if textErr != nil {
+					out.Status = "failed"
+					retErr = fmt.Errorf("agent %q: text guard check: %w", node.ID, textErr)
+					return
+				}
+				if textOut.Blocked {
+					out.Status = "failed"
+					retErr = temporalerr.NewNonRetryableApplicationError(
+						fmt.Sprintf("agent %q: text guard blocked response (%s)", node.ID, textOut.Categories),
+						"TextGateBlocked", nil,
+					)
+					return
+				}
+				accumulated = textOut.Text
+			}
 			// File Guard check (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md):
 			// only when the agent actually returned a recognized file part —
 			// a text-only response (the overwhelmingly common case today) never
@@ -530,6 +566,34 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				out.Status = "failed"
 				retErr = fmt.Errorf("llm %q: %w", node.ID, err)
 				return
+			}
+			// Text Guards check (Phase 3 of docs/APPFLOW_TEXT_GUARDS_PLAN.md) —
+			// same call as the agent case, run BEFORE the response is written
+			// into vars/accumulated so a downstream node never sees
+			// unredacted text.
+			if llmOut.ResponseText != "" {
+				var textOut TextGateCheckOutput
+				textErr := workflow.ExecuteActivity(ctx, AppFlowTextGateActivityName, TextGateCheckInput{
+					RunID:         input.RunID,
+					ApplicationID: input.ApplicationID,
+					NodeID:        node.ID,
+					Text:          llmOut.ResponseText,
+					Verbosity:     input.LogVerbosity,
+				}).Get(ctx, &textOut)
+				if textErr != nil {
+					out.Status = "failed"
+					retErr = fmt.Errorf("llm %q: text guard check: %w", node.ID, textErr)
+					return
+				}
+				if textOut.Blocked {
+					out.Status = "failed"
+					retErr = temporalerr.NewNonRetryableApplicationError(
+						fmt.Sprintf("llm %q: text guard blocked response (%s)", node.ID, textOut.Categories),
+						"TextGateBlocked", nil,
+					)
+					return
+				}
+				llmOut.ResponseText = textOut.Text
 			}
 			outVar := llmOut.OutputVar
 			if outVar == "" {

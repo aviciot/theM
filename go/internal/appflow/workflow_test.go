@@ -390,6 +390,84 @@ func TestFileGateActivity_GateError_Propagates(t *testing.T) {
 	}
 }
 
+// fakeTextGate implements TextGateChecker for tests.
+type fakeTextGate struct {
+	result    TextGateCheckOutput
+	err       error
+	lastInput TextGateCheckInput
+	callCount int
+}
+
+func (f *fakeTextGate) Check(_ context.Context, in TextGateCheckInput) (TextGateCheckOutput, error) {
+	f.callCount++
+	f.lastInput = in
+	return f.result, f.err
+}
+
+// AF-WF-21: TextGateActivity with a nil TextGate dependency is a safe
+// no-op (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3) — text passes through
+// completely unguarded when no gate is configured, same nil-safe
+// convention as FileGateActivity (AF-WF-18).
+func TestTextGateActivity_NilGate_NoOp(t *testing.T) {
+	acts := &AppFlowActivities{TextGate: nil}
+	out, err := acts.TextGateActivity(context.Background(), TextGateCheckInput{
+		NodeID: "llm-1",
+		Text:   "some text",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Text != "some text" {
+		t.Errorf("Text = %q, want the original text unchanged for a nil gate", out.Text)
+	}
+	if out.Blocked {
+		t.Error("Blocked should be false for a nil gate")
+	}
+}
+
+// AF-WF-22: TextGateActivity delegates to the configured TextGate and
+// passes NodeID/Text through unchanged.
+func TestTextGateActivity_DelegatesToGate(t *testing.T) {
+	gate := &fakeTextGate{result: TextGateCheckOutput{Text: "redacted text", Categories: "pii_redact:flagged"}}
+	acts := &AppFlowActivities{TextGate: gate}
+	out, err := acts.TextGateActivity(context.Background(), TextGateCheckInput{
+		RunID:  "run-1",
+		NodeID: "llm-1",
+		Text:   "email me at a@b.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Text != "redacted text" {
+		t.Errorf("Text = %q, want the gate's real result passed through", out.Text)
+	}
+	if gate.callCount != 1 {
+		t.Fatalf("want 1 call to the gate, got %d", gate.callCount)
+	}
+	if gate.lastInput.NodeID != "llm-1" || gate.lastInput.Text != "email me at a@b.com" {
+		t.Errorf("lastInput = %+v, want NodeID/Text passed through unchanged", gate.lastInput)
+	}
+}
+
+// AF-WF-23: TextGateActivity surfaces a real gate error rather than
+// swallowing it — same "don't silently look like scanning disabled"
+// requirement as FileGateActivity (AF-WF-20).
+func TestTextGateActivity_GateError_Propagates(t *testing.T) {
+	gate := &fakeTextGate{err: errors.New("db unavailable")}
+	acts := &AppFlowActivities{TextGate: gate}
+	_, err := acts.TextGateActivity(context.Background(), TextGateCheckInput{
+		RunID:  "run-1",
+		NodeID: "llm-1",
+		Text:   "some text",
+	})
+	if err == nil {
+		t.Fatal("expected an error to propagate from the gate")
+	}
+	if !strings.Contains(err.Error(), "db unavailable") {
+		t.Errorf("error = %v, want it to mention the underlying gate error", err)
+	}
+}
+
 // AF-WF-07: findJoinNode locates the join from a fork's branches.
 func TestFindJoinNode_Basic(t *testing.T) {
 	nodeByID := map[string]*AppFlowNode{
