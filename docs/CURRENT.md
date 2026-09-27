@@ -1,13 +1,18 @@
 # Current Session State — the-M
-# Last updated: 2026-09-26 — docs/APPFLOW_NAMED_PORTS_PLAN.md Phases 1-5 complete AND
-# live-browser-verified (all 4 steps of docs/APP_CANVAS_VERIFICATION_PLAN.md's build-up
-# checked directly by the user in the real UI: LLM->Agent, Condition true/false branching,
-# Fork/Join, and the named-port drag-to-connect feature itself). New /app-canvas skill
-# created capturing build/debug knowledge for future sessions. Also same session: a new
-# thread, docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md — Phase 1 DONE (AppFlow's agent-calling
-# path now recognizes all 4 real A2A response part kinds — text/file/data/raw — instead of
-# silently dropping anything but text; found while investigating whether File Guard could be
-# wired into App Canvas). Phases 2-3 (File Guard hook + frontend config UI) not started.
+# Last updated: 2026-09-27 — docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phases 1-3 complete
+# (A2A part-kind recognition, File Guard hook w/ node_id scoping, frontend Guards section
+# on agent nodes). Follow-up fix on top of Phase 2, found via live testing against the real
+# a2a-stream test agent: decodeAgentSendMessageResponse previously stopped at the FIRST
+# non-empty part, so a genuine multi-artifact response (streamed text chunks, then an HTML
+# report, then a real zip) never reached the zip at all — File Guard would silently never
+# fire for a real file-producing agent. Fixed to scan all parts/artifacts for a file/raw part
+# first, falling back to text only if none exists. Raw-bytes parts (not just URL-kind files)
+# are now scanned inline inside pgxAgentA2ACaller.InvokeByID via a new FileGateChecker.
+# InterceptInline method — never round-tripped through Temporal activity output/workflow
+# history. AgentInvoker.InvokeByID widened with NodeID/RunID params. Phase 3's frontend UI
+# still not live-browser-verified — next session should do that plus a live debug run against
+# a2a-stream/docu-writer to prove the raw-bytes fix end-to-end (no automated test can drive a
+# real ClamAV scan + ws/debug UI together).
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---

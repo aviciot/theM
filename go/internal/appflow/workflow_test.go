@@ -249,7 +249,7 @@ type fakeAgentInvoker struct {
 	err      error
 }
 
-func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _ string) (AgentInvokeResult, error) {
+func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _, _, _ string) (AgentInvokeResult, error) {
 	if f.result.PartKind != "" {
 		return f.result, f.err
 	}
@@ -315,6 +315,12 @@ type fakeFileGate struct {
 }
 
 func (f *fakeFileGate) Intercept(_ context.Context, in FileGateCheckInput) (FileGateCheckOutput, error) {
+	f.callCount++
+	f.lastInput = in
+	return f.result, f.err
+}
+
+func (f *fakeFileGate) InterceptInline(_ context.Context, in FileGateCheckInput, _ []byte) (FileGateCheckOutput, error) {
 	f.callCount++
 	f.lastInput = in
 	return f.result, f.err

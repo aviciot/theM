@@ -1,7 +1,8 @@
 # AppFlow A2A Response Kinds + File Guard Plan
-# Status: Phases 1-3 COMPLETE. Not yet live-browser-verified (Phase 3's UI).
+# Status: Phases 1-3 COMPLETE + Phase 2 follow-up fix (raw-bytes/multi-artifact) COMPLETE.
+# Not yet live-browser-verified (Phase 3's UI, and the follow-up fix's runtime path).
 # Owner: platform
-# Last updated: 2026-09-26
+# Last updated: 2026-09-27
 
 ---
 
@@ -346,6 +347,62 @@ end-to-end debug run with a genuine file artifact. Building a
 file-returning test agent (or reusing an existing one, if one exists
 somewhere in this repo's test fixtures) would be needed to close this gap
 before fully trusting Phase 2 in front of a real user.
+
+#### Phase 2 follow-up — multi-artifact + raw-bytes fix — DONE (2026-09-27)
+
+**Real bug found by probing a2a-stream directly** (the file-returning test
+agent this plan's own "not yet tested live" note above called out as
+needed — it already exists, per `docs/CURRENT.md`'s "a2a-stream test agent"
+section: streams ~16 text words, then an HTML report part, then a real
+`stream_output.zip` via `part.raw`). `decodeAgentSendMessageResponse`'s
+original "return on the first non-empty part found" logic stopped at
+artifact[0]'s first text chunk and never even looked at the zip two
+artifacts later — File Guard would have silently never fired for a
+genuinely file-producing agent whose response also happens to include
+earlier text, the exact real-world shape a streaming agent produces.
+
+**Fixed**: `decodeAgentSendMessageResponse` now scans every part in every
+artifact for a file (`url`) or raw part first — those are what File Guard
+cares about and must never be masked by an earlier, unrelated text chunk —
+falling back to the first text part only if no file/raw part exists
+anywhere in the response. `data` parts keep their original lower-priority
+treatment.
+
+**Raw-bytes parts now actually get scanned, not just recognized.** Phase 1
+only recognized `PartKind == "raw"` (e.g. docu_writer's PDF, a2a-stream's
+zip) as a marker — it never carried the bytes anywhere, and Phase 2's
+`FileGateActivity` only ever handled the `url` case. Fixed:
+`decodeAgentSendMessageResponse` now returns the decoded raw bytes as a
+second return value, kept **outside** `AgentInvokeResult`/
+`AgentInvokeActivityOutput` (those round-trip through Temporal activity
+input/output, and workflow history has no size cap — raw file bytes must
+never enter that path). `pgxAgentA2ACaller.InvokeByID` scans them inline,
+in-process, via a new `FileGateChecker.InterceptInline(ctx, in, data
+[]byte)` method, before ever returning — never via a separate activity the
+way the URL case is. `AgentInvoker.InvokeByID` widened with `nodeID` and
+`runID` params so this inline scan has what it needs (a node-scoped wiring
+lookup, and a non-empty `run_id` for `them.quarantine_artifacts`, which is
+`NOT NULL` — found live: `storeQuarantine` failing with `invalid input
+syntax for type uuid: ""` before this widening, since `InvokeByID` had no
+run ID to pass at all).
+
+4 new/revised tests: `TestDecodeAgentSendMessageResponse_FilePartWinsOverEarlierText`
+(revises the old, now-wrong "text always wins if seen first" assumption),
+`TestDecodeAgentSendMessageResponse_MultiArtifactStreamShape` (the real
+a2a-stream shape: text chunks → HTML report → zip, proving the raw part is
+found and its bytes returned, not lost behind 17 preceding text parts), plus
+existing tests updated for the function's new `(result, rawBytes, err)`
+signature.
+
+**Verified**: `go build ./...` and `go test ./...` clean (all packages) via
+the same `golang:1.25` container method used for Phases 1-3.
+
+**Not yet tested live**: this closes the "no file-returning test agent
+exists" gap in principle (a2a-stream and docu-writer both already exist and
+already return real files per `docs/CURRENT.md`), but no live debug run has
+yet been done against either with a File Guard wiring attached and enabled
+— that, plus Phase 3's frontend UI, are the two remaining live-verification
+gaps before this whole plan can be considered fully proven end-to-end.
 
 ### Phase 3 — frontend: attach a File Guard wiring to an agent node — DONE (2026-09-26)
 

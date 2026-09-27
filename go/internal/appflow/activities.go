@@ -254,9 +254,18 @@ type AgentInvokeResult struct {
 }
 
 // AgentInvoker calls a specific agent by its DB UUID via A2A.
-// Implemented by the dag-worker's pgxAgentA2ACaller.
+// Implemented by the dag-worker's pgxAgentA2ACaller. nodeID is the calling
+// canvas node instance — needed (not just agentID) so a raw-bytes file part
+// can be scanned against that exact node's File Guard wiring inline, before
+// this method ever returns (Phase 2's node_id scoping fix only works if the
+// caller actually has a node_id to pass). runID is needed for the same
+// inline scan: them.quarantine_artifacts.run_id is NOT NULL, so a scan
+// triggered from inside InvokeByID must have a real run ID to record
+// against, not an empty string (found live: storeQuarantine failing with
+// "invalid input syntax for type uuid: \"\"" because InvokeByID had no
+// run ID to pass at all before this widening).
 type AgentInvoker interface {
-	InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (AgentInvokeResult, error)
+	InvokeByID(ctx context.Context, tenantID, applicationID, agentID, nodeID, runID, userMessage string) (AgentInvokeResult, error)
 }
 
 // RunStatusUpdater updates a run's terminal status in the DB.
@@ -405,7 +414,7 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 			"EmptyAgentID", nil,
 		)
 	}
-	result, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.UserMessage)
+	result, err := a.AgentInvoker.InvokeByID(ctx, input.TenantID, input.ApplicationID, input.AgentID, input.NodeID, input.RunID, input.UserMessage)
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", err.Error(), input.Verbosity)
 		return AgentInvokeActivityOutput{}, fmt.Errorf("appflow: invoke agent %s: %w", input.AgentID, err)
@@ -461,8 +470,20 @@ type FileGateCheckOutput struct {
 // here (matching AgentInvoker/InlineLLMCaller's existing pattern) so this
 // package doesn't need to import internal/middleware (which pulls in the
 // MinIO storage client) just for this one method's signature.
+//
+// Intercept is for a URL-kind file part (agent returned a download link).
+// InterceptInline is for a raw-bytes part (agent returned the file's bytes
+// directly in the A2A response, e.g. docu_writer's PDF output, a2a-stream's
+// zip artifact) — confirmed via both agents' real source this session that
+// this is a genuinely common shape, not a hypothetical: NEVER round-trip
+// those bytes through a Temporal activity input/output (workflow history
+// has no size limit protection and this could be megabytes) — callers must
+// scan raw bytes at the point they're already held in memory, which is why
+// InterceptInline takes the bytes directly rather than being called from a
+// separate activity the way the URL case is.
 type FileGateChecker interface {
 	Intercept(ctx context.Context, in FileGateCheckInput) (FileGateCheckOutput, error)
+	InterceptInline(ctx context.Context, in FileGateCheckInput, data []byte) (FileGateCheckOutput, error)
 }
 
 // FileGateActivity scans a file an agent node returned against that node's

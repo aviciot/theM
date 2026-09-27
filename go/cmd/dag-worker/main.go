@@ -171,16 +171,12 @@ func run() error {
 	}
 	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
 	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
-	agentCaller := &pgxAgentA2ACaller{
-		pool:       rlsPools.Admin,
-		cryptoKey:  cryptoKey,
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
-	}
 	// File Guard (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): same
 	// construction pattern cmd/them/main.go already uses — nil storage
 	// client (S3 not configured) means FileGate.Intercept fails open
 	// (scanning disabled), never blocks agent responses. dag-worker never
-	// constructed a FileGate before this phase.
+	// constructed a FileGate before this phase. Built before agentCaller so
+	// agentCaller can hold a reference for its own inline raw-bytes scan.
 	var fileGateStore middleware.Store
 	if cfg.S3Endpoint != "" {
 		if sc, scErr := storage.New(storage.Config{
@@ -199,6 +195,12 @@ func run() error {
 		log.Warn("THE_M_S3_ENDPOINT not set — File Guard will fail-open for all apps")
 	}
 	fileGate := &appFlowFileGateAdapter{gate: middleware.NewFileGate(middleware.NewPgxQuerier(rlsPools.Admin), fileGateStore)}
+	agentCaller := &pgxAgentA2ACaller{
+		pool:       rlsPools.Admin,
+		cryptoKey:  cryptoKey,
+		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		fileGate:   fileGate,
+	}
 	appFlowActs := &appflow.AppFlowActivities{
 		LLMCaller:        llmCaller,
 		InlineLLM:        llmCaller,
@@ -837,6 +839,12 @@ type pgxAgentA2ACaller struct {
 	pool       *pgxpool.Pool
 	cryptoKey  []byte
 	httpClient *http.Client
+	// fileGate scans a raw-bytes file part inline, in this same activity,
+	// before InvokeByID returns — see FileGateChecker's doc comment on why
+	// raw bytes must never round-trip through Temporal activity output. May
+	// be nil (e.g. in tests) — a nil gate just skips the scan, same
+	// nil-safety convention as AppFlowActivities.FileGate.
+	fileGate *appFlowFileGateAdapter
 }
 
 // InvokeByID calls the A2A agent identified by agentID via A2A v1.0 SendMessage.
@@ -851,7 +859,7 @@ type pgxAgentA2ACaller struct {
 // the artifact's parts as real a2a.Part values (the SDK's own Part.UnmarshalJSON
 // correctly recognizes all 4 kinds) and returns whichever kind the first part
 // actually was, instead of assuming text.
-func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicationID, agentID, userMessage string) (appflow.AgentInvokeResult, error) {
+func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicationID, agentID, nodeID, runID, userMessage string) (appflow.AgentInvokeResult, error) {
 	// Resolve agent endpoint + auth token from DB (scoped by tenant for security).
 	row := c.pool.QueryRow(ctx,
 		`SELECT COALESCE(endpoint_url,''), COALESCE(auth_token_encrypted,'')
@@ -915,7 +923,31 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: agent returned HTTP %d", resp.StatusCode)
 	}
 
-	return decodeAgentSendMessageResponse(resp.Body)
+	result, rawBytes, err := decodeAgentSendMessageResponse(resp.Body)
+	if err != nil {
+		return appflow.AgentInvokeResult{}, err
+	}
+
+	// Raw-bytes file part (docu_writer's PDF, a2a-stream's zip): scan it
+	// inline, right here, while the bytes are still in memory — never carry
+	// them into AgentInvokeResult/Temporal history. See FileGateChecker's
+	// doc comment for why. A nil fileGate (e.g. in tests, or a genuinely
+	// misconfigured worker) just skips the scan — same fail-open posture
+	// FileGate itself already documents everywhere else.
+	if result.PartKind == "raw" && len(rawBytes) > 0 && c.fileGate != nil {
+		if _, gateErr := c.fileGate.InterceptInline(ctx, appflow.FileGateCheckInput{
+			TenantID:        tenantID,
+			ApplicationID:   applicationID,
+			NodeID:          nodeID,
+			RunID:           runID,
+			FileName:        result.FileName,
+			FileContentType: result.FileContentType,
+		}, rawBytes); gateErr != nil {
+			return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: file guard check for node %q: %w", nodeID, gateErr)
+		}
+	}
+
+	return result, nil
 }
 
 // decodeAgentSendMessageResponse parses a non-streaming A2A v1.0 SendMessage
@@ -928,11 +960,32 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 // not a hand-rolled struct with only a `Text string` field — the previous
 // version of this code silently decoded a file/data/raw part to an empty
 // string, no error, nothing logged (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
-// Phase 1). Classifies the first non-empty part found, in priority order
-// text > file > data > raw — text stays first so today's only real-world
-// case (every canvas-built agent tested this session returns plain text) is
-// completely unaffected by this change.
-func decodeAgentSendMessageResponse(body io.Reader) (appflow.AgentInvokeResult, error) {
+// Phase 1).
+//
+// REVISED after live testing against a2a-stream (a real multi-artifact
+// agent, confirmed via a direct probe this session): a non-streaming
+// SendMessage response can legitimately contain MULTIPLE artifacts — e.g.
+// a2a-stream returns 16 streamed text chunks as artifact[0], an HTML report
+// as artifact[1], and a real zip file (raw bytes) as artifact[2]. The
+// original "return on the first non-empty part found" logic stopped at
+// artifact[0]'s first text chunk and never even looked at the zip — File
+// Guard would have silently never fired for a genuinely file-producing
+// agent whose response also happens to include earlier text. Fixed: scan
+// ALL parts across ALL artifacts first for a file (url) or raw part —
+// those are what File Guard cares about and must never be masked by an
+// earlier, unrelated text chunk — falling back to the first text part only
+// if no file/raw part exists anywhere in the response. data parts keep
+// their original lower-priority treatment (recognized, not yet acted on).
+//
+// The second return value is the raw bytes for a PartKind=="raw" result —
+// confirmed via docu_writer's (PDF) and a2a-stream's (zip) real source that
+// agents genuinely send files this way, not just as a URL. Deliberately
+// returned OUTSIDE AgentInvokeResult/AgentInvokeActivityOutput: those types
+// round-trip through Temporal activity input/output (workflow history has
+// no size cap), so raw file bytes must never enter that path. The caller
+// (InvokeByID) uses these bytes immediately, in-process, for a File Guard
+// InterceptInline scan, then discards them.
+func decodeAgentSendMessageResponse(body io.Reader) (appflow.AgentInvokeResult, []byte, error) {
 	var rpcResp struct {
 		Result *struct {
 			Task *struct {
@@ -946,39 +999,59 @@ func decodeAgentSendMessageResponse(body io.Reader) (appflow.AgentInvokeResult, 
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(body).Decode(&rpcResp); err != nil {
-		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: decode response: %w", err)
+		return appflow.AgentInvokeResult{}, nil, fmt.Errorf("agentA2ACaller: decode response: %w", err)
 	}
 	if rpcResp.Error != nil {
-		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: agent error: %s", rpcResp.Error.Message)
+		return appflow.AgentInvokeResult{}, nil, fmt.Errorf("agentA2ACaller: agent error: %s", rpcResp.Error.Message)
+	}
+	if rpcResp.Result == nil || rpcResp.Result.Task == nil {
+		return appflow.AgentInvokeResult{}, nil, nil
 	}
 
-	if rpcResp.Result != nil && rpcResp.Result.Task != nil {
-		for _, artifact := range rpcResp.Result.Task.Artifacts {
-			for _, p := range artifact.Parts {
-				if p == nil {
-					continue
-				}
+	// Pass 1: scan every part in every artifact for a file (url) or raw
+	// part — these must never be masked by an earlier text chunk.
+	var firstText string
+	var dataSeen bool
+	for _, artifact := range rpcResp.Result.Task.Artifacts {
+		for _, p := range artifact.Parts {
+			if p == nil {
+				continue
+			}
+			if url := p.URL(); url != "" {
+				return appflow.AgentInvokeResult{
+					PartKind:        "file",
+					FileURL:         string(url),
+					FileName:        p.Filename,
+					FileContentType: p.MediaType,
+				}, nil, nil
+			}
+			if raw := p.Raw(); raw != nil {
+				return appflow.AgentInvokeResult{
+					PartKind:        "raw",
+					FileName:        p.Filename,
+					FileContentType: p.MediaType,
+				}, raw, nil
+			}
+			if firstText == "" {
 				if text := p.Text(); text != "" {
-					return appflow.AgentInvokeResult{ResponseText: text}, nil
+					firstText = text
 				}
-				if url := p.URL(); url != "" {
-					return appflow.AgentInvokeResult{
-						PartKind:        "file",
-						FileURL:         string(url),
-						FileName:        p.Filename,
-						FileContentType: p.MediaType,
-					}, nil
-				}
-				if data := p.Data(); data != nil {
-					return appflow.AgentInvokeResult{PartKind: "data"}, nil
-				}
-				if raw := p.Raw(); raw != nil {
-					return appflow.AgentInvokeResult{PartKind: "raw"}, nil
-				}
+			}
+			if !dataSeen && p.Data() != nil {
+				dataSeen = true
 			}
 		}
 	}
-	return appflow.AgentInvokeResult{}, nil
+
+	// Pass 2 (no file/raw part found anywhere): text takes priority over data,
+	// matching the original documented priority order.
+	if firstText != "" {
+		return appflow.AgentInvokeResult{ResponseText: firstText}, nil, nil
+	}
+	if dataSeen {
+		return appflow.AgentInvokeResult{PartKind: "data"}, nil, nil
+	}
+	return appflow.AgentInvokeResult{}, nil, nil
 }
 
 var _ appflow.AgentInvoker = (*pgxAgentA2ACaller)(nil)
@@ -992,7 +1065,29 @@ type appFlowFileGateAdapter struct {
 }
 
 func (a *appFlowFileGateAdapter) Intercept(ctx context.Context, in appflow.FileGateCheckInput) (appflow.FileGateCheckOutput, error) {
-	gr, err := a.gate.Intercept(ctx, middleware.GateInput{
+	gr, err := a.gate.Intercept(ctx, toGateInput(in))
+	if err != nil {
+		return appflow.FileGateCheckOutput{}, err
+	}
+	return appflow.FileGateCheckOutput{ArtifactID: gr.ArtifactID, ScanStatus: gr.ScanStatus}, nil
+}
+
+// InterceptInline scans a raw-bytes file part (docu_writer's PDF output,
+// a2a-stream's zip artifact — confirmed via both agents' real source this
+// session, not hypothetical) without ever writing the bytes into Temporal
+// workflow history: pgxAgentA2ACaller calls this directly, in the same
+// activity that already holds the bytes in memory, never round-tripping
+// them through the workflow layer first.
+func (a *appFlowFileGateAdapter) InterceptInline(ctx context.Context, in appflow.FileGateCheckInput, data []byte) (appflow.FileGateCheckOutput, error) {
+	gr, err := a.gate.InterceptInline(ctx, toGateInput(in), data)
+	if err != nil {
+		return appflow.FileGateCheckOutput{}, err
+	}
+	return appflow.FileGateCheckOutput{ArtifactID: gr.ArtifactID, ScanStatus: gr.ScanStatus}, nil
+}
+
+func toGateInput(in appflow.FileGateCheckInput) middleware.GateInput {
+	return middleware.GateInput{
 		DownloadURL:   in.FileURL,
 		FileName:      in.FileName,
 		ContentType:   in.FileContentType,
@@ -1001,14 +1096,7 @@ func (a *appFlowFileGateAdapter) Intercept(ctx context.Context, in appflow.FileG
 		TenantID:      in.TenantID,
 		AgentSlug:     in.AgentSlug,
 		NodeID:        in.NodeID,
-	})
-	if err != nil {
-		return appflow.FileGateCheckOutput{}, err
 	}
-	return appflow.FileGateCheckOutput{
-		ArtifactID: gr.ArtifactID,
-		ScanStatus: gr.ScanStatus,
-	}, nil
 }
 
 var _ appflow.FileGateChecker = (*appFlowFileGateAdapter)(nil)
