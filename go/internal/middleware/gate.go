@@ -257,13 +257,24 @@ func (g *FileGate) cleanupQuarantine(ctx context.Context, key string) error {
 // to applications.security_config (the legacy app-level toggle) when no
 // wiring exists or neither identifier is set.
 func (g *FileGate) resolveSecCfg(ctx context.Context, appID, nodeID, agentSlug string) (SecurityConfig, error) {
+	return resolveSecCfgForDef(ctx, g.db, &g.cacheMu, g.cache, "file-guard", appID, nodeID, agentSlug)
+}
+
+// resolveSecCfgForDef is the shared config-resolution logic behind
+// FileGate.resolveSecCfg and TextGate.resolveSecCfg (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// Phase 1) — the same per-node-wiring-then-app-fallback precedence applies to
+// every guard, parameterized by which middleware_defs row to look up
+// (defSlug), not just "file-guard". Extracted here rather than duplicated so
+// a future precedence change (e.g. Phase 2's node_id scoping fix) only needs
+// updating once.
+func resolveSecCfgForDef(ctx context.Context, db GateQuerier, cacheMu *sync.Mutex, cache map[string]cachedSecCfg, defSlug, appID, nodeID, agentSlug string) (SecurityConfig, error) {
 	if nodeID != "" || agentSlug != "" {
-		cfg, found, err := g.loadWiringCfg(ctx, appID, nodeID, agentSlug)
+		cfg, found, err := loadWiringCfgForDef(ctx, db, cacheMu, cache, defSlug, appID, nodeID, agentSlug)
 		if err == nil && found {
 			return cfg, nil
 		}
 	}
-	return g.loadSecCfg(ctx, appID)
+	return loadSecCfg(ctx, db, cacheMu, cache, appID)
 }
 
 // loadWiringCfg looks up a middleware_wirings row for this application,
@@ -281,13 +292,36 @@ func (g *FileGate) resolveSecCfg(ctx context.Context, appID, nodeID, agentSlug s
 // fallback. Returns (config, true, nil) when a wiring is found and enabled.
 // Returns (zero, false, nil) when no wiring exists (caller should fall back).
 func (g *FileGate) loadWiringCfg(ctx context.Context, appID, nodeID, agentSlug string) (SecurityConfig, bool, error) {
-	cacheKey := appID + ":" + nodeID + ":" + agentSlug
-	g.cacheMu.Lock()
-	if cached, ok := g.cache[cacheKey]; ok && time.Now().Before(cached.expiry) {
-		g.cacheMu.Unlock()
+	return loadWiringCfgForDef(ctx, g.db, &g.cacheMu, g.cache, "file-guard", appID, nodeID, agentSlug)
+}
+
+// loadWiringCfgForDef looks up a middleware_wirings row for this application
+// and this specific middleware_defs slug (defSlug — "file-guard",
+// "pii_redact", "prompt_inject", ...), scoped by the specific canvas node
+// instance (nodeID) when provided — docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// Phase 2. Before that fix (file-guard only, at the time), lookup was by
+// agent.slug only: them.middleware_wirings already had a real node_id column
+// with its own unique index (uq_mw_wiring_app_node) specifically to let two
+// canvas instances of the same agent carry independent wirings, but the
+// query never read it — two boxes on one canvas sharing (or colliding on) a
+// single wiring, not the schema's actual intent. Generalized here
+// (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1) to take defSlug as a parameter
+// instead of hardcoding "file-guard", so pii_redact/prompt_inject reuse the
+// exact same precedence logic rather than a second hand-rolled copy of it.
+//
+// A node_id-scoped row sorts first when both exist for the same agent
+// (ORDER BY node_id match DESC); a legacy wiring created before node_id
+// existed (node_id IS NULL) still resolves correctly via the agentSlug
+// fallback. Returns (config, true, nil) when a wiring is found and enabled.
+// Returns (zero, false, nil) when no wiring exists (caller should fall back).
+func loadWiringCfgForDef(ctx context.Context, db GateQuerier, cacheMu *sync.Mutex, cache map[string]cachedSecCfg, defSlug, appID, nodeID, agentSlug string) (SecurityConfig, bool, error) {
+	cacheKey := defSlug + ":" + appID + ":" + nodeID + ":" + agentSlug
+	cacheMu.Lock()
+	if cached, ok := cache[cacheKey]; ok && time.Now().Before(cached.expiry) {
+		cacheMu.Unlock()
 		return cached.cfg, true, nil
 	}
-	g.cacheMu.Unlock()
+	cacheMu.Unlock()
 
 	// Query wiring: join agents to resolve slug → agent_id; join middleware_defs
 	// to get the builtin defaults; merge with config_override. Matches either
@@ -305,11 +339,11 @@ WHERE mw.application_id = $1::uuid
   AND (a.slug = $2 OR $2 = '')
   AND (mw.node_id = $3 OR mw.node_id IS NULL OR mw.node_id = '')
   AND md.kind           = 'guard'
-  AND md.slug           = 'file-guard'
+  AND md.slug           = $4
 ORDER BY (mw.node_id = $3) DESC
 LIMIT 1`
 
-	rows, err := g.db.Query(ctx, q, appID, agentSlug, nodeID)
+	rows, err := db.Query(ctx, q, appID, agentSlug, nodeID, defSlug)
 	if err != nil {
 		return SecurityConfig{}, false, err
 	}
@@ -356,9 +390,9 @@ LIMIT 1`
 	}
 	cfg = MergeDefaults(cfg)
 
-	g.cacheMu.Lock()
-	g.cache[cacheKey] = cachedSecCfg{cfg: cfg, expiry: time.Now().Add(30 * time.Second)}
-	g.cacheMu.Unlock()
+	cacheMu.Lock()
+	cache[cacheKey] = cachedSecCfg{cfg: cfg, expiry: time.Now().Add(30 * time.Second)}
+	cacheMu.Unlock()
 
 	return cfg, true, nil
 }
@@ -366,16 +400,20 @@ LIMIT 1`
 // loadSecCfg returns the app-level security config from applications.security_config
 // with a 30s cache. Used as fallback when no per-agent wiring is found.
 func (g *FileGate) loadSecCfg(ctx context.Context, appID string) (SecurityConfig, error) {
-	g.cacheMu.Lock()
-	if cached, ok := g.cache[appID]; ok && time.Now().Before(cached.expiry) {
-		g.cacheMu.Unlock()
+	return loadSecCfg(ctx, g.db, &g.cacheMu, g.cache, appID)
+}
+
+func loadSecCfg(ctx context.Context, db GateQuerier, cacheMu *sync.Mutex, cache map[string]cachedSecCfg, appID string) (SecurityConfig, error) {
+	cacheMu.Lock()
+	if cached, ok := cache[appID]; ok && time.Now().Before(cached.expiry) {
+		cacheMu.Unlock()
 		return cached.cfg, nil
 	}
-	g.cacheMu.Unlock()
+	cacheMu.Unlock()
 
 	const q = `SELECT COALESCE(security_config, '{}') FROM them.applications WHERE id = $1::uuid`
 	var raw []byte
-	if err := g.db.QueryRow(ctx, q, appID).Scan(&raw); err != nil {
+	if err := db.QueryRow(ctx, q, appID).Scan(&raw); err != nil {
 		return DefaultSecurityConfig(), err
 	}
 	var cfg SecurityConfig
@@ -384,9 +422,9 @@ func (g *FileGate) loadSecCfg(ctx context.Context, appID string) (SecurityConfig
 	}
 	cfg = MergeDefaults(cfg)
 
-	g.cacheMu.Lock()
-	g.cache[appID] = cachedSecCfg{cfg: cfg, expiry: time.Now().Add(30 * time.Second)}
-	g.cacheMu.Unlock()
+	cacheMu.Lock()
+	cache[appID] = cachedSecCfg{cfg: cfg, expiry: time.Now().Add(30 * time.Second)}
+	cacheMu.Unlock()
 
 	return cfg, nil
 }

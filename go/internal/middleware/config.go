@@ -20,17 +20,30 @@ type AVScanConfig struct {
 }
 
 // PIIRedactConfig is the config shape for the pii_redact processor.
+// Mode replaces the old BlockOnDetect bool (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// Phase 4, confirmed with the user 2026-09-27) — one field instead of two
+// ways to say the same thing, same lesson as the duplicate "enabled"
+// checkbox found in the File Guard Guards UI this session.
 type PIIRedactConfig struct {
-	Enabled        bool `json:"enabled"`
-	LLMAssist      bool `json:"llm_assist"`
-	BlockOnDetect  bool `json:"block_on_detect"`
+	Enabled   bool   `json:"enabled"`
+	LLMAssist bool   `json:"llm_assist"`
+	Mode      string `json:"mode"` // "block" | "redact" | "warn"
+	// Direction: "output" (scan what the LLM/agent produced — default) or
+	// "both" (also scan the incoming prompt/user message before it's sent).
+	// "input"-only is not offered: if you pay the cost to scan input you
+	// always want output scanned too.
+	Direction string `json:"direction"` // "output" | "both"
 }
 
 // PromptInjectConfig is the config shape for the prompt_inject processor.
+// Mode replaces the old BlockOnDetect bool — see PIIRedactConfig's comment.
+// No "redact" mode here: an injection attempt isn't a value to mask, it's a
+// decision to accept or reject the whole text.
 type PromptInjectConfig struct {
-	Enabled        bool   `json:"enabled"`
-	BlockOnDetect  bool   `json:"block_on_detect"`
-	Sensitivity    string `json:"sensitivity"` // "low" | "medium" | "high"
+	Enabled     bool   `json:"enabled"`
+	Mode        string `json:"mode"`      // "block" | "warn"
+	Sensitivity string `json:"sensitivity"` // "low" | "medium" | "high"
+	Direction   string `json:"direction"`   // "output" | "both"
 }
 
 // SchemaValidateConfig is the config shape for the schema_validate processor.
@@ -48,8 +61,8 @@ type AuditCaptureConfig struct {
 // Enabled is false — zero overhead until explicitly turned on.
 func DefaultSecurityConfig() SecurityConfig {
 	avRaw, _     := json.Marshal(AVScanConfig{Enabled: true, MaxFileMB: 5, BlockOnInfected: true})
-	piiRaw, _    := json.Marshal(PIIRedactConfig{Enabled: false})
-	injectRaw, _ := json.Marshal(PromptInjectConfig{Enabled: false, Sensitivity: "medium"})
+	piiRaw, _    := json.Marshal(PIIRedactConfig{Enabled: false, Mode: "redact", Direction: "output"})
+	injectRaw, _ := json.Marshal(PromptInjectConfig{Enabled: false, Mode: "block", Sensitivity: "medium", Direction: "output"})
 	schemaRaw, _ := json.Marshal(SchemaValidateConfig{Enabled: false})
 	auditRaw, _  := json.Marshal(AuditCaptureConfig{Enabled: false})
 
@@ -105,8 +118,50 @@ func Validate(cfg SecurityConfig) error {
 		default:
 			return fmt.Errorf("prompt_inject.sensitivity must be low|medium|high")
 		}
+		if err := validateMode(inj.Mode, "block", "warn"); err != nil {
+			return fmt.Errorf("prompt_inject.%w", err)
+		}
+		if err := validateDirection(inj.Direction); err != nil {
+			return fmt.Errorf("prompt_inject.%w", err)
+		}
+	}
+	if piiRaw, ok := cfg.Processors["pii_redact"]; ok {
+		var pii PIIRedactConfig
+		if err := json.Unmarshal(piiRaw, &pii); err != nil {
+			return fmt.Errorf("pii_redact config: %w", err)
+		}
+		if err := validateMode(pii.Mode, "block", "redact", "warn"); err != nil {
+			return fmt.Errorf("pii_redact.%w", err)
+		}
+		if err := validateDirection(pii.Direction); err != nil {
+			return fmt.Errorf("pii_redact.%w", err)
+		}
 	}
 	return nil
+}
+
+// validateMode checks mode against the set of values valid for one guard
+// ("" is always allowed — an unset mode falls back to the processor's own
+// default, same fail-open convention as an unset Sensitivity above).
+func validateMode(mode string, allowed ...string) error {
+	if mode == "" {
+		return nil
+	}
+	for _, a := range allowed {
+		if mode == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("mode must be one of %v", allowed)
+}
+
+func validateDirection(direction string) error {
+	switch direction {
+	case "", "output", "both":
+		return nil
+	default:
+		return fmt.Errorf("direction must be output|both")
+	}
 }
 
 // EnabledProcessors returns the ordered list of processor names that are both

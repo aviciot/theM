@@ -12,6 +12,13 @@ type PipelineResult struct {
 	Threat      string   // non-empty when infected
 	Results     []Result // one entry per processor that ran
 	TotalMS     int64
+	// FinalPart is the part after every processor's Modified (if any) has
+	// been applied in sequence — e.g. a pii_redact processor's redacted
+	// text. Equal to the input part when nothing was modified. Added
+	// for TextGate (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1) — a synchronous
+	// caller needs the redacted text back, unlike av_scan's async path
+	// (cmd/middleware-worker/main.go), which only needed the status.
+	FinalPart Part
 }
 
 // Pipeline executes an ordered list of processors against a Part.
@@ -38,7 +45,7 @@ func (p *Pipeline) Run(
 	pub ProgressPublisher,
 ) PipelineResult {
 	if len(names) == 0 {
-		return PipelineResult{FinalStatus: "disabled"}
+		return PipelineResult{FinalStatus: "disabled", FinalPart: part}
 	}
 
 	start := time.Now()
@@ -93,6 +100,7 @@ func (p *Pipeline) Run(
 				Threat:      threat,
 				Results:     results,
 				TotalMS:     time.Since(start).Milliseconds(),
+				FinalPart:   current,
 			}
 		}
 	}
@@ -105,6 +113,7 @@ func (p *Pipeline) Run(
 		FinalStatus: finalStatus,
 		Results:     results,
 		TotalMS:     time.Since(start).Milliseconds(),
+		FinalPart:   current,
 	}
 }
 
