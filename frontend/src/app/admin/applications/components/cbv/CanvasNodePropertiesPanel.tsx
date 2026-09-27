@@ -130,12 +130,15 @@ export function CanvasNodePropertiesPanel({
   if (selectedNode.type === 'inline') {
     return (
       <InlineNodePanel
+        appId={appId}
         selectedNode={selectedNode}
         nodes={nodes}
         edges={edges}
+        agents={agents}
         setNodes={setNodes}
         setIsDirty={setIsDirty}
         setLogoResult={setLogoResult}
+        showToast={showToast}
       />
     );
   }

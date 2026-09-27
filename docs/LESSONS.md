@@ -3,6 +3,57 @@
 
 ---
 
+## 2026-09-27 — Two silent data-corruption bugs found live while adding llm-node guard wirings
+
+**Symptom 1:** `ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_node DO UPDATE` failed
+live with `ERROR: constraint "uq_mw_wiring_app_node" does not exist
+(SQLSTATE 42704)`, even though `\d them.middleware_wirings` clearly lists
+`uq_mw_wiring_app_node` under Indexes.
+**Root cause:** it's a **partial unique index**
+(`CREATE UNIQUE INDEX ... WHERE node_id IS NOT NULL AND node_id <> ''`),
+not a named table constraint. Postgres's `ON CONFLICT ON CONSTRAINT` only
+accepts real constraints (`pg_constraint` rows) — a unique index alone,
+partial or not, is not one, even though `\d` lists both under the same
+"Indexes" heading and it's easy to assume they're interchangeable.
+**Fix:** use the inference-target form instead:
+`ON CONFLICT (application_id, node_id) WHERE node_id IS NOT NULL AND node_id <> ''`
+— matching the index's own predicate exactly.
+**Watch for:** before writing `ON CONFLICT ON CONSTRAINT <name>`, check
+`SELECT conname FROM pg_constraint WHERE conrelid = '<table>'::regclass`
+first — if the name isn't in that list, it's an index, not a constraint,
+and needs the column-list + WHERE-clause form instead. `\d` doesn't
+distinguish the two visually.
+
+**Symptom 2:** every "Save Guard Config" click (a config-only update, no
+`node_id` in the request body) was silently setting the wiring's `node_id`
+back to `NULL` — found live when a wiring correctly created with
+`node_id="llm_1"` came back with `node_id=""` after nothing but a config
+save.
+**Root cause:** `UpdateMiddlewareWiring`'s SQL had
+`node_id = CASE WHEN $6 = '' THEN NULL ELSE $6 END` — meaning "the caller's
+NodeID param is empty" was treated as "the caller wants to clear it,"
+instead of "the caller didn't send one." Since the real frontend call site
+(`AgentGuardsSection.tsx`'s `handleSaveConfig`) never sends `node_id` at
+all on a config-only save, this fired on nearly every save, and had
+presumably been doing so since `node_id` was first added — a
+previously-unexplained "wiring lost its scoping" symptom from an earlier
+session was very likely this exact bug.
+**Fix:** changed the CASE to `CASE WHEN $6 = '' THEN node_id ELSE $6 END`
+— an empty incoming value now preserves the column's current value instead
+of nulling it. Added a regression test
+(`TestDAL_UpdateMiddlewareWiring_ConfigOnlySave_PreservesNodeID`) that
+fails against the old SQL and passes against the fix.
+**Watch for:** any `UPDATE ... SET col = CASE WHEN $n = '' THEN NULL ELSE $n
+END` pattern is making an assumption — "empty means clear it" — that is
+usually wrong for a partial-update endpoint where a field can legitimately
+be omitted from the request. The safe default for an optional field on an
+UPDATE is "preserve the existing value when not provided," not "clear it."
+This exact bug shape can recur anywhere else in this codebase that uses the
+same CASE-to-NULL idiom on an UPDATE statement — worth grepping for before
+trusting another one uncritically.
+
+---
+
 ## 2026-09-27 — Rebuilding "them-dag-worker" silently left debug runs on stale code
 
 **Symptom:** a trace-detail fix (adding a "File Guard: pending/clean/blocked" suffix to the agent

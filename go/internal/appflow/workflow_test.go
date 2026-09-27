@@ -247,14 +247,21 @@ type fakeAgentInvoker struct {
 	response string
 	result   AgentInvokeResult // takes priority over `response` when PartKind is set
 	err      error
+	calls    int
 }
 
 func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _, _, _ string) (AgentInvokeResult, error) {
+	f.calls++
 	if f.result.PartKind != "" {
 		return f.result, f.err
 	}
 	return AgentInvokeResult{ResponseText: f.response}, f.err
 }
+
+// callCount is a test-only convenience accessor — used by
+// docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's input-blocking test to prove
+// a blocked input never reaches the real agent call at all.
+func (f *fakeAgentInvoker) callCount() int { return f.calls }
 
 // AF-WF-04: InvokeAgentActivity returns agent response text on success.
 func TestInvokeAgentActivity_Success(t *testing.T) {
@@ -393,6 +400,11 @@ func TestFileGateActivity_GateError_Propagates(t *testing.T) {
 // fakeTextGate implements TextGateChecker for tests.
 type fakeTextGate struct {
 	result    TextGateCheckOutput
+	// byPhase, when non-nil, overrides result per-Phase ("input"/"output")
+	// — lets a test give different answers for the input-phase vs
+	// output-phase call the workflow now always makes (docs/
+	// APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's direction field).
+	byPhase   map[string]TextGateCheckOutput
 	err       error
 	lastInput TextGateCheckInput
 	callCount int
@@ -401,6 +413,9 @@ type fakeTextGate struct {
 func (f *fakeTextGate) Check(_ context.Context, in TextGateCheckInput) (TextGateCheckOutput, error) {
 	f.callCount++
 	f.lastInput = in
+	if f.byPhase != nil {
+		return f.byPhase[in.Phase], f.err
+	}
 	return f.result, f.err
 }
 

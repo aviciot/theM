@@ -337,8 +337,10 @@ export interface MiddlewareWiringIn {
 export interface MiddlewareWiring {
   id: string;
   application_id: string;
-  agent_id: string;
-  agent_slug: string;
+  // Empty for a wiring scoped to a non-agent node (an llm node has no
+  // agents row at all — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4).
+  agent_id?: string;
+  agent_slug?: string;
   def_id: string;
   def_slug: string;
   position: number;
@@ -350,7 +352,8 @@ export interface MiddlewareWiring {
 }
 
 export interface MiddlewareWiringCreate {
-  agent_id: string;
+  // Omit for a wiring scoped to a non-agent node (e.g. an llm node).
+  agent_id?: string;
   def_slug?: string;
   position?: number;
   config_override?: Record<string, unknown>;

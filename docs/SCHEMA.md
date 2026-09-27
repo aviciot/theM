@@ -710,6 +710,33 @@ Registry of middleware component types (builtin and tenant-scoped). Migration: `
 
 ---
 
+## them.middleware_wirings
+
+Attaches one guard (`middleware_defs` row) to one canvas node instance within
+one application. Migration: `db/013_agentic_middleware.sql`; `node_id` added
+by `docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md` Phase 2.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| application_id | UUID FK→applications | ON DELETE CASCADE |
+| agent_id | UUID FK→agents, **nullable** | Made nullable by `db/114` (`docs/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 4) — an `llm` canvas node has no `agents` row at all (its provider/model come from the app's Runtime tab, not an agent record), so a wiring scoped to an `llm` node has `agent_id IS NULL` and is identified by `node_id` alone. Every query joining `agents` must use `LEFT JOIN`, never inner `JOIN` — an inner join silently excludes every llm-node wiring. |
+| def_id | UUID FK→middleware_defs | ON DELETE RESTRICT |
+| position | INT | Legacy per-agent ordering slot; `uq_mw_wiring_app_agent_pos UNIQUE(application_id, agent_id, position)` still protects pre-`node_id` wirings, but is not the real identity for anything created after `node_id` existed |
+| node_id | TEXT, nullable | The real identity for every wiring created via App Canvas's Guards UI — scopes a guard to one specific canvas node instance, not just an agent globally (two boxes using the same agent get independent configs). `uq_mw_wiring_app_node UNIQUE(application_id, node_id) WHERE node_id IS NOT NULL AND node_id <> ''` — a **partial unique index**, not a named constraint (`ON CONFLICT ON CONSTRAINT` does not work against it; use the inference-target form `ON CONFLICT (application_id, node_id) WHERE ...` instead — confirmed live, `ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_node` fails with "constraint does not exist") |
+| config_override | JSONB | Per-wiring override merged on top of `middleware_defs.config`'s default. **Flat JSON object** for `pii_redact`/`prompt_inject` (matches their Go config structs directly) — NOT the nested `SecurityConfig{Processors: map}` shape `file-guard`'s own `config` happens to use. Resolving code for these two guards must NOT reuse `FileGate`'s `SecurityConfig`-shaped resolver — see `internal/middleware/textgate.go`'s own doc comment |
+| enabled | BOOLEAN | |
+| created_at / updated_at | TIMESTAMPTZ | An `UPDATE` that omits `node_id` (e.g. a config-only save) must NOT null it out — `internal/admin/dal/middleware_wirings.go`'s `UpdateMiddlewareWiring` only overwrites `node_id` when a non-empty value is actually sent (fixed live this session — the previous unconditional `CASE WHEN $6 = '' THEN NULL` was silently wiping every wiring's `node_id` on its very first config-only re-save) |
+
+**`middleware_defs.config` shape varies by guard — do not assume one shape
+fits all**: `file-guard`'s `config` is a `SecurityConfig{Processors: map}`
+wrapper (historical, matches the multi-processor pipeline concept);
+`pii_redact`/`prompt_inject`'s `config` (added by `db/113`) is each
+guard's own flat config struct directly. A shared resolver written for one
+shape will silently misparse the other.
+
+---
+
 ## them.middleware_jobs (Phase 3 middleware pipeline)
 Job queue for artifact processing pipeline. Workers claim rows using `SELECT FOR UPDATE SKIP LOCKED`. Migration: `db/050_middleware_pipeline.sql`.
 
@@ -869,6 +896,8 @@ Key relationships:
 | `db/101_app_flow_llm_overrides.sql` | Node Registry Phase 1: `them.app_flow_llm_overrides` table — per-app, per-node provider+model override for app-canvas inline LLM nodes, applied at workflow start ahead of the canvas-compiled value. |
 | `db/103_run_steps_appflow_trace.sql` | App Canvas Debug Mode Phase 3: `them.run_steps` gains `node_id`/`node_kind` (nullable) for AppFlow DAG node traces + a partial unique index on `(run_id, node_id) WHERE node_id IS NOT NULL`. Also drops the broken `tool_call_id TEXT NOT NULL` column (never populated by its writer — every insert should have been failing). |
 | `db/112_file_guard_mode_options.sql` | UX fix found live-testing the Guards section (App Canvas): file-guard's `mode` config field was free text with only 2 valid runtime values (`block`/`warn`), letting a user silently misconfigure it with a typo. Adds `"options": ["block", "warn"]` to that one field inside `them.middleware_defs.config_fields` — new generic `options` sub-key (`internal/nodedefs.ConfigFieldDoc.Options`), frontend renders a `<select>` when present instead of an `<input>`. |
+| `db/113_pii_prompt_guard_defs.sql` | `docs/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 2: 2 new `middleware_defs`/`component_definitions` row pairs (`pii_redact`, `prompt_inject`), splitting the old combined `guard_default` row (disabled, not deleted) to match `av_scan`/`file-guard`'s existing one-def-per-processor pattern. Each new `middleware_defs.config` is a flat processor config (not `file-guard`'s nested `SecurityConfig` shape) — see the `them.middleware_wirings` section above. |
+| `db/114_middleware_wirings_agent_optional.sql` | `docs/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 4: `them.middleware_wirings.agent_id` becomes nullable — an `llm` canvas node has no `agents` row at all, so it could never get any guard wiring before this. `node_id` is the real identity going forward for both agent and llm-node wirings; `uq_mw_wiring_app_agent_pos` is left in place (still protects pre-`node_id` wirings) but is no longer the meaningful uniqueness guarantee for new wirings. |
 
 ---
 

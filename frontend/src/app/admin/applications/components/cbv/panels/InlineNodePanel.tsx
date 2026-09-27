@@ -4,16 +4,21 @@ import type { InlineNodeData } from '../../../types';
 import { C } from '../../../constants';
 import { fieldStyle } from './panelShared';
 import { InlinePortsSection } from './InlinePortsSection';
+import { AgentGuardsSection } from './AgentGuardsSection';
+import type { Agent } from '@/lib/api';
 
 // ── InlineNodePanel (LLM + Condition) ────────────────────────────────────────
 
 interface Props {
+  appId: string;
   selectedNode: Node;
   nodes: Node[];
   edges: Edge[];
+  agents: Agent[];
   setNodes: (updater: (ns: Node[]) => Node[]) => void;
   setIsDirty: (v: boolean) => void;
   setLogoResult: (v: 'none' | 'valid' | 'invalid' | 'warn') => void;
+  showToast: (msg: string, ok: boolean) => void;
 }
 
 const CONDITION_EXAMPLES = [
@@ -23,7 +28,7 @@ const CONDITION_EXAMPLES = [
 ];
 
 export function InlineNodePanel({
-  selectedNode, nodes, edges, setNodes, setIsDirty, setLogoResult,
+  appId, selectedNode, nodes, edges, agents, setNodes, setIsDirty, setLogoResult, showToast,
 }: Props) {
   const liveNode = nodes.find(n => n.id === selectedNode.id);
   const d = (liveNode?.data ?? selectedNode.data) as unknown as InlineNodeData;
@@ -143,6 +148,10 @@ export function InlineNodePanel({
           <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
             Stored but not yet applied — the shared LLM provider interface takes no options (Phase 2).
           </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+          <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} />
         </div>
       </div>
     );

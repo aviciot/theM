@@ -323,17 +323,20 @@ func loadWiringCfgForDef(ctx context.Context, db GateQuerier, cacheMu *sync.Mute
 	}
 	cacheMu.Unlock()
 
-	// Query wiring: join agents to resolve slug → agent_id; join middleware_defs
-	// to get the builtin defaults; merge with config_override. Matches either
-	// this exact node_id or (as a fallback) any wiring for the agent on this
-	// app — an exact node_id match is preferred via ORDER BY when both exist.
+	// Query wiring: LEFT JOIN agents to resolve slug → agent_id (LEFT, not
+	// JOIN — an llm-node wiring has no agent_id at all, docs/
+	// APPFLOW_TEXT_GUARDS_PLAN.md Phase 4/db/114; an inner join would
+	// silently exclude it here); join middleware_defs to get the builtin
+	// defaults; merge with config_override. Matches either this exact
+	// node_id or (as a fallback) any wiring for the agent on this app — an
+	// exact node_id match is preferred via ORDER BY when both exist.
 	const q = `
 SELECT
     mw.enabled,
     COALESCE(md.config, '{}')      AS def_config,
     COALESCE(mw.config_override, '{}') AS override
 FROM them.middleware_wirings mw
-JOIN them.agents             a  ON a.id  = mw.agent_id
+LEFT JOIN them.agents        a  ON a.id  = mw.agent_id
 JOIN them.middleware_defs    md ON md.id = mw.def_id
 WHERE mw.application_id = $1::uuid
   AND (a.slug = $2 OR $2 = '')

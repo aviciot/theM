@@ -541,7 +541,12 @@ type TextGateCheckInput struct {
 	NodeID        string `json:"node_id"`
 	AgentSlug     string `json:"agent_slug,omitempty"`
 	Text          string `json:"text"`
-	Verbosity     string `json:"verbosity,omitempty"`
+	// Phase is "input" (the outgoing prompt, checked before the llm/agent
+	// call) or "output" (the response, checked after). A guard's own
+	// "direction" config decides whether it actually runs for a given
+	// phase — see middleware.TextGate.Check's doc comment.
+	Phase     string `json:"phase,omitempty"`
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // TextGateCheckOutput is returned by AppFlowTextGateActivity.

@@ -56,6 +56,14 @@ type TextGateInput struct {
 	ApplicationID string
 	NodeID        string
 	AgentSlug     string
+	// Phase is "input" (about to send this text to the llm/agent — checked
+	// BEFORE the call) or "output" (the llm/agent's response — checked
+	// AFTER). A guard's own "direction" config field ("output", the
+	// default, or "both") decides whether it runs for a given phase — see
+	// Check's own doc comment. Required; Check treats "" the same as
+	// "output" (fail toward the pre-existing behavior every wiring created
+	// before this field existed already has).
+	Phase string
 }
 
 // TextGateResult is returned by Check.
@@ -84,6 +92,16 @@ type TextGateResult struct {
 // for a processor-level failure — same fail-open convention FileGate/
 // Pipeline.Run already use; only a DB error resolving config surfaces as an
 // error here.
+//
+// in.Phase gates each guard by its own "direction" config field: a guard
+// configured "output" (the default) only runs when Phase=="output"; a guard
+// configured "both" runs on both "input" and "output" calls. This lets one
+// wiring's config decide whether the caller needs to invoke Check a second
+// time (before the llm/agent call, on the outgoing prompt) — the workflow
+// caller doesn't need to know each guard's direction setting itself, only
+// that it should always call Check twice (input phase, then output phase)
+// and let TextGate decide per-guard whether either call actually does
+// anything.
 func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (TextGateResult, error) {
 	pipeline := NewPipeline(g.reg)
 	part := Part{Kind: "text", Text: text}
@@ -103,11 +121,20 @@ func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (Te
 			continue // no wiring for this guard on this node — skip, fail open
 		}
 
-		var enabled struct {
-			Enabled bool `json:"enabled"`
+		var cfgMeta struct {
+			Enabled   bool   `json:"enabled"`
+			Direction string `json:"direction"`
 		}
-		_ = json.Unmarshal(cfgRaw, &enabled)
-		if !enabled.Enabled {
+		_ = json.Unmarshal(cfgRaw, &cfgMeta)
+		if !cfgMeta.Enabled {
+			continue
+		}
+		phase := in.Phase
+		if phase == "" {
+			phase = "output"
+		}
+		runsOnThisPhase := phase == "output" || cfgMeta.Direction == "both"
+		if !runsOnThisPhase {
 			continue
 		}
 
@@ -170,13 +197,16 @@ func (g *TextGate) loadTextWiringCfg(ctx context.Context, defSlug, appID, nodeID
 	}
 	g.cacheMu.Unlock()
 
+	// LEFT JOIN agents, not JOIN — an llm-node wiring has no agent_id at all
+	// (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4/db/114); an inner join would
+	// silently exclude it.
 	const q = `
 SELECT
     mw.enabled,
     COALESCE(md.config, '{}')          AS def_config,
     COALESCE(mw.config_override, '{}') AS override
 FROM them.middleware_wirings mw
-JOIN them.agents             a  ON a.id  = mw.agent_id
+LEFT JOIN them.agents        a  ON a.id  = mw.agent_id
 JOIN them.middleware_defs    md ON md.id = mw.def_id
 WHERE mw.application_id = $1::uuid
   AND (a.slug = $2 OR $2 = '')

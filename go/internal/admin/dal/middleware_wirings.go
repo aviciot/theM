@@ -9,8 +9,8 @@ import (
 type MiddlewareWiring struct {
 	ID             string          `json:"id"`
 	ApplicationID  string          `json:"application_id"`
-	AgentID        string          `json:"agent_id"`
-	AgentSlug      string          `json:"agent_slug"`
+	AgentID        string          `json:"agent_id,omitempty"`
+	AgentSlug      string          `json:"agent_slug,omitempty"`
 	DefID          string          `json:"def_id"`
 	DefSlug        string          `json:"def_slug"`
 	Position       int             `json:"position"`
@@ -22,8 +22,11 @@ type MiddlewareWiring struct {
 }
 
 // MiddlewareWiringInput is the request body for creating/updating a wiring.
+// AgentID is empty for a wiring scoped to a non-agent node (e.g. an llm
+// node — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4); NodeID is then the
+// only identity the wiring has.
 type MiddlewareWiringInput struct {
-	AgentID        string          `json:"agent_id"`
+	AgentID        string          `json:"agent_id,omitempty"`
 	DefSlug        string          `json:"def_slug"`
 	Position       int             `json:"position"`
 	ConfigOverride json.RawMessage `json:"config_override"`
@@ -31,11 +34,13 @@ type MiddlewareWiringInput struct {
 	NodeID         string          `json:"node_id,omitempty"`
 }
 
-// ListMiddlewareWirings returns all wirings for an application.
+// ListMiddlewareWirings returns all wirings for an application. LEFT JOINs
+// agents — an llm-node wiring has no agent_id at all (db/114), so an inner
+// JOIN would silently exclude it from every list.
 func ListMiddlewareWirings(ctx context.Context, db Querier, appID string) ([]MiddlewareWiring, error) {
 	const q = `
-SELECT mw.id::text, mw.application_id::text, mw.agent_id::text,
-       a.slug AS agent_slug,
+SELECT mw.id::text, COALESCE(mw.agent_id::text, ''),
+       COALESCE(a.slug, ''),
        mw.def_id::text, md.slug AS def_slug,
        mw.position,
        COALESCE(mw.config_override, '{}'),
@@ -44,7 +49,7 @@ SELECT mw.id::text, mw.application_id::text, mw.agent_id::text,
        to_char(mw.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
        to_char(mw.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 FROM   them.middleware_wirings mw
-JOIN   them.agents           a  ON a.id  = mw.agent_id
+LEFT JOIN them.agents        a  ON a.id  = mw.agent_id
 JOIN   them.middleware_defs  md ON md.id = mw.def_id
 WHERE  mw.application_id = $1::uuid
 ORDER  BY mw.position, mw.created_at`
@@ -60,13 +65,14 @@ ORDER  BY mw.position, mw.created_at`
 		var w MiddlewareWiring
 		var cfgRaw []byte
 		if err := rows.Scan(
-			&w.ID, &w.ApplicationID, &w.AgentID, &w.AgentSlug,
+			&w.ID, &w.AgentID, &w.AgentSlug,
 			&w.DefID, &w.DefSlug, &w.Position, &cfgRaw,
 			&w.Enabled, &w.NodeID,
 			&w.CreatedAt, &w.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		w.ApplicationID = appID
 		w.ConfigOverride = cfgRaw
 		out = append(out, w)
 	}
@@ -79,8 +85,8 @@ ORDER  BY mw.position, mw.created_at`
 // GetMiddlewareWiring returns one wiring row by ID, scoped to appID.
 func GetMiddlewareWiring(ctx context.Context, db Querier, appID, wiringID string) (MiddlewareWiring, error) {
 	const q = `
-SELECT mw.id::text, mw.application_id::text, mw.agent_id::text,
-       a.slug AS agent_slug,
+SELECT mw.id::text, COALESCE(mw.agent_id::text, ''),
+       COALESCE(a.slug, ''),
        mw.def_id::text, md.slug AS def_slug,
        mw.position,
        COALESCE(mw.config_override, '{}'),
@@ -89,14 +95,14 @@ SELECT mw.id::text, mw.application_id::text, mw.agent_id::text,
        to_char(mw.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
        to_char(mw.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 FROM   them.middleware_wirings mw
-JOIN   them.agents           a  ON a.id  = mw.agent_id
+LEFT JOIN them.agents        a  ON a.id  = mw.agent_id
 JOIN   them.middleware_defs  md ON md.id = mw.def_id
 WHERE  mw.id = $1::uuid AND mw.application_id = $2::uuid`
 
 	var w MiddlewareWiring
 	var cfgRaw []byte
 	err := db.QueryRow(ctx, q, wiringID, appID).Scan(
-		&w.ID, &w.ApplicationID, &w.AgentID, &w.AgentSlug,
+		&w.ID, &w.AgentID, &w.AgentSlug,
 		&w.DefID, &w.DefSlug, &w.Position, &cfgRaw,
 		&w.Enabled, &w.NodeID,
 		&w.CreatedAt, &w.UpdatedAt,
@@ -104,18 +110,25 @@ WHERE  mw.id = $1::uuid AND mw.application_id = $2::uuid`
 	if err != nil {
 		return MiddlewareWiring{}, err
 	}
+	w.ApplicationID = appID
 	w.ConfigOverride = cfgRaw
 	return w, nil
 }
 
 // CreateMiddlewareWiring inserts a new wiring row, or updates the existing
-// one in place if a wiring for this (application_id, agent_id, position)
-// already exists — them.middleware_wirings enforces that triple unique
-// (uq_mw_wiring_app_agent_pos). A caller can legitimately hit this (e.g. the
-// App Canvas Guards section creating a wiring for a node whose existing
-// wiring predates node_id and so didn't match on node_id lookup) — that's a
-// real "this wiring already exists, update it" case, not an error condition,
-// so it must not surface as a raw unique-violation 500.
+// one in place if a wiring for this (application_id, node_id) already
+// exists — them.middleware_wirings enforces that pair unique
+// (uq_mw_wiring_app_node) whenever node_id is set, which every
+// canvas-created wiring always has (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// Phase 2). A caller can legitimately hit this (e.g. re-saving an existing
+// node's guard config) — that's a real "this wiring already exists, update
+// it" case, not an error condition, so it must not surface as a raw
+// unique-violation 500.
+//
+// in.AgentID is empty for a wiring scoped to a non-agent node (an llm node
+// has no agents row at all — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4,
+// db/114 made agent_id nullable for exactly this). node_id, not agent_id,
+// is the identity ON CONFLICT resolves on.
 func CreateMiddlewareWiring(ctx context.Context, db Querier, appID string, in MiddlewareWiringInput) (MiddlewareWiring, error) {
 	enabled := true
 	if in.Enabled != nil {
@@ -126,17 +139,25 @@ func CreateMiddlewareWiring(ctx context.Context, db Querier, appID string, in Mi
 		cfgRaw = json.RawMessage("{}")
 	}
 
+	// uq_mw_wiring_app_node is a partial UNIQUE INDEX (WHERE node_id IS NOT
+	// NULL AND node_id <> ''), not a named constraint — ON CONFLICT ON
+	// CONSTRAINT only accepts real constraints (confirmed live: using the
+	// index's name that way fails with "constraint ... does not exist").
+	// The inference-target form (columns + matching WHERE clause) is the
+	// correct way to target a partial unique index.
 	const q = `
 INSERT INTO them.middleware_wirings
     (application_id, agent_id, def_id, position, config_override, enabled, node_id)
-SELECT $1::uuid, $2::uuid, md.id, $3, $4::jsonb, $5,
+SELECT $1::uuid,
+       CASE WHEN $2 = '' THEN NULL ELSE $2::uuid END,
+       md.id, $3, $4::jsonb, $5,
        CASE WHEN $6 = '' THEN NULL ELSE $6 END
 FROM   them.middleware_defs md
 WHERE  md.slug = $7
-ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_agent_pos DO UPDATE
+ON CONFLICT (application_id, node_id) WHERE node_id IS NOT NULL AND node_id <> '' DO UPDATE
 SET    config_override = EXCLUDED.config_override,
        enabled         = EXCLUDED.enabled,
-       node_id         = EXCLUDED.node_id,
+       agent_id        = EXCLUDED.agent_id,
        updated_at      = now()
 RETURNING id::text`
 
@@ -160,12 +181,20 @@ func UpdateMiddlewareWiring(ctx context.Context, db Querier, appID, wiringID str
 		cfgRaw = json.RawMessage("{}")
 	}
 
+	// node_id is only overwritten when the caller actually sends a non-empty
+	// value — a config-only save (the App Canvas Guards panel's "Save Guard
+	// Config" never sends node_id at all) must not silently wipe the
+	// wiring's existing scoping. Found live this session: the previous
+	// unconditional CASE WHEN $6 = '' THEN NULL had been quietly unscoping
+	// every wiring's node_id on its very first config-only re-save, ever
+	// since node_id was introduced — the exact bug behind an earlier
+	// session's "wiring lost its node_id" symptom.
 	const q = `
 UPDATE them.middleware_wirings
 SET    config_override = $3::jsonb,
        enabled         = $4,
        position        = $5,
-       node_id         = CASE WHEN $6 = '' THEN NULL ELSE $6 END,
+       node_id         = CASE WHEN $6 = '' THEN node_id ELSE $6 END,
        updated_at      = now()
 WHERE  id = $1::uuid AND application_id = $2::uuid`
 

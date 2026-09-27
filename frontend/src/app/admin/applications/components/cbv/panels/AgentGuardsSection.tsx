@@ -7,19 +7,30 @@ import { getCachedNodeTypesByFamily } from '@/lib/nodeRegistry';
 import type { ConfigFieldDecl } from '@/lib/nodeRegistry';
 import { themApi, type Agent, type MiddlewareWiring } from '@/lib/api';
 
-// ── AgentGuardsSection — Phase 3 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md ──
+// ── AgentGuardsSection — Guards panel for agent + llm nodes ─────────────────
 //
-// Lets a canvas agent node carry its own File Guard config, scoped by this
-// exact node instance (node_id) — not just the agent globally — per Phase
-// 2's node_id scoping fix. Renders file-guard's config_fields (fetched live
-// via GET /admin/node-types, cached by CanvasBuilderView on load) instead of
-// a hardcoded field list, matching this session's confirmed
-// self-documenting-registry pattern.
+// Started as Phase 3 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md (File Guard
+// on agent nodes only); generalized in docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// Phase 4 to render every applicable guard def for a node, and to work for
+// llm nodes too (an llm node has no agents row — middleware_wirings.agent_id
+// is now nullable, db/114 — node_id is the only real identity a wiring
+// needs).
 //
-// PII/Prompt-Injection guard is deliberately NOT rendered here — confirmed
-// this session that no real detection logic exists for it anywhere in the
-// codebase (empty config structs only); showing a working-looking form for
-// it would silently lie about what it does.
+// Which guards apply to which node kind:
+// - agent: file-guard, pii_redact, prompt_inject (an agent's A2A response
+//   can carry a file or text worth guarding).
+// - llm: pii_redact, prompt_inject only — NOT file-guard. An llm node's
+//   response can never carry a file today (confirmed:
+//   docs/APPFLOW_LLM_FILE_OUTPUT_PLAN.md is a separate, not-yet-started
+//   plan) — showing a File Guard toggle that can never trigger would
+//   misrepresent what it does, same principle as PII/Prompt-Injection guard
+//   being excluded before their real detection logic existed.
+//
+// PII/Prompt-Injection guard is deliberately NOT rendered for either node
+// kind until this phase — confirmed pii_redact/prompt_inject now have real
+// detection logic (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1-2/3), so this is
+// no longer the "would silently lie about what it does" case that excluded
+// the old combined guard_default def.
 
 interface Props {
   appId: string;
@@ -28,34 +39,25 @@ interface Props {
   showToast: (msg: string, ok: boolean) => void;
 }
 
-const FILE_GUARD_SLUG = 'file-guard';
+const AGENT_GUARD_SLUGS = ['file-guard', 'pii_redact', 'prompt_inject'] as const;
+const LLM_GUARD_SLUGS = ['pii_redact', 'prompt_inject'] as const;
+
+const GUARD_LABELS: Record<string, string> = {
+  'file-guard': 'File Guard',
+  pii_redact: 'PII Guard',
+  prompt_inject: 'Prompt-Injection Guard',
+};
 
 export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: Props) {
-  const nodeData = selectedNode.data as unknown as { definition_ref?: { name?: string } };
+  const nodeData = selectedNode.data as unknown as { definition_ref?: { name?: string }; node_type?: string };
+  const isLLMNode = nodeData.node_type === 'llm';
   const agentSlug = nodeData.definition_ref?.name;
   const agent = agents.find(a => a.slug === agentSlug);
 
-  const [wiring, setWiring] = useState<MiddlewareWiring | null | undefined>(undefined); // undefined = loading
-  const [configDraft, setConfigDraft] = useState<Record<string, unknown>>({});
-  const [saving, setSaving] = useState(false);
-
-  const fileGuardDef = getCachedNodeTypesByFamily('middleware').find(d => d.type === FILE_GUARD_SLUG);
-  const configFields: ConfigFieldDecl[] = fileGuardDef?.config_fields ?? [];
-
-  useEffect(() => {
-    let cancelled = false;
-    setWiring(undefined);
-    if (!agent) return;
-    themApi.listMiddlewareWirings(appId).then(list => {
-      if (cancelled) return;
-      const match = list.find(w => w.node_id === selectedNode.id && w.def_slug === FILE_GUARD_SLUG);
-      setWiring(match ?? null);
-      setConfigDraft((match?.config_override as Record<string, unknown>) ?? {});
-    }).catch(() => { if (!cancelled) setWiring(null); });
-    return () => { cancelled = true; };
-  }, [appId, selectedNode.id, agent]);
-
-  if (!agent) {
+  // An llm node has no agent to resolve at all — that's expected, not a
+  // loading/error state the way it is for an agent node whose definition
+  // hasn't resolved yet.
+  if (!isLLMNode && !agent) {
     return (
       <div>
         <div style={{ ...sectionHdrStyle, color: C.purple, marginBottom: 6 }}>Guards</div>
@@ -66,20 +68,79 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
     );
   }
 
+  const guardSlugs = isLLMNode ? LLM_GUARD_SLUGS : AGENT_GUARD_SLUGS;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={sectionHdrStyle}>Guards</div>
+      {guardSlugs.map(slug => (
+        <GuardWiringForm
+          key={slug}
+          appId={appId}
+          selectedNode={selectedNode}
+          agent={agent}
+          defSlug={slug}
+          showToast={showToast}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface GuardWiringFormProps {
+  appId: string;
+  selectedNode: Node;
+  agent: Agent | undefined;
+  defSlug: string;
+  showToast: (msg: string, ok: boolean) => void;
+}
+
+function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast }: GuardWiringFormProps) {
+  const [wiring, setWiring] = useState<MiddlewareWiring | null | undefined>(undefined); // undefined = loading
+  const [configDraft, setConfigDraft] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+
+  const guardDef = getCachedNodeTypesByFamily('middleware').find(d => d.type === defSlug);
+  const configFields: ConfigFieldDecl[] = guardDef?.config_fields ?? [];
+
+  useEffect(() => {
+    let cancelled = false;
+    setWiring(undefined);
+    themApi.listMiddlewareWirings(appId).then(list => {
+      if (cancelled) return;
+      const match = list.find(w => w.node_id === selectedNode.id && w.def_slug === defSlug);
+      setWiring(match ?? null);
+      setConfigDraft((match?.config_override as Record<string, unknown>) ?? {});
+    }).catch(() => { if (!cancelled) setWiring(null); });
+    return () => { cancelled = true; };
+  }, [appId, selectedNode.id, defSlug]);
+
+  if (wiring === undefined) {
+    return (
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 4 }}>
+          {GUARD_LABELS[defSlug] ?? defSlug}
+        </div>
+        <div style={{ fontSize: 11, color: C.textMuted }}>Loading…</div>
+      </div>
+    );
+  }
+
   const enabled = wiring?.enabled ?? false;
 
-  // file-guard's own config_fields also declare an "enabled" key (the
+  // This guard's own config_fields also declare an "enabled" key (the
   // wiring-independent "is this guard active" flag inside config_override).
-  // That's redundant with the wiring-level `enabled` column this section
-  // already renders as the single top-level checkbox — rather than show two
+  // That's redundant with the wiring-level `enabled` column this form
+  // already renders as its own top-level checkbox — rather than show two
   // "Enabled" toggles, config_override.enabled is kept silently in sync with
-  // the wiring's own enabled state and hidden from the rendered form.
+  // the wiring's own enabled state and hidden from the rendered form (same
+  // fix as File Guard's original duplicate-checkbox bug, applied generically
+  // here so it can't recur for any future guard).
   function withEnabledSynced(nextEnabled: boolean) {
     return { ...configDraft, enabled: nextEnabled };
   }
 
   async function handleToggleEnabled(nextEnabled: boolean) {
-    if (!agent) return;
     setSaving(true);
     try {
       const syncedConfig = withEnabledSynced(nextEnabled);
@@ -91,8 +152,8 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
         setWiring(updated);
       } else {
         const created = await themApi.createMiddlewareWiring(appId, {
-          agent_id: agent.id,
-          def_slug: FILE_GUARD_SLUG,
+          agent_id: agent?.id,
+          def_slug: defSlug,
           node_id: selectedNode.id,
           enabled: nextEnabled,
           config_override: syncedConfig,
@@ -100,7 +161,7 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
         setWiring(created);
       }
       setConfigDraft(syncedConfig);
-      showToast(nextEnabled ? 'File Guard enabled' : 'File Guard disabled', true);
+      showToast(`${GUARD_LABELS[defSlug] ?? defSlug} ${nextEnabled ? 'enabled' : 'disabled'}`, true);
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : 'Failed to save guard setting', false);
     } finally {
@@ -109,7 +170,6 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
   }
 
   async function handleSaveConfig() {
-    if (!agent) return;
     setSaving(true);
     try {
       const syncedConfig = withEnabledSynced(enabled);
@@ -118,8 +178,8 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
         setWiring(updated);
       } else {
         const created = await themApi.createMiddlewareWiring(appId, {
-          agent_id: agent.id,
-          def_slug: FILE_GUARD_SLUG,
+          agent_id: agent?.id,
+          def_slug: defSlug,
           node_id: selectedNode.id,
           enabled: true,
           config_override: syncedConfig,
@@ -139,19 +199,12 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
     setConfigDraft(prev => ({ ...prev, [key]: value }));
   }
 
-  if (wiring === undefined) {
-    return (
-      <div>
-        <div style={{ ...sectionHdrStyle, color: C.purple, marginBottom: 6 }}>Guards</div>
-        <div style={{ fontSize: 11, color: C.textMuted }}>Loading…</div>
-      </div>
-    );
-  }
-
   return (
-    <div>
+    <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div style={{ ...sectionHdrStyle, color: C.purple }}>Guards — File Guard</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          {GUARD_LABELS[defSlug] ?? defSlug}
+        </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.textMuted, cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -165,13 +218,13 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
 
       {!enabled && (
         <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
-          Files this agent returns are not scanned. Turn on to quarantine and scan them before delivery.
+          This guard is off for this node. Turn on to configure it.
         </div>
       )}
 
       {enabled && configFields.length === 0 && (
         <div style={{ fontSize: 11, color: '#f87171' }}>
-          file-guard's config fields are not available — reload the canvas to refetch node types.
+          {defSlug}&apos;s config fields are not available — reload the canvas to refetch node types.
         </div>
       )}
 

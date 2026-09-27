@@ -1,6 +1,10 @@
 # AppFlow Text Guards Plan (PII Redaction + Prompt-Injection Detection)
-# Status: Phases 1-3 DONE (backend + workflow wiring). Phase 4 (Guards UI)
-# not started. Not yet live-browser-verified.
+# Status: ALL 4 PHASES DONE. Verified live end-to-end via a real debug run
+# (input-phase block). Not yet live-BROWSER-verified (no browser-automation
+# tool in this environment, same standing limitation as every other
+# frontend phase this session) — recommend a real click-through: select an
+# llm node, confirm the Guards section shows PII Guard + Prompt-Injection
+# Guard (no File Guard), toggle one on, save, reload, confirm it persists.
 # Owner: platform
 # Last updated: 2026-09-27
 
@@ -250,7 +254,49 @@ generalize to `llm` nodes yet — Phase 4 needs to land, or a wiring needs to
 be manually inserted via SQL, before this can be proven end-to-end with a
 real run.
 
-### Phase 4 — App Canvas UI
+### Phase 4 — App Canvas UI — DONE (2026-09-27)
+
+**Implemented as specced, plus 2 real schema/query bugs found and fixed
+along the way (see `docs/LESSONS.md`'s 2026-09-27 entries for the full
+detail) and the `direction` field's runtime wiring closed in the same
+session it shipped (it existed as a DB/UI field with zero code reading it
+until this phase — flagged and fixed, not left as a silent lie):**
+
+- `middleware_wirings.agent_id` made nullable (`db/114`) — an `llm` node
+  has no `agents` row at all. `ListMiddlewareWirings`/`GetMiddlewareWiring`
+  switched to `LEFT JOIN agents`; `CreateMiddlewareWiring`'s upsert re-keyed
+  from `uq_mw_wiring_app_agent_pos` to `uq_mw_wiring_app_node` (the real
+  identity for both node kinds); admin handler's Create validation loosened
+  from "agent_id required" to "agent_id OR node_id required."
+- `direction` ("output"/"both") actually wired in: `TextGate.Check` gained
+  a `Phase` param; `workflow.go`'s `case "agent"`/`case "llm"` now call
+  `TextGateActivity` twice (input phase before the call, output phase
+  after) — a guard's own `direction` config decides whether either call
+  does anything.
+- `AgentGuardsSection.tsx` generalized from one hardcoded file-guard form
+  into a component rendering every applicable guard for a node's kind:
+  `agent` gets file-guard + pii_redact + prompt_inject; `llm` gets
+  pii_redact + prompt_inject only (no file-guard — an llm response can
+  never carry a file, confirmed via
+  `docs/APPFLOW_LLM_FILE_OUTPUT_PLAN.md`). Wired into `InlineNodePanel.tsx`.
+
+**Verified live, end-to-end, against a real debug run** (not just unit
+tests): a `pii_redact` wiring on an `llm` node with `mode=block,
+direction=both` correctly failed the run with
+`text guard blocked input (pii_redact:flagged)` **before the LLM node ever
+executed** — confirmed via `them.runs.error` and the fact that
+`run_steps` had zero rows for that node (traceNode's own `node_start` never
+even got a chance to fire, since the block happens before that node's
+activities begin).
+
+9 new tests across `internal/admin/dal` (4, real Postgres integration
+tests), `internal/admin` (1 net-new + 1 renamed), `internal/middleware` (3),
+`internal/appflow` (1, real Temporal test-environment). `go build`/`go
+vet`/`go test ./...` all clean; frontend `tsc --noEmit` clean, all 79
+existing JS tests pass.
+
+**Original spec text below, kept for the "why" — the mode/redact-vs-block
+design reasoning still applies as originally written:**
 - Generalize `AgentGuardsSection.tsx` to also render for `llm` nodes (today
   it's agent-node-specific — `agentSlug`/`Agent[]` lookup logic needs to
   become conditional on node kind, not agent-only).

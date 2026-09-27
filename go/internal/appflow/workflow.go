@@ -447,6 +447,36 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "agent":
+			// Text Guards input-phase check (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+			// Phase 4's direction field): only a guard wired with
+			// direction:"both" actually does anything here — TextGate.Check
+			// itself decides that per-guard from the resolved config, this
+			// call site doesn't need to know which guards are so configured.
+			{
+				var textIn TextGateCheckOutput
+				textErr := workflow.ExecuteActivity(ctx, AppFlowTextGateActivityName, TextGateCheckInput{
+					RunID:         input.RunID,
+					ApplicationID: input.ApplicationID,
+					NodeID:        node.ID,
+					Text:          accumulated,
+					Phase:         "input",
+					Verbosity:     input.LogVerbosity,
+				}).Get(ctx, &textIn)
+				if textErr != nil {
+					out.Status = "failed"
+					retErr = fmt.Errorf("agent %q: text guard input check: %w", node.ID, textErr)
+					return
+				}
+				if textIn.Blocked {
+					out.Status = "failed"
+					retErr = temporalerr.NewNonRetryableApplicationError(
+						fmt.Sprintf("agent %q: text guard blocked input (%s)", node.ID, textIn.Categories),
+						"TextGateBlocked", nil,
+					)
+					return
+				}
+				accumulated = textIn.Text
+			}
 			// Call agent via A2A HTTP through InvokeAgentActivity.
 			var agentOut AgentInvokeActivityOutput
 			err := workflow.ExecuteActivity(ctx, AppFlowInvokeAgentActivityName, AgentInvokeActivityInput{
@@ -481,6 +511,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					ApplicationID: input.ApplicationID,
 					NodeID:        node.ID,
 					Text:          agentOut.ResponseText,
+					Phase:         "output",
 					Verbosity:     input.LogVerbosity,
 				}).Get(ctx, &textOut)
 				if textErr != nil {
@@ -542,6 +573,41 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			if model == "" {
 				model = input.LLMModel
 			}
+
+			// Text Guards input-phase check (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+			// Phase 4's direction field) — same "only a guard wired
+			// direction:'both' does anything" contract as the agent case.
+			// Checked against `accumulated` (the same value about to become
+			// vars["input"] and be interpolated into the rendered prompt) —
+			// the exact final rendered prompt only exists inside
+			// InlineLLMActivity, this is the best available proxy for "the
+			// text about to be sent," consistent with how the agent case
+			// treats its own UserMessage input.
+			{
+				var textIn TextGateCheckOutput
+				textErr := workflow.ExecuteActivity(ctx, AppFlowTextGateActivityName, TextGateCheckInput{
+					RunID:         input.RunID,
+					ApplicationID: input.ApplicationID,
+					NodeID:        node.ID,
+					Text:          accumulated,
+					Phase:         "input",
+					Verbosity:     input.LogVerbosity,
+				}).Get(ctx, &textIn)
+				if textErr != nil {
+					out.Status = "failed"
+					retErr = fmt.Errorf("llm %q: text guard input check: %w", node.ID, textErr)
+					return
+				}
+				if textIn.Blocked {
+					out.Status = "failed"
+					retErr = temporalerr.NewNonRetryableApplicationError(
+						fmt.Sprintf("llm %q: text guard blocked input (%s)", node.ID, textIn.Categories),
+						"TextGateBlocked", nil,
+					)
+					return
+				}
+				accumulated = textIn.Text
+			}
 			vars["input"] = accumulated
 
 			var llmOut InlineLLMActivityOutput
@@ -578,6 +644,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					ApplicationID: input.ApplicationID,
 					NodeID:        node.ID,
 					Text:          llmOut.ResponseText,
+					Phase:         "output",
 					Verbosity:     input.LogVerbosity,
 				}).Get(ctx, &textOut)
 				if textErr != nil {

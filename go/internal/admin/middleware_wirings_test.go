@@ -80,21 +80,42 @@ func (r *mwRow) Scan(dest ...any) error {
 	return nil
 }
 
-// wiringRow builds a fake scan row for a MiddlewareWiring.
+// wiringRow builds a fake scan row for a MiddlewareWiring — matches
+// GetMiddlewareWiring/ListMiddlewareWirings' current SELECT shape (no
+// application_id column scanned directly; DAL sets it from the appID
+// parameter instead — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4).
 func wiringRow() []any {
 	return []any{
-		"wiring-uuid-1",           // id
-		"app-uuid-1",              // application_id
-		"agent-uuid-1",            // agent_id
-		"crm-agent",               // agent_slug
-		"def-uuid-1",              // def_id
-		"file-guard",              // def_slug
-		0,                         // position
+		"wiring-uuid-1",            // id
+		"agent-uuid-1",             // agent_id
+		"crm-agent",                // agent_slug
+		"def-uuid-1",               // def_id
+		"file-guard",               // def_slug
+		0,                          // position
 		[]byte(`{"enabled":true}`), // config_override
-		true,                      // enabled
-		"node-1",                  // node_id
-		"2026-09-15T00:00:00Z",    // created_at
-		"2026-09-15T00:00:00Z",    // updated_at
+		true,                       // enabled
+		"node-1",                   // node_id
+		"2026-09-15T00:00:00Z",     // created_at
+		"2026-09-15T00:00:00Z",     // updated_at
+	}
+}
+
+// wiringRowNoAgent builds a fake scan row for an llm-node wiring — no
+// agent at all (agent_id/agent_slug empty), same shape docs/
+// APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's db/114 migration made possible.
+func wiringRowNoAgent() []any {
+	return []any{
+		"wiring-uuid-2",
+		"", // agent_id
+		"", // agent_slug
+		"def-uuid-2",
+		"pii_redact",
+		0,
+		[]byte(`{"enabled":true,"mode":"redact"}`),
+		true,
+		"llm_1",
+		"2026-09-15T00:00:00Z",
+		"2026-09-15T00:00:00Z",
 	}
 }
 
@@ -190,8 +211,12 @@ func TestMiddlewareWirings_List(t *testing.T) {
 	}
 }
 
-// TestMiddlewareWirings_Create_MissingAgentID returns 400.
-func TestMiddlewareWirings_Create_MissingAgentID(t *testing.T) {
+// TestMiddlewareWirings_Create_MissingBothAgentIDAndNodeID returns 400 — a
+// wiring needs SOME identity to scope to. Renamed from
+// "MissingAgentID" (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4): agent_id
+// alone is no longer required, since an llm node has no agent at all and
+// scopes its wiring by node_id only — see the two tests below.
+func TestMiddlewareWirings_Create_MissingBothAgentIDAndNodeID(t *testing.T) {
 	db := &mwDB{}
 	h := buildMWHandler(db)
 
@@ -204,6 +229,42 @@ func TestMiddlewareWirings_Create_MissingAgentID(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestMiddlewareWirings_Create_NodeIDOnly_NoAgentID_Succeeds proves an
+// llm-node wiring (no agent_id, node_id only) passes the handler's own
+// validation and reaches the DAL — the real bug this session's live API
+// test caught before this fix: the handler rejected this with
+// "agent_id is required" even after middleware_wirings.agent_id became
+// nullable (db/114) and the DAL itself already supported it.
+func TestMiddlewareWirings_Create_NodeIDOnly_NoAgentID_Succeeds(t *testing.T) {
+	db := &mwDB{getRow: wiringRowNoAgent()}
+	h := buildMWHandler(db)
+
+	body, _ := json.Marshal(map[string]any{
+		"def_slug": "pii_redact",
+		"node_id":  "llm_1",
+		"enabled":  true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/applications/app-1/middleware-wirings",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if agentID, ok := out["agent_id"]; ok && agentID != "" {
+		t.Errorf("agent_id = %v, want empty for an llm-node wiring", agentID)
+	}
+	if out["node_id"] != "llm_1" {
+		t.Errorf("node_id = %v, want %q", out["node_id"], "llm_1")
 	}
 }
 

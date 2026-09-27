@@ -1139,6 +1139,7 @@ func (a *appFlowTextGateAdapter) Check(ctx context.Context, in appflow.TextGateC
 		ApplicationID: in.ApplicationID,
 		NodeID:        in.NodeID,
 		AgentSlug:     in.AgentSlug,
+		Phase:         in.Phase,
 	}, in.Text)
 	if err != nil {
 		return appflow.TextGateCheckOutput{}, err
