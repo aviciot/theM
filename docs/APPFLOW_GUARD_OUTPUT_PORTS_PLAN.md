@@ -1,10 +1,9 @@
 # AppFlow Guard Output Ports Plan
-# Status: Scope confirmed with user 2026-09-27 — 3/4 open questions
-# resolved (one value per guard kind, one port per guard, port appears
-# automatically when a guard is enabled, File Guard's async gap gets
-# CLOSED not skipped — see Phase 0). Implementation starting with Phase 0.
+# Status: Phase 0 DONE (2026-09-28, both code paths — see below). Phases
+# 1-4 (the actual output-ports feature) not started; do not begin without
+# explicit user confirmation first.
 # Owner: platform
-# Last updated: 2026-09-27
+# Last updated: 2026-09-28
 
 ---
 
@@ -122,6 +121,30 @@ work rather than blocking the start of Phase 0:
 ## the open questions above)
 
 ### Phase 0 — make File Guard's scan synchronous from AppFlow's point of view
+
+**DONE 2026-09-28.** Implemented for BOTH File Guard code paths — the plan
+below only described the URL-based path when written; a second, separate
+raw-bytes inline path (a2a-stream's zip, docu_writer's PDF — scanned inside
+`pgxAgentA2ACaller.InvokeByID`, never round-tripped through Temporal
+activity history) was found live to still show stale `"pending"` and
+needed its own independent wait, using the same `RedisScanSubscriber`
+underneath. See `go/TEST_INDEX.md`'s S1-177 for the full file/test list.
+Net effect either way: an `"infected"` verdict now fails the run with the
+threat name instead of the file silently passing through as "pending";
+`"clean"`/`"error"` surface the real terminal status; a wait that doesn't
+resolve in time fails open (`"timeout"`), matching the classic
+Orchestrator's own precedent — this was flagged as a real question in the
+original phase text below and resolved by keeping AppFlow consistent with
+the orchestrator rather than diverging into fail-closed.
+
+Live re-verification against `verify-step6-fileguard` (a2a-stream, the
+raw-bytes-path fixture app) was deferred at the user's explicit choice —
+build, `go test ./...`, and a fresh rebuild+restart of all 3 dag-worker
+images were done and confirmed, but the fix has not yet been re-tested
+end-to-end through the browser/API. Do that before relying on this in a
+demo.
+
+Original phase plan (kept for context):
 
 **Researched 2026-09-27, before writing this phase**: a real, working
 completion-wait mechanism ALREADY EXISTS in this codebase —

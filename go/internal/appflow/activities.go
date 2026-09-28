@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	temporalerr "go.temporal.io/sdk/temporal"
@@ -239,6 +240,11 @@ type AppFlowActivities struct {
 	// be nil — a node's text then passes through completely unguarded, same
 	// nil-safe convention as FileGate.
 	TextGate TextGateChecker
+	// FileGateWaiter blocks until File Guard's async scan reaches a real
+	// terminal verdict (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0).
+	// May be nil — FileGateActivityWait then fails open immediately
+	// (ScanStatus:"timeout"), same nil-safe convention as FileGate/TextGate.
+	FileGateWaiter FileGateWaiter
 }
 
 // DebugCredCleaner deletes every per-node debug credential override for one
@@ -530,6 +536,81 @@ func (a *AppFlowActivities) FileGateActivity(ctx context.Context, input FileGate
 		return FileGateCheckOutput{}, fmt.Errorf("appflow: file gate check for node %q: %w", input.NodeID, err)
 	}
 	return out, nil
+}
+
+// FileGateWaitInput is the input to AppFlowFileGateWaitActivity — Phase 0 of
+// docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md.
+type FileGateWaitInput struct {
+	RunID      string `json:"run_id"`
+	ArtifactID string `json:"artifact_id"`
+	NodeID     string `json:"node_id,omitempty"`
+	Verbosity  string `json:"verbosity,omitempty"`
+}
+
+// FileGateWaitOutput is returned by AppFlowFileGateWaitActivity.
+type FileGateWaitOutput struct {
+	// ScanStatus is the REAL terminal verdict — "clean", "infected", or
+	// "error" (the only 3 values middleware.JobResult.FinalStatus's real
+	// terminal-status switch handles, confirmed in job.go's Complete) — or
+	// "timeout" if the scan didn't finish within the wait window (fail-open
+	// case, same precedent as the classic Orchestrator's own
+	// waitAndEmitScanResult).
+	ScanStatus string `json:"scan_status"`
+	Threat     string `json:"threat,omitempty"`
+}
+
+// FileGateWaiter is the interface AppFlowFileGateWaitActivity depends on.
+// Implemented by *orchestrator.RedisScanSubscriber — defined as its own
+// small interface here (matching FileGateChecker/TextGateChecker's existing
+// pattern) so this package doesn't need to import internal/orchestrator.
+type FileGateWaiter interface {
+	WaitForScanResult(ctx context.Context, runID, artifactID string, timeout time.Duration) (result FileGateWaitResult, ok bool)
+}
+
+// FileGateWaitResult mirrors orchestrator.ScanResult's fields — a separate
+// type (not a direct alias) so this package has no compile-time dependency
+// on internal/orchestrator's package, same reasoning as every other small
+// interface on this struct.
+type FileGateWaitResult struct {
+	ScanStatus string
+	Threat     string
+}
+
+// fileGateWaitTimeout bounds how long AppFlowFileGateWaitActivity will wait
+// for a real scan verdict — deliberately much shorter than the classic
+// Orchestrator's 5-minute precedent (scanResultTimeout in
+// internal/orchestrator/tools.go): that path is a background goroutine a
+// user never blocks on, this one is a synchronous step inside a Temporal
+// workflow a user IS waiting on. Real scans observed this session were
+// sub-100ms for small test files; 60s is a conservative upper bound, not a
+// measured worst case for large real files (no such benchmark exists yet
+// in this repo — revisit if real-world file sizes turn out to need more).
+const fileGateWaitTimeout = 60 * time.Second
+
+// FileGateActivityWait blocks until the middleware worker publishes the
+// real scan verdict for artifactID, or fileGateWaitTimeout elapses.
+// Real I/O (Redis pub/sub subscribe) — cannot run inline in deterministic
+// workflow code, same rule documented for every other *Activity method on
+// this struct. A nil FileGateWaiter is a safe no-op — the caller should
+// treat this the same as a timeout (fail open, matching FileGate's
+// documented fail-open posture everywhere else).
+//
+// On timeout, returns ScanStatus:"timeout" rather than an error — this is
+// an expected, handled outcome (mirroring the classic Orchestrator's own
+// fail-open-on-timeout behavior in waitAndEmitScanResult), not an activity
+// failure. The workflow caller decides what "timeout" means for its own
+// node (Phase 0 fails open, same as the classic Orchestrator; revisit this
+// choice explicitly if AppFlow ever needs to fail closed instead).
+func (a *AppFlowActivities) FileGateActivityWait(ctx context.Context, input FileGateWaitInput) (FileGateWaitOutput, error) {
+	if a.FileGateWaiter == nil || input.ArtifactID == "" {
+		return FileGateWaitOutput{ScanStatus: "timeout"}, nil
+	}
+	res, ok := a.FileGateWaiter.WaitForScanResult(ctx, input.RunID, input.ArtifactID, fileGateWaitTimeout)
+	if !ok {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "agent", "node_error", "file guard scan did not complete within the wait window — failing open", input.Verbosity)
+		return FileGateWaitOutput{ScanStatus: "timeout"}, nil
+	}
+	return FileGateWaitOutput{ScanStatus: res.ScanStatus, Threat: res.Threat}, nil
 }
 
 // TextGateCheckInput is the input to AppFlowTextGateActivity — Phase 3 of

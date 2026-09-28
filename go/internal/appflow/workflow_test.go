@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aviciot/them/internal/domain"
 )
@@ -480,6 +481,101 @@ func TestTextGateActivity_GateError_Propagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "db unavailable") {
 		t.Errorf("error = %v, want it to mention the underlying gate error", err)
+	}
+}
+
+// fakeFileGateWaiter implements FileGateWaiter for tests.
+type fakeFileGateWaiter struct {
+	result       FileGateWaitResult
+	ok           bool
+	lastRunID    string
+	lastArtifact string
+	callCount    int
+}
+
+func (f *fakeFileGateWaiter) WaitForScanResult(_ context.Context, runID, artifactID string, _ time.Duration) (FileGateWaitResult, bool) {
+	f.callCount++
+	f.lastRunID = runID
+	f.lastArtifact = artifactID
+	return f.result, f.ok
+}
+
+// AF-WF-24: FileGateActivityWait with a nil FileGateWaiter dependency is a
+// safe no-op that fails open (ScanStatus:"timeout") — same nil-safe
+// convention as FileGate/TextGate (AF-WF-18/21).
+func TestFileGateActivityWait_NilWaiter_FailsOpen(t *testing.T) {
+	acts := &AppFlowActivities{FileGateWaiter: nil}
+	out, err := acts.FileGateActivityWait(context.Background(), FileGateWaitInput{
+		RunID:      "run-1",
+		ArtifactID: "artifact-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ScanStatus != "timeout" {
+		t.Errorf("ScanStatus = %q, want %q for a nil waiter", out.ScanStatus, "timeout")
+	}
+}
+
+// AF-WF-25: FileGateActivityWait delegates to the configured waiter and
+// passes RunID/ArtifactID through unchanged.
+func TestFileGateActivityWait_DelegatesToWaiter(t *testing.T) {
+	waiter := &fakeFileGateWaiter{result: FileGateWaitResult{ScanStatus: "clean"}, ok: true}
+	acts := &AppFlowActivities{FileGateWaiter: waiter}
+	out, err := acts.FileGateActivityWait(context.Background(), FileGateWaitInput{
+		RunID:      "run-1",
+		ArtifactID: "artifact-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ScanStatus != "clean" {
+		t.Errorf("ScanStatus = %q, want the waiter's real result passed through", out.ScanStatus)
+	}
+	if waiter.callCount != 1 {
+		t.Fatalf("want 1 call to the waiter, got %d", waiter.callCount)
+	}
+	if waiter.lastRunID != "run-1" || waiter.lastArtifact != "artifact-1" {
+		t.Errorf("waiter got runID=%q artifactID=%q, want them passed through unchanged", waiter.lastRunID, waiter.lastArtifact)
+	}
+}
+
+// AF-WF-26: a timed-out wait (ok=false) is a handled outcome
+// (ScanStatus:"timeout"), never an error — the workflow decides fail-open
+// vs fail-closed, not the activity.
+func TestFileGateActivityWait_WaiterTimesOut_ReturnsTimeoutStatus(t *testing.T) {
+	waiter := &fakeFileGateWaiter{ok: false}
+	acts := &AppFlowActivities{FileGateWaiter: waiter}
+	out, err := acts.FileGateActivityWait(context.Background(), FileGateWaitInput{
+		RunID:      "run-1",
+		ArtifactID: "artifact-1",
+	})
+	if err != nil {
+		t.Fatalf("a timeout must not be an error, got: %v", err)
+	}
+	if out.ScanStatus != "timeout" {
+		t.Errorf("ScanStatus = %q, want %q", out.ScanStatus, "timeout")
+	}
+}
+
+// AF-WF-27: FileGateActivityWait with an empty ArtifactID is a safe no-op
+// (nothing was ever enqueued to wait for) — fails open the same as a nil
+// waiter, without even calling the waiter.
+func TestFileGateActivityWait_EmptyArtifactID_FailsOpenWithoutCallingWaiter(t *testing.T) {
+	waiter := &fakeFileGateWaiter{ok: true, result: FileGateWaitResult{ScanStatus: "clean"}}
+	acts := &AppFlowActivities{FileGateWaiter: waiter}
+	out, err := acts.FileGateActivityWait(context.Background(), FileGateWaitInput{
+		RunID:      "run-1",
+		ArtifactID: "",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ScanStatus != "timeout" {
+		t.Errorf("ScanStatus = %q, want %q for an empty ArtifactID", out.ScanStatus, "timeout")
+	}
+	if waiter.callCount != 0 {
+		t.Errorf("waiter should never be called with an empty ArtifactID, got %d calls", waiter.callCount)
 	}
 }
 

@@ -50,6 +50,8 @@ func (s *AppFlowTraceWorkflowTestSuite) SetupTest() {
 	s.env.RegisterActivityWithOptions(s.acts.InvokeAgentActivity, temporalactivity.RegisterOptions{Name: AppFlowInvokeAgentActivityName})
 	s.env.RegisterActivityWithOptions(s.acts.InlineLLMActivity, temporalactivity.RegisterOptions{Name: AppFlowInlineLLMActivityName})
 	s.env.RegisterActivityWithOptions(s.acts.TextGateActivity, temporalactivity.RegisterOptions{Name: AppFlowTextGateActivityName})
+	s.env.RegisterActivityWithOptions(s.acts.FileGateActivity, temporalactivity.RegisterOptions{Name: AppFlowFileGateActivityName})
+	s.env.RegisterActivityWithOptions(s.acts.FileGateActivityWait, temporalactivity.RegisterOptions{Name: AppFlowFileGateWaitActivityName})
 	s.env.RegisterActivityWithOptions(s.acts.TraceNodeEventActivity, temporalactivity.RegisterOptions{Name: AppFlowTraceNodeEventActivityName})
 }
 
@@ -618,4 +620,60 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_TextGateWarnFlag_VisibleIn
 		}
 	}
 	s.True(found, "expected a node_done trace mentioning the warn-mode flag; dones=%+v", dones)
+}
+
+// AF-TR-W14: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0 — an infected
+// scan verdict (returned once the wait activity resolves) fails the
+// workflow non-retryably. Proves the wait activity's result is actually
+// consulted, not just called and ignored.
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGateWaitInfected_FailsWorkflowNonRetryably() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{result: AgentInvokeResult{
+		PartKind: "file", FileURL: "https://example.com/report.pdf", FileName: "report.pdf",
+	}}
+	s.acts.FileGate = &fakeFileGate{result: FileGateCheckOutput{ArtifactID: "artifact-1", ScanStatus: "pending"}}
+	s.acts.FileGateWaiter = &fakeFileGateWaiter{ok: true, result: FileGateWaitResult{ScanStatus: "infected", Threat: "EICAR"}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-filegate-infected",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           singleAgentSpec(),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "file guard blocked file")
+	s.Contains(s.env.GetWorkflowError().Error(), "EICAR")
+}
+
+// AF-TR-W15: a clean scan verdict lets the workflow complete normally, and
+// the wait is genuinely SKIPPED (never called) when ScanStatus isn't
+// "pending" in the first place (e.g. "disabled" — no wiring configured) —
+// proving the wait only ever fires for a real enqueued scan, not on every
+// file response.
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGateDisabled_NeverCallsWaitActivity() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{result: AgentInvokeResult{
+		PartKind: "file", FileURL: "https://example.com/report.pdf", FileName: "report.pdf",
+	}}
+	s.acts.FileGate = &fakeFileGate{result: FileGateCheckOutput{ScanStatus: "disabled"}}
+	waiter := &fakeFileGateWaiter{ok: true, result: FileGateWaitResult{ScanStatus: "clean"}}
+	s.acts.FileGateWaiter = waiter
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-filegate-disabled",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           singleAgentSpec(),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	if waiter.callCount > 0 {
+		s.Fail("the wait activity must never be called when File Guard is disabled for this node")
+	}
 }

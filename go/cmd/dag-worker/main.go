@@ -53,6 +53,7 @@ import (
 	"github.com/aviciot/them/internal/middleware"
 	"github.com/aviciot/them/internal/middleware/pii"
 	"github.com/aviciot/them/internal/middleware/promptguard"
+	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
@@ -197,11 +198,20 @@ func run() error {
 		log.Warn("THE_M_S3_ENDPOINT not set — File Guard will fail-open for all apps")
 	}
 	fileGate := &appFlowFileGateAdapter{gate: middleware.NewFileGate(middleware.NewPgxQuerier(rlsPools.Admin), fileGateStore)}
+	// File Guard synchronous wait (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+	// Phase 0): reuses the classic Orchestrator's existing, working
+	// Redis-pub/sub scan-completion mechanism (RedisScanSubscriber) rather
+	// than inventing a new wait pattern — dag-worker never constructed one
+	// before this phase, since AppFlow's File Guard hook was fire-and-forget
+	// until now. Built before agentCaller so agentCaller can hold a
+	// reference for its own raw-bytes inline wait.
+	fileGateWaiter := &appFlowFileGateWaitAdapter{sub: orchestrator.NewRedisScanSubscriber(redisCache.Client())}
 	agentCaller := &pgxAgentA2ACaller{
-		pool:       rlsPools.Admin,
-		cryptoKey:  cryptoKey,
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
-		fileGate:   fileGate,
+		pool:           rlsPools.Admin,
+		cryptoKey:      cryptoKey,
+		httpClient:     &http.Client{Timeout: 5 * time.Minute},
+		fileGate:       fileGate,
+		fileGateWaiter: fileGateWaiter,
 	}
 	// Text Guards (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3): pii/promptguard
 	// processors run synchronously, in-process, inside dag-worker itself —
@@ -222,6 +232,7 @@ func run() error {
 		DebugCredCleaner: debugCredStore,
 		FileGate:         fileGate,
 		TextGate:         textGate,
+		FileGateWaiter:   fileGateWaiter,
 	}
 	appFlowTaskQueue := appflow.AppFlowTaskQueue
 	if cfg.AppFlowTaskQueueOverride != "" {
@@ -245,6 +256,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.FileGateActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowFileGateActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.FileGateActivityWait, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowFileGateWaitActivityName,
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.TextGateActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowTextGateActivityName,
@@ -847,6 +861,13 @@ var _ appflow.InlineLLMCaller = (*dbLLMCaller)(nil)
 
 // ── pgxAgentA2ACaller ─────────────────────────────────────────────────────────
 
+// fileGateInlineWaitTimeout bounds the raw-bytes inline scan wait — same
+// value and same reasoning as appflow.fileGateWaitTimeout (activities.go),
+// duplicated here since this is a different package and the two call sites
+// (URL-based file via a Temporal activity vs. raw-bytes inline within this
+// same activity) are genuinely separate code paths, not one shared call.
+const fileGateInlineWaitTimeout = 60 * time.Second
+
 // pgxAgentA2ACaller implements appflow.AgentInvoker. It resolves the agent
 // endpoint URL by agent UUID from them.agents, then calls it via A2A HTTP POST.
 // The agent auth token is decrypted with the platform crypto key.
@@ -860,6 +881,15 @@ type pgxAgentA2ACaller struct {
 	// be nil (e.g. in tests) — a nil gate just skips the scan, same
 	// nil-safety convention as AppFlowActivities.FileGate.
 	fileGate *appFlowFileGateAdapter
+	// fileGateWaiter blocks for the REAL scan verdict on a raw-bytes file's
+	// enqueued scan (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0) —
+	// same real-verdict wait the URL-based file path gets via
+	// AppFlowFileGateWaitActivity in workflow.go, but called inline here
+	// since this whole method already IS a Temporal activity (InvokeByID is
+	// called from InvokeAgentActivity) — no separate activity call needed
+	// for this path. May be nil — skips the wait, same fail-open posture as
+	// every other optional dependency here.
+	fileGateWaiter *appFlowFileGateWaitAdapter
 }
 
 // InvokeByID calls the A2A agent identified by agentID via A2A v1.0 SendMessage.
@@ -956,25 +986,77 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 	// (genuinely quarantined + scanned in the DB) but was completely
 	// invisible in the debug log, indistinguishable from "never scanned."
 	if result.PartKind == "raw" && len(rawBytes) > 0 {
-		if c.fileGate == nil {
-			result.FileGateScanStatus = "disabled"
-		} else {
-			gateOut, gateErr := c.fileGate.InterceptInline(ctx, appflow.FileGateCheckInput{
-				TenantID:        tenantID,
-				ApplicationID:   applicationID,
-				NodeID:          nodeID,
-				RunID:           runID,
-				FileName:        result.FileName,
-				FileContentType: result.FileContentType,
-			}, rawBytes)
-			if gateErr != nil {
-				return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: file guard check for node %q: %w", nodeID, gateErr)
-			}
-			result.FileGateScanStatus = gateOut.ScanStatus
-			result.FileGateArtifactID = gateOut.ArtifactID
+		var scanErr error
+		result, scanErr = scanRawBytesFilePart(ctx, c.fileGate, c.fileGateWaiter, result, rawBytes, appflow.FileGateCheckInput{
+			TenantID:        tenantID,
+			ApplicationID:   applicationID,
+			NodeID:          nodeID,
+			RunID:           runID,
+			FileName:        result.FileName,
+			FileContentType: result.FileContentType,
+		})
+		if scanErr != nil {
+			return appflow.AgentInvokeResult{}, scanErr
 		}
 	}
 
+	return result, nil
+}
+
+// scanRawBytesFilePart scans a raw-bytes file part (docu_writer's PDF,
+// a2a-stream's zip) inline and waits for the real scan verdict
+// (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0) — extracted from
+// InvokeByID as a standalone function taking the two gate interfaces
+// directly (not the concrete adapter types) specifically so it's
+// unit-testable with fakes, same reasoning
+// decodeAgentSendMessageResponse was extracted for. InvokeByID itself
+// still isn't unit-testable as a whole (needs a live Postgres pool + real
+// HTTP call).
+//
+// A nil fileGate skips the scan entirely (ScanStatus:"disabled") — same
+// fail-open posture FileGate documents everywhere else. A nil
+// fileGateWaiter, or a "pending" scan that isn't waited on, leaves
+// ScanStatus as whatever InterceptInline itself returned (still
+// "pending") — the caller's trace shows "pending", not a fabricated real
+// verdict.
+func scanRawBytesFilePart(
+	ctx context.Context,
+	fileGate appflow.FileGateChecker,
+	fileGateWaiter appflow.FileGateWaiter,
+	result appflow.AgentInvokeResult,
+	rawBytes []byte,
+	in appflow.FileGateCheckInput,
+) (appflow.AgentInvokeResult, error) {
+	if fileGate == nil {
+		result.FileGateScanStatus = "disabled"
+		return result, nil
+	}
+
+	gateOut, gateErr := fileGate.InterceptInline(ctx, in, rawBytes)
+	if gateErr != nil {
+		return appflow.AgentInvokeResult{}, fmt.Errorf("agentA2ACaller: file guard check for node %q: %w", in.NodeID, gateErr)
+	}
+	result.FileGateScanStatus = gateOut.ScanStatus
+	result.FileGateArtifactID = gateOut.ArtifactID
+
+	// A blocked (infected) verdict fails the run non-retryably, same as the
+	// URL-based file path — an infected raw-bytes file must not silently
+	// continue just because this path historically had no wait at all.
+	if gateOut.ScanStatus != "pending" || fileGateWaiter == nil {
+		return result, nil
+	}
+
+	waitRes, ok := fileGateWaiter.WaitForScanResult(ctx, in.RunID, gateOut.ArtifactID, fileGateInlineWaitTimeout)
+	if !ok {
+		result.FileGateScanStatus = "timeout"
+		return result, nil
+	}
+	result.FileGateScanStatus = waitRes.ScanStatus
+	if waitRes.ScanStatus == "infected" {
+		return appflow.AgentInvokeResult{}, fmt.Errorf(
+			"agentA2ACaller: file guard blocked file for node %q (threat=%s)", in.NodeID, waitRes.Threat,
+		)
+	}
 	return result, nil
 }
 
@@ -1150,6 +1232,24 @@ func (a *appFlowTextGateAdapter) Check(ctx context.Context, in appflow.TextGateC
 var _ appflow.TextGateChecker = (*appFlowTextGateAdapter)(nil)
 
 var _ appflow.FileGateChecker = (*appFlowFileGateAdapter)(nil)
+
+// appFlowFileGateWaitAdapter bridges orchestrator.RedisScanSubscriber to the
+// appflow.FileGateWaiter interface (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// Phase 0) — same bridging pattern appFlowFileGateAdapter/appFlowTextGateAdapter
+// already use.
+type appFlowFileGateWaitAdapter struct {
+	sub *orchestrator.RedisScanSubscriber
+}
+
+func (a *appFlowFileGateWaitAdapter) WaitForScanResult(ctx context.Context, runID, artifactID string, timeout time.Duration) (appflow.FileGateWaitResult, bool) {
+	res, ok := a.sub.WaitForScanResult(ctx, runID, artifactID, timeout)
+	if !ok {
+		return appflow.FileGateWaitResult{}, false
+	}
+	return appflow.FileGateWaitResult{ScanStatus: res.ScanStatus, Threat: res.Threat}, true
+}
+
+var _ appflow.FileGateWaiter = (*appFlowFileGateWaitAdapter)(nil)
 
 // pgxRunStatusUpdater implements appflow.RunStatusUpdater using pgxpool.
 type pgxRunStatusUpdater struct {

@@ -48,6 +48,11 @@ const (
 	// scan activity (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
 	AppFlowFileGateActivityName = "AppFlowFileGateActivity"
 
+	// AppFlowFileGateWaitActivityName is the registered name for the
+	// activity that blocks until File Guard's async scan reaches a real
+	// terminal verdict (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0).
+	AppFlowFileGateWaitActivityName = "AppFlowFileGateWaitActivity"
+
 	// AppFlowTextGateActivityName is the registered name for the PII/
 	// prompt-injection text guard activity (Phase 3 of
 	// docs/APPFLOW_TEXT_GUARDS_PLAN.md).
@@ -103,6 +108,15 @@ const (
 	// docs/APPFLOW_RUNTIME_PARAMS_PLAN.md's own review corrected an earlier,
 	// wrong assumption that appFlowActivityTimeout was 120s — it is 10m.
 	DebugRunMaxLifetime = 3*time.Hour + 30*time.Minute
+
+	// fileGateWaitActivityTimeout bounds AppFlowFileGateWaitActivity's own
+	// Temporal StartToCloseTimeout — deliberately longer than the
+	// activity's internal fileGateWaitTimeout (60s, activities.go) so the
+	// activity has room to return its own "timeout" result cleanly rather
+	// than being killed by Temporal's outer timeout first (which would
+	// surface as a real activity failure, not the handled fail-open path
+	// this phase is built around).
+	fileGateWaitActivityTimeout = 75 * time.Second
 )
 
 // WorkflowIDForRun returns a deterministic Temporal workflow ID for an AppFlowWorkflow
@@ -583,6 +597,47 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					out.Status = "failed"
 					retErr = fmt.Errorf("agent %q: file guard check: %w", node.ID, gateErr)
 					return
+				}
+				// Wait for the REAL scan verdict (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+				// Phase 0) — only when a scan was actually enqueued
+				// (ScanStatus=="pending"; "disabled" means no wiring/no
+				// storage configured, nothing to wait for). Own
+				// ActivityOptions: a longer StartToCloseTimeout than the
+				// main ao (the activity itself blocks for up to
+				// fileGateWaitTimeout=60s) and MaximumAttempts:1 — a
+				// timed-out wait must fail once and let this workflow decide
+				// fail-open, not have Temporal's default retry policy
+				// silently re-run the wait up to 3 times, tripling the
+				// user-visible delay.
+				if gateOut.ScanStatus == "pending" {
+					waitAO := workflow.ActivityOptions{
+						TaskQueue:           activityTaskQueue,
+						StartToCloseTimeout: fileGateWaitActivityTimeout,
+						RetryPolicy:         &temporalerr.RetryPolicy{MaximumAttempts: 1},
+					}
+					waitCtx := workflow.WithActivityOptions(ctx, waitAO)
+					var waitOut FileGateWaitOutput
+					waitErr := workflow.ExecuteActivity(waitCtx, AppFlowFileGateWaitActivityName, FileGateWaitInput{
+						RunID:      input.RunID,
+						ArtifactID: gateOut.ArtifactID,
+						NodeID:     node.ID,
+						Verbosity:  input.LogVerbosity,
+					}).Get(waitCtx, &waitOut)
+					if waitErr != nil {
+						out.Status = "failed"
+						retErr = fmt.Errorf("agent %q: file guard wait: %w", node.ID, waitErr)
+						return
+					}
+					if waitOut.ScanStatus == "infected" {
+						out.Status = "failed"
+						retErr = temporalerr.NewNonRetryableApplicationError(
+							fmt.Sprintf("agent %q: file guard blocked file (threat=%s)", node.ID, waitOut.Threat),
+							"FileGateBlocked", nil,
+						)
+						return
+					}
+					traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done",
+						fmt.Sprintf("%s — File Guard: %s", accumulated, waitOut.ScanStatus), input.LogVerbosity)
 				}
 			}
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
