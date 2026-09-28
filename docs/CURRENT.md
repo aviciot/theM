@@ -31,10 +31,22 @@
    up as data; the query itself still has this behavior. Decide: should a blank `node_id` ever
    be a valid "applies to all nodes" wiring (intentional), or should it always mean "orphaned,
    ignore" now that per-node wiring is the norm? Needs a decision before writing a code fix.
-2. **App export/import does not exist yet.** When it's built, it must capture everything
-   configurable via the canvas UI — not just `components`/`connections` — including File
-   Guard/PII/prompt-injection wirings from `them.middleware_wirings`. See CLAUDE.md's new
-   "App Export/Import Must Be Complete" rule.
+2. **App export/import is not complete — full plan now written: `docs/
+   APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md`.** Three existing pieces already exist and must be
+   reconciled, not duplicated: (1) canvas-JSON-only frontend export/import (`docs/
+   APP_CANVAS_EXPORT_IMPORT_PLAN.md`, built 2026-09-22, still live, deliberately excludes
+   Guards/MCP/etc.), (2) "Deploy to Tenant" DB-level clone (`go/internal/admin/dal/
+   app_deploy.go`, has the real ID-remap logic but is missing `middleware_wirings` + 5 other
+   tables), (3) Guard config's own live-DB-query resolution (`internal/middleware/gate.go`,
+   deliberately instant/no-publish, in both debug and prod today — confirmed no existing
+   debug/prod split exists for this). **Next task: Phase 1 of the completeness plan** — extend
+   `app_deploy.go`'s copy list to cover the 6 missing tables, structured as a registry/list
+   (Option C), not bespoke per-table SQL. A related but SEPARATE, not-yet-approved idea
+   (Phase 3, needs its own explicit go-ahead): make Guards publish-gated in production while
+   staying instant in Debug Mode — this is new runtime behavior, ruled out of scope for the
+   export/import fix itself. **Explicitly ruled out:** moving Guards into the canvas JSON
+   ("Option B") — would break Guards' confirmed instant-toggle requirement in both debug and
+   prod; see the completeness plan's "What NOT to do" section for the full reasoning.
 3. **Run ID display is trimmed in the UI**, no copy button — user-reported, not yet started.
    Add more space + a copy-to-clipboard button (watch for the documented http/https copy-button
    quirk raised by the user before implementing).

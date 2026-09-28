@@ -1,0 +1,189 @@
+# App Canvas — Configuration Completeness Plan
+# Status: PLANNING — no code changes yet. Written 2026-09-28 after a live investigation
+# found File Guard/PII config is invisible to export/import, plus a real secret-leak bug
+# (fixed separately, see go/TEST_INDEX.md S1-178) in the unrelated "Deploy to Tenant" feature.
+# Owner: platform
+
+---
+
+## Why this doc exists
+
+The user asked a direct question: *"if we enable File Guard on the canvas, does exporting the
+app include that?"* The answer today is **no** — and investigating why surfaced a general
+problem, not a one-off bug: **there is no standing rule that everything configurable on the
+canvas must be exportable.** Every new canvas feature has been free to invent its own storage
+(own DB table, own save endpoint) with no requirement to also make it travel with the app.
+
+This doc sets that rule going forward, reconciles it with the **three existing, overlapping
+pieces of infrastructure** that already touch parts of this problem (so nothing new gets built
+that duplicates or contradicts them), and lays out a phased plan to close the current gap.
+
+**Primary goal, in the user's own words:** *"1:1, 100% of the app flow, excluding API tokens
+etc."* — used for moving an app between teams and full app backup/restore.
+
+---
+
+## The three existing pieces already in play — read this before touching anything
+
+### 1. Canvas JSON export/import (frontend-only) — `docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`
+
+Built 2026-09-22, still live (`CanvasBuilderView.tsx`'s `handleExport`/`handleImportJSON`).
+Downloads/uploads the `AppDefinitionDoc` JSON (`schema_version`, `components`, `entry_points`,
+`connections`) — purely client-side, no backend call. **Explicitly, deliberately out of scope
+by design:** Guards, MCP credentials, Temporal config — anything not already inside that JSON
+shape. This was the right call for what it was building (a quick canvas-only convenience,
+mirroring the agent builder), but it is not, and was never meant to be, the full app
+export/import this doc is now planning.
+
+Key fact this feature already proved, which the rest of this plan relies on: **components
+resolve by `(kind, namespace, name, version)` — a portable ref — not by DB UUID.**
+`definition_id` is explicitly ignored server-side at Validate/Publish
+(`go/internal/registry/resolver.go`'s `ResolveForPublish`, third arg always `""`). This is why
+the canvas JSON alone is already cross-tenant portable with zero UUID remapping — the model to
+extend, not replace.
+
+### 2. "Deploy to Tenant" (DB-level clone) — `go/internal/admin/dal/app_deploy.go`
+
+A backend feature that clones an app's *database rows* (not just canvas JSON) into another
+tenant, with real UUID remapping for the two ID families that need it (`application_id`,
+`agent_id`+dependents — confirmed shallow, not deep, in
+`docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §3). This is the mechanism that actually has a path to
+including Guards/MCP bindings/etc., because it already operates at the DB level, not the JSON
+level. **Currently also incomplete** — doesn't copy `middleware_wirings`, `app_agent_bindings`,
+`app_mcp_credentials`, `app_flow_llm_overrides`, `app_temporal_config`, `app_debug_config`, or
+`applications.canvas` (full gap list: `docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §4).
+
+**A real secret-leak bug was found and fixed in this feature already** (2026-09-28,
+`go/TEST_INDEX.md` S1-178): `app_params` was copied verbatim, including inline encrypted secret
+entries. Fixed, tested, deployed. This is the feature this plan recommends extending.
+
+### 3. Guard config storage — `them.middleware_wirings`
+
+Lives entirely outside both of the above. Read live, on every single node execution — in both
+Debug Mode and production — via `internal/middleware/gate.go`'s `resolveSecCfg`/`loadWiringCfg`
+(confirmed live 2026-09-28: no separate debug/prod code path exists). This is the "instant
+checkbox toggle" behavior the user explicitly wants to keep for Debug Mode.
+
+---
+
+## The rule, going forward
+
+**Every setting a user can configure by clicking around the App Canvas UI must be one of:**
+
+**(a) Inside the app's `AppDefinitionDoc` JSON** (`components[]`/`entry_points[]`/
+`connections[]`, or a new top-level key if genuinely node/edge-scoped data that doesn't fit the
+existing shape) — automatically covered by canvas export/import (#1 above) and by "Deploy to
+Tenant" once it also ships the JSON, with zero extra per-feature code.
+
+**(b) In its own `application_id`-scoped DB table, registered in one place** — see "Option C"
+below. Covered by "Deploy to Tenant" (#2) once that table is added to its copy list — a
+one-line addition, not bespoke SQL each time.
+
+**Never (c): a feature that lives outside the app's `application_id` scope entirely**, or that
+has no defined path into either (a) or (b). This is the actual failure mode that caused the
+current gap — Guards were built correctly as (b), but "Deploy to Tenant" was never updated to
+know about it. The fix is process, not just code: **closing this gap is a checklist item on any
+PR that adds a new `application_id`-scoped table**, and it's linked from `CLAUDE.md`'s existing
+"App Export/Import Must Be Complete" rule (added 2026-09-28) so it isn't forgotten again.
+
+### Choosing between (a) and (b) for a new feature
+
+Use **(a) — inside the JSON** when the setting:
+- has no reason to change independently of the rest of the canvas (it's part of "what this app
+  does"), and
+- is fine being subject to the same draft → publish timing as everything else in the JSON today.
+
+Use **(b) — its own table** when the setting:
+- must be toggleable instantly, without a publish step (Guards' actual, deliberate requirement —
+  confirmed this is genuinely how they work today, in both debug and prod), or
+- has its own independent lifecycle (e.g. needs versioning, or is queried across apps, or is
+  large/binary), or
+- has a real operational reason to be edited live in production without a redeploy.
+
+**Do not choose (b) by default just because it's easier to bolt on.** That default is exactly
+how Guards ended up invisible to export — the table was the right call for Guards specifically
+(instant-toggle is a real, confirmed requirement), but it must be a deliberate choice each time,
+checked against this list, not the path of least resistance.
+
+---
+
+## Debug-instant vs. publish-gated — a separate, secondary design axis
+
+This is NOT the reason for the (a)/(b) rule above — export/import completeness is the primary
+goal and applies regardless of this. But it's a related question every new feature should also
+answer, because it affects user experience and was the source of real confusion this session:
+
+**Confirmed live 2026-09-28:** today, production and Debug Mode read Guard config through the
+literal same code path — a live DB query, every run, no publish step, for both. There is no
+existing "draft vs. published" split for anything outside the canvas JSON itself. The canvas
+JSON *does* have this split (draft autosave vs. `active_definition_id`'s published snapshot),
+but only for JSON-resident settings — not for anything in its own table.
+
+**The user's stated preference, confirmed 2026-09-28:** production changes should require an
+explicit Publish (safety — no live traffic silently changes behavior mid-flight), but Debug Mode
+should keep working instantly (fast iteration while building/testing).
+
+**This is real, wanted, future work — but it is NOT required to fix export/import,** and doing
+it changes runtime behavior, not just storage. Tracked here as **Phase 3 (optional, separate
+decision point)** below so it doesn't get silently bundled into the export/import fix.
+
+---
+
+## Phased plan
+
+### Phase 0 — Fix the immediate secret-leak bug
+
+**DONE 2026-09-28.** `DeployApplication`'s `app_params` secret leak — see `go/TEST_INDEX.md`
+S1-178. Unblocks the rest of this plan; no dependency on anything below.
+
+### Phase 1 — Close the "Deploy to Tenant" coverage gap (Option C: table registry, not bespoke code)
+
+Extend `app_deploy.go`'s CTE (or a follow-up pass after it, same transaction) to also clone:
+`middleware_wirings` (the confirmed, concrete gap that started this investigation),
+`app_agent_bindings` (minus `credential_bindings`), `app_mcp_credentials` (binding only, minus
+`credential_encrypted`), `app_flow_llm_overrides`, `app_temporal_config`, `app_debug_config`,
+`applications.canvas`.
+
+Structure this as a small, explicit **list of `application_id`-scoped tables to copy** (a Go
+slice/struct, not one growing raw-SQL CTE) — adding a future table means adding one entry with
+its own ID-remap rule (most need none beyond `application_id` itself, per
+`docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §3), not hand-writing new CTE clauses each time. This
+is "Option C" from the earlier discussion — most of the simplicity of a quick bolt-on fix,
+without the "someone forgot to add the new feature's table" risk repeating.
+
+Decision already made (2026-09-28): export captures the **active** app version only, not full
+draft/revision history — matches what "Deploy to Tenant" already does.
+
+### Phase 2 — Turn "Deploy to Tenant" into real export/import (file-based, not just tenant-to-tenant)
+
+Once Phase 1 makes the DB-level clone complete, add a thin wrapper: serialize the result of a
+(now-complete) deploy call to a portable JSON file for backup/download, and a restore path that
+replays the same insert logic from a file instead of a live source app. No second code path —
+same logic, one new entry point. This is what actually delivers "move between teams" and "full
+app backup" as user-facing features, on top of Phase 1's completeness fix.
+
+### Phase 3 — (Optional, separate decision) Debug-instant vs. publish-gated Guards
+
+Only if/when explicitly requested: give production a frozen, publish-time snapshot of guard
+config (new column or embedded in `application_definitions.definition`), while Debug Mode keeps
+reading `middleware_wirings` live as it does today. This is new runtime behavior, not a storage
+migration — `resolveSecCfg`/`loadWiringCfg` would need a debug/production branch that doesn't
+exist today. **Do not start this without a fresh confirmation conversation** — it's a genuine
+scope expansion beyond export/import, and the "instant toggle" behavior it would change is
+currently working as designed for both paths.
+
+---
+
+## What NOT to do (ruled out, with reasons, so it doesn't get re-proposed)
+
+- **Do not move Guards into the canvas JSON ("Option B").** Investigated and rejected
+  2026-09-28: Guards' instant-toggle behavior (no publish needed) is a real, confirmed
+  requirement for both debug and production today. Moving Guards into the JSON would make them
+  inherit the JSON's draft/publish timing, breaking instant toggling — a genuine regression, not
+  a wash. It also doesn't fully solve the general problem, since future features with a real
+  reason to need their own table would hit the same gap again regardless.
+- **Do not build a second, parallel export mechanism.** Three pieces already exist (above); the
+  plan is to complete and connect them, not add a fourth.
+- **Do not attempt UUID/logical-ID schema refactor.** Investigated and rejected — the rewrite
+  chain is shallow (two ID families), per `docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §3/§6. Not
+  justified by the stated use cases (one-time move, backup/restore).
