@@ -1352,6 +1352,40 @@ specific container being tested first, even if it "was already rebuilt earlier t
 
 ---
 
+## `docker compose restart` does NOT pick up a freshly built image — only `up -d` does (found 2026-09-28)
+
+**Symptom:** File Guard's raw-bytes synchronous-wait fix (Phase 0 of
+`docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md`) kept showing the pre-fix `"pending"` trace on live runs,
+across two separate rebuild+restart cycles, even though `docker inspect <container> --format
+'{{.Image}}'` and `docker images ... --format '{{.ID}}'` appeared consistent enough at a glance to
+look like the fix was deployed. Only surfaced clearly once a temporary debug log line was added,
+rebuilt, and STILL never fired on a live run — proof the running binary genuinely predated the
+edit, not a logic bug in the fix itself.
+
+**Root cause:** the deploy command used was `docker compose ... --profile temporal restart
+them-dag-worker them-dag-worker-2 them-dag-worker-debug` after `... build ...`. `restart` only
+stops and starts the EXISTING container — it does not check whether the image tag it was created
+from has since been rebuilt, and does not swap in the new image. The container kept running the
+old binary indefinitely across any number of `build` + `restart` cycles. `docker inspect
+<container> --format '{{.Image}}'` will keep reporting the OLD image's digest in this case, which
+looks like a legitimate confirmation but is actually the tell — comparing it against `docker images
+<repo> --format '{{.ID}}'` (the freshest build) would have shown the mismatch immediately, but this
+comparison was done loosely/dismissed as a manifest-list-digest formatting difference instead of a
+real mismatch the first time around.
+
+**Fix:** `docker compose ... build <services> && docker compose ... up -d --force-recreate
+<services>` — `up -d` (with or without `--force-recreate`) detects that the image changed and
+recreates the container from the new image; `restart` never does this recreation step at all.
+
+**Watch for:** any deploy step in this project that uses `restart` after a `build` — grep the
+command being run, not just its stated intent. When verifying a live fix, always diff the exact
+image ID string (`docker inspect <container> --format '{{.Image}}'` vs `docker images <repo>
+--format '{{.ID}}'`) character-for-character — a "looks close enough" comparison across a
+manifest-list digest and a per-platform ID is not the same check and will hide this exact bug.
+Found while live-verifying `go/TEST_INDEX.md`'s S1-177 (File Guard Phase 0).
+
+---
+
 ## Agent-node resolution being tied to publish time was a real design gap, not just an inconvenience (found 2026-09-24)
 
 **Symptom:** `stage2-graph-llm-condition-v2`'s Debug button failed with `validate: [unresolved_agent]

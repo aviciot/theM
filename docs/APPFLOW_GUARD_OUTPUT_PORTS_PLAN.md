@@ -137,12 +137,16 @@ Orchestrator's own precedent — this was flagged as a real question in the
 original phase text below and resolved by keeping AppFlow consistent with
 the orchestrator rather than diverging into fail-closed.
 
-Live re-verification against `verify-step6-fileguard` (a2a-stream, the
-raw-bytes-path fixture app) was deferred at the user's explicit choice —
-build, `go test ./...`, and a fresh rebuild+restart of all 3 dag-worker
-images were done and confirmed, but the fix has not yet been re-tested
-end-to-end through the browser/API. Do that before relying on this in a
-demo.
+**Live-verified 2026-09-28** against `verify-step6-ws` (raw-bytes path,
+via the user's own live run, not a synthetic test): run `ced5c9d9-...`
+shows `File Guard: clean` in `run_steps.output`, and
+`middleware_jobs.updated_at` (06:45:42.374) lands before the run's own
+`ended_at` (06:45:42.427) — proof the wait genuinely blocked until the
+real scan finished, rather than racing ahead of it. Two earlier "still
+shows pending" live runs on the same day were a deploy problem, not a
+logic bug: `docker compose restart` does not pick up a freshly built
+image (only `up -d`/`--force-recreate` does) — see `docs/LESSONS.md`'s
+2026-09-28 entry.
 
 Original phase plan (kept for context):
 
