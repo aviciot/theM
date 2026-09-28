@@ -163,11 +163,116 @@ draft/revision history — matches what "Deploy to Tenant" already does.
 
 ### Phase 2 — Turn "Deploy to Tenant" into real export/import (file-based, not just tenant-to-tenant)
 
-Once Phase 1 makes the DB-level clone complete, add a thin wrapper: serialize the result of a
-(now-complete) deploy call to a portable JSON file for backup/download, and a restore path that
-replays the same insert logic from a file instead of a live source app. No second code path —
-same logic, one new entry point. This is what actually delivers "move between teams" and "full
-app backup" as user-facing features, on top of Phase 1's completeness fix.
+**Design note, written before implementation (2026-09-28) — the "thin wrapper" framing above
+turned out to be wrong once actually investigated; this replaces it.**
+
+**The real problem:** `DeployApplication`'s CTE is genuinely DB-to-DB — one SQL statement reads
+directly from a live source app row and writes directly into a live target tenant in the same
+breath (`app_deploy.go:297`'s `WITH src AS (SELECT ... FROM them.applications WHERE id = $1)`).
+A file sits in between two separate operations (export now, import maybe weeks later, maybe in a
+different environment with no network path back to the source) — there is no "live source app"
+to `SELECT ... FROM` at import time. This is not a thin wrapper; it's genuinely two new code
+paths: **export** (DB rows → one Go value → JSON file) and **import** (JSON file → DB inserts),
+sharing the *shape* of what travels but not the SQL itself.
+
+**Avoiding ~10 new hand-written Go structs — use `to_jsonb(row)`, not per-table structs.**
+`dal.Application`/`dal.EntryPoint` (the existing summary types returned by `DeployApplication`
+today) are deliberately incomplete views — missing `system_prompt`, `mcp_servers`, every guard
+config field, etc. — built for the admin UI's summary response, not for a byte-perfect
+round-trip. Building a second, complete struct per table (applications,
+application_definitions, app_orchestrators, entry_points, plus all 6 tables from Phase 1, plus
+agents/component_definitions/agent_definitions/agent_runtime_specs for canvas agents) would be
+a lot of new, narrow, easy-to-drift-from-the-schema code. Confirmed live: Postgres'
+`to_jsonb(row)` (or `row_to_json`) can serialize any table's row to a JSON object keyed by
+column name with zero Go-side struct definition — `SELECT to_jsonb(t) FROM (SELECT * FROM
+them.<table> WHERE application_id = $1) t`. **Export becomes: run one `to_jsonb`-shaped SELECT
+per table in the registry (reusing `appScopedConfigTables` from Phase 1, extended with a
+read-only SELECT variant), collect the results into one JSON envelope.** No new struct per
+table — the JSON shape IS the table's column shape, which also means a future column added to
+any of these tables is automatically included in export with zero code change (only a genuinely
+new *table* needs the Phase 1 registry entry).
+
+**Secret redaction must happen in the export SELECT, not as a separate JSON-filtering pass.**
+Same reasoning as Phase 0/1's fixes — a generic `to_jsonb(row)` would include
+`credential_bindings`/`credential_encrypted`/`app_params`'s secret entries verbatim, since it has
+no concept of "this column is a secret." Each table's export SELECT must explicitly project
+secret columns as `NULL`/filtered, mirroring exactly what Phase 1's copy SQL already does
+(`NULL` for `credential_bindings`/`credential_encrypted`, the `jsonb_object_agg`/`jsonb_each`
+filter for `app_params`) — this is why the registry needs its OWN export-SELECT string per
+table, not a blind `SELECT *`.
+
+**Agents travel differently from the other 6 tables — bundled by value, not by reference.**
+`CopyAgentsForDeploy` (today, DB-to-DB) matches an agent in the target tenant by
+`(kind, namespace, name, version)` and only copies it if genuinely absent or conflict-free. For
+a *file* export, there is no live target tenant to check against at export time — the file must
+carry each referenced agent's full row (component_definitions + agents +, for canvas agents,
+agent_definitions + agent_runtime_specs) inline, and the conflict check moves to **import time**
+instead, against whatever tenant the file is being imported into. Same match-by-identity logic
+as today, just relocated from "compare two live tenants" to "compare the file's agent block
+against the importing tenant."
+
+**Import target: always a NEW application in an EXISTING tenant** (not "create a new tenant" —
+tenant creation/selection is a separate, existing admin flow) — matches "move between teams"
+(pick the destination team's tenant, import into it) and "restore from backup" (re-import into
+the same tenant the backup came from, or a different one for disaster recovery) equally. Reuses
+exactly the same new-UUID-generation + `agentIDMap`-style remap Phase 1 already proved correct —
+import is structurally "DeployApplication, but the `src` CTE's source is a JSON file's values
+bound as query parameters, not a live `SELECT ... FROM them.applications`."
+
+**File shape (envelope):**
+```json
+{
+  "export_version": 1,
+  "exported_at": "2026-09-28T12:00:00Z",
+  "application": { /* to_jsonb of the applications row, secrets already stripped */ },
+  "application_definition": { /* to_jsonb of the active application_definitions row */ },
+  "entry_points": [ /* to_jsonb per row */ ],
+  "app_orchestrators": [ /* to_jsonb per row, api_key_encrypted columns NULL */ ],
+  "scoped_config": {
+    "middleware_wirings": [ /* ... */ ],
+    "app_agent_bindings": [ /* ..., credential_bindings NULL */ ],
+    "app_mcp_credentials": [ /* ..., credential_encrypted NULL */ ],
+    "app_flow_llm_overrides": [ /* ... */ ],
+    "app_temporal_config": [ /* ... */ ],
+    "app_debug_config": [ /* ... */ ]
+  },
+  "agents": [ /* one entry per referenced agent: component_definition + agent + optional canvas deps */ ]
+}
+```
+`export_version` is a real, checked field from day one (not deferred) — a future schema change to
+the envelope must bump this and either migrate or reject an old file at import time, not silently
+mis-map old fields into new columns.
+
+**Implementation shape (once approved):**
+1. `ExportApplication(ctx, appID) (ExportedApp, error)` — new DAL function/file
+   (`app_export.go`), builds the envelope above via one `to_jsonb` SELECT per table (reusing
+   Phase 1's `appScopedConfigTables` list, extended with an `exportSQL` field alongside
+   `copySQL`) plus the agents block (adapting `CopyAgentsForDeploy`'s existing fetch queries,
+   without the target-tenant-exists check).
+2. `ImportApplication(ctx, envelope ExportedApp, targetTenantID string) (Application, error)` —
+   new DAL function, same file. Structurally mirrors `DeployApplication` + `CopyAgentsForDeploy`
+   combined, but sourcing every INSERT's values from the decoded envelope struct instead of a
+   `SELECT ... FROM them.applications WHERE id = $1`. Same `agentIDMap` remap logic, same
+   conflict handling (`ErrDeployConflict`) for a same-identity/different-content agent already
+   present in the target tenant.
+3. Two new HTTP routes: `GET /admin/applications/{id}/export` (streams the JSON file,
+   `Content-Disposition: attachment`) and `POST /admin/applications/import?target_tenant_id=...`
+   (multipart file upload or raw JSON body — decide at implementation time based on what's
+   simpler for the frontend to wire up).
+4. Frontend: an Export button next to (or replacing/subsuming) the existing canvas-only export
+   (`docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`'s `handleExport`) — **decide whether the canvas-only
+   export stays as a separate, smaller "just the canvas JSON" convenience, or is retired in
+   favor of this strictly-more-complete one.** Leaning toward keeping both: the canvas-only one
+   is useful for quick within-tenant canvas backup/sharing without touching Guards/MCP/etc.,
+   while this new one is the "real" 1:1 app export the user asked for. Flag for a decision at
+   implementation time, not assumed here.
+
+**Explicitly deferred to implementation time, not decided in this note:**
+- Whether `POST .../import` creates the target application inside the same request/transaction
+  as parsing the file, or is a two-step "validate file, show a preview/checklist, confirm import"
+  flow (the existing deploy checklist — `LLMKeysRequired`/`MCPServers`/`AgentsConflict` — is the
+  precedent; import likely wants the same "here's what needs attention" response shape).
+- Exact wire format for `POST .../import`'s file upload (multipart vs. raw JSON body).
 
 ### Phase 3 — (Optional, separate decision) Debug-instant vs. publish-gated Guards
 
