@@ -1627,3 +1627,62 @@ cleanup actually ran — check for leftover rows directly (`SELECT count(*) FROM
 slug LIKE 'test-prefix%'` after a run) when a test seeds fixture data with FK relationships,
 the same way this was actually caught: not by a test failure, but by running the *same* test
 twice in a row and noticing the second run collided.
+
+---
+
+## `to_jsonb`/import round-trip: a real array column is not the same as a JSONB column (found 2026-09-28)
+
+**Found while:** building Phase 2's file-based app export/import
+(docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md) — `TestDAL_ExportImportApplication_RoundTrip`
+failed on `ImportApplication`'s very first orchestrator insert: `column "edges" is of type
+text[] but expression is of type jsonb`.
+
+**Root cause:** `them.app_orchestrators.edges` is a real Postgres `text[]` column (default
+`'{websocket}'::text[]`), not JSONB. `ExportApplication`'s `to_jsonb(row)`-based export SELECT
+correctly turns it into a JSON array in the file (`to_jsonb` handles this transparently — a
+Postgres array becomes a JSON array with no special-casing needed on the export side). The
+`importOrchestratorRow` Go struct originally declared `Edges json.RawMessage`, and the import
+INSERT bound it as `$28::jsonb` — which is wrong on the way IN, even though the way OUT (export)
+worked by accident. `to_jsonb` erasing the distinction between "real array column" and "JSONB
+column" in the *output* JSON shape doesn't mean the two are interchangeable on the way back in;
+the target column's real type still has to be respected.
+
+**Fix:** changed the Go field to `Edges []string` (so `encoding/json` decodes the JSON array
+into a real Go slice) and the INSERT parameter to `$28::text[]`, passing `o.Edges` directly
+instead of `string(o.Edges)`.
+
+**Watch for:** any future table added to the export/import registry that has an array column
+(`text[]`, `uuid[]`, etc.) needs its import-side Go type to be a real slice (`[]string`,
+`[]int`, ...) bound with the matching `::type[]` cast — not `json.RawMessage` bound as `::jsonb`
+just because that's the default pattern used for the genuinely-JSONB columns elsewhere in the
+same table. `to_jsonb` on export flattens this distinction away in the file's own shape; the
+database schema on the import side does not.
+
+---
+
+## `t.Cleanup` leaked an agent created BY the code under test, not just one seeded BY the test (found 2026-09-28)
+
+**Found while:** the same Phase 2 round-trip test above — `TestDAL_ExportImportApplication_
+RoundTrip` passed 3 consecutive times with zero test-reported errors, but a leftover-row check
+after each run found new `agents`/`component_definitions` rows accumulating every single time.
+
+**Root cause:** a variant of the same class of bug as the "`t.Cleanup`'s LIFO order" entry
+above, but with a twist — this time the leaking row wasn't seeded by the TEST at all. It was
+created BY `ImportApplication` itself: since the target tenant has no agent matching the
+exported one's identity, import inserts a brand-new `agents` + `component_definitions` row pair
+in the target tenant. The test only tracked `agentIDsToClean` for the ORIGINAL, test-seeded
+source-side agent — the code-under-test's own newly-created row had no id captured anywhere,
+so nothing ever cleaned it up.
+
+**Fix:** after calling `ImportApplication`, query `SELECT id FROM them.agents WHERE tenant_id =
+$1` against the target tenant and register cleanup for whatever comes back, in addition to the
+originally-seeded agent ids — rather than trying to thread the new agent's id back out of
+`ImportApplication`'s return value (which deliberately doesn't expose it, matching
+`DeployApplication`'s own return shape).
+
+**Watch for:** when a test's job is specifically to prove that the code under test CREATES new
+rows (not just moves/copies existing ones), the cleanup can't rely on a list of ids the test
+itself already knows about before calling the function — it has to look at what the function
+actually left behind afterward. This is a strictly harder case than the earlier LIFO-ordering
+entry, which was about ordering existing cleanups correctly; this one is about a cleanup target
+that doesn't exist yet at the time cleanups are normally registered.
