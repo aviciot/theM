@@ -1686,3 +1686,34 @@ itself already knows about before calling the function — it has to look at wha
 actually left behind afterward. This is a strictly harder case than the earlier LIFO-ordering
 entry, which was about ordering existing cleanups correctly; this one is about a cleanup target
 that doesn't exist yet at the time cleanups are normally registered.
+
+---
+
+## Two "Export"/"Import" features with the same name, different scope, caused real confusion (found 2026-09-28)
+
+**What happened:** while building the new full-app export/import (docs/
+APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md Phase 2), a much older, narrower canvas-only Export/Import
+feature already existed in the App Canvas builder (`CanvasBuilderView.tsx`'s `handleExport`/
+`handleImportJSON`, per `docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`, built 2026-09-22) — pure
+frontend, canvas JSON only (nodes/edges), no guards/agents/cross-tenant support. Adding the new
+Runtime-tab Export/Import next to it, without first checking whether the old one should be
+removed, meant the user ended up looking at two buttons both labeled "Export"/"Import" with no
+way to tell from the UI alone that they did completely different things.
+
+**Root cause:** the earlier investigation (docs/APP_EXPORT_IMPORT_INVESTIGATION.md) inventoried
+every *table* an app touches, but never checked what *frontend features* already claimed to
+solve export/import — so the new work was designed and half-built before the collision was
+noticed, by the user, not by the person building it.
+
+**Fix:** removed the old feature entirely (not deprecated, not left "for canvas-only quick
+sharing" — a real option considered and rejected, since the confusion of two same-named buttons
+outweighs the narrower convenience). `CanvasExportImport.ts` deleted; `CanvasTopBar`'s two
+single-purpose slots (`exportButton`/`importControls`) collapsed into one generic `extraActions`
+slot, now used only for the unrelated "Debug this draft" button that happened to share the same
+slot.
+
+**Watch for:** before adding a new feature whose name overlaps an existing one ("export",
+"import", "deploy", "publish" — anything that sounds like a generic verb), grep the frontend for
+that name FIRST, not after building — `grep -rl "handleExport\|Export JSON"` would have surfaced
+this in seconds, before any design or code was written. A feature-name collision is a UX bug
+regardless of whether the underlying code is correct.

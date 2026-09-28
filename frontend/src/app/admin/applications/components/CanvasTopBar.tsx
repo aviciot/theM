@@ -24,8 +24,7 @@ export function CanvasTopBar({
   onSetExecutionBackend,
   onSaveDraft,
   onPublishClick,
-  exportButton,
-  importControls,
+  extraActions,
 }: {
   app: Application;
   activeDef: AppDefinition | null;
@@ -41,11 +40,9 @@ export function CanvasTopBar({
   onSetExecutionBackend: (v: 'local' | 'temporal') => void;
   onSaveDraft: () => void;
   onPublishClick: () => void;
-  /** Slot for the Export JSON button (docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md) — kept as an
+  /** Slot for extra draft-only actions (currently: Debug this draft) — kept as an
    * injected node rather than owned here so CanvasTopBar stays a pure display component. */
-  exportButton?: React.ReactNode;
-  /** Slot for the Import JSON button + hidden file input. */
-  importControls?: React.ReactNode;
+  extraActions?: React.ReactNode;
 }) {
   return (
     <>
@@ -69,8 +66,7 @@ export function CanvasTopBar({
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {importControls}
-        {exportButton}
+        {extraActions}
         {activeDef && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>Execution</span>

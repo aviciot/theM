@@ -21,7 +21,6 @@ import { CanvasInnerWithDrop, validateConnection } from './CanvasInner';
 import { CanvasNodePropertiesPanel } from './cbv/CanvasNodePropertiesPanel';
 import { CanvasTopBar } from './CanvasTopBar';
 import { CanvasPalette } from './CanvasPalette';
-import { exportAppDefinition, parseImportedAppDefinition } from './CanvasExportImport';
 import { AppFlowDebugPanel } from './AppFlowDebugPanel';
 import { AppFlowDebugInspector } from './AppFlowDebugInspector';
 import { useAppFlowDebugSession } from '../hooks/useAppFlowDebugSession';
@@ -184,9 +183,6 @@ export function CanvasBuilderView({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [layoutDir, setLayoutDir] = useState<'TB' | 'LR'>('TB');
 
-  // Export/Import JSON (docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md)
-  const importFileRef = useRef<HTMLInputElement>(null);
-
   // App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — real WS
   // consumer, not a simulator. Runs the saved draft directly on the debug
   // Temporal worker pool; node states drive CanvasNodes.tsx's overlay via
@@ -308,42 +304,6 @@ export function CanvasBuilderView({
     } catch {
       showToast('Failed to create draft', false);
     }
-  }
-
-  // ── Export / Import JSON (docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md) ────────────
-  // Import is gated to "no definition loaded yet" — same rule the agent
-  // builder uses — so it never silently discards an in-progress draft.
-  function handleExport() {
-    const doc = activeDef ? canvasToDoc(nodes, edges, draft?.name ?? app.name, executionBackend) : draft;
-    if (!doc) { showToast('Nothing to export yet', false); return; }
-    exportAppDefinition(doc, app.slug ?? app.name);
-  }
-
-  function handleImportJSON() {
-    importFileRef.current?.click();
-  }
-
-  function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ''; // allow re-importing the same filename consecutively
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const result = parseImportedAppDefinition(ev.target?.result as string);
-      if ('error' in result) {
-        showToast(`Import failed: ${result.error}`, false);
-        return;
-      }
-      const seedWithName: AppDefinitionDoc = { ...result.doc, name: result.doc.name || app.name };
-      try {
-        const res = await themApi.createDefinition(app.id, { definition: seedWithName });
-        await reloadDefs(res.id);
-        showToast('Imported — click Validate to confirm every referenced component exists in this tenant', true);
-      } catch {
-        showToast('Import failed: could not create draft from imported file', false);
-      }
-    };
-    reader.readAsText(file);
   }
 
   async function saveDraft() {
@@ -536,35 +496,14 @@ export function CanvasBuilderView({
         onSetExecutionBackend={v => { setExecutionBackend(v); setIsDirty(true); setLogoResult('none'); }}
         onSaveDraft={saveDraft}
         onPublishClick={handlePublishClick}
-        exportButton={
-          <>
-            {activeDef && !appFlowDebug.debug.active && (
-              <button onClick={appFlowDebug.openPanel} title="Debug this draft — real execution on the isolated debug worker pool, no publish required" style={{
-                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)',
-                color: '#f59e0b', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-              }}>▶ Debug</button>
-            )}
-            <button onClick={handleExport} title="Export as JSON file" style={{
-              background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.5)',
-              color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-            }}>↑ Export JSON</button>
-          </>
+        extraActions={
+          activeDef && !appFlowDebug.debug.active ? (
+            <button onClick={appFlowDebug.openPanel} title="Debug this draft — real execution on the isolated debug worker pool, no publish required" style={{
+              background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)',
+              color: '#f59e0b', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+            }}>▶ Debug</button>
+          ) : undefined
         }
-        importControls={!activeDef ? (
-          <>
-            <input
-              ref={importFileRef}
-              type="file"
-              accept=".json,application/json"
-              style={{ display: 'none' }}
-              onChange={handleImportFileChange}
-            />
-            <button onClick={handleImportJSON} title="Import a JSON app definition into a new draft" style={{
-              background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.5)',
-              color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-            }}>↓ Import JSON</button>
-          </>
-        ) : undefined}
       />
 
       {appFlowDebug.debug.active && (

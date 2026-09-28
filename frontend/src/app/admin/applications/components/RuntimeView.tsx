@@ -104,6 +104,14 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   const [deployResult, setDeployResult] = useState<import('@/lib/api').DeployResult | null>(null);
   const [deployError,  setDeployError]  = useState('');
 
+  const [exporting,      setExporting]      = useState(false);
+  const [exportError,    setExportError]    = useState('');
+  const [importTarget,   setImportTarget]   = useState('');
+  const [importFile,     setImportFile]     = useState<File | null>(null);
+  const [importing,      setImporting]      = useState(false);
+  const [importResult,   setImportResult]   = useState<import('@/lib/api').ImportResult | null>(null);
+  const [importError,    setImportError]    = useState('');
+
   useEffect(() => {
     themApi.getProviderKeys(app.id).then(statuses => {
       setKeyStatuses(statuses);
@@ -265,6 +273,35 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     } catch (e: unknown) {
       setDeployError(e instanceof Error ? e.message : 'Deploy failed');
     } finally { setDeploying(false); }
+  }
+
+  async function handleExport() {
+    setExporting(true); setExportError('');
+    try {
+      const envelope = await themApi.exportApplication(app.id);
+      const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${app.slug || 'app'}-export.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      setExportError(e instanceof Error ? e.message : 'Export failed');
+    } finally { setExporting(false); }
+  }
+
+  async function handleImport() {
+    if (!importTarget || !importFile) return;
+    setImporting(true); setImportError(''); setImportResult(null);
+    try {
+      const text = await importFile.text();
+      const envelope = JSON.parse(text);
+      const result = await themApi.importApplication(importTarget, envelope);
+      setImportResult(result);
+    } catch (e: unknown) {
+      setImportError(e instanceof Error ? e.message : 'Import failed');
+    } finally { setImporting(false); }
   }
 
   async function handleSave() {
@@ -612,6 +649,76 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
                 )}
               </div>
             )}
+          </Section>
+        )}
+
+        {user?.role === 'super_admin' && (
+          <Section title="Export / Import Application" icon="save" accent="#818cf8" defaultOpen={false}
+            subtitle="Download a full backup of this app, or restore one into a tenant">
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+                Downloads everything configured for this app — entry points, orchestrators, File Guard/PII/prompt-injection
+                wirings, MCP bindings, LLM overrides, Temporal and debug config, and every referenced agent — as one JSON
+                file. Secrets (credentials, API keys) are never included; the destination must supply its own.
+              </div>
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                style={{ padding: '8px 20px', borderRadius: 7, border: 'none', cursor: exporting ? 'not-allowed' : 'pointer', background: '#818cf8', color: '#0a0f1e', fontSize: 13, fontWeight: 700, opacity: exporting ? 0.5 : 1 }}
+              >
+                {exporting ? 'Exporting…' : 'Export as JSON'}
+              </button>
+              {exportError && (
+                <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginTop: 8 }}>{exportError}</div>
+              )}
+            </div>
+
+            <div style={{ borderTop: `1px solid ${C.glassBorder}`, paddingTop: 14 }}>
+              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+                Import a previously exported file into a tenant — creates a brand-new application there. The source
+                application does not need to still exist.
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={e => { setImportFile(e.target.files?.[0] ?? null); setImportResult(null); setImportError(''); }}
+                  style={{ ...sharedField, flex: '1 1 220px' }}
+                />
+                <select
+                  value={importTarget}
+                  onChange={e => { setImportTarget(e.target.value); setImportResult(null); setImportError(''); }}
+                  style={{ ...sharedField, flex: '1 1 220px' }}
+                >
+                  <option value="">— select target tenant —</option>
+                  {tenants.map(t => (
+                    <option key={t.id} value={t.id}>{t.display_name || t.slug} ({t.slug})</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleImport}
+                  disabled={!importTarget || !importFile || importing}
+                  style={{ padding: '8px 20px', borderRadius: 7, border: 'none', cursor: (!importTarget || !importFile || importing) ? 'not-allowed' : 'pointer', background: '#818cf8', color: '#0a0f1e', fontSize: 13, fontWeight: 700, opacity: (!importTarget || !importFile || importing) ? 0.5 : 1 }}
+                >
+                  {importing ? 'Importing…' : 'Import'}
+                </button>
+              </div>
+              {importError && (
+                <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginBottom: 8 }}>{importError}</div>
+              )}
+              {importResult && (
+                <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(129,140,248,0.07)', border: '1px solid rgba(129,140,248,0.25)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#818cf8', marginBottom: 6 }}>Imported successfully</div>
+                  <div style={{ fontSize: 12, color: C.text }}>
+                    App: <span style={{ fontFamily: 'JetBrains Mono, monospace', color: C.textMuted }}>{importResult.application.slug}</span>
+                    {' '}in tenant <span style={{ fontFamily: 'JetBrains Mono, monospace', color: C.textMuted }}>{importResult.application.tenant_slug}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#fbbf24', marginTop: 6 }}>
+                    Provider keys, agent auth tokens, and MCP/agent-binding credentials were not imported — configure them in the target tenant before running this app.
+                  </div>
+                </div>
+              )}
+            </div>
           </Section>
         )}
         </>)}

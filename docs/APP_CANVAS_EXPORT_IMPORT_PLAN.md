@@ -1,5 +1,13 @@
 # App Canvas — Export / Import JSON
-# Status: dangling-root gap FIXED (2026-09-22). Export/import feature BUILT (2026-09-22), pending manual test.
+# Status: REMOVED (2026-09-28) — superseded by the full-app export/import built in
+# docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md Phase 2 (GET/POST /admin/applications/.../export,
+# /import). This canvas-only feature covered only the canvas JSON (nodes/edges) — no guards, no
+# agents, no cross-tenant move — and caused real user confusion sitting alongside the new,
+# strictly more complete feature (two "Export"/"Import" buttons, unclear which did what). Removed
+# entirely: CanvasExportImport.ts deleted, handleExport/handleImportJSON/handleImportFileChange
+# removed from CanvasBuilderView.tsx, CanvasTopBar's exportButton/importControls slots collapsed
+# into one extraActions slot (now only used for the Debug button). Kept this doc for historical
+# context — do not resurrect this design; use the completeness plan's feature instead.
 # Date: 2026-09-21
 
 ---

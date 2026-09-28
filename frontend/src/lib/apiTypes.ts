@@ -1143,6 +1143,17 @@ export interface DeployResult {
   };
 }
 
+// AppExportEnvelope is the full, portable, secrets-redacted export of one
+// application (docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md Phase 2). The
+// frontend never inspects its contents — it's downloaded as a file on
+// export and re-uploaded verbatim on import — so this is intentionally an
+// opaque passthrough type, not a field-by-field mirror of the Go struct.
+export type AppExportEnvelope = Record<string, unknown>;
+
+export interface ImportResult {
+  application: Application;
+}
+
 export interface TenantRole {
   id: string;
   tenant_id: string;
