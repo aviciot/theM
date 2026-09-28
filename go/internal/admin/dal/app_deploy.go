@@ -287,11 +287,22 @@ ON CONFLICT (definition_id) DO NOTHING`
 // DeployApplication atomically clones a source application into a target tenant.
 // agentIDMap (old UUID → new UUID) is produced by CopyAgentsForDeploy; pass nil
 // when the source app has no agents. provider_keys and app_mcp_credentials are
-// intentionally NOT copied. Returns the newly created Application.
+// intentionally NOT copied. app_params is copied with every secret entry
+// stripped (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §5): a secret entry is a
+// JSON object carrying a "ct" (ciphertext) key (db/045_app_global_params.sql),
+// a non-secret entry is a plain scalar — this was previously copied verbatim,
+// leaking encrypted secret ciphertext into the target tenant. Returns the
+// newly created Application.
 func (d *DB) DeployApplication(ctx context.Context, sourceAppID, targetTenantID string, agentIDMap map[string]string) (Application, error) {
 	const cte = `
 WITH src AS (
-    SELECT name, slug, enabled, runtime_config, app_params, active_definition_id
+    SELECT name, slug, enabled, runtime_config,
+        COALESCE((
+            SELECT jsonb_object_agg(key, value)
+            FROM jsonb_each(app_params)
+            WHERE NOT (jsonb_typeof(value) = 'object' AND value ? 'ct')
+        ), '{}'::jsonb) AS app_params_filtered,
+        active_definition_id
     FROM them.applications
     WHERE id = $1::uuid
 ),
@@ -301,7 +312,7 @@ new_app AS (
     SELECT
         gen_random_uuid(), $2::uuid, name,
         slug || '-' || substr(md5(random()::text), 1, 6),
-        enabled, '{}'::jsonb, runtime_config, app_params,
+        enabled, '{}'::jsonb, runtime_config, app_params_filtered,
         now(), now()
     FROM src
     RETURNING id, name, slug, enabled

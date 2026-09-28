@@ -1546,3 +1546,36 @@ decision — check whether the *runtime* actually enforces that restriction (`go
 in this case: it doesn't) before treating "the UI won't let me draw this wire" as authoritative.
 A UI gap and a real architectural constraint look identical from the outside until you check the
 execution engine directly.
+
+---
+
+## `DeployApplication` was copying encrypted secrets into the target tenant via `app_params` (found 2026-09-28)
+
+**Found while:** investigating a full app export/import feature (docs/APP_EXPORT_IMPORT_
+INVESTIGATION.md), not while looking for a bug — surfaced as a side effect of inventorying every
+table an app touches and checking what each one's export behavior should be.
+
+**Root cause:** `them.applications.app_params` (`db/045_app_global_params.sql`) stores per-app
+named parameters in one JSONB blob where secrets and non-secrets share the same shape: a secret
+entry is `{"name": {"ct": "enc:...", "hint": "XXXX"}}`, a non-secret entry is a plain scalar
+(`{"name": "value"}`). `go/internal/admin/dal/app_deploy.go`'s `DeployApplication` — the existing
+"deploy this app to another tenant" feature — copied the whole `app_params` column verbatim into
+the newly cloned application row, with no filtering. Every other secret-bearing column in this
+same function (`llm_api_key_encrypted`, `transcription_api_key_encrypted`, etc.) was already
+explicitly nulled out — `app_params` was simply missed, because unlike those columns its secret-
+ness isn't visible from the column name or type; it's a runtime property of individual JSON keys
+inside one JSONB column.
+
+**Fix:** filter `app_params` inside the existing CTE itself — `jsonb_object_agg(key, value) FROM
+jsonb_each(app_params) WHERE NOT (jsonb_typeof(value) = 'object' AND value ? 'ct')` — dropping any
+entry shaped like a secret, keeping everything else untouched. Verified with 3 new integration
+tests against real Postgres (`app_deploy_secrets_integration_test.go`) since a fake Querier cannot
+execute Postgres jsonb functions and would have silently passed either way.
+
+**Watch for:** a JSONB (or any semi-structured) column that mixes secret and non-secret values by
+convention, not by a separate column/table, is invisible to the usual "grep for `_encrypted`/
+`api_key` column names" secret audit. Any future copy/clone/export code path that touches a JSONB
+config blob must be checked for this pattern specifically — the column name (`app_params`) gives
+no hint that it can carry ciphertext. Worth a broader audit: are there other JSONB columns in this
+schema with the same secret-and-non-secret-mixed-in-one-blob shape (`runtime_config`? `security_config`?)
+that a future copy path could miss the same way?
