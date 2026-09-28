@@ -138,6 +138,13 @@ S1-178. Unblocks the rest of this plan; no dependency on anything below.
 
 ### Phase 1 — Close the "Deploy to Tenant" coverage gap (Option C: table registry, not bespoke code)
 
+**DONE 2026-09-28.** All 6 tables below now copy correctly, plus `applications.canvas`.
+`appScopedConfigTables` (`go/internal/admin/dal/app_deploy.go`) is the registry — see
+`go/TEST_INDEX.md` S1-179 for the full test list and 2 real bugs found/fixed while building it
+(an unused SQL parameter, and a `t.Cleanup` LIFO-ordering bug that leaked test fixture rows on
+every run). `go build`/`go vet`/`go test ./...` clean; integration tests pass against real
+Postgres, re-run 3x with a leftover-row check to confirm the fixture cleanup actually holds.
+
 Extend `app_deploy.go`'s CTE (or a follow-up pass after it, same transaction) to also clone:
 `middleware_wirings` (the confirmed, concrete gap that started this investigation),
 `app_agent_bindings` (minus `credential_bindings`), `app_mcp_credentials` (binding only, minus

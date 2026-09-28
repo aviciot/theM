@@ -308,11 +308,12 @@ WITH src AS (
 ),
 new_app AS (
     INSERT INTO them.applications
-        (id, tenant_id, name, slug, enabled, provider_keys, runtime_config, app_params, created_at, updated_at)
+        (id, tenant_id, name, slug, enabled, provider_keys, runtime_config, app_params, canvas, created_at, updated_at)
     SELECT
-        gen_random_uuid(), $2::uuid, name,
-        slug || '-' || substr(md5(random()::text), 1, 6),
-        enabled, '{}'::jsonb, runtime_config, app_params_filtered,
+        gen_random_uuid(), $2::uuid, src.name,
+        src.slug || '-' || substr(md5(random()::text), 1, 6),
+        src.enabled, '{}'::jsonb, src.runtime_config, src.app_params_filtered,
+        (SELECT a.canvas FROM them.applications a WHERE a.id = $1::uuid),
         now(), now()
     FROM src
     RETURNING id, name, slug, enabled
@@ -427,7 +428,154 @@ LEFT JOIN them.application_definitions d ON d.id = sd.active_definition_id`
 		}
 	}
 
+	if err := d.copyAppScopedConfigForDeploy(ctx, sourceAppID, a.ID, agentIDMap); err != nil {
+		return Application{}, err
+	}
+
 	a.EntryPoints = d.ListEntryPoints(ctx, a.ID)
 	a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
 	return a, nil
+}
+
+// appScopedConfigTable is one entry in the registry copyAppScopedConfigForDeploy
+// walks. Adding a future application_id-scoped table to a deploy/export means
+// adding one entry here — not writing a new bespoke CTE clause — per
+// docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md's Phase 1 ("Option C").
+//
+// copySQL must be parameterized as: $1=sourceAppID, $2=newAppID. None of the
+// 6 tables below carry their own tenant_id column — ownership is entirely via
+// application_id, resolved through a join to them.applications by RLS policy
+// (confirmed via \d on each table) — so no target-tenant parameter is needed.
+type appScopedConfigTable struct {
+	name         string
+	copySQL      string
+	remapAgentID bool // true if this table has an agent_id column needing agentIDMap remap
+}
+
+var appScopedConfigTables = []appScopedConfigTable{
+	{
+		name:         "middleware_wirings",
+		remapAgentID: true,
+		// node_id is the canvas-JSON instance_id, stable across environments —
+		// no remap needed (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §3). def_id
+		// is a fixed platform-row FK (File Guard/PII/etc. builtin defs), copied
+		// unchanged since these rows are expected to exist identically in every
+		// environment via migrations, not something a deploy should clone.
+		copySQL: `
+INSERT INTO them.middleware_wirings
+    (id, application_id, agent_id, def_id, position, config_override, enabled, node_id, component_definition_id, component_version)
+SELECT
+    gen_random_uuid(), $2::uuid, mw.agent_id, mw.def_id, mw.position, mw.config_override, mw.enabled, mw.node_id, mw.component_definition_id, mw.component_version
+FROM them.middleware_wirings mw
+WHERE mw.application_id = $1::uuid
+RETURNING id, agent_id`,
+	},
+	{
+		name:         "app_agent_bindings",
+		remapAgentID: true,
+		// credential_bindings intentionally excluded (Fernet ciphertext secrets,
+		// docs/APP_EXPORT_IMPORT_INVESTIGATION.md §5) — the target must supply
+		// its own credentials. config_overrides/agent_params/policies are
+		// configured behavior and travel with the deploy.
+		copySQL: `
+INSERT INTO them.app_agent_bindings
+    (id, application_id, agent_id, definition_id, credential_bindings, config_overrides, policies, agent_params, created_at, updated_at)
+SELECT
+    gen_random_uuid(), $2::uuid, b.agent_id, b.definition_id, '{}'::jsonb, b.config_overrides, b.policies, b.agent_params, now(), now()
+FROM them.app_agent_bindings b
+WHERE b.application_id = $1::uuid
+RETURNING id, agent_id`,
+	},
+	{
+		// The binding (which MCP server this app expects, by mcp_server_id — not
+		// copied/remapped, since mcp_servers rows are tenant registrations that
+		// must already exist identically in the target) travels; the credential
+		// itself (credential_encrypted) does not, same reasoning as agent auth
+		// tokens. auth_header_name is configured behavior and is kept.
+		name: "app_mcp_credentials",
+		copySQL: `
+INSERT INTO them.app_mcp_credentials
+    (id, application_id, mcp_server_id, credential_encrypted, auth_header_name, created_at, updated_at)
+SELECT
+    gen_random_uuid(), $2::uuid, c.mcp_server_id, NULL, c.auth_header_name, now(), now()
+FROM them.app_mcp_credentials c
+WHERE c.application_id = $1::uuid
+  AND EXISTS (SELECT 1 FROM them.mcp_servers ms WHERE ms.id = c.mcp_server_id)`,
+	},
+	{
+		// node_id is the canvas-JSON instance_id — string-stable, no remap.
+		name: "app_flow_llm_overrides",
+		copySQL: `
+INSERT INTO them.app_flow_llm_overrides (application_id, node_id, provider, model, updated_at)
+SELECT $2::uuid, o.node_id, o.provider, o.model, now()
+FROM them.app_flow_llm_overrides o
+WHERE o.application_id = $1::uuid`,
+	},
+	{
+		name: "app_temporal_config",
+		copySQL: `
+INSERT INTO them.app_temporal_config (application_id, max_concurrent_workflows, workflow_timeout_s, activity_timeout_s, retry_max_attempts, updated_at)
+SELECT $2::uuid, c.max_concurrent_workflows, c.workflow_timeout_s, c.activity_timeout_s, c.retry_max_attempts, now()
+FROM them.app_temporal_config c
+WHERE c.application_id = $1::uuid`,
+	},
+	{
+		name: "app_debug_config",
+		copySQL: `
+INSERT INTO them.app_debug_config (application_id, log_verbosity, updated_at)
+SELECT $2::uuid, c.log_verbosity, now()
+FROM them.app_debug_config c
+WHERE c.application_id = $1::uuid`,
+	},
+}
+
+// copyAppScopedConfigForDeploy walks appScopedConfigTables and copies every
+// application_id-scoped table's rows from sourceAppID into newAppID, remapping
+// agent_id where the table carries one. This is the extension point for future
+// canvas-configurable features that use their own DB table instead of the app
+// JSON — see docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md.
+func (d *DB) copyAppScopedConfigForDeploy(ctx context.Context, sourceAppID, newAppID string, agentIDMap map[string]string) error {
+	for _, tbl := range appScopedConfigTables {
+		if !tbl.remapAgentID {
+			if err := d.q.Exec(ctx, tbl.copySQL, sourceAppID, newAppID); err != nil {
+				return fmt.Errorf("deploy: copy %s: %w", tbl.name, err)
+			}
+			continue
+		}
+
+		rows, err := d.q.Query(ctx, tbl.copySQL, sourceAppID, newAppID)
+		if err != nil {
+			return fmt.Errorf("deploy: copy %s: %w", tbl.name, err)
+		}
+		type copiedRow struct {
+			id      string
+			agentID *string
+		}
+		var copied []copiedRow
+		for rows.Next() {
+			var r copiedRow
+			if err := rows.Scan(&r.id, &r.agentID); err != nil {
+				rows.Close()
+				return fmt.Errorf("deploy: copy %s: scan: %w", tbl.name, err)
+			}
+			copied = append(copied, r)
+		}
+		rows.Close()
+
+		if len(agentIDMap) == 0 {
+			continue
+		}
+		remapQ := fmt.Sprintf(`UPDATE them.%s SET agent_id=$2::uuid WHERE id=$1::uuid`, tbl.name)
+		for _, r := range copied {
+			if r.agentID == nil {
+				continue // llm-node wiring with no agent — nothing to remap
+			}
+			if newAgentID, ok := agentIDMap[*r.agentID]; ok {
+				if err := d.q.Exec(ctx, remapQ, r.id, newAgentID); err != nil {
+					return fmt.Errorf("deploy: remap agent_id for %s row %s: %w", tbl.name, r.id, err)
+				}
+			}
+		}
+	}
+	return nil
 }
