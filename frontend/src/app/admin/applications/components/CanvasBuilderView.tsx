@@ -26,6 +26,7 @@ import { AppFlowDebugInspector } from './AppFlowDebugInspector';
 import { useAppFlowDebugSession } from '../hooks/useAppFlowDebugSession';
 import { PortBindingPopover } from './cbv/PortBindingPopover';
 import { isBindableSource, resolveDropTarget, commitInlinePortBinding, type NameableField } from './cbv/useInlinePortWiring';
+import { useAuthStore } from '@/stores/authStore';
 
 // Which RF node component (and canvas palette section) each appflow node_type
 // renders as. This split is a frontend/UI concern, not portable node metadata
@@ -63,6 +64,26 @@ export function CanvasBuilderView({
   onBack: () => void;
   onAppUpdated?: (updated: Application) => void;
 }) {
+  const user = useAuthStore(s => s.user);
+  const [exporting, setExporting] = useState(false);
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const envelope = user?.role === 'super_admin'
+        ? await themApi.exportApplication(app.id)
+        : await themApi.exportApplicationOwnTenant(app.id);
+      const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${app.slug || 'app'}-export.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Export failed', false);
+    } finally { setExporting(false); }
+  }
+
   // Map agent slug → real icon (used for palette and canvas nodes)
   const agentIconBySlug = useMemo(() => {
     const m = new Map<string, string>();
@@ -497,12 +518,18 @@ export function CanvasBuilderView({
         onSaveDraft={saveDraft}
         onPublishClick={handlePublishClick}
         extraActions={
-          activeDef && !appFlowDebug.debug.active ? (
-            <button onClick={appFlowDebug.openPanel} title="Debug this draft — real execution on the isolated debug worker pool, no publish required" style={{
-              background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)',
-              color: '#f59e0b', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-            }}>▶ Debug</button>
-          ) : undefined
+          <>
+            {activeDef && !appFlowDebug.debug.active && (
+              <button onClick={appFlowDebug.openPanel} title="Debug this draft — real execution on the isolated debug worker pool, no publish required" style={{
+                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)',
+                color: '#f59e0b', padding: '7px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+              }}>▶ Debug</button>
+            )}
+            <button onClick={handleExport} disabled={exporting} title="Export the full application (canvas, guards, agents, everything) as a JSON file" style={{
+              background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.5)',
+              color: '#818cf8', padding: '7px 14px', borderRadius: 6, cursor: exporting ? 'not-allowed' : 'pointer', fontSize: 13, opacity: exporting ? 0.6 : 1,
+            }}>{exporting ? 'Exporting…' : '↑ Export'}</button>
+          </>
         }
       />
 

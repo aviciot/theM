@@ -860,7 +860,9 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 // Phase 2 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md. Returns the full,
 // secrets-redacted envelope (application + entry points + orchestrators +
 // the 6 Phase-1 scoped-config tables + every referenced agent bundled by
-// value) as a downloadable JSON file. RequireSuperAdmin.
+// value) as a downloadable JSON file. Platform-global route, RequireSuperAdmin
+// — can export ANY tenant's app. For a tenant admin exporting their OWN app,
+// see ExportApplicationTenantScoped, mounted separately under tenantScoped.
 func (h *ApplicationsHandler) ExportApplication(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
 	if appID == "" {
@@ -892,6 +894,37 @@ func (h *ApplicationsHandler) ExportApplication(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	writeExportFile(w, appID, env)
+}
+
+// ExportApplicationTenantScoped handles GET /api/v1/admin/applications/{id}/export
+// under the tenant-scoped route group (RequireTenantAdmin + AdminTenantMiddleware).
+// Uses h.legacyDAL — the RLS-enforced tenant querier (them_app role) — so a tenant
+// admin can only ever read an application row that actually belongs to their own
+// tenant; a cross-tenant appID simply returns 404 via RLS, not a 403, matching how
+// every other tenant-scoped GET /applications/{id} endpoint already behaves.
+func (h *ApplicationsHandler) ExportApplicationTenantScoped(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+
+	env, err := h.legacyDAL.ExportApplication(r.Context(), appID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusNotFound, "application not found")
+			return
+		}
+		slog.Error("export: read application (tenant-scoped)", "app_id", appID, "error", err)
+		writeError(w, http.StatusInternalServerError, "export failed")
+		return
+	}
+
+	writeExportFile(w, appID, env)
+}
+
+func writeExportFile(w http.ResponseWriter, appID string, env dal.ExportedApp) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="app-export-%s.json"`, appID))
 	if err := json.NewEncoder(w).Encode(env); err != nil {
@@ -908,7 +941,9 @@ type importInput struct {
 // ImportApplication handles POST /api/v1/admin/applications/import — Phase 2
 // of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md. Creates a brand-new
 // application in target_tenant_id from a previously-exported envelope, with
-// no live source application required. RequireSuperAdmin.
+// no live source application required. Platform-global route,
+// RequireSuperAdmin — target_tenant_id can be ANY tenant. For a tenant admin
+// importing into their OWN tenant only, see ImportApplicationTenantScoped.
 func (h *ApplicationsHandler) ImportApplication(w http.ResponseWriter, r *http.Request) {
 	var body importInput
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TargetTenantID == "" {
@@ -934,6 +969,33 @@ func (h *ApplicationsHandler) ImportApplication(w http.ResponseWriter, r *http.R
 	} else {
 		newApp, err = h.legacyDAL.ImportApplication(r.Context(), body.Export, body.TargetTenantID)
 	}
+	writeImportResult(w, body.TargetTenantID, newApp, err)
+}
+
+// ImportApplicationTenantScoped handles POST /api/v1/admin/applications/import
+// under the tenant-scoped route group. target_tenant_id in the request body is
+// deliberately IGNORED — the target is always forced to the caller's own
+// tenant (from the JWT claim, via tenantctx), so a tenant admin can never
+// import into a tenant that isn't their own. Uses h.legacyDAL (RLS-enforced
+// them_app role) for the same reason ExportApplicationTenantScoped does.
+func (h *ApplicationsHandler) ImportApplicationTenantScoped(w http.ResponseWriter, r *http.Request) {
+	callerTenantID, err := tenantctx.TenantIDFromCtx(r.Context())
+	if err != nil || callerTenantID == "" {
+		writeError(w, http.StatusForbidden, "tenant context missing")
+		return
+	}
+
+	var body importInput
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	newApp, err := h.legacyDAL.ImportApplication(r.Context(), body.Export, callerTenantID)
+	writeImportResult(w, callerTenantID, newApp, err)
+}
+
+func writeImportResult(w http.ResponseWriter, targetTenantID string, newApp dal.Application, err error) {
 	if err != nil {
 		if errors.Is(err, dal.ErrDeployConflict) {
 			writeJSON(w, http.StatusConflict, map[string]any{
@@ -945,7 +1007,7 @@ func (h *ApplicationsHandler) ImportApplication(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusBadRequest, "target tenant not found")
 			return
 		}
-		slog.Error("import: create application", "target_tenant", body.TargetTenantID, "error", err)
+		slog.Error("import: create application", "target_tenant", targetTenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "import failed")
 		return
 	}

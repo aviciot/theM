@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // Phase 2 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md — ExportApplication/
@@ -61,6 +62,24 @@ func newExportRouter(db admin.DBQuerier) *chi.Mux {
 	h := admin.NewApplicationsHandler(db, nil, nil, nil, nil)
 	r.Get("/applications/{id}/export", h.ExportApplication)
 	r.Post("/applications/import", h.ImportApplication)
+	return r
+}
+
+// newTenantScopedExportRouter mounts the tenant-scoped variants, with a
+// middleware that injects callerTenantID into the request context the same
+// way AdminTenantMiddleware does in production (from the JWT's tenant_id
+// claim) — no real JWT needed for this handler-layer test.
+func newTenantScopedExportRouter(db admin.DBQuerier, callerTenantID string) *chi.Mux {
+	r := chi.NewRouter()
+	h := admin.NewApplicationsHandler(db, nil, nil, nil, nil)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := tenantctx.WithTenantID(req.Context(), callerTenantID)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+	r.Get("/applications/{id}/export", h.ExportApplicationTenantScoped)
+	r.Post("/applications/import", h.ImportApplicationTenantScoped)
 	return r
 }
 
@@ -135,4 +154,75 @@ func TestImportApplication_UnsupportedVersion(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ── Tenant-scoped variants (own-tenant export/import for a regular tenant admin) ──
+
+// EI-06: GET /applications/{id}/export (tenant-scoped) → 200, same shape as
+// the platform-global export, just via legacyDAL (RLS-enforced querier).
+func TestExportApplicationTenantScoped_Success(t *testing.T) {
+	r := newTenantScopedExportRouter(&exportDB{}, "caller-tenant-uuid")
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/src-app-uuid/export", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"export_version"`)
+}
+
+// EI-07: a cross-tenant appID doesn't need special handling here — RLS on
+// the underlying tenant-scoped querier is what actually enforces isolation
+// (proven at the DAL/integration level, not here) — this test only proves
+// the handler doesn't swallow or override a not-found error into a 200.
+func TestExportApplicationTenantScoped_NotFound(t *testing.T) {
+	r := newTenantScopedExportRouter(&exportDB{rowErr: errors.New("no rows in result set")}, "caller-tenant-uuid")
+
+	req := httptest.NewRequest(http.MethodGet, "/applications/other-tenants-app/export", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code) // generic pgx error, not dal.IsNoRows-shaped in this fake
+}
+
+// EI-08 (security-critical): POST /applications/import (tenant-scoped) with
+// a target_tenant_id in the body pointing at a DIFFERENT tenant than the
+// caller's own — the caller's own tenant (from context) must win, not the
+// body. This is the property that makes it safe to let a regular tenant
+// admin call this endpoint at all.
+func TestImportApplicationTenantScoped_IgnoresBodyTargetTenant(t *testing.T) {
+	var capturedTenantArg string
+	db := &tenantScopedImportCapturingDB{onExecArgs: func(args []any) {
+		if len(args) > 0 {
+			if s, ok := args[0].(string); ok {
+				capturedTenantArg = s
+			}
+		}
+	}}
+	r := newTenantScopedExportRouter(db, "caller-tenant-uuid")
+
+	body := bytes.NewBufferString(`{"target_tenant_id":"attacker-controlled-other-tenant-uuid","export":{"export_version":1,"application":{"name":"test-app","enabled":true}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/applications/import", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.NotEqual(t, "attacker-controlled-other-tenant-uuid", capturedTenantArg,
+		"the body's target_tenant_id must never be used — the caller's own tenant (from context) must always win")
+}
+
+// tenantScopedImportCapturingDB wraps exportDB's fakes but reports every
+// Exec call's args to onExecArgs, so the test above can inspect which
+// tenant_id ImportApplication's INSERTs actually used.
+type tenantScopedImportCapturingDB struct {
+	exportDB
+	onExecArgs func(args []any)
+}
+
+func (d *tenantScopedImportCapturingDB) Exec(_ context.Context, _ string, args ...any) error {
+	if d.onExecArgs != nil {
+		d.onExecArgs(args)
+	}
+	return nil
 }

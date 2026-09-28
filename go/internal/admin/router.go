@@ -193,6 +193,18 @@ func BuildRouter(
 				tenantScoped.Get("/middleware-defs", mwWirings.ListDefs)
 				apps.Routes(tenantScoped, bindings, mwWirings)
 
+				// Export/import own-tenant apps (Phase 2 follow-up, docs/
+				// APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md) — a tenant admin can export
+				// any app in their own tenant and import into their own tenant only;
+				// target_tenant_id in the import body is ignored, always forced to the
+				// caller's own tenant. See ExportApplicationTenantScoped/
+				// ImportApplicationTenantScoped's doc comments for the RLS reasoning.
+				// Distinct paths from the platform-global /export and /import below —
+				// chi shares one routing tree across sibling a.Group() calls, so the
+				// same method+path registered twice within /admin would collide.
+				tenantScoped.Get("/applications/{id}/export-own", apps.ExportApplicationTenantScoped)
+				tenantScoped.Post("/applications/import-own", apps.ImportApplicationTenantScoped)
+
 				// Per-app Temporal config override (tenant-scoped).
 				temporalCfgApp := NewTemporalConfigHandler(dbq)
 				tenantScoped.Get("/applications/{id}/temporal-config", temporalCfgApp.GetApp)

@@ -91,12 +91,18 @@ function GetStartedBanner({ onNew }: { onNew: () => void }) {
 }
 
 export function ListView({
-  list, loading, onNew, onEdit, onRuntime, onMCPCredentials, onMonitor, onToggle, onDelete, onReload,
+  list, loading, onNew, onImport, canImport, onEdit, onRuntime, onMCPCredentials, onMonitor, onToggle, onDelete, onReload,
   selectedApps, onToggleSelect, onSelectAll, onBulkDelete, bulkDeleting,
 }: {
   list: Application[];
   loading: boolean;
   onNew: () => void;
+  /** Creates a new application in the caller's own tenant from a previously
+   * exported JSON envelope — always own-tenant, enforced server-side too. */
+  onImport: (envelope: import('@/lib/api').AppExportEnvelope) => Promise<void>;
+  /** Only tenant admins (or super_admin) can import — a regular tenant
+   * member can export but never import. */
+  canImport: boolean;
   onEdit: (app: Application) => void;
   onRuntime: (app: Application) => void;
   onMCPCredentials: (app: Application) => void;
@@ -116,6 +122,32 @@ export function ListView({
   const [slugManual, setSlugManual] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [listToast, setListToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  // "New Application" choice: blank vs. import from a previously exported file.
+  // Import always targets the caller's own tenant — no tenant picker, ever;
+  // the backend forces this regardless (ImportApplicationTenantScoped), and
+  // Import itself is only ever shown to a tenant admin (see isSuperAdmin/
+  // page.tsx's role gate on the "New Application" flow).
+  const [showNewChoice, setShowNewChoice] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  async function commitImport() {
+    if (!importFile) return;
+    setImporting(true); setImportError('');
+    try {
+      const text = await importFile.text();
+      const envelope = JSON.parse(text);
+      await onImport(envelope);
+      setShowImportModal(false); setShowNewChoice(false);
+      setImportFile(null);
+      showListToast('Imported', true);
+    } catch (e: unknown) {
+      setImportError(e instanceof Error ? e.message : 'Import failed');
+    } finally { setImporting(false); }
+  }
 
   function showListToast(msg: string, ok: boolean) {
     setListToast({ msg, ok });
@@ -244,7 +276,7 @@ export function ListView({
             </button>
           )}
           <button
-            onClick={onNew}
+            onClick={() => setShowNewChoice(true)}
             style={{
               display: 'flex', alignItems: 'center', gap: 8,
               padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -268,7 +300,7 @@ export function ListView({
         )}
 
         {!loading && list.length === 0 && (
-          <GetStartedBanner onNew={onNew} />
+          <GetStartedBanner onNew={() => setShowNewChoice(true)} />
         )}
 
         {!loading && list.map((app) => {
@@ -307,7 +339,7 @@ export function ListView({
         {!loading && list.length > 0 && (
           <div
             className="app-deploy-card"
-            onClick={onNew}
+            onClick={() => setShowNewChoice(true)}
             style={{
               borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)',
               background: 'rgba(99,102,241,0.02)',
@@ -356,6 +388,79 @@ export function ListView({
               <button onClick={() => setRenameApp(null)} disabled={renaming} style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
               <button onClick={commitRename} disabled={renaming || !renameName.trim()} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', cursor: renaming ? 'default' : 'pointer', fontSize: 13, fontWeight: 700, opacity: renaming ? 0.7 : 1 }}>
                 {renaming ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Application choice: blank vs. import from file */}
+      {showNewChoice && !showImportModal && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowNewChoice(false)}
+        >
+          <div
+            style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 440, position: 'relative' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>New Application</div>
+            <button
+              onClick={() => { setShowNewChoice(false); onNew(); }}
+              style={{ width: '100%', textAlign: 'left', padding: '14px 16px', borderRadius: 10, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: C.text, cursor: 'pointer', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12 }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#00d1ff' }}>add</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Blank</div>
+                <div style={{ fontSize: 11, color: C.textMuted }}>Start from an empty canvas</div>
+              </div>
+            </button>
+            {canImport && (
+            <button
+              onClick={() => setShowImportModal(true)}
+              style={{ width: '100%', textAlign: 'left', padding: '14px 16px', borderRadius: 10, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#818cf8' }}>upload_file</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>From file</div>
+                <div style={{ fontSize: 11, color: C.textMuted }}>Import a previously exported application</div>
+              </div>
+            </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Import from file modal */}
+      {showImportModal && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => !importing && setShowImportModal(false)}
+        >
+          <div
+            style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 380, maxWidth: 480, position: 'relative' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>Import Application</div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Exported JSON file</div>
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={e => setImportFile(e.target.files?.[0] ?? null)}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: C.text, fontSize: 13, boxSizing: 'border-box', marginBottom: 12 }}
+            />
+            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 16 }}>Imports into your own tenant.</div>
+            {importError && (
+              <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginBottom: 12 }}>{importError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowImportModal(false)} disabled={importing} style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+              <button
+                onClick={commitImport}
+                disabled={importing || !importFile}
+                style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#818cf8', color: '#0a0f1e', cursor: importing ? 'default' : 'pointer', fontSize: 13, fontWeight: 700, opacity: (importing || !importFile) ? 0.6 : 1 }}
+              >
+                {importing ? 'Importing…' : 'Import'}
               </button>
             </div>
           </div>

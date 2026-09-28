@@ -2,16 +2,18 @@
 import { useState, useEffect } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type Agent } from '@/lib/api';
+import { themApi, type Application, type Agent, type AppExportEnvelope } from '@/lib/api';
 import { C } from './constants';
 import { CanvasBuilderView } from './components/CanvasBuilderView';
 import { RuntimeView } from './components/RuntimeView';
 import { MCPCredentialsView } from './components/MCPCredentialsView';
 import { MonitorView } from './components/MonitorView';
 import { ListView } from './components/ListView';
+import { useAuthStore } from '@/stores/authStore';
 
 // ── Page root ─────────────────────────────────────────────────────────────────
 export default function ApplicationsPage() {
+  const user = useAuthStore(s => s.user);
   const [list, setList] = useState<Application[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -219,6 +221,12 @@ export default function ApplicationsPage() {
               openDefinition(app);
             } catch {/* ignore */}
           }}
+          onImport={async (envelope: AppExportEnvelope) => {
+            const result = await themApi.importApplicationOwnTenant(envelope);
+            await load();
+            openDefinition(result.application);
+          }}
+          canImport={user?.role === 'admin' || user?.role === 'super_admin'}
           onEdit={(app) => openDefinition(app)}
           onRuntime={openRuntime}
           onMCPCredentials={openMCPCredentials}

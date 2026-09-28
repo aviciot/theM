@@ -507,9 +507,15 @@ export const themApi = {
   setAppParam: (appId: string, name: string, value: string, type: string) => api.put<{ name: string; updated: boolean }>(`/admin/applications/${appId}/app-params/${name}`, { value, type }),
   deleteAppParam: (appId: string, name: string) => api.delete<{ name: string; deleted: boolean }>(`/admin/applications/${appId}/app-params/${name}`),
   deployApplication: (appId: string, targetTenantId: string): Promise<DeployResult> => api.post<DeployResult>(`/admin/applications/${appId}/deploy`, { target_tenant_id: targetTenantId }),
+  // Platform super_admin only — cross-tenant, target_tenant_id may be ANY tenant.
   exportApplication: (appId: string): Promise<AppExportEnvelope> => api.get<AppExportEnvelope>(`/admin/applications/${appId}/export`),
   importApplication: (targetTenantId: string, exportEnvelope: AppExportEnvelope): Promise<ImportResult> =>
     api.post<ImportResult>('/admin/applications/import', { target_tenant_id: targetTenantId, export: exportEnvelope }),
+  // Regular tenant admin (role=admin) — own tenant only. target_tenant_id is
+  // never sent; the backend always forces the caller's own tenant.
+  exportApplicationOwnTenant: (appId: string): Promise<AppExportEnvelope> => api.get<AppExportEnvelope>(`/admin/applications/${appId}/export-own`),
+  importApplicationOwnTenant: (exportEnvelope: AppExportEnvelope): Promise<ImportResult> =>
+    api.post<ImportResult>('/admin/applications/import-own', { export: exportEnvelope }),
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
   listEntryPoints: (appId: string) => api.get<EntryPoint[]>(`/admin/applications/${appId}/entry-points`),
