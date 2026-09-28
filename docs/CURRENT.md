@@ -1,26 +1,54 @@
 # Current Session State — the-M
-# Last updated: 2026-09-27 — docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phases 1-3 complete
-# (A2A part-kind recognition, File Guard hook w/ node_id scoping, frontend Guards section
-# on agent nodes). Follow-up fix on top of Phase 2, found via live testing against the real
-# a2a-stream test agent: decodeAgentSendMessageResponse previously stopped at the FIRST
-# non-empty part, so a genuine multi-artifact response (streamed text chunks, then an HTML
-# report, then a real zip) never reached the zip at all — File Guard would silently never
-# fire for a real file-producing agent. Fixed to scan all parts/artifacts for a file/raw part
-# first, falling back to text only if none exists. Raw-bytes parts (not just URL-kind files)
-# are now scanned inline inside pgxAgentA2ACaller.InvokeByID via a new FileGateChecker.
-# InterceptInline method — never round-tripped through Temporal activity output/workflow
-# history. AgentInvoker.InvokeByID widened with NodeID/RunID params. Phase 3's frontend UI
-# still not live-browser-verified — next session should do that plus a live debug run against
-# a2a-stream/docu-writer to prove the raw-bytes fix end-to-end (no automated test can drive a
-# real ClamAV scan + ws/debug UI together).
+# Last updated: 2026-09-28 — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0 DONE + live-verified.
+# File Guard's async scan is now synchronous for BOTH code paths (URL-based file parts and
+# raw-bytes inline files) — a run genuinely waits for the real clean/infected/timeout verdict
+# instead of returning "pending" immediately. Live-verified via the user's own run
+# (ced5c9d9-7201-4abc-9c73-73a605f0e35b): File Guard: clean shown in the trace, with the
+# middleware job's completion timestamp landing before the run's own end timestamp.
+# Two real bugs found and fixed along the way (not part of the Phase 0 code itself):
+# (1) `docker compose restart` does NOT pick up a freshly built image — only `up -d`/
+#     `--force-recreate` does. Caused two false "still broken" live runs. See docs/LESSONS.md.
+# (2) A legacy `middleware_wirings` row with a blank `node_id` was matching ANY node in an app
+#     as a fallback (`internal/middleware/gate.go`'s `loadWiringCfgForDef` SQL: `mw.node_id = $3
+#     OR mw.node_id IS NULL OR mw.node_id = ''`) — File Guard fired on verify-step6-ws's agent_1
+#     even though the UI's per-node checkbox showed unchecked. Deleted the orphaned row
+#     (application_id 2fe69d01-3526-4b39-8dde-126047b220cb) as a data fix; the query logic
+#     itself is UNCHANGED and will silently do this again for any other app with a leftover
+#     blank-node_id wiring — flagged as a known gap below, not yet fixed in code.
+# New hard rule added to CLAUDE.md: anything configurable via the App Canvas UI must be
+# representable in the app's exportable JSON. Confirmed live 2026-09-28 that File Guard/PII/
+# prompt-injection config is NOT in the app JSON today (lives only in `them.middleware_wirings`,
+# outside the JSON entirely) — app export/import doesn't exist yet as a feature, but when it's
+# built, guard config must be included, not just canvas nodes/edges.
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
+
+---
+
+## Known gaps / next tasks (2026-09-28)
+
+1. **`loadWiringCfgForDef`'s blank-`node_id` fallback can silently apply a wiring to every
+   node in an app** (`go/internal/middleware/gate.go`). Only the one live-hit row was cleaned
+   up as data; the query itself still has this behavior. Decide: should a blank `node_id` ever
+   be a valid "applies to all nodes" wiring (intentional), or should it always mean "orphaned,
+   ignore" now that per-node wiring is the norm? Needs a decision before writing a code fix.
+2. **App export/import does not exist yet.** When it's built, it must capture everything
+   configurable via the canvas UI — not just `components`/`connections` — including File
+   Guard/PII/prompt-injection wirings from `them.middleware_wirings`. See CLAUDE.md's new
+   "App Export/Import Must Be Complete" rule.
+3. **Run ID display is trimmed in the UI**, no copy button — user-reported, not yet started.
+   Add more space + a copy-to-clipboard button (watch for the documented http/https copy-button
+   quirk raised by the user before implementing).
+4. Phases 1-4 of `docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md` (the actual guard-output-ports
+   feature — writing guard outcomes into FlowVars so a `condition` node can branch on them) —
+   not started. Phase 0 (this session's work) was the prerequisite; do not start Phase 1 without
+   explicit user confirmation first, per this session's established pattern.
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `8e6785fc` (local; not yet pushed this session — ask before pushing, per this project's
+HEAD: `f3b9cc25` (local; not yet pushed this session — ask before pushing, per this project's
 git rules). Remote is `origin` → `aviciot/theM` on GitHub (credentials already configured in the
 remote URL from a prior session).
 

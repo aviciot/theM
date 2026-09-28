@@ -130,6 +130,36 @@ Application ID must flow through every new feature:
 
 ---
 
+## App Export/Import Must Be Complete (hard rule)
+
+**Anything a user can configure by clicking around in the App Canvas UI must be
+representable in the app's exportable JSON.** Export an app, import it into a fresh
+environment, and the result must be functionally identical — no setting silently
+missing, nothing left requiring a manual re-click to restore.
+
+This is a standing constraint on the *shape* of the app definition, checked every time a
+new per-node or per-app configurable feature is added — not just a future import/export
+feature's own concern.
+
+- When adding any new canvas-configurable setting (a node property, a guard/middleware
+  wiring, a routing rule, anything a user sets via a UI panel on a node or app), decide
+  up front whether it belongs in the app JSON — and if the answer is "it lives in its own
+  DB table instead" (as File Guard/PII middleware wirings currently do, keyed by
+  `application_id`/`node_id` in `them.middleware_wirings`, entirely outside the app JSON),
+  that is a **gap**, not an acceptable design — flag it explicitly rather than silently
+  shipping a feature that can only ever be set through the UI.
+- Found live 2026-09-28: File Guard/PII/prompt-injection config is NOT part of the app
+  JSON today — confirmed via `.claude/skills/app-canvas.md`'s own documented JSON shape,
+  which has no guard/middleware section at all. An app export today would silently lose
+  every guard setting. This is a known, currently-unfixed gap — see `docs/STATUS.md`.
+- When app export/import is actually built, its own design must explicitly enumerate
+  every place canvas-configurable state can live (app JSON's `components`/`connections`,
+  `them.middleware_wirings`, and anything else found along the way) and fold all of it
+  into the exported artifact — not just the app JSON's existing `components`/`connections`
+  shape.
+
+---
+
 ## Rules — Code
 
 - **Never** query `auth_service.*` tables directly — use `app/services/auth_client.py` (HTTP to 8701) from Python, or `internal/auth/` from Go
