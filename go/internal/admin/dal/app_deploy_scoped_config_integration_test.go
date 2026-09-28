@@ -145,8 +145,8 @@ func TestDAL_DeployApplication_CopiesScopedConfig(t *testing.T) {
 	// earlier, meaning it would otherwise run LAST — after the agents are
 	// already gone).
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM them.applications WHERE id = $1::uuid`, deployed.ID) //nolint:errcheck
-		pool.Exec(context.Background(), `DELETE FROM them.middleware_wirings WHERE application_id = $1::uuid`, srcAppID)   //nolint:errcheck
+		pool.Exec(context.Background(), `DELETE FROM them.applications WHERE id = $1::uuid`, deployed.ID)                //nolint:errcheck
+		pool.Exec(context.Background(), `DELETE FROM them.middleware_wirings WHERE application_id = $1::uuid`, srcAppID) //nolint:errcheck
 		pool.Exec(context.Background(), `DELETE FROM them.app_agent_bindings WHERE application_id = $1::uuid`, srcAppID) //nolint:errcheck
 		for _, id := range agentIDsToClean {
 			pool.Exec(context.Background(), `DELETE FROM them.agents WHERE id = $1::uuid`, id)                //nolint:errcheck

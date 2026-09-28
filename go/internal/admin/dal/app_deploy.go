@@ -438,7 +438,8 @@ LEFT JOIN them.application_definitions d ON d.id = sd.active_definition_id`
 }
 
 // appScopedConfigTable is one entry in the registry copyAppScopedConfigForDeploy
-// walks. Adding a future application_id-scoped table to a deploy/export means
+// (Phase 1, DB-to-DB deploy) and exportScopedConfig (Phase 2, file export) both
+// walk. Adding a future application_id-scoped table to a deploy/export means
 // adding one entry here — not writing a new bespoke CTE clause — per
 // docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md's Phase 1 ("Option C").
 //
@@ -446,9 +447,16 @@ LEFT JOIN them.application_definitions d ON d.id = sd.active_definition_id`
 // 6 tables below carry their own tenant_id column — ownership is entirely via
 // application_id, resolved through a join to them.applications by RLS policy
 // (confirmed via \d on each table) — so no target-tenant parameter is needed.
+//
+// exportSQL must be parameterized as: $1=sourceAppID, and select exactly one
+// to_jsonb(...) column per row, redacting the same secret columns copySQL
+// already redacts (NULL for credential_bindings/credential_encrypted) — this
+// is why export needs its own SELECT rather than reusing copySQL's RETURNING,
+// which only returns id/agent_id, not the full row.
 type appScopedConfigTable struct {
 	name         string
 	copySQL      string
+	exportSQL    string
 	remapAgentID bool // true if this table has an agent_id column needing agentIDMap remap
 }
 
@@ -469,6 +477,13 @@ SELECT
 FROM them.middleware_wirings mw
 WHERE mw.application_id = $1::uuid
 RETURNING id, agent_id`,
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT mw.agent_id, md.slug AS def_slug, mw.position, mw.config_override, mw.enabled, mw.node_id
+    FROM them.middleware_wirings mw
+    JOIN them.middleware_defs md ON md.id = mw.def_id
+    WHERE mw.application_id = $1::uuid
+) t`,
 	},
 	{
 		name:         "app_agent_bindings",
@@ -485,6 +500,12 @@ SELECT
 FROM them.app_agent_bindings b
 WHERE b.application_id = $1::uuid
 RETURNING id, agent_id`,
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT b.agent_id, b.config_overrides, b.policies, b.agent_params
+    FROM them.app_agent_bindings b
+    WHERE b.application_id = $1::uuid
+) t`,
 	},
 	{
 		// The binding (which MCP server this app expects, by mcp_server_id — not
@@ -501,6 +522,16 @@ SELECT
 FROM them.app_mcp_credentials c
 WHERE c.application_id = $1::uuid
   AND EXISTS (SELECT 1 FROM them.mcp_servers ms WHERE ms.id = c.mcp_server_id)`,
+		// mcp_server_id travels as the server's SLUG, not its UUID — a UUID is
+		// only stable within one environment; import must re-resolve by slug
+		// in the target tenant (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §2).
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT ms.slug AS mcp_server_slug, c.auth_header_name
+    FROM them.app_mcp_credentials c
+    JOIN them.mcp_servers ms ON ms.id = c.mcp_server_id
+    WHERE c.application_id = $1::uuid
+) t`,
 	},
 	{
 		// node_id is the canvas-JSON instance_id — string-stable, no remap.
@@ -510,6 +541,12 @@ INSERT INTO them.app_flow_llm_overrides (application_id, node_id, provider, mode
 SELECT $2::uuid, o.node_id, o.provider, o.model, now()
 FROM them.app_flow_llm_overrides o
 WHERE o.application_id = $1::uuid`,
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT o.node_id, o.provider, o.model
+    FROM them.app_flow_llm_overrides o
+    WHERE o.application_id = $1::uuid
+) t`,
 	},
 	{
 		name: "app_temporal_config",
@@ -518,6 +555,12 @@ INSERT INTO them.app_temporal_config (application_id, max_concurrent_workflows, 
 SELECT $2::uuid, c.max_concurrent_workflows, c.workflow_timeout_s, c.activity_timeout_s, c.retry_max_attempts, now()
 FROM them.app_temporal_config c
 WHERE c.application_id = $1::uuid`,
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT c.max_concurrent_workflows, c.workflow_timeout_s, c.activity_timeout_s, c.retry_max_attempts
+    FROM them.app_temporal_config c
+    WHERE c.application_id = $1::uuid
+) t`,
 	},
 	{
 		name: "app_debug_config",
@@ -526,6 +569,12 @@ INSERT INTO them.app_debug_config (application_id, log_verbosity, updated_at)
 SELECT $2::uuid, c.log_verbosity, now()
 FROM them.app_debug_config c
 WHERE c.application_id = $1::uuid`,
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT c.log_verbosity
+    FROM them.app_debug_config c
+    WHERE c.application_id = $1::uuid
+) t`,
 	},
 }
 

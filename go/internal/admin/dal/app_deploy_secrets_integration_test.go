@@ -106,8 +106,8 @@ func TestDAL_DeployApplication_AllSecretAppParams_ProducesEmptyObject(t *testing
 	targetTenantID, _ := setupAppScopedConfigApp(t, pool, "inttest-deploy-secrets-allsecret-target")
 
 	appParams := map[string]any{
-		"api_key":    map[string]any{"ct": "enc:aaa", "hint": "1111"},
-		"other_key":  map[string]any{"ct": "enc:bbb", "hint": "2222"},
+		"api_key":   map[string]any{"ct": "enc:aaa", "hint": "1111"},
+		"other_key": map[string]any{"ct": "enc:bbb", "hint": "2222"},
 	}
 	raw, err := json.Marshal(appParams)
 	if err != nil {

@@ -264,6 +264,9 @@ func BuildRouter(
 				}
 				// Super-admin deploy: POST /admin/applications/{id}/deploy
 				platformGlobal.Post("/applications/{id}/deploy", apps.DeployApplication)
+				// Super-admin export/import (Phase 2, docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md)
+				platformGlobal.Get("/applications/{id}/export", apps.ExportApplication)
+				platformGlobal.Post("/applications/import", apps.ImportApplication)
 				if sessionReader != nil {
 					NewSessionsHandler(sessionReader).Routes(platformGlobal)
 				}

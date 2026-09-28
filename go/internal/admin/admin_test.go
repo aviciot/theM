@@ -154,6 +154,17 @@ func scanInto(dest, src any) error {
 		default:
 			return fmt.Errorf("scanInto: cannot assign %T to *time.Time", src)
 		}
+	case *json.RawMessage:
+		switch v := src.(type) {
+		case []byte:
+			*d = json.RawMessage(v)
+		case string:
+			*d = json.RawMessage(v)
+		case nil:
+			*d = nil
+		default:
+			return fmt.Errorf("scanInto: cannot assign %T to *json.RawMessage", src)
+		}
 	case *any:
 		*d = src
 	default:
@@ -164,15 +175,15 @@ func scanInto(dest, src any) error {
 
 // fakeDB satisfies admin.DBQuerier.
 type fakeDB struct {
-	queryRows       *fakeRows                    // returned by Query
-	queryRowErr     error                        // error returned by QueryRow's Scan
-	queryRowStr     string                       // string value scanned by QueryRow (e.g. slug lookup)
-	queryRowStrings []string                     // multi-column QueryRow (e.g. tenantID + slug)
-	execErr         error                        // returned by Exec
-	execFn          func(string, ...any) error   // optional: override Exec for arg inspection
-	execRetStr      string                       // string id returned by ExecReturning (UUID)
-	execRetErr      error                        // error returned by ExecReturning's Scan
-	querySQLLog     []string                     // log of executed SQL
+	queryRows       *fakeRows                  // returned by Query
+	queryRowErr     error                      // error returned by QueryRow's Scan
+	queryRowStr     string                     // string value scanned by QueryRow (e.g. slug lookup)
+	queryRowStrings []string                   // multi-column QueryRow (e.g. tenantID + slug)
+	execErr         error                      // returned by Exec
+	execFn          func(string, ...any) error // optional: override Exec for arg inspection
+	execRetStr      string                     // string id returned by ExecReturning (UUID)
+	execRetErr      error                      // error returned by ExecReturning's Scan
+	querySQLLog     []string                   // log of executed SQL
 }
 
 func (f *fakeDB) Query(_ context.Context, sql string, _ ...any) (admin.RowScanner, error) {
@@ -675,11 +686,11 @@ func TestPatchEntryPointAliasesUpdate(t *testing.T) {
 // ── fakeSessionReader for session handler tests ───────────────────────────────
 
 type fakeSessionReader struct {
-	epSessions []string
-	appSessions []string
-	info       *session.SessionInfo
-	getErr     error
-	sigErr     error
+	epSessions   []string
+	appSessions  []string
+	info         *session.SessionInfo
+	getErr       error
+	sigErr       error
 	sigDelivered bool
 }
 
@@ -946,9 +957,9 @@ func (r *fakeInt64Row) Scan(dest ...any) error {
 // It overrides ExecReturning to return either a full provider row or an int64.
 type fakeProviderDB struct {
 	fakeDB
-	providerRow    *fakeProviderRow // returned by ExecReturning for Insert/Update
-	deleteRow      *fakeInt64Row    // returned by ExecReturning for Delete
-	queryRow8      *fakeProviderRow // returned by QueryRow for Get
+	providerRow *fakeProviderRow // returned by ExecReturning for Insert/Update
+	deleteRow   *fakeInt64Row    // returned by ExecReturning for Delete
+	queryRow8   *fakeProviderRow // returned by QueryRow for Get
 }
 
 func (f *fakeProviderDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {

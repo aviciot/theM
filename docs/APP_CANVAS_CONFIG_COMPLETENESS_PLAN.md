@@ -163,6 +163,20 @@ draft/revision history — matches what "Deploy to Tenant" already does.
 
 ### Phase 2 — Turn "Deploy to Tenant" into real export/import (file-based, not just tenant-to-tenant)
 
+**DONE 2026-09-28.** `ExportApplication`/`ImportApplication` (`go/internal/admin/dal/
+app_export.go`) built exactly per the design below — `to_jsonb` per table, agents bundled by
+value, secrets redacted in the export SELECT itself. 2 new HTTP routes: `GET
+/admin/applications/{id}/export`, `POST /admin/applications/import`. Full round-trip proven live
+(export → real `json.Marshal`/`Unmarshal` → delete the source app → import into a different
+tenant → every piece correctly re-linked) — see `go/TEST_INDEX.md` S1-180 for the complete test
+list and 2 real bugs found while building it (an `edges` column type mismatch, and another
+`t.Cleanup` LIFO-ordering leak). `go build`/`go vet`/`go test ./...` (58 packages) clean.
+
+**Not yet done, deferred to a future session:** the frontend UI (Export/Import buttons wired to
+these 2 routes) — the backend is complete and tested, but nothing in `frontend/` calls these
+routes yet. The existing canvas-only export (`docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`) is
+unaffected and still works as its own smaller convenience.
+
 **Design note, written before implementation (2026-09-28) — the "thin wrapper" framing above
 turned out to be wrong once actually investigated; this replaces it.**
 

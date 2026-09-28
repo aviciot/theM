@@ -856,6 +856,103 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 	})
 }
 
+// ExportApplication handles GET /api/v1/admin/applications/{id}/export —
+// Phase 2 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md. Returns the full,
+// secrets-redacted envelope (application + entry points + orchestrators +
+// the 6 Phase-1 scoped-config tables + every referenced agent bundled by
+// value) as a downloadable JSON file. RequireSuperAdmin.
+func (h *ApplicationsHandler) ExportApplication(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+
+	var env dal.ExportedApp
+	var err error
+	if h.pools != nil {
+		tx, txErr := h.pools.BeginAdminTx(r.Context())
+		if txErr != nil {
+			slog.Error("export: begin admin tx", "app_id", appID, "error", txErr)
+			writeError(w, http.StatusInternalServerError, "export failed")
+			return
+		}
+		defer tx.Rollback(r.Context()) //nolint:errcheck
+		env, err = dal.NewDBFromAdminQuerier(tx).ExportApplication(r.Context(), appID)
+	} else {
+		env, err = h.legacyDAL.ExportApplication(r.Context(), appID)
+	}
+	if err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusNotFound, "application not found")
+			return
+		}
+		slog.Error("export: read application", "app_id", appID, "error", err)
+		writeError(w, http.StatusInternalServerError, "export failed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="app-export-%s.json"`, appID))
+	if err := json.NewEncoder(w).Encode(env); err != nil {
+		slog.Error("export: encode response", "app_id", appID, "error", err)
+	}
+}
+
+// importInput is the request body for POST /admin/applications/import.
+type importInput struct {
+	TargetTenantID string          `json:"target_tenant_id"`
+	Export         dal.ExportedApp `json:"export"`
+}
+
+// ImportApplication handles POST /api/v1/admin/applications/import — Phase 2
+// of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md. Creates a brand-new
+// application in target_tenant_id from a previously-exported envelope, with
+// no live source application required. RequireSuperAdmin.
+func (h *ApplicationsHandler) ImportApplication(w http.ResponseWriter, r *http.Request) {
+	var body importInput
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TargetTenantID == "" {
+		writeError(w, http.StatusBadRequest, "invalid JSON or missing target_tenant_id")
+		return
+	}
+
+	var newApp dal.Application
+	var err error
+	if h.pools != nil {
+		tx, txErr := h.pools.BeginAdminTx(r.Context())
+		if txErr != nil {
+			slog.Error("import: begin admin tx", "target_tenant", body.TargetTenantID, "error", txErr)
+			writeError(w, http.StatusInternalServerError, "import failed")
+			return
+		}
+		defer tx.Rollback(r.Context()) //nolint:errcheck
+		adminDB := dal.NewDBFromAdminQuerier(tx)
+		newApp, err = adminDB.ImportApplication(r.Context(), body.Export, body.TargetTenantID)
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+	} else {
+		newApp, err = h.legacyDAL.ImportApplication(r.Context(), body.Export, body.TargetTenantID)
+	}
+	if err != nil {
+		if errors.Is(err, dal.ErrDeployConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "agent content conflict: target tenant has agents with different content",
+			})
+			return
+		}
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusBadRequest, "target tenant not found")
+			return
+		}
+		slog.Error("import: create application", "target_tenant", body.TargetTenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "import failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"application": newApp})
+}
+
 func (h *ApplicationsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	var input BulkDeleteInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
