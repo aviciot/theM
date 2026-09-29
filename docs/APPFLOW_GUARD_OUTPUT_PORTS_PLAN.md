@@ -1,10 +1,11 @@
 # AppFlow Guard Output Ports Plan
 # Status: Phase 0 DONE (2026-09-28). Phase 1 DONE (2026-09-29, flat status
 # var per guard, real Temporal tests). Phase 1.5 DONE (2026-09-29,
-# per-category detail plumbed through, flat key convention). Phase 2 IN
-# PROGRESS (2026-09-29): (a)/(b) FlowVars-shape decided (b, flat storage +
-# display translation), "Writes" panel DONE. Source-side port-picker
-# popover (multi-output drag UI) NOT yet started. Phase 3 not started.
+# per-category detail plumbed through, flat key convention). Phase 2 DONE
+# (2026-09-29): (a)/(b) FlowVars-shape decided (b, flat storage + display
+# translation); "Writes" panel; source-side port-picker popover (any node
+# with >1 output can now be dragged from, popover asks which). Phase 3
+# (condition node UX polish for the final var shape) not started.
 # Owner: platform
 # Last updated: 2026-09-29
 
@@ -337,32 +338,67 @@ prompt_inject (no expansion), disabled-wiring (nothing), wrong-node
 (nothing), and two-guards-same-node cases. `tsc --noEmit` clean; all 91
 frontend tests (83 pre-existing + 8 new) pass.
 
-**Source-side port-picker popover — new UI, decided live 2026-09-29.**
-Today, `useInlinePortWiring.ts`'s drag-to-wire system has NO source-side
-choice at all — `isBindableSource` only returns true for `llm` (the only
-kind with a bindable output today), and `commitInlinePortBinding` always
-reads exactly one var (`sourceCfg.output_var`). Once a node can have
-multiple outputs (its own `output_var` AND N guard vars), dragging from
-its output dot needs a NEW popover asking "which output are you sending?"
-— a second popover, distinct from and in addition to the EXISTING
-target-side popover (`resolveDropTarget`/`PortBindingPopover`, unchanged,
-still asks "which field on the target"). Confirmed live: the same source
-output must remain freely reusable across multiple target wires — no
-"already connected, can't reuse" restriction; a status var is a read, not
-a claim.
+**Source-side port-picker popover — DONE (2026-09-29).** Extends
+`useInlinePortWiring.ts`'s drag-to-wire system, which previously had NO
+source-side choice at all (`isBindableSource` only ever checked
+`node_type === 'llm'`, `commitInlinePortBinding` always read
+`sourceCfg.output_var`). Now any node with ≥1 draggable output (its own
+`output_var` for `llm`, plus one entry per enabled guard var — any node
+kind, agent or llm today, any future kind guards apply to tomorrow with
+zero new code) shows a NEW popover asking "which output are you sending?"
+when it has more than one — a second popover, distinct from and in
+addition to the EXISTING target-side one (`resolveDropTarget`/
+`PortBindingPopover`, unchanged, still asks "which field on the target").
+Confirmed live: the same source output stays freely reusable across
+multiple target wires — no "already connected, can't reuse" restriction;
+a status var is a read, not a claim.
 
-- Extend `isBindableSource` to also return true for any node with ≥1
-  enabled guard wiring, not just `node_type === 'llm'`.
-- New function (name TBD at implementation time, e.g. `resolveDragSource`)
-  returning the list of this node's available outputs: its own
-  `output_var` (if `llm`) plus one entry per guard var — mirroring
-  `resolveDropTarget`'s existing `{kind: 'none' | 'auto' | 'ambiguous'}`
-  shape for consistency.
-- `commitInlinePortBinding` (or a new sibling) needs the CHOSEN source var
-  threaded in, not hardcoded to `output_var` — the existing
-  `PortBinding{source_node_id, source_var}` shape already supports an
-  arbitrary `source_var` string, so this is additive, not a breaking
-  change to the binding storage format.
+Shipped as: `resolveDragSource(node, wirings): DragSource[]` (new,
+`useInlinePortWiring.ts`) — merges the node's static output (llm only)
+with `guardWriteVarsForNode`'s guard vars (reused verbatim from the Writes
+panel, so both features stay in sync automatically); `isBindableSource`
+now takes `wirings` and checks `resolveDragSource(...).length > 0` instead
+of a hardcoded kind check. `commitInlinePortBinding` gained an optional
+5th `sourceVar` param — when omitted, falls back to the pre-existing
+`output_var` behavior unchanged (zero risk to the llm-only Phase 5 paths).
+`resolveBinding` (`appFlowVars.ts`, drives the Reads panel's drift
+warning) gained a `wirings` param and a guard-var branch: a bound guard
+var is recognized via `guardWriteVarsForNode` and reported as never
+drifted (its name is a fixed convention, not a renamable field like
+`output_var`) — a real bug this change would otherwise have introduced
+(every guard-var binding would have shown a false "drifted" warning,
+comparing the guard var name against the source's unrelated `output_var`).
+
+New shared `ChoicePopover.tsx` factored out of the pre-existing
+`PortBindingPopover.tsx` (visual shell only — position, glass card, list
+of `{key,label}` buttons) so the new `SourcePortPopover.tsx` ("which
+output?") looks and behaves identically to the existing target popover
+("which field?") without duplicating styling; both are now thin typed
+wrappers over `ChoicePopover`. `CanvasBuilderView.tsx`'s `handleConnect`/
+`handleConnectEnd`/render site extended to resolve BOTH axes per connect
+gesture — source ambiguity, target ambiguity, or both at once (e.g.
+dragging from a 2-guard agent into a 2-field llm) — showing the source
+popover first when needed, then the target popover, committing once both
+are known; a fully-`auto`/`auto` connect still commits immediately with no
+popover, unchanged from before. `wirings` is now fetched once at
+`CanvasBuilderView` level (`refreshWirings`) and threaded down through
+`CanvasNodePropertiesPanel` → `AgentNodePanel`/`InlineNodePanel` →
+`AgentGuardsSection`/`WritesSection`/`InlinePortsSection`, replacing each
+panel's own duplicate per-node fetch; `AgentGuardsSection` gained an
+`onWiringChanged` callback (wired to `refreshWirings`) so toggling a guard
+makes it immediately draggable without a page reload.
+
+Tests: `useInlinePortWiring.test.js` grew from 21 to 28 cases — new
+`resolveDragSource`/`isBindableSource` cases (llm-only, agent-with-guards,
+llm-with-a-guard exposing both outputs, disabled-guard contributes
+nothing), a `commitInlinePortBinding` case proving the explicit
+`sourceVar` override works, and the `resolveBinding` no-false-drift
+regression case above. `tsc --noEmit` clean (via the local `tsc` binary —
+`npx`/`npm` currently fail with `ENOSPC` writing their own cache under
+`/home`, a separate, unrelated, nearly-full filesystem; unaffected by this
+change). All 98 frontend tests across the 8 standalone `.test.js` files
+pass (up from 91 before this change — 7 net new: `useInlinePortWiring`
+grew by 7, `guardWriteVars` unchanged at 8 from the prior commit).
 
 ### Phase 3 — condition node UX for nested guard vars
 - Confirm the `condition` node's existing expression editor and example

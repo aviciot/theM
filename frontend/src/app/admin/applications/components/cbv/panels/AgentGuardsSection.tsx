@@ -37,6 +37,11 @@ interface Props {
   selectedNode: Node;
   agents: Agent[];
   showToast: (msg: string, ok: boolean) => void;
+  // Called after every successful create/update — lets a parent that holds
+  // its own app-wide wirings list (e.g. CanvasBuilderView's drag-source
+  // popover, docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2) refetch so a
+  // newly-enabled guard becomes draggable without a full page reload.
+  onWiringChanged?: () => void;
 }
 
 const AGENT_GUARD_SLUGS = ['file-guard', 'pii_redact', 'prompt_inject'] as const;
@@ -48,7 +53,7 @@ export const GUARD_LABELS: Record<string, string> = {
   prompt_inject: 'Prompt-Injection Guard',
 };
 
-export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: Props) {
+export function AgentGuardsSection({ appId, selectedNode, agents, showToast, onWiringChanged }: Props) {
   const nodeData = selectedNode.data as unknown as { definition_ref?: { name?: string }; node_type?: string };
   const isLLMNode = nodeData.node_type === 'llm';
   const agentSlug = nodeData.definition_ref?.name;
@@ -81,6 +86,7 @@ export function AgentGuardsSection({ appId, selectedNode, agents, showToast }: P
           agent={agent}
           defSlug={slug}
           showToast={showToast}
+          onWiringChanged={onWiringChanged}
         />
       ))}
     </div>
@@ -93,9 +99,10 @@ interface GuardWiringFormProps {
   agent: Agent | undefined;
   defSlug: string;
   showToast: (msg: string, ok: boolean) => void;
+  onWiringChanged?: () => void;
 }
 
-function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast }: GuardWiringFormProps) {
+function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast, onWiringChanged }: GuardWiringFormProps) {
   const [wiring, setWiring] = useState<MiddlewareWiring | null | undefined>(undefined); // undefined = loading
   const [configDraft, setConfigDraft] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
@@ -162,6 +169,7 @@ function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast }: Gua
       }
       setConfigDraft(syncedConfig);
       showToast(`${GUARD_LABELS[defSlug] ?? defSlug} ${nextEnabled ? 'enabled' : 'disabled'}`, true);
+      onWiringChanged?.();
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : 'Failed to save guard setting', false);
     } finally {
@@ -188,6 +196,7 @@ function GuardWiringForm({ appId, selectedNode, agent, defSlug, showToast }: Gua
       }
       setConfigDraft(syncedConfig);
       showToast('Guard config saved', true);
+      onWiringChanged?.();
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : 'Failed to save guard config', false);
     } finally {

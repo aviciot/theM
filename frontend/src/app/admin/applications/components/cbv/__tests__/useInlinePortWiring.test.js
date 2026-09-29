@@ -30,8 +30,57 @@ function nameableFields(nodeType) {
   return [];
 }
 
-function isBindableSource(node) {
-  return !!node && node.data.node_type === 'llm';
+// ── guardWriteVarsForNode (inlined from guardWriteVars.ts, see its own
+// test file for the full behavior — only what resolveDragSource needs) ──
+
+const FILE_GUARD_VAR_SEGMENT = 'file_guard';
+const GUARD_SHORT_LABEL = { 'file-guard': 'file_guard', pii_redact: 'pii_guard', prompt_inject: 'prompt_guard' };
+const GUARD_LABEL_FULL = { 'file-guard': 'File Guard', pii_redact: 'PII Guard', prompt_inject: 'Prompt-Injection Guard' };
+const ALL_PII_CATEGORIES = ['email', 'phone', 'credit_card', 'ssn'];
+
+function piiCategoriesFor(wiring) {
+  const configured = wiring.config_override.categories;
+  if (Array.isArray(configured) && configured.length > 0) return configured.filter(c => typeof c === 'string');
+  return ALL_PII_CATEGORIES;
+}
+
+function guardWriteVarsForNode(nodeId, wirings) {
+  const nodeWirings = wirings.filter(w => w.node_id === nodeId && w.enabled);
+  const out = [];
+  for (const w of nodeWirings) {
+    const shortLabel = GUARD_SHORT_LABEL[w.def_slug] ?? w.def_slug;
+    const varSegment = w.def_slug === 'file-guard' ? FILE_GUARD_VAR_SEGMENT : w.def_slug;
+    const guardLabel = GUARD_LABEL_FULL[w.def_slug] ?? w.def_slug;
+    out.push({ flatVar: `${nodeId}_${varSegment}_status`, displayRef: `${shortLabel}.status`, guardLabel });
+    if (w.def_slug === 'pii_redact') {
+      for (const category of piiCategoriesFor(w)) {
+        out.push({ flatVar: `${nodeId}_${varSegment}_${category}_status`, displayRef: `${shortLabel}.${category}.status`, guardLabel, detail: `category: ${category}` });
+      }
+    }
+  }
+  return out;
+}
+
+// ── resolveDragSource / isBindableSource (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// Phase 2 — extends the pre-existing llm-only source resolution to any node
+// kind with an enabled guard wiring) ──
+
+function resolveDragSource(node, wirings) {
+  if (!node) return [];
+  const d = node.data;
+  const out = [];
+  if (d.node_type === 'llm') {
+    const outputVar = d.config?.output_var || 'output';
+    out.push({ varName: outputVar, label: outputVar });
+  }
+  for (const g of guardWriteVarsForNode(node.id, wirings)) {
+    out.push({ varName: g.flatVar, label: `${g.guardLabel}: ${g.displayRef}` });
+  }
+  return out;
+}
+
+function isBindableSource(node, wirings) {
+  return resolveDragSource(node, wirings).length > 0;
 }
 
 function resolveDropTarget(targetNode) {
@@ -70,16 +119,16 @@ function appendTemplateRef(text, alias) {
   return trimmed ? `${text} ${ref}` : ref;
 }
 
-function commitInlinePortBinding(sourceNode, targetNodeId, field, setNodes) {
+function commitInlinePortBinding(sourceNode, targetNodeId, field, setNodes, sourceVar) {
   const sourceCfg = sourceNode.data.config ?? {};
-  const sourceVar = sourceCfg.output_var || 'output';
+  const resolvedSourceVar = sourceVar ?? sourceCfg.output_var ?? 'output';
 
   setNodes(ns => ns.map(n => {
     if (n.id !== targetNodeId) return n;
     const nd = n.data;
     const cfg = nd.config ?? {};
     const existingAliases = cfg.input_aliases ?? {};
-    const alias = defaultAliasFor(sourceNode, sourceVar, existingAliases);
+    const alias = defaultAliasFor(sourceNode, resolvedSourceVar, existingAliases);
     const currentText = cfg[field.key] || '';
     return {
       ...n,
@@ -87,7 +136,7 @@ function commitInlinePortBinding(sourceNode, targetNodeId, field, setNodes) {
         ...nd,
         config: {
           ...cfg,
-          input_aliases: { ...existingAliases, [alias]: { source_node_id: sourceNode.id, source_var: sourceVar } },
+          input_aliases: { ...existingAliases, [alias]: { source_node_id: sourceNode.id, source_var: resolvedSourceVar } },
           [field.key]: appendTemplateRef(currentText, alias),
         },
       },
@@ -143,12 +192,18 @@ function deleteInlinePortAlias(nodeId, alias, setNodes) {
   }));
 }
 
-function resolveBinding(node, varName, allNodes) {
+function resolveBinding(node, varName, allNodes, wirings = []) {
   const aliases = getInputAliases(node);
   const binding = aliases[varName];
   if (!binding) return null;
   const sourceNode = allNodes.find(n => n.id === binding.source_node_id);
   if (!sourceNode) return null;
+
+  const guardVars = guardWriteVarsForNode(sourceNode.id, wirings);
+  if (guardVars.some(g => g.flatVar === binding.source_var)) {
+    return { sourceNode, liveVar: binding.source_var, boundVar: binding.source_var, drifted: false };
+  }
+
   const sourceCfg = sourceNode.data.config ?? {};
   const liveVar = sourceCfg.output_var || 'output';
   return { sourceNode, liveVar, boundVar: binding.source_var, drifted: liveVar !== binding.source_var };
@@ -186,11 +241,41 @@ function runSetNodes(nodes, commitFn) {
 
 console.log('\nresolveDropTarget / isBindableSource:');
 
-test('llm is the only bindable source', () => {
-  assert.equal(isBindableSource(node('a', 'llm')), true);
+test('llm is bindable with no wirings at all (its own output_var)', () => {
+  assert.equal(isBindableSource(node('a', 'llm'), []), true);
   for (const kind of ['condition', 'router', 'hil', 'fork', 'join', 'agent']) {
-    assert.equal(isBindableSource(node('a', kind)), false, `${kind} should not be bindable`);
+    assert.equal(isBindableSource(node('a', kind), []), false, `${kind} should not be bindable with no wirings`);
   }
+});
+
+test('a non-llm node becomes bindable once it has an enabled guard wiring (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2)', () => {
+  const wirings = [{ node_id: 'a', enabled: true, def_slug: 'prompt_inject', config_override: {} }];
+  assert.equal(isBindableSource(node('a', 'agent'), wirings), true);
+});
+
+test('resolveDragSource: llm with no guards exposes exactly its own output_var', () => {
+  const sources = resolveDragSource(node('a', 'llm', { output_var: 'summary' }), []);
+  assert.deepEqual(sources, [{ varName: 'summary', label: 'summary' }]);
+});
+
+test('resolveDragSource: agent with 2 enabled guards exposes 1 var per guard status, none for its own output (agent never writes one)', () => {
+  const wirings = [
+    { node_id: 'a', enabled: true, def_slug: 'pii_redact', config_override: { categories: ['email'] } },
+    { node_id: 'a', enabled: true, def_slug: 'prompt_inject', config_override: {} },
+  ];
+  const sources = resolveDragSource(node('a', 'agent'), wirings);
+  assert.deepEqual(sources.map(s => s.varName), ['a_pii_redact_status', 'a_pii_redact_email_status', 'a_prompt_inject_status']);
+});
+
+test('resolveDragSource: llm WITH a guard exposes both its own output_var and the guard var', () => {
+  const wirings = [{ node_id: 'a', enabled: true, def_slug: 'pii_redact', config_override: { categories: ['ssn'] } }];
+  const sources = resolveDragSource(node('a', 'llm', { output_var: 'output' }), wirings);
+  assert.deepEqual(sources.map(s => s.varName), ['output', 'a_pii_redact_status', 'a_pii_redact_ssn_status']);
+});
+
+test('resolveDragSource: a disabled guard contributes nothing', () => {
+  const wirings = [{ node_id: 'a', enabled: false, def_slug: 'pii_redact', config_override: {} }];
+  assert.deepEqual(resolveDragSource(node('a', 'agent'), wirings), []);
 });
 
 test('condition target auto-binds to its single expression field', () => {
@@ -251,6 +336,17 @@ test('appends to existing non-empty field text rather than replacing it', () => 
   const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit));
   const updated = result.find(n => n.id === 'tgt');
   assert.equal(updated.data.config.user_prompt, 'Given the context, {{.Summarizer_summary}}');
+});
+
+test('accepts an explicit sourceVar override (guard var), instead of always defaulting to output_var', () => {
+  const source = node('src', 'agent', {}, 'Agent1');
+  const target = node('tgt', 'condition', { expression: '' });
+  const field = { key: 'expression', label: 'Expression' };
+
+  const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit, 'src_pii_redact_email_status'));
+  const updated = result.find(n => n.id === 'tgt');
+  const [, binding] = Object.entries(updated.data.config.input_aliases)[0];
+  assert.equal(binding.source_var, 'src_pii_redact_email_status');
 });
 
 test('defaults source var to "output" when output_var is unset', () => {
@@ -337,6 +433,19 @@ test('returns null when the source node no longer exists', () => {
 test('returns null for a var that is not a drag-created alias', () => {
   const target = node('tgt', 'condition', { input_aliases: {} });
   assert.equal(resolveBinding(target, 'typed_var', [target]), null);
+});
+
+test('a bound guard var never reports drift, even though it does not match the source\'s output_var', () => {
+  // Regression case this Phase 2 change specifically had to avoid: naively
+  // reusing the old liveVar=output_var comparison would flag EVERY guard-var
+  // binding as "drifted" (a guard var name never equals output_var).
+  const source = node('src', 'agent', {}, 'Agent1');
+  const target = node('tgt', 'condition', { input_aliases: { pii_email: { source_node_id: 'src', source_var: 'src_pii_redact_email_status' } } });
+  const wirings = [{ node_id: 'src', enabled: true, def_slug: 'pii_redact', config_override: { categories: ['email'] } }];
+
+  const binding = resolveBinding(target, 'pii_email', [source, target], wirings);
+  assert.equal(binding.drifted, false);
+  assert.equal(binding.liveVar, 'src_pii_redact_email_status');
 });
 
 // ── renameInlinePortAlias ──────────────────────────────────────────────────────

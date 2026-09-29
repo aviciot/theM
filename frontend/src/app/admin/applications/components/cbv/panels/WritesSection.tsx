@@ -23,20 +23,27 @@ interface Props {
   appId: string;
   selectedNode: Node;
   outputVar?: string; // llm's own output_var; omitted for agent (writes no static var)
+  // Passed by CanvasBuilderView, which already fetches this once for the
+  // drag-source popover — avoids a duplicate fetch per selected node. Falls
+  // back to its own fetch when omitted, so this component still works
+  // standalone (e.g. if a future caller doesn't have the list handy).
+  wirings?: MiddlewareWiring[];
 }
 
-export function WritesSection({ appId, selectedNode, outputVar }: Props) {
-  const [wirings, setWirings] = useState<MiddlewareWiring[] | null>(null);
+export function WritesSection({ appId, selectedNode, outputVar, wirings: wiringsProp }: Props) {
+  const [fetchedWirings, setFetchedWirings] = useState<MiddlewareWiring[] | null>(null);
 
   useEffect(() => {
+    if (wiringsProp) return;
     let cancelled = false;
-    setWirings(null);
+    setFetchedWirings(null);
     themApi.listMiddlewareWirings(appId).then(list => {
-      if (!cancelled) setWirings(list);
-    }).catch(() => { if (!cancelled) setWirings([]); });
+      if (!cancelled) setFetchedWirings(list);
+    }).catch(() => { if (!cancelled) setFetchedWirings([]); });
     return () => { cancelled = true; };
-  }, [appId, selectedNode.id]);
+  }, [appId, selectedNode.id, wiringsProp]);
 
+  const wirings = wiringsProp ?? fetchedWirings;
   const guardVars = wirings ? guardWriteVarsForNode(selectedNode.id, wirings) : [];
   const hasOutputVar = !!outputVar;
   const isEmpty = !hasOutputVar && guardVars.length === 0;

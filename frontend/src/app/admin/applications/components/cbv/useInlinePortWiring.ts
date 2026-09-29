@@ -28,10 +28,18 @@
  */
 
 import type { Node } from '@xyflow/react';
+import type { MiddlewareWiring } from '@/lib/api';
+import { guardWriteVarsForNode } from './guardWriteVars';
 
 export interface NameableField {
   key: string;    // config key the alias's {{.alias}} reference gets appended into
   label: string;  // shown in the popover
+}
+
+/** One of a node's available outputs — its own primary var, or a guard var. */
+export interface DragSource {
+  varName: string;  // the real FlowVar key (== NameableField.key's role, but source-side)
+  label: string;    // shown in the popover, e.g. "output" or "PII Guard: email.status"
 }
 
 export interface PortBinding {
@@ -59,9 +67,29 @@ export function nameableFields(nodeType: string): NameableField[] {
   return [];
 }
 
-/** Only `llm` ever writes a FlowVar — it's the only kind with a bindable output. */
-export function isBindableSource(node: Node | undefined): boolean {
-  return !!node && (node.data as unknown as InlineLikeData).node_type === 'llm';
+/**
+ * Every output a node can be dragged FROM: its own primary var (`llm` only
+ * — `output_var`, defaulting to "output") plus one entry per FlowVar an
+ * enabled guard wiring on it writes (any node kind — agent or llm today,
+ * any future kind guards apply to tomorrow, with zero new code here).
+ */
+export function resolveDragSource(node: Node | undefined, wirings: MiddlewareWiring[]): DragSource[] {
+  if (!node) return [];
+  const d = node.data as unknown as InlineLikeData;
+  const out: DragSource[] = [];
+  if (d.node_type === 'llm') {
+    const outputVar = (d.config?.output_var as string) || 'output';
+    out.push({ varName: outputVar, label: outputVar });
+  }
+  for (const g of guardWriteVarsForNode(node.id, wirings)) {
+    out.push({ varName: g.flatVar, label: `${g.guardLabel}: ${g.displayRef}` });
+  }
+  return out;
+}
+
+/** Any node with at least one draggable output (own var, or a guard var). */
+export function isBindableSource(node: Node | undefined, wirings: MiddlewareWiring[]): boolean {
+  return resolveDragSource(node, wirings).length > 0;
 }
 
 export type DropResolution =
@@ -118,24 +146,27 @@ function appendTemplateRef(text: string, alias: string): string {
 
 /**
  * Commit a data-port binding: a reference to the source node (not a copy of
- * its output_var's name) becomes a new alias on the target, appended into
- * `field`'s text.
+ * the var name itself) becomes a new alias on the target, appended into
+ * `field`'s text. `sourceVar` is the chosen output — the source's own
+ * primary var (`output_var`, the pre-existing default) or a guard var
+ * (`resolveDragSource`'s new multi-output case).
  */
 export function commitInlinePortBinding(
   sourceNode: Node,
   targetNodeId: string,
   field: NameableField,
   setNodes: (updater: (ns: Node[]) => Node[]) => void,
+  sourceVar?: string,
 ) {
   const sourceCfg = (sourceNode.data as unknown as InlineLikeData).config ?? {};
-  const sourceVar = (sourceCfg.output_var as string) || 'output';
+  const resolvedSourceVar = sourceVar ?? (sourceCfg.output_var as string) ?? 'output';
 
   setNodes(ns => ns.map(n => {
     if (n.id !== targetNodeId) return n;
     const nd = n.data as unknown as InlineLikeData;
     const cfg = nd.config ?? {};
     const existingAliases = (cfg.input_aliases as Record<string, PortBinding>) ?? {};
-    const alias = defaultAliasFor(sourceNode, sourceVar, existingAliases);
+    const alias = defaultAliasFor(sourceNode, resolvedSourceVar, existingAliases);
     const currentText = (cfg[field.key] as string) || '';
     return {
       ...n,
@@ -143,7 +174,7 @@ export function commitInlinePortBinding(
         ...nd,
         config: {
           ...cfg,
-          input_aliases: { ...existingAliases, [alias]: { source_node_id: sourceNode.id, source_var: sourceVar } },
+          input_aliases: { ...existingAliases, [alias]: { source_node_id: sourceNode.id, source_var: resolvedSourceVar } },
           [field.key]: appendTemplateRef(currentText, alias),
         },
       } as unknown as Record<string, unknown>,

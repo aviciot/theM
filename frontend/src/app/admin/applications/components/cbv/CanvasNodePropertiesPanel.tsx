@@ -1,7 +1,7 @@
 'use client';
 import type { Node, Edge } from '@xyflow/react';
 import { C } from '../../constants';
-import type { MCPServer, Agent } from '@/lib/api';
+import type { MCPServer, Agent, MiddlewareWiring } from '@/lib/api';
 import { OrchestratorNodePanel } from './panels/OrchestratorNodePanel';
 import { AgentNodePanel } from './panels/AgentNodePanel';
 import { EntryPointNodePanel } from './panels/EntryPointNodePanel';
@@ -17,6 +17,7 @@ interface Props {
   nodes: Node[];
   edges: Edge[];
   agents: Agent[];
+  wirings: MiddlewareWiring[];
   openSections: Record<string, boolean>;
   setOpenSections: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   availableMCPServers: MCPServer[];
@@ -31,15 +32,16 @@ interface Props {
   setLogoResult: (v: 'none' | 'valid' | 'invalid' | 'warn') => void;
   showToast: (msg: string, ok: boolean) => void;
   setEpConfig: (instanceId: string, patch: Record<string, unknown>, remove?: string[]) => void;
+  onWiringChanged?: () => void;
 }
 
 export function CanvasNodePropertiesPanel({
-  appId, selectedNode, nodes, edges, agents,
+  appId, selectedNode, nodes, edges, agents, wirings,
   openSections, setOpenSections,
   availableMCPServers, mcpExpanded, setMcpExpanded,
   configPanelText, setConfigPanelText, configPanelErr, setConfigPanelErr,
   setNodes, setIsDirty, setLogoResult,
-  showToast, setEpConfig,
+  showToast, setEpConfig, onWiringChanged,
 }: Props) {
 
   if (!selectedNode) {
@@ -75,6 +77,8 @@ export function CanvasNodePropertiesPanel({
         selectedNode={selectedNode}
         nodes={nodes}
         agents={agents}
+        wirings={wirings}
+        onWiringChanged={onWiringChanged}
         configPanelText={configPanelText}
         setConfigPanelText={setConfigPanelText}
         configPanelErr={configPanelErr}
@@ -135,6 +139,8 @@ export function CanvasNodePropertiesPanel({
         nodes={nodes}
         edges={edges}
         agents={agents}
+        wirings={wirings}
+        onWiringChanged={onWiringChanged}
         setNodes={setNodes}
         setIsDirty={setIsDirty}
         setLogoResult={setLogoResult}

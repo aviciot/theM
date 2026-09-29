@@ -2,6 +2,7 @@
 import type { Node, Edge } from '@xyflow/react';
 import { C } from '../../../constants';
 import { getNodeDef } from '@/lib/nodeRegistry';
+import type { MiddlewareWiring } from '@/lib/api';
 import { extractInlineNodeVars, upstreamAppFlowVarSources, resolveBinding } from '../appFlowVars';
 import { renameInlinePortAlias, deleteInlinePortAlias, getInputAliases } from '../useInlinePortWiring';
 import { PortAliasField } from './PortAliasField';
@@ -29,9 +30,10 @@ interface Props {
   nodes: Node[];
   edges: Edge[];
   setNodes: (updater: (ns: Node[]) => Node[]) => void;
+  wirings?: MiddlewareWiring[];
 }
 
-export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Props) {
+export function InlinePortsSection({ selectedNode, nodes, edges, setNodes, wirings = [] }: Props) {
   const thisNode = nodes.find(n => n.id === selectedNode.id) ?? selectedNode;
   const { reads } = extractInlineNodeVars(thisNode);
   const varSrcMap = upstreamAppFlowVarSources(selectedNode.id, nodes, edges);
@@ -61,7 +63,7 @@ export function InlinePortsSection({ selectedNode, nodes, edges, setNodes }: Pro
       {[...new Set(reads)].map(v => {
         const isAlias = v in inputAliases;
         const isEntryPointInput = v === 'input' && hasDirectEntryPointEdge;
-        const binding = isAlias ? resolveBinding(thisNode, v, nodes) : null;
+        const binding = isAlias ? resolveBinding(thisNode, v, nodes, wirings) : null;
         // Aliased var: resolved via its live node reference. Entry-point
         // `.input`: always resolved, no upstream node "writes" it. Typed-in
         // var: falls back to the graph-walk heuristic.

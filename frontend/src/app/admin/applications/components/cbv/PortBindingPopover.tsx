@@ -1,6 +1,6 @@
 'use client';
-import { C, glass } from '../../constants';
 import type { NameableField } from './useInlinePortWiring';
+import { ChoicePopover } from './ChoicePopover';
 
 // Small drop-point popover for Phase 5 (docs/APPFLOW_NAMED_PORTS_PLAN.md):
 // opens when a wire is dropped onto a target with more than one nameable
@@ -9,6 +9,11 @@ import type { NameableField } from './useInlinePortWiring';
 // raw drop coordinates from the connect gesture, not tied to any node's
 // on-canvas position, matching the plan's "small popover at the drop point"
 // spec confirmed with the user.
+//
+// Thin typed wrapper over ChoicePopover (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// Phase 2 factored the shared visual shell out so the new source-side
+// popover — SourcePortPopover.tsx — looks and feels identical without
+// duplicating the styling).
 
 interface Props {
   x: number;
@@ -20,36 +25,13 @@ interface Props {
 
 export function PortBindingPopover({ x, y, fields, onPick, onDismiss }: Props) {
   return (
-    <>
-      <div
-        style={{ position: 'fixed', inset: 0, zIndex: 999 }}
-        onClick={onDismiss}
-      />
-      <div
-        style={{
-          position: 'fixed', left: x, top: y, zIndex: 1000,
-          ...glass, borderRadius: 10, padding: 6, minWidth: 160,
-        }}
-      >
-        <div style={{ fontSize: 10, color: C.textMuted, padding: '2px 6px 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Bind to which field?
-        </div>
-        {fields.map(f => (
-          <button
-            key={f.key}
-            onClick={() => onPick(f)}
-            style={{
-              display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px',
-              borderRadius: 6, border: 'none', background: 'transparent', color: C.text,
-              fontSize: 12, cursor: 'pointer',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,240,255,0.08)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-    </>
+    <ChoicePopover
+      x={x}
+      y={y}
+      title="Bind to which field?"
+      items={fields}
+      onPick={item => onPick(fields.find(f => f.key === item.key)!)}
+      onDismiss={onDismiss}
+    />
   );
 }

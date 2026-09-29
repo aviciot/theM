@@ -11,7 +11,7 @@ import {
   type Edge,
   type Connection,
 } from '@xyflow/react';
-import { themApi, type Application, type Agent, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport, type MCPServer, type MiddlewareDef } from '@/lib/api';
+import { themApi, type Application, type Agent, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport, type MCPServer, type MiddlewareDef, type MiddlewareWiring } from '@/lib/api';
 import type { OrchNodeData, AgentNodeData, MwNodeData, EpNodeData, FlowControlNodeData, LogoState } from '../types';
 import { C, EP_META } from '../constants';
 import { agentIconForLibrary, applyDagreLayout, canvasToDoc, docToCanvas, genInstanceId } from './CanvasHelpers';
@@ -25,7 +25,8 @@ import { AppFlowDebugPanel } from './AppFlowDebugPanel';
 import { AppFlowDebugInspector } from './AppFlowDebugInspector';
 import { useAppFlowDebugSession } from '../hooks/useAppFlowDebugSession';
 import { PortBindingPopover } from './cbv/PortBindingPopover';
-import { isBindableSource, resolveDropTarget, commitInlinePortBinding, type NameableField } from './cbv/useInlinePortWiring';
+import { SourcePortPopover } from './cbv/SourcePortPopover';
+import { resolveDropTarget, resolveDragSource, commitInlinePortBinding, type NameableField, type DragSource } from './cbv/useInlinePortWiring';
 import { useAuthStore } from '@/stores/authStore';
 
 // Which RF node component (and canvas palette section) each appflow node_type
@@ -135,8 +136,24 @@ export function CanvasBuilderView({
   // a state update from the previous one. A ref has no such render-timing
   // gap: handleConnect writes it synchronously, handleConnectEnd always
   // reads the value as of that exact moment.
-  const pendingPortBindingRef = useRef<{ sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
-  const [portPopover, setPortPopover] = useState<{ x: number; y: number; sourceNode: Node; targetNodeId: string; fields: NameableField[] } | null>(null);
+  //
+  // Extended for docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2: a node can
+  // now have >1 output too (its own output_var AND N guard vars), so a
+  // pending binding may need to resolve EITHER axis, or both at once —
+  // `sources`/`fields` are each `null` when that axis was already `auto`-
+  // resolved (single choice) at connect time, an array when it still needs a
+  // popover pick. `resolvedSource` holds the already-decided source var when
+  // only the target side is still ambiguous, and vice versa.
+  const pendingPortBindingRef = useRef<{
+    sourceNode: Node; targetNodeId: string;
+    sources: DragSource[] | null; resolvedSource?: string;
+    fields: NameableField[] | null; resolvedField?: NameableField;
+  } | null>(null);
+  const [portPopover, setPortPopover] = useState<{
+    x: number; y: number; sourceNode: Node; targetNodeId: string;
+    sources: DragSource[] | null; resolvedSource?: string;
+    fields: NameableField[] | null; resolvedField?: NameableField;
+  } | null>(null);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -180,6 +197,17 @@ export function CanvasBuilderView({
   };
   useEffect(() => { refreshProviderKeys(); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { themApi.listMCPServers().then(setAvailableMCPServers).catch(() => {}); }, []);
+
+  // Middleware wirings for the whole app — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+  // Phase 2. Fetched once here (not per-panel) so the drag-source popover
+  // can resolve ANY node's guard vars at connect-time, not just the
+  // currently-selected one; also threaded down into the Reads/Writes panels
+  // so they don't each make their own duplicate request.
+  const [wirings, setWirings] = useState<MiddlewareWiring[]>([]);
+  const refreshWirings = () => {
+    themApi.listMiddlewareWirings(app.id).then(setWirings).catch(() => {});
+  };
+  useEffect(() => { refreshWirings(); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // App-canvas node registry (llm/condition/router/hil/fork/join) — fetched
   // once, cached in lib/nodeRegistry.ts, consumed by CanvasNodes.tsx and the
@@ -420,19 +448,33 @@ export function CanvasBuilderView({
     setIsDirty(true);
     setLogoResult('none');
 
-    // Phase 5 named data ports: llm is the only kind that ever writes a
-    // FlowVar, so it's the only source a data binding can come from. Every
-    // other source→llm/condition connection is a plain control edge only.
+    // Phase 5 named data ports, extended by docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+    // Phase 2: a node can now have >1 output (its own output_var AND N guard
+    // vars), not just llm's single hardcoded one — resolveDragSource covers
+    // any node kind with an enabled guard wiring. Two independent
+    // ambiguities can each need a popover pick: WHICH source var, and WHICH
+    // target field — resolve each on its own, then commit only once both
+    // are known (immediately if both were 'auto', otherwise after whichever
+    // popover pick(s) are still outstanding).
     // Clear any leftover pending request from a previous connect gesture
     // before deciding this one, so a plain/auto connection right after an
     // ambiguous one that was never resolved can't accidentally reuse it.
     pendingPortBindingRef.current = null;
-    if (isBindableSource(srcNode)) {
-      const resolution = resolveDropTarget(tgtNode);
-      if (resolution.kind === 'auto') {
-        commitInlinePortBinding(srcNode, tgtNode.id, resolution.field, setNodes);
-      } else if (resolution.kind === 'ambiguous') {
-        pendingPortBindingRef.current = { sourceNode: srcNode, targetNodeId: tgtNode.id, fields: resolution.fields };
+    const sourceResolution = resolveDragSource(srcNode, wirings);
+    if (sourceResolution.length > 0) {
+      const targetResolution = resolveDropTarget(tgtNode);
+      if (targetResolution.kind === 'none') return;
+
+      const sources = sourceResolution.length === 1 ? null : sourceResolution;
+      const resolvedSource = sourceResolution.length === 1 ? sourceResolution[0].varName : undefined;
+      const fields = targetResolution.kind === 'ambiguous' ? targetResolution.fields : null;
+      const resolvedField = targetResolution.kind === 'auto' ? targetResolution.field : undefined;
+
+      if (!sources && resolvedField) {
+        // Both axes auto-resolved — commit immediately, no popover needed.
+        commitInlinePortBinding(srcNode, tgtNode.id, resolvedField, setNodes, resolvedSource);
+      } else {
+        pendingPortBindingRef.current = { sourceNode: srcNode, targetNodeId: tgtNode.id, sources, resolvedSource, fields, resolvedField };
       }
     }
   }
@@ -441,9 +483,9 @@ export function CanvasBuilderView({
     const pending = pendingPortBindingRef.current;
     if (!pending) return;
     pendingPortBindingRef.current = null;
-    const { sourceNode, targetNodeId, fields } = pending;
+    const { sourceNode, targetNodeId, sources, resolvedSource, fields, resolvedField } = pending;
     const point = 'changedTouches' in event ? event.changedTouches[0] : event;
-    setPortPopover({ x: point.clientX, y: point.clientY, sourceNode, targetNodeId, fields });
+    setPortPopover({ x: point.clientX, y: point.clientY, sourceNode, targetNodeId, sources, resolvedSource, fields, resolvedField });
   }
 
   function handleDropOnCanvas(e: DragEvent<HTMLDivElement>, rfInstance: ReturnType<typeof useReactFlow>) {
@@ -632,6 +674,8 @@ export function CanvasBuilderView({
                 nodes={nodes}
                 edges={edges}
                 agents={agents}
+                wirings={wirings}
+                onWiringChanged={refreshWirings}
                 openSections={openSections}
                 setOpenSections={setOpenSections}
                 availableMCPServers={availableMCPServers}
@@ -699,13 +743,35 @@ export function CanvasBuilderView({
         </div>
       )}
 
-      {portPopover && (
+      {/* Source-side popover ("which output?") shows first when the drag's
+          SOURCE has >1 draggable var (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+          Phase 2) — asked before the target-side one so the target popover
+          (if also ambiguous) can commit in one shot once both are known. */}
+      {portPopover && portPopover.sources && (
+        <SourcePortPopover
+          x={portPopover.x}
+          y={portPopover.y}
+          sources={portPopover.sources}
+          onPick={source => {
+            const resolvedField = portPopover.resolvedField;
+            if (resolvedField) {
+              commitInlinePortBinding(portPopover.sourceNode, portPopover.targetNodeId, resolvedField, setNodes, source.varName);
+              setPortPopover(null);
+            } else {
+              setPortPopover({ ...portPopover, sources: null, resolvedSource: source.varName });
+            }
+          }}
+          onDismiss={() => setPortPopover(null)}
+        />
+      )}
+
+      {portPopover && !portPopover.sources && portPopover.fields && (
         <PortBindingPopover
           x={portPopover.x}
           y={portPopover.y}
           fields={portPopover.fields}
           onPick={field => {
-            commitInlinePortBinding(portPopover.sourceNode, portPopover.targetNodeId, field, setNodes);
+            commitInlinePortBinding(portPopover.sourceNode, portPopover.targetNodeId, field, setNodes, portPopover.resolvedSource);
             setPortPopover(null);
           }}
           onDismiss={() => setPortPopover(null)}

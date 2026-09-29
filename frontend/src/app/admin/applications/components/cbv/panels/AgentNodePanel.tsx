@@ -5,7 +5,7 @@ import { C } from '../../../constants';
 import { fieldStyle, chipStyle } from './panelShared';
 import { AgentGuardsSection } from './AgentGuardsSection';
 import { WritesSection } from './WritesSection';
-import type { Agent } from '@/lib/api';
+import type { Agent, MiddlewareWiring } from '@/lib/api';
 
 // ── AgentNodePanel ────────────────────────────────────────────────────────────
 
@@ -14,6 +14,7 @@ interface Props {
   selectedNode: Node;
   nodes: Node[];
   agents: Agent[];
+  wirings: MiddlewareWiring[];
   configPanelText: string;
   setConfigPanelText: React.Dispatch<React.SetStateAction<string>>;
   configPanelErr: boolean;
@@ -21,12 +22,13 @@ interface Props {
   setNodes: (updater: (ns: Node[]) => Node[]) => void;
   setIsDirty: (v: boolean) => void;
   showToast: (msg: string, ok: boolean) => void;
+  onWiringChanged?: () => void;
 }
 
 export function AgentNodePanel({
-  appId, selectedNode, nodes, agents,
+  appId, selectedNode, nodes, agents, wirings,
   configPanelText, setConfigPanelText, configPanelErr, setConfigPanelErr,
-  setNodes, setIsDirty, showToast,
+  setNodes, setIsDirty, showToast, onWiringChanged,
 }: Props) {
   const liveAgentNode = nodes.find(n => n.id === selectedNode.id);
   const d = (liveAgentNode?.data ?? selectedNode.data) as unknown as AgentNodeData;
@@ -62,10 +64,10 @@ export function AgentNodePanel({
         />
       </div>
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
-        <WritesSection appId={appId} selectedNode={selectedNode} />
+        <WritesSection appId={appId} selectedNode={selectedNode} wirings={wirings} />
       </div>
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
-        <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} />
+        <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} onWiringChanged={onWiringChanged} />
       </div>
     </div>
   );

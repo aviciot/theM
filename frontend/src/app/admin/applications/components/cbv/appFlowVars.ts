@@ -26,9 +26,11 @@
  */
 
 import type { Node, Edge } from '@xyflow/react';
+import type { MiddlewareWiring } from '@/lib/api';
 import { extractTemplateVars } from '@/lib/templateVars';
 import { reachablePredecessors } from '@/lib/graphWalk';
 import { getInputAliases } from './useInlinePortWiring';
+import { guardWriteVarsForNode } from './guardWriteVars';
 
 export interface AppFlowNodeVars {
   reads: string[];
@@ -53,13 +55,26 @@ export interface ResolvedBinding {
  * up fresh in `allNodes` every call — never trusting a copied string. Returns
  * null if the var isn't a drag-created alias, or its source node no longer
  * exists (e.g. deleted, or a hand-edited import referencing an unknown id).
+ *
+ * A bound source_var is either the source's primary output_var (drifts if
+ * renamed — the pre-existing case) or a guard var (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+ * Phase 2 — a fixed naming convention, e.g. `agent1_pii_redact_status`, that
+ * never "renames"; only disappears if the guard wiring is deleted/disabled,
+ * which is a different kind of staleness than drift and not reported here).
  */
-export function resolveBinding(node: Node, varName: string, allNodes: Node[]): ResolvedBinding | null {
+export function resolveBinding(node: Node, varName: string, allNodes: Node[], wirings: MiddlewareWiring[] = []): ResolvedBinding | null {
   const aliases = getInputAliases(node);
   const binding = aliases[varName];
   if (!binding) return null;
   const sourceNode = allNodes.find(n => n.id === binding.source_node_id);
   if (!sourceNode) return null;
+
+  const guardVars = guardWriteVarsForNode(sourceNode.id, wirings);
+  const isGuardVar = guardVars.some(g => g.flatVar === binding.source_var);
+  if (isGuardVar) {
+    return { sourceNode, liveVar: binding.source_var, boundVar: binding.source_var, drifted: false };
+  }
+
   const sourceCfg = (sourceNode.data as unknown as InlineLikeData).config ?? {};
   const liveVar = (sourceCfg.output_var as string) || 'output';
   return { sourceNode, liveVar, boundVar: binding.source_var, drifted: liveVar !== binding.source_var };

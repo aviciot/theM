@@ -6,7 +6,7 @@ import { fieldStyle } from './panelShared';
 import { InlinePortsSection } from './InlinePortsSection';
 import { AgentGuardsSection } from './AgentGuardsSection';
 import { WritesSection } from './WritesSection';
-import type { Agent } from '@/lib/api';
+import type { Agent, MiddlewareWiring } from '@/lib/api';
 
 // ── InlineNodePanel (LLM + Condition) ────────────────────────────────────────
 
@@ -16,10 +16,12 @@ interface Props {
   nodes: Node[];
   edges: Edge[];
   agents: Agent[];
+  wirings: MiddlewareWiring[];
   setNodes: (updater: (ns: Node[]) => Node[]) => void;
   setIsDirty: (v: boolean) => void;
   setLogoResult: (v: 'none' | 'valid' | 'invalid' | 'warn') => void;
   showToast: (msg: string, ok: boolean) => void;
+  onWiringChanged?: () => void;
 }
 
 const CONDITION_EXAMPLES = [
@@ -29,7 +31,7 @@ const CONDITION_EXAMPLES = [
 ];
 
 export function InlineNodePanel({
-  appId, selectedNode, nodes, edges, agents, setNodes, setIsDirty, setLogoResult, showToast,
+  appId, selectedNode, nodes, edges, agents, wirings, setNodes, setIsDirty, setLogoResult, showToast, onWiringChanged,
 }: Props) {
   const liveNode = nodes.find(n => n.id === selectedNode.id);
   const d = (liveNode?.data ?? selectedNode.data) as unknown as InlineNodeData;
@@ -83,7 +85,7 @@ export function InlineNodePanel({
 
         {displayNameField}
 
-        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} />
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} wirings={wirings} />
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider / Model</label>
@@ -152,11 +154,11 @@ export function InlineNodePanel({
         </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
-          <WritesSection appId={appId} selectedNode={selectedNode} outputVar={outputVar || 'output'} />
+          <WritesSection appId={appId} selectedNode={selectedNode} outputVar={outputVar || 'output'} wirings={wirings} />
         </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
-          <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} />
+          <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} onWiringChanged={onWiringChanged} />
         </div>
       </div>
     );
@@ -183,7 +185,7 @@ export function InlineNodePanel({
 
         {displayNameField}
 
-        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} />
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} wirings={wirings} />
 
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Expression</label>
