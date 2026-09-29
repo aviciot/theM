@@ -1,10 +1,11 @@
 # AppFlow Guard Output Ports Plan
 # Status: Phase 0 DONE (2026-09-28). Phase 1 DONE (2026-09-29, flat status
-# var per guard, real Temporal tests). Phases 1.5-3 REDESIGNED 2026-09-29
-# after live design discussion — nested per-category vars
-# ({{pii_guard.email.status}}) + a new "Writes" panel + a new source-side
-# port-picker popover. Phase 2's (a)/(b) FlowVars-shape decision must be
-# made before writing code — see below. Not started.
+# var per guard, real Temporal tests). Phase 1.5 DONE (2026-09-29,
+# per-category detail plumbed through, flat key convention). Phase 2-3
+# REDESIGNED 2026-09-29 after live design discussion — nested per-category
+# display vars ({{pii_guard.email.status}}) + a new "Writes" panel + a new
+# source-side port-picker popover. Phase 2's (a)/(b) FlowVars-shape decision
+# must be made before writing code — see below. Not started.
 # Owner: platform
 # Last updated: 2026-09-29
 
@@ -233,6 +234,8 @@ work makes it visible to users.
 
 ### Phase 1.5 — carry per-category detail through, not just one flat status
 
+**DONE (2026-09-29).**
+
 **Real gap found reading the actual detector code**: `pii.Detector.Process`
 (`internal/middleware/pii/pii.go`) already computes exactly which
 categories matched, with counts — `found := map[string]int{}` — and stores
@@ -242,14 +245,27 @@ workflow: `Pipeline.Run` only forwards `Detail` to `PublishProgress` (File
 Guard's async event stream) and a `"threat"` string extraction — never into
 `TextGateCheckOutput`, which only ever carries a flat `Categories string`.
 
-**Needed:** widen `TextGateCheckOutput` (and the underlying
-`middleware.TextGateResult`) to carry a structured per-guard, per-category
-detail payload — not just the joined `"defSlug:status"` string — so
-`writeTextGuardVars` can write NESTED vars, not just one flat status.
-Exact shape TBD at implementation time (candidate: `map[string]map[string]
-Result` — defSlug → category → outcome/count), but must preserve
-backward-compat with the existing flat `Categories` string (still used by
-the trace/guardNotes path, unchanged).
+**Shipped:** `middleware.TextGateResult` gained `ResultsByGuard
+map[string]Result` (keyed by defSlug), populated inside `TextGate.Check()`.
+`appflow.TextGateCheckOutput` gained `GuardDetails []GuardCategoryDetail`
+(`{DefSlug, Outcome string; Categories map[string]int}`). The real boundary
+bug was `cmd/dag-worker/main.go`'s `appFlowTextGateAdapter.Check`, which
+only ever read `Text`/`Blocked`/`Categories` off the `TextGate` result —
+fixed via new `guardCategoryDetailsFrom(...)` helper (sorted by defSlug for
+Temporal-replay determinism). `workflow.go` gained
+`writeGuardCategoryVars(vars, nodeID, details)`, writing one flat var per
+matched category: `nodeID_defSlug_category_status = "flagged"` (e.g.
+`agent1_pii_redact_phone_status`) — same flat-key convention as Phase 1,
+not yet the nested `{{pii_guard.email.status}}` display form (that's
+Phase 2's (a)/(b) decision below, still not started). Tests: 1 new
+`internal/middleware/textgate_test.go` case proving `ResultsByGuard` carries
+the real category detail one layer below the boundary bug; 2 new real
+Temporal-environment tests in `workflow_temporal_test.go`
+(`TestAgentNode_GuardCategoryVar_ConditionBranchesOnSpecificCategory`,
+`TestAgentNode_GuardCategoryVar_DoesNotMatchUnrelatedCategory`) proving a
+condition node can branch on one specific category without matching an
+unrelated one. `go build`/`go test ./...` (full suite) clean. See
+`go/TEST_INDEX.md` S1-183.
 
 ### Phase 2 — nested guard output vars + Writes panel
 

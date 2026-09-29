@@ -79,6 +79,23 @@ type TextGateResult struct {
 	// visibility, same "don't silently scan with zero visibility" lesson
 	// from this session's File Guard trace fix.
 	Results []Result
+	// ResultsByGuard is the same data as Results, keyed by defSlug
+	// ("pii_redact", "prompt_inject") instead of positional order —
+	// docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5. Each guard's own
+	// Result.Detail carries its real per-category match data (e.g.
+	// pii_redact's Detail["categories"] = map[string]int{"email": 1}) —
+	// this was already computed correctly by pii.Detector.Process the whole
+	// time, just never threaded past this struct before Phase 1.5 (the
+	// appflow-layer TextGateCheckOutput/appFlowTextGateAdapter only ever
+	// extracted Categories, a flat human-readable string, and silently
+	// dropped everything else). Added as a NEW field alongside Results
+	// rather than replacing it — Results' positional-order guarantee (this
+	// same Check method's own iteration order over
+	// []string{"pii_redact","prompt_inject"}) is fragile to rely on from a
+	// caller that wants a specific guard's own result, so ResultsByGuard is
+	// the one new callers should use; Results stays for whatever narrow
+	// internal use it already had.
+	ResultsByGuard map[string]Result
 	// Categories is a short human-readable summary of what ran and matched,
 	// e.g. "pii_redact:flagged prompt_inject:clean" — for the workflow trace
 	// line, same spirit as FileGateCheckOutput's ScanStatus.
@@ -107,6 +124,7 @@ func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (Te
 	part := Part{Kind: "text", Text: text}
 
 	var allResults []Result
+	resultsByGuard := make(map[string]Result)
 	var categoryParts []string
 	current := part
 	for _, defSlug := range []string{"pii_redact", "prompt_inject"} {
@@ -140,6 +158,13 @@ func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (Te
 
 		pr := pipeline.Run(ctx, current, []string{defSlug}, wrapSingleProcessorConfig(defSlug, cfgRaw), nil)
 		allResults = append(allResults, pr.Results...)
+		// pipeline.Run was called with exactly one processor name (defSlug),
+		// so pr.Results has exactly one entry when the processor actually
+		// ran (it can be empty if the processor was never found in the
+		// registry, though that's already filtered out above).
+		if len(pr.Results) > 0 {
+			resultsByGuard[defSlug] = pr.Results[0]
+		}
 		current = pr.FinalPart
 		categoryParts = append(categoryParts, defSlug+":"+pr.FinalStatus)
 
@@ -148,14 +173,18 @@ func (g *TextGate) Check(ctx context.Context, in TextGateInput, text string) (Te
 				if r.Block {
 					return TextGateResult{
 						Text: current.Text, Blocked: true, Results: allResults,
-						Categories: joinCategoryParts(categoryParts),
+						ResultsByGuard: resultsByGuard,
+						Categories:     joinCategoryParts(categoryParts),
 					}, nil
 				}
 			}
 		}
 	}
 
-	return TextGateResult{Text: current.Text, Results: allResults, Categories: joinCategoryParts(categoryParts)}, nil
+	return TextGateResult{
+		Text: current.Text, Results: allResults, ResultsByGuard: resultsByGuard,
+		Categories: joinCategoryParts(categoryParts),
+	}, nil
 }
 
 func joinCategoryParts(parts []string) string {

@@ -841,3 +841,82 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGuardStatusVar_Conditi
 	}
 	s.True(foundBranch, "expected cond1 to read agent1_file_guard_status=\"clean\" and take the true branch; dones=%+v", dones)
 }
+
+// AF-TR-W20: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5 — a guard's
+// per-category detail (GuardDetails, carrying which PII category actually
+// matched) is written into its own FlowVar
+// (agent1_pii_redact_email_status) distinct from the guard's own combined
+// status var (agent1_pii_redact_status) — a condition node can branch on
+// "did EMAIL specifically get flagged" without also matching a phone/ssn
+// hit on the same guard.
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_GuardCategoryVar_ConditionBranchesOnSpecificCategory() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{response: "call me at 555-123-4567"}
+	s.acts.TextGate = &fakeTextGate{byPhase: map[string]TextGateCheckOutput{
+		"input": {Text: "hi"},
+		"output": {
+			Text: "call me at 555-123-4567", Categories: "pii_redact:flagged",
+			GuardDetails: []GuardCategoryDetail{
+				{DefSlug: "pii_redact", Outcome: "flagged", Categories: map[string]int{"phone": 1}},
+			},
+		},
+	}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-guard-category-var",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           agentThenConditionSpec(`{{eq .agent1_pii_redact_phone_status "flagged"}}`),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	foundBranch := false
+	for _, d := range dones {
+		if d["node_id"] == "cond1" && d["detail"] == "branch=true" {
+			foundBranch = true
+		}
+	}
+	s.True(foundBranch, "expected cond1 to read agent1_pii_redact_phone_status=\"flagged\" and take the true branch; dones=%+v", dones)
+}
+
+// AF-TR-W21: the category var must be SPECIFIC — a condition checking for
+// "email" must not spuriously match when only "phone" was actually
+// flagged, proving writeGuardCategoryVars doesn't write a var for every
+// possible category, only the ones that actually appear in GuardDetails.
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_GuardCategoryVar_DoesNotMatchUnrelatedCategory() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{response: "call me at 555-123-4567"}
+	s.acts.TextGate = &fakeTextGate{byPhase: map[string]TextGateCheckOutput{
+		"input": {Text: "hi"},
+		"output": {
+			Text: "call me at 555-123-4567", Categories: "pii_redact:flagged",
+			GuardDetails: []GuardCategoryDetail{
+				{DefSlug: "pii_redact", Outcome: "flagged", Categories: map[string]int{"phone": 1}},
+			},
+		},
+	}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-guard-category-var-negative",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           agentThenConditionSpec(`{{eq .agent1_pii_redact_email_status "flagged"}}`),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	foundFalseBranch := false
+	for _, d := range dones {
+		if d["node_id"] == "cond1" && d["detail"] == "branch=false" {
+			foundFalseBranch = true
+		}
+	}
+	s.True(foundFalseBranch, "agent1_pii_redact_email_status must be unset (no email category flagged) so the condition takes the false branch; dones=%+v", dones)
+}

@@ -189,6 +189,30 @@ func writeTextGuardVars(vars FlowVars, nodeID, categories string) {
 	}
 }
 
+// writeGuardCategoryVars writes one FlowVar per (guard, category) pair
+// found in details — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5.
+// E.g. a pii_redact guard that matched "email" once and "phone" twice on
+// node "agent1" writes agent1_pii_redact_email_status="flagged" and
+// agent1_pii_redact_phone_status="flagged". A guard with Outcome=="clean"
+// (nothing matched at all) writes no per-category vars — there is nothing
+// to enumerate — but writeTextGuardVars's own per-guard status var (e.g.
+// agent1_pii_redact_status="clean") already covers that case.
+//
+// Flat storage key, not real nested Go values, deliberately — FlowVars is
+// (and stays) a flat map[string]string; the nicer dotted display form
+// ({{pii_guard.email.status}}) a user sees/drags on the canvas is a
+// presentation-layer translation the frontend applies over this flat key,
+// not a different runtime representation (Phase 2's (a)/(b) decision,
+// resolved as (b): additive, doesn't touch FlowVars' type or every
+// existing vars[x]=y call site).
+func writeGuardCategoryVars(vars FlowVars, nodeID string, details []GuardCategoryDetail) {
+	for _, d := range details {
+		for category := range d.Categories {
+			vars[nodeID+"_"+d.DefSlug+"_"+category+"_status"] = "flagged"
+		}
+	}
+}
+
 // writeFileGuardVar sets the File Guard status var for nodeID — its own
 // vocabulary (clean/infected/error/timeout/disabled/pending), deliberately
 // NOT normalized into text guards' clean/flagged/blocked, since "infected"
@@ -547,6 +571,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				}
 				accumulated = textIn.Text
 				writeTextGuardVars(vars, node.ID, textIn.Categories)
+				writeGuardCategoryVars(vars, node.ID, textIn.GuardDetails)
 				if strings.Contains(textIn.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "input: "+textIn.Categories)
 				}
@@ -603,6 +628,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				}
 				accumulated = textOut.Text
 				writeTextGuardVars(vars, node.ID, textOut.Categories)
+				writeGuardCategoryVars(vars, node.ID, textOut.GuardDetails)
 				if strings.Contains(textOut.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "output: "+textOut.Categories)
 				}
@@ -747,6 +773,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				}
 				accumulated = textIn.Text
 				writeTextGuardVars(vars, node.ID, textIn.Categories)
+				writeGuardCategoryVars(vars, node.ID, textIn.GuardDetails)
 				if strings.Contains(textIn.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "input: "+textIn.Categories)
 				}
@@ -805,6 +832,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				}
 				llmOut.ResponseText = textOut.Text
 				writeTextGuardVars(vars, node.ID, textOut.Categories)
+				writeGuardCategoryVars(vars, node.ID, textOut.GuardDetails)
 				if strings.Contains(textOut.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "output: "+textOut.Categories)
 				}

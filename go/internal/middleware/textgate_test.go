@@ -97,6 +97,39 @@ func TestTextGate_PIIWiringEnabled_RedactsText(t *testing.T) {
 	}
 }
 
+// TG-2b: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5 — ResultsByGuard
+// keys the same result by defSlug, and its Detail carries the real
+// per-category match data pii.Detector.Process already computes
+// (Detail["categories"] = map[string]int) — this was previously discarded
+// entirely at the appflow-layer adapter, never at this level; this test
+// proves the data is genuinely present here, one layer below where the
+// real gap was.
+func TestTextGate_PIIWiringEnabled_ResultsByGuardCarriesCategoryDetail(t *testing.T) {
+	db := &textGateFakeDB{wirings: map[string]*wiringRow{
+		"pii_redact": {enabled: true, defConfig: `{"enabled":false,"mode":"redact"}`, override: `{}`},
+	}}
+	gate := middleware.NewTextGate(db, registryWithBoth())
+
+	res, err := gate.Check(context.Background(), middleware.TextGateInput{
+		ApplicationID: "app-1", NodeID: "node-1",
+	}, "email jane@example.com for details")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	r, ok := res.ResultsByGuard["pii_redact"]
+	if !ok {
+		t.Fatalf("ResultsByGuard = %+v, want a \"pii_redact\" entry", res.ResultsByGuard)
+	}
+	cats, ok := r.Detail["categories"].(map[string]int)
+	if !ok {
+		t.Fatalf("ResultsByGuard[\"pii_redact\"].Detail[\"categories\"] = %v (%T), want map[string]int", r.Detail["categories"], r.Detail["categories"])
+	}
+	if cats["email"] != 1 {
+		t.Errorf("categories[\"email\"] = %d, want 1", cats["email"])
+	}
+}
+
 // TG-3: prompt_inject wiring enabled with mode=block and a matching phrase —
 // Check reports Blocked=true and stops (does not also run pii_redact, since
 // pii_redact has no wiring here — but critically, the block itself must

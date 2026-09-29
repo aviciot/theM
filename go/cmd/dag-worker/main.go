@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -1226,7 +1227,41 @@ func (a *appFlowTextGateAdapter) Check(ctx context.Context, in appflow.TextGateC
 	if err != nil {
 		return appflow.TextGateCheckOutput{}, err
 	}
-	return appflow.TextGateCheckOutput{Text: tr.Text, Blocked: tr.Blocked, Categories: tr.Categories}, nil
+	return appflow.TextGateCheckOutput{
+		Text: tr.Text, Blocked: tr.Blocked, Categories: tr.Categories,
+		GuardDetails: guardCategoryDetailsFrom(tr.ResultsByGuard),
+	}, nil
+}
+
+// guardCategoryDetailsFrom converts middleware.TextGateResult.ResultsByGuard
+// (defSlug -> middleware.Result) into the stable, Temporal-serializable
+// shape appflow.TextGateCheckOutput carries — docs/
+// APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5. Sorted by defSlug for a
+// deterministic output order (this feeds a Temporal activity result, and
+// map iteration order is deliberately randomized by Go — an activity's
+// recorded output must be stable across replays of the same history).
+func guardCategoryDetailsFrom(byGuard map[string]middleware.Result) []appflow.GuardCategoryDetail {
+	if len(byGuard) == 0 {
+		return nil
+	}
+	slugs := make([]string, 0, len(byGuard))
+	for slug := range byGuard {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+
+	out := make([]appflow.GuardCategoryDetail, 0, len(slugs))
+	for _, slug := range slugs {
+		r := byGuard[slug]
+		detail := appflow.GuardCategoryDetail{DefSlug: slug, Outcome: r.Outcome}
+		if raw, ok := r.Detail["categories"]; ok {
+			if cats, ok := raw.(map[string]int); ok {
+				detail.Categories = cats
+			}
+		}
+		out = append(out, detail)
+	}
+	return out
 }
 
 var _ appflow.TextGateChecker = (*appFlowTextGateAdapter)(nil)

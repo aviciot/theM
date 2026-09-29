@@ -644,6 +644,31 @@ type TextGateCheckOutput struct {
 	// File Guard's trace fix earlier this session. Empty when nothing ran
 	// or nothing matched.
 	Categories string `json:"categories,omitempty"`
+	// GuardDetails carries one entry per guard that actually ran, with its
+	// real per-category match data — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+	// Phase 1.5. This was already computed correctly by pii.Detector.Process
+	// (Result.Detail["categories"] = map[string]int, e.g. {"email": 1}) but
+	// silently dropped at the appFlowTextGateAdapter boundary before this
+	// phase — Categories only ever carried the flat "defSlug:status" summary
+	// string. A concrete slice of a named struct, not map[string]any, since
+	// this round-trips through Temporal activity history (JSON-serialized,
+	// stored, and replayed) — an arbitrary any value would still work but a
+	// stable, explicit shape is safer against a future encoding/json edge
+	// case (e.g. a map[string]int decoding as map[string]float64 through an
+	// any) and is easier for the workflow's own var-writing code to consume
+	// deterministically.
+	GuardDetails []GuardCategoryDetail `json:"guard_details,omitempty"`
+}
+
+// GuardCategoryDetail is one guard's structured result — which categories
+// (if any) it matched, with counts. Categories is nil/empty for a guard
+// whose Outcome is "clean" (nothing matched) or for a guard kind that
+// doesn't report categories at all (prompt_inject reports only Outcome,
+// no category breakdown, unlike pii_redact).
+type GuardCategoryDetail struct {
+	DefSlug    string         `json:"def_slug"`
+	Outcome    string         `json:"outcome"`
+	Categories map[string]int `json:"categories,omitempty"`
 }
 
 // TextGateChecker is the interface AppFlowTextGateActivity depends on.
