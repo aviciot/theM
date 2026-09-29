@@ -116,19 +116,28 @@ WHERE  mw.id = $1::uuid AND mw.application_id = $2::uuid`
 }
 
 // CreateMiddlewareWiring inserts a new wiring row, or updates the existing
-// one in place if a wiring for this (application_id, node_id) already
-// exists — them.middleware_wirings enforces that pair unique
-// (uq_mw_wiring_app_node) whenever node_id is set, which every
+// one in place if a wiring for this (application_id, node_id, def_id)
+// already exists — them.middleware_wirings enforces that triple unique
+// (uq_mw_wiring_app_node_def) whenever node_id is set, which every
 // canvas-created wiring always has (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
 // Phase 2). A caller can legitimately hit this (e.g. re-saving an existing
 // node's guard config) — that's a real "this wiring already exists, update
 // it" case, not an error condition, so it must not surface as a raw
 // unique-violation 500.
 //
+// Widened from (application_id, node_id) to include def_id 2026-09-28
+// (db/117_middleware_wirings_multi_guard_per_node.sql) — the original pair
+// meant a node could only ever have ONE guard wired to it, period, a limit
+// nobody noticed until a demo app tried to wire both PII Guard and
+// Prompt-Injection Guard onto the same node and hit a live unique-violation.
+// def_id is now part of the identity: the same guard type re-saved on the
+// same node still upserts in place, but two DIFFERENT guard types on one
+// node now coexist as two separate rows.
+//
 // in.AgentID is empty for a wiring scoped to a non-agent node (an llm node
 // has no agents row at all — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4,
-// db/114 made agent_id nullable for exactly this). node_id, not agent_id,
-// is the identity ON CONFLICT resolves on.
+// db/114 made agent_id nullable for exactly this). node_id+def_id, not
+// agent_id, is the identity ON CONFLICT resolves on.
 func CreateMiddlewareWiring(ctx context.Context, db Querier, appID string, in MiddlewareWiringInput) (MiddlewareWiring, error) {
 	enabled := true
 	if in.Enabled != nil {
@@ -139,8 +148,8 @@ func CreateMiddlewareWiring(ctx context.Context, db Querier, appID string, in Mi
 		cfgRaw = json.RawMessage("{}")
 	}
 
-	// uq_mw_wiring_app_node is a partial UNIQUE INDEX (WHERE node_id IS NOT
-	// NULL AND node_id <> ''), not a named constraint — ON CONFLICT ON
+	// uq_mw_wiring_app_node_def is a partial UNIQUE INDEX (WHERE node_id IS
+	// NOT NULL AND node_id <> ''), not a named constraint — ON CONFLICT ON
 	// CONSTRAINT only accepts real constraints (confirmed live: using the
 	// index's name that way fails with "constraint ... does not exist").
 	// The inference-target form (columns + matching WHERE clause) is the
@@ -154,7 +163,7 @@ SELECT $1::uuid,
        CASE WHEN $6 = '' THEN NULL ELSE $6 END
 FROM   them.middleware_defs md
 WHERE  md.slug = $7
-ON CONFLICT (application_id, node_id) WHERE node_id IS NOT NULL AND node_id <> '' DO UPDATE
+ON CONFLICT (application_id, node_id, def_id) WHERE node_id IS NOT NULL AND node_id <> '' DO UPDATE
 SET    config_override = EXCLUDED.config_override,
        enabled         = EXCLUDED.enabled,
        agent_id        = EXCLUDED.agent_id,

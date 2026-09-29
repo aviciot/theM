@@ -677,3 +677,167 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGateDisabled_NeverCall
 		s.Fail("the wait activity must never be called when File Guard is disabled for this node")
 	}
 }
+
+// agentThenConditionSpec chains a single agent node into a condition node
+// that branches on the agent node's own Text Guard status var — the exact
+// shape docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1 exists to enable.
+// Both branches are real terminal nodes so which one fired is observable
+// from the trace.
+func agentThenConditionSpec(expression string) *AppFlowSpec {
+	return &AppFlowSpec{
+		EntryPoints: []EPFlow{
+			{
+				Slug:    "test",
+				StartID: "agent1",
+				Nodes: []AppFlowNode{
+					{ID: "agent1", Kind: "agent", AgentID: "agent-uuid-1"},
+					{ID: "cond1", Kind: "condition", Config: mustJSON(InlineConditionConfig{Expression: expression})},
+					{ID: "flagged_branch", Kind: "orchestrator"},
+					{ID: "clean_branch", Kind: "orchestrator"},
+				},
+				Edges: []AppFlowEdge{
+					{Source: "agent1", Target: "cond1"},
+					{Source: "cond1", Target: "flagged_branch", Label: "true"},
+					{Source: "cond1", Target: "clean_branch", Label: "false"},
+				},
+			},
+		},
+	}
+}
+
+// AF-TR-W16: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1 — a Text
+// Guard's outcome is written into a real FlowVar (<nodeID>_<defSlug>_status)
+// that a downstream condition node can actually read and branch on, not
+// just a trace-only string. A flagged PII result on agent1 routes to the
+// "true" branch.
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_GuardStatusVar_ConditionBranchesOnFlagged() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{response: "call me at 555-123-4567"}
+	s.acts.TextGate = &fakeTextGate{byPhase: map[string]TextGateCheckOutput{
+		"input":  {Text: "hi"},
+		"output": {Text: "call me at 555-123-4567", Categories: "pii_redact:flagged"},
+	}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-guard-var-flagged",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           agentThenConditionSpec(`{{eq .agent1_pii_redact_status "flagged"}}`),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	foundBranch := false
+	for _, d := range dones {
+		if d["node_id"] == "cond1" && d["detail"] == "branch=true" {
+			foundBranch = true
+		}
+	}
+	s.True(foundBranch, "expected cond1 to take the true branch on a flagged PII status; dones=%+v", dones)
+}
+
+// AF-TR-W17: the same guard-status var, but the guard result is clean —
+// proves the var is written (and readable) in the non-flagged case too,
+// not just when something was found, and that the condition correctly
+// takes the "false" branch.
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_GuardStatusVar_ConditionBranchesOnClean() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{response: "hello there"}
+	s.acts.TextGate = &fakeTextGate{byPhase: map[string]TextGateCheckOutput{
+		"input":  {Text: "hi"},
+		"output": {Text: "hello there", Categories: "pii_redact:clean"},
+	}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-guard-var-clean",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           agentThenConditionSpec(`{{eq .agent1_pii_redact_status "flagged"}}`),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	foundBranch := false
+	for _, d := range dones {
+		if d["node_id"] == "cond1" && d["detail"] == "branch=false" {
+			foundBranch = true
+		}
+	}
+	s.True(foundBranch, "expected cond1 to take the false branch on a clean PII status; dones=%+v", dones)
+}
+
+// AF-TR-W18: two guards on the same node write two INDEPENDENT vars — a
+// condition must be able to check one guard's status without the other
+// guard's result leaking into or overwriting it (Open Question 1 from the
+// plan doc: a node with both PII Guard and Prompt-Injection Guard enabled
+// must let a condition branch on EACH independently).
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_GuardStatusVar_TwoGuardsWriteIndependentVars() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{response: "call me at 555-123-4567"}
+	s.acts.TextGate = &fakeTextGate{byPhase: map[string]TextGateCheckOutput{
+		"input":  {Text: "hi"},
+		"output": {Text: "call me at 555-123-4567", Categories: "pii_redact:flagged prompt_inject:clean"},
+	}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-guard-var-two-guards",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           agentThenConditionSpec(`{{and (eq .agent1_pii_redact_status "flagged") (eq .agent1_prompt_inject_status "clean")}}`),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	foundBranch := false
+	for _, d := range dones {
+		if d["node_id"] == "cond1" && d["detail"] == "branch=true" {
+			foundBranch = true
+		}
+	}
+	s.True(foundBranch, "expected both guard vars to be independently readable and both conditions to hold; dones=%+v", dones)
+}
+
+// AF-TR-W19: File Guard's own status var uses its native vocabulary
+// (clean/infected/error/timeout/disabled), not the text guards'
+// clean/flagged/blocked — an "infected" verdict is a materially different,
+// more severe outcome than a text guard's "flagged" and must stay
+// distinguishable from it. This test also proves the var is written even
+// when the wait activity resolves to a non-blocking "clean" (previously
+// only the trace string carried this, never a FlowVar).
+func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGuardStatusVar_ConditionReadsCleanVerdict() {
+	s.acts.AgentInvoker = &fakeAgentInvoker{result: AgentInvokeResult{
+		PartKind: "file", FileURL: "https://example.com/report.pdf", FileName: "report.pdf",
+	}}
+	s.acts.FileGate = &fakeFileGate{result: FileGateCheckOutput{ArtifactID: "artifact-1", ScanStatus: "pending"}}
+	s.acts.FileGateWaiter = &fakeFileGateWaiter{ok: true, result: FileGateWaitResult{ScanStatus: "clean"}}
+
+	input := AppFlowWorkflowInput{
+		RunID:          "run-w-file-guard-var-clean",
+		TenantID:       "tenant-1",
+		ApplicationID:  "app-1",
+		EntryPointSlug: "test",
+		Spec:           agentThenConditionSpec(`{{eq .agent1_file_guard_status "clean"}}`),
+		UserMessage:    "hi",
+	}
+	s.env.ExecuteWorkflow(AppFlowWorkflow, input)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	dones := tracePayloadsOfType(s.T(), s.streamPub, "node_done")
+	foundBranch := false
+	for _, d := range dones {
+		if d["node_id"] == "cond1" && d["detail"] == "branch=true" {
+			foundBranch = true
+		}
+	}
+	s.True(foundBranch, "expected cond1 to read agent1_file_guard_status=\"clean\" and take the true branch; dones=%+v", dones)
+}

@@ -154,6 +154,53 @@ func traceNode(ctx workflow.Context, runID, nodeID, kind, eventType, detail, ver
 	}).Get(ctx, nil)
 }
 
+// guardStatusVarName builds the FlowVar name a condition node reads a
+// guard's outcome from — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.
+// One var per (node, guard kind) pair, deliberately not combined across
+// guards on the same node (Open Question 1: a node with both PII Guard and
+// Prompt-Injection Guard enabled must let a condition node branch on EACH
+// independently — e.g. route PII to HIL but reject a bad file outright —
+// so collapsing them into one "anything flagged" value would lose exactly
+// the distinction this feature exists to expose).
+func guardStatusVarName(nodeID, defSlug string) string {
+	return nodeID + "_" + defSlug + "_status"
+}
+
+// writeTextGuardVars parses a TextGateCheckOutput's Categories string
+// (space-separated "defSlug:status" pairs, e.g. "pii_redact:flagged
+// prompt_inject:clean" — see middleware.TextGate.Check's joinCategoryParts)
+// into one FlowVar per guard that actually ran on this node, so a
+// downstream condition node can branch on each guard independently.
+// Guards that didn't run at all for this node (no wiring, or wrong
+// direction for this phase) get no var — a condition expression checking
+// for one must treat "unset" the same as "clean" (both mean "nothing to
+// worry about"), matching renderFlowTemplate's own <no value> convention
+// for an unset FlowVar.
+func writeTextGuardVars(vars FlowVars, nodeID, categories string) {
+	if categories == "" {
+		return
+	}
+	for _, part := range strings.Fields(categories) {
+		defSlug, status, ok := strings.Cut(part, ":")
+		if !ok || defSlug == "" || status == "" {
+			continue // malformed pair — skip rather than write a var with an empty key/value
+		}
+		vars[guardStatusVarName(nodeID, defSlug)] = status
+	}
+}
+
+// writeFileGuardVar sets the File Guard status var for nodeID — its own
+// vocabulary (clean/infected/error/timeout/disabled/pending), deliberately
+// NOT normalized into text guards' clean/flagged/blocked, since "infected"
+// is a materially different, more severe outcome than "flagged" and a
+// condition node needs to be able to tell them apart.
+func writeFileGuardVar(vars FlowVars, nodeID, scanStatus string) {
+	if scanStatus == "" {
+		return
+	}
+	vars[guardStatusVarName(nodeID, "file_guard")] = scanStatus
+}
+
 // stepTick is workflow-local shared state for the debug Step control
 // (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Exactly one instance is created per
 // AppFlowWorkflow execution when StepMode is true, and a pointer to it is
@@ -499,6 +546,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				accumulated = textIn.Text
+				writeTextGuardVars(vars, node.ID, textIn.Categories)
 				if strings.Contains(textIn.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "input: "+textIn.Categories)
 				}
@@ -554,6 +602,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				accumulated = textOut.Text
+				writeTextGuardVars(vars, node.ID, textOut.Categories)
 				if strings.Contains(textOut.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "output: "+textOut.Categories)
 				}
@@ -628,6 +677,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 						retErr = fmt.Errorf("agent %q: file guard wait: %w", node.ID, waitErr)
 						return
 					}
+					writeFileGuardVar(vars, node.ID, waitOut.ScanStatus)
 					if waitOut.ScanStatus == "infected" {
 						out.Status = "failed"
 						retErr = temporalerr.NewNonRetryableApplicationError(
@@ -638,6 +688,8 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					}
 					traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done",
 						fmt.Sprintf("%s — File Guard: %s", accumulated, waitOut.ScanStatus), input.LogVerbosity)
+				} else {
+					writeFileGuardVar(vars, node.ID, gateOut.ScanStatus)
 				}
 			}
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
@@ -694,6 +746,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				accumulated = textIn.Text
+				writeTextGuardVars(vars, node.ID, textIn.Categories)
 				if strings.Contains(textIn.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "input: "+textIn.Categories)
 				}
@@ -751,6 +804,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					return
 				}
 				llmOut.ResponseText = textOut.Text
+				writeTextGuardVars(vars, node.ID, textOut.Categories)
 				if strings.Contains(textOut.Categories, ":flagged") {
 					guardNotes = append(guardNotes, "output: "+textOut.Categories)
 				}

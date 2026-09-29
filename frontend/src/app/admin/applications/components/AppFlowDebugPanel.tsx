@@ -222,8 +222,32 @@ export function AppFlowDebugPanel({
         }}>✕ Close</button>
 
         {debug.runId && (
-          <span style={{ color: '#64748b', fontSize: '11px' }}>
-            run {debug.runId.slice(0, 8)}…
+          <span style={{ color: '#64748b', fontSize: '11px', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            run {debug.runId}
+            <button
+              type="button"
+              onClick={() => {
+                if (navigator.clipboard?.writeText) {
+                  navigator.clipboard.writeText(debug.runId!).catch(() => {});
+                } else {
+                  // Clipboard API requires a secure context (https or localhost) —
+                  // falls back to a hidden textarea + execCommand for plain-http
+                  // deployments where navigator.clipboard is undefined.
+                  const ta = document.createElement('textarea');
+                  ta.value = debug.runId!;
+                  ta.style.position = 'fixed';
+                  ta.style.opacity = '0';
+                  document.body.appendChild(ta);
+                  ta.select();
+                  try { document.execCommand('copy'); } catch { /* ignore */ }
+                  document.body.removeChild(ta);
+                }
+              }}
+              title="Copy run ID"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', color: '#64748b' }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>content_copy</span>
+            </button>
           </span>
         )}
         {debug.workflowId && (

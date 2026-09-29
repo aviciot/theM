@@ -42,7 +42,7 @@ interface Props {
 const AGENT_GUARD_SLUGS = ['file-guard', 'pii_redact', 'prompt_inject'] as const;
 const LLM_GUARD_SLUGS = ['pii_redact', 'prompt_inject'] as const;
 
-const GUARD_LABELS: Record<string, string> = {
+export const GUARD_LABELS: Record<string, string> = {
   'file-guard': 'File Guard',
   pii_redact: 'PII Guard',
   prompt_inject: 'Prompt-Injection Guard',

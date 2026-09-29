@@ -1,9 +1,12 @@
 # AppFlow Guard Output Ports Plan
-# Status: Phase 0 DONE (2026-09-28, both code paths — see below). Phases
-# 1-4 (the actual output-ports feature) not started; do not begin without
-# explicit user confirmation first.
+# Status: Phase 0 DONE (2026-09-28). Phase 1 DONE (2026-09-29, flat status
+# var per guard, real Temporal tests). Phases 1.5-3 REDESIGNED 2026-09-29
+# after live design discussion — nested per-category vars
+# ({{pii_guard.email.status}}) + a new "Writes" panel + a new source-side
+# port-picker popover. Phase 2's (a)/(b) FlowVars-shape decision must be
+# made before writing code — see below. Not started.
 # Owner: platform
-# Last updated: 2026-09-28
+# Last updated: 2026-09-29
 
 ---
 
@@ -199,38 +202,139 @@ duplicate the Redis pub/sub mechanism that already does this exact job
   behavior on timeout is correct and deliberate, not accidental.
 
 ### Phase 1 — backend: write guard outcomes into FlowVars
-- `workflow.go`'s `case "agent"`/`case "llm"`: after each Text/File Guard
-  check, write a normalized status var (exact shape per Open Question 1)
-  into `vars`, not just the existing trace-only `guardNotes` string.
-- Tests: workflow-level (real Temporal test environment, matching this
-  session's `AppFlowTraceWorkflowTestSuite` pattern) proving the var is
-  set correctly for clean/flagged/blocked cases, and that a downstream
-  `condition` node can actually read and branch on it.
 
-### Phase 2 — conditional port resolution
-- Extend the dynamic-port mechanism to `appflow`'s node registry, gated on
-  a live `middleware_wirings` lookup for that specific `node_id` (does
-  this node have an enabled guard wiring at all, and which kind).
-- This is the part most likely to need real design iteration — the
-  existing dynamic-port mechanism was built for `agentgen`'s `transform`
-  node, which resolves its ports from the node's OWN config (fully local,
-  no DB call). This is resolving a port's EXISTENCE from a DB lookup
-  (guard wiring state) — a new pattern, not a copy-paste of the existing
-  one.
+**DONE 2026-09-29.** `workflow.go`'s `case "agent"`/`case "llm"` now write a
+normalized status var after every Text/File Guard check via two new helpers:
+`writeTextGuardVars(vars, nodeID, categories)` (parses `TextGateCheckOutput.
+Categories`'s space-separated `"defSlug:status"` pairs — confirmed exact
+format from `middleware.TextGate.Check`'s `joinCategoryParts` — into one var
+per guard that actually ran) and `writeFileGuardVar(vars, nodeID,
+scanStatus)` (File Guard's own vocabulary, deliberately not normalized into
+text guards' clean/flagged/blocked — see Open Question 1). Var name:
+`guardStatusVarName(nodeID, defSlug) = nodeID + "_" + defSlug + "_status"`
+— e.g. `agent1_pii_redact_status`, `llm_1_file_guard_status` (File Guard's
+real `def_slug` is `file-guard` with a hyphen, not valid inside a Go
+`text/template` reference — the var uses `file_guard` with an underscore
+instead; the frontend must apply this same substitution, see Phase 2).
+5 new real-Temporal-environment tests in `workflow_temporal_test.go`
+(AF-TR-W16 through W19 plus the two-guards case) prove: a flagged/clean
+status is readable by a downstream `condition` node and correctly decides
+its branch; two guards on the same node write two independent vars neither
+overwrites; File Guard's status uses its own vocabulary. `go build`/`go
+vet`/`go test ./...` all clean.
 
-### Phase 3 — frontend: render + wire the new port
-- Reuse `resolveOutputPorts`/`PortBindingPopover`/`InlinePortsSection`
-  wholesale — confirm live that a guard-status port genuinely needs zero
-  new frontend port-wiring code, only a new port SOURCE to feed those
-  existing components.
-- Guards section UI: decide (Open Question 4) whether the port appears
-  automatically when a guard is toggled on, or needs a separate toggle.
+**Superseded/expanded scope, decided live 2026-09-29** (see the redesign
+below) — one flat status var per guard turned out to be too little: a real
+PII Guard result needs to expose WHICH category matched (email vs ssn),
+not just "something matched." Phase 1 as shipped is the right foundation
+(the var-writing mechanism, the naming convention, the workflow call
+sites) but Phase 1.5 below extends the DATA it carries before Phase 2's UI
+work makes it visible to users.
 
-### Phase 4 — condition node UX for the new var
+### Phase 1.5 — carry per-category detail through, not just one flat status
+
+**Real gap found reading the actual detector code**: `pii.Detector.Process`
+(`internal/middleware/pii/pii.go`) already computes exactly which
+categories matched, with counts — `found := map[string]int{}` — and stores
+it as `Result.Detail: map[string]any{"categories": found}`. This detail is
+computed correctly today but is **thrown away** before it reaches the
+workflow: `Pipeline.Run` only forwards `Detail` to `PublishProgress` (File
+Guard's async event stream) and a `"threat"` string extraction — never into
+`TextGateCheckOutput`, which only ever carries a flat `Categories string`.
+
+**Needed:** widen `TextGateCheckOutput` (and the underlying
+`middleware.TextGateResult`) to carry a structured per-guard, per-category
+detail payload — not just the joined `"defSlug:status"` string — so
+`writeTextGuardVars` can write NESTED vars, not just one flat status.
+Exact shape TBD at implementation time (candidate: `map[string]map[string]
+Result` — defSlug → category → outcome/count), but must preserve
+backward-compat with the existing flat `Categories` string (still used by
+the trace/guardNotes path, unchanged).
+
+### Phase 2 — nested guard output vars + Writes panel
+
+**Redesigned 2026-09-29, replacing the original "one flat status var,
+reuse the transform node's dynamic-port mechanism" sketch** — live design
+discussion surfaced two real requirements the original sketch didn't
+cover: (1) a guard's result isn't always just one status word — PII Guard
+needs to expose per-category detail (`pii_guard.email.status`,
+`pii_guard.ssn.status`), and File Guard may expose more than a bare status
+too (e.g. threat name); (2) users need a dedicated place to SEE what a
+node writes, mirroring the existing Reads panel, not just type a var name
+from memory.
+
+**Var naming — nested, not flat.** Supersedes Phase 1's flat
+`<nodeID>_<defSlug>_status` for the *user-facing* naming users type/drag —
+`{{pii_guard.email.status}}`, `{{pii_guard.ssn.status}}`,
+`{{file_guard.status}}`, `{{file_guard.threat}}`. Go's `text/template`
+syntax makes `{{.pii_guard.email.status}}` mean chained field access into a
+Go value, not a flat map key with dots in it (confirmed this exact
+footgun already once this session, in the named-ports plan's alias-naming
+work) — so `FlowVars` (currently `map[string]string`) needs either (a) to
+become `map[string]any` with nested `map[string]any` values so the dotted
+template access actually resolves as real field access, or (b) a
+lower-level flat storage key (`nodeID_defSlug_category_status`, matching
+Phase 1's existing convention) with the DISPLAY/AUTOCOMPLETE layer showing
+the nicer dotted form and translating it before rendering the template.
+**Decide (a) vs (b) before writing code** — (a) is more "correct" but
+touches `FlowVars`'s type everywhere it's used (`renderFlowTemplate`,
+every `vars[x] = y` call site); (b) is a smaller, additive change (new
+naming/display convention only, `FlowVars` stays a flat map) at the cost
+of the display name and the real template reference not being identical
+strings — needs an explicit decision, not an assumption.
+
+**New "Writes" panel section**, mirroring `InlinePortsSection.tsx`'s
+existing "Reads" section exactly (same visual style, collapsible) — shows
+every var THIS node produces: its own real output (`output_var` for `llm`;
+nothing static for `agent`, which never writes to FlowVars directly) plus
+one entry per enabled guard, each showing its full dotted reference
+(`{{pii_guard.email.status}}`) with a copy affordance. A collapsible
+"Guards" subsection inside Writes groups guard-produced vars separately
+from the node's own primary output, per the live design discussion.
+Populated by reading the SAME per-app `listMiddlewareWirings(appId)` call
+the Guards section itself already makes — confirmed no new backend
+endpoint needed for existence/visibility, this part of the original sketch
+was right.
+
+**Source-side port-picker popover — new UI, decided live 2026-09-29.**
+Today, `useInlinePortWiring.ts`'s drag-to-wire system has NO source-side
+choice at all — `isBindableSource` only returns true for `llm` (the only
+kind with a bindable output today), and `commitInlinePortBinding` always
+reads exactly one var (`sourceCfg.output_var`). Once a node can have
+multiple outputs (its own `output_var` AND N guard vars), dragging from
+its output dot needs a NEW popover asking "which output are you sending?"
+— a second popover, distinct from and in addition to the EXISTING
+target-side popover (`resolveDropTarget`/`PortBindingPopover`, unchanged,
+still asks "which field on the target"). Confirmed live: the same source
+output must remain freely reusable across multiple target wires — no
+"already connected, can't reuse" restriction; a status var is a read, not
+a claim.
+
+- Extend `isBindableSource` to also return true for any node with ≥1
+  enabled guard wiring, not just `node_type === 'llm'`.
+- New function (name TBD at implementation time, e.g. `resolveDragSource`)
+  returning the list of this node's available outputs: its own
+  `output_var` (if `llm`) plus one entry per guard var — mirroring
+  `resolveDropTarget`'s existing `{kind: 'none' | 'auto' | 'ambiguous'}`
+  shape for consistency.
+- `commitInlinePortBinding` (or a new sibling) needs the CHOSEN source var
+  threaded in, not hardcoded to `output_var` — the existing
+  `PortBinding{source_node_id, source_var}` shape already supports an
+  arbitrary `source_var` string, so this is additive, not a breaking
+  change to the binding storage format.
+
+### Phase 3 — condition node UX for nested guard vars
 - Confirm the `condition` node's existing expression editor and example
-  presets (`CONDITION_EXAMPLES` in `InlineNodePanel.tsx`) work naturally
-  with the new var without any special-casing — e.g.
-  `{{eq .agent_intake_guard_status "flagged"}}`.
+  presets (`CONDITION_EXAMPLES` in `InlineNodePanel.tsx`) work with the
+  final chosen var shape from Phase 2 (flat storage + dotted display, or
+  real nested `FlowVars`) — add a guard-specific example once the shape
+  is locked, e.g. `{{eq .pii_guard_email_status "flagged"}}` (flat) or
+  `{{eq .pii_guard.email.status "flagged"}}` (nested, pending Phase 2's
+  (a)/(b) decision).
+- Confirm dragging a guard var into a `condition` node's Expression field
+  (the only nameable field `condition` has today, so this already
+  auto-binds via the EXISTING target-side popover, no new target-side
+  code needed) produces a working, readable expression.
 
 ---
 

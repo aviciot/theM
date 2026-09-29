@@ -1717,3 +1717,41 @@ slot.
 that name FIRST, not after building — `grep -rl "handleExport\|Export JSON"` would have surfaced
 this in seconds, before any design or code was written. A feature-name collision is a UX bug
 regardless of whether the underlying code is correct.
+
+---
+
+## A canvas node could only ever have ONE guard wired to it — a silent limitation nobody noticed (found 2026-09-28/29)
+
+**Found while:** building a test app for the Guard Output Ports feature — importing an app that
+wired both PII Guard and Prompt-Injection Guard onto the same `llm_1` node failed live with
+`duplicate key value violates unique constraint "uq_mw_wiring_app_node"`.
+
+**Root cause:** `db/018_graph_compiler.sql` (2026-09-17) added `uq_mw_wiring_app_node` — a unique
+index on `(application_id, node_id)` — at a time when File Guard was the ONLY guard kind that
+existed. At that point "one wiring per node" and "one guard per node" were the same rule by
+coincidence, not by design. Once PII Guard and Prompt-Injection Guard were added weeks later,
+this silently became a real product limitation: a node could never carry more than one guard
+type, and nothing ever tested or exercised the 2-guards-on-one-node case, because nobody had
+tried it live until this session. Confirmed by querying the live table: zero apps, ever, had
+2 wirings on the same `node_id` before the fix.
+
+**A subtlety that made this easy to miss:** the FRONTEND (`AgentGuardsSection.tsx`, built earlier
+this same session) already matched a wiring by `(node_id, def_slug)` — written correctly for the
+multi-guard case from day one, purely because that's the natural way to look up "does THIS guard
+have a wiring on THIS node," not because anyone deliberately designed for multi-guard-per-node.
+The bug was invisible until an actual database write with two guards on one node was attempted —
+which nothing in the UI flow before this session had ever done, since the Guards panel section
+is per-guard-per-node already and nobody had tested checking two boxes on the same node.
+
+**Fix:** widened the index to `(application_id, node_id, def_id)` — one wiring per node PER
+GUARD TYPE. `CreateMiddlewareWiring`'s `ON CONFLICT` target updated to match. Re-saving the same
+guard on the same node still upserts in place (unchanged behavior); two different guards on one
+node now insert as two independent rows.
+
+**Watch for:** any unique constraint written when a feature has exactly one "kind" of a thing
+(here: one guard kind) is a landmine for the day a second kind is added — the constraint's real
+intent ("one X per node") gets silently narrowed to "one of the only X that exists per node,"
+and nothing will fail until someone actually tries the N>1 case. When adding a second variant of
+something that previously had only one, explicitly grep for every unique index/constraint touching
+that table and ask "was this written assuming only one kind could ever exist?" — don't wait for a
+live duplicate-key error to find out.
