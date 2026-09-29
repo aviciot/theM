@@ -1,5 +1,37 @@
 # Current Session State — the-M
-# Last updated: 2026-09-28 — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0 DONE + live-verified.
+# Last updated: 2026-09-29 — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md ALL PHASES DONE.
+# Since the 2026-09-28 entry below (kept for history), two full feature threads shipped:
+#
+# 1) Application Export/Import (docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md) — all phases done:
+#    Phase 0 (secret-leak fix in DeployApplication's app_params copy), Phase 1 (DeployApplication
+#    now copies all 6 previously-missing app-scoped tables incl. middleware_wirings), Phase 2
+#    (genuine file-based export/import — download/upload JSON, to_jsonb()-driven, full agent
+#    bundling + ID remap). Frontend: Export is available to ANY tenant user (own tenant only,
+#    backend-enforced via RequireTenantAdmin's own scoping); Import is admin-only, own-tenant-only,
+#    NO tenant picker (server ignores any client-supplied target_tenant_id) — offered via a
+#    Blank/From-file choice when clicking "New Application," not from the Runtime tab. The OLD
+#    canvas-only export/import feature (different scope, same name — caused real confusion) was
+#    removed entirely, UI and backend. Also fixed: multi-guard-per-node was silently impossible
+#    (db/117 migration widened the unique index to (application_id, node_id, def_id)).
+#
+# 2) Guard Output Ports (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md) — all 4 phases done: a guard's
+#    result (File Guard/PII/Prompt-Injection) is now a real FlowVar a `condition` node can branch
+#    on, draggable from the canvas, not just a trace-only string. Phase 0: File Guard's scan made
+#    synchronous. Phase 1: flat `<nodeID>_<defSlug>_status` var per guard. Phase 1.5: per-category
+#    PII detail (WHICH category matched, e.g. `_email_status`) plumbed through — was silently
+#    discarded at the dag-worker adapter boundary before this. Phase 2: new "Writes" panel
+#    (mirrors "Reads"); new source-side drag popover ("which output are you sending?") for any
+#    node with >1 output, reusing the same guardWriteVarsForNode helper for the Writes panel
+#    and the popover — works for any node kind with a guard wired to it, zero new code per kind.
+#    Phase 3: condition-node example expression + a real alias-naming bug fix (guard-var aliases
+#    were doubling the node identity, e.g. Agent1_agent1_pii_redact_status).
+#
+# Also this session: Run ID display fixed (was hard-truncated to 8 chars, no copy button —
+# AppFlowDebugPanel.tsx now shows the full ID + a copy button with a document.execCommand
+# fallback for non-secure contexts).
+#
+# --- Prior entry, kept for history (2026-09-28) ---
+# docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0 DONE + live-verified.
 # File Guard's async scan is now synchronous for BOTH code paths (URL-based file parts and
 # raw-bytes inline files) — a run genuinely waits for the real clean/infected/timeout verdict
 # instead of returning "pending" immediately. Live-verified via the user's own run
@@ -15,54 +47,34 @@
 #     (application_id 2fe69d01-3526-4b39-8dde-126047b220cb) as a data fix; the query logic
 #     itself is UNCHANGED and will silently do this again for any other app with a leftover
 #     blank-node_id wiring — flagged as a known gap below, not yet fixed in code.
-# New hard rule added to CLAUDE.md: anything configurable via the App Canvas UI must be
-# representable in the app's exportable JSON. Confirmed live 2026-09-28 that File Guard/PII/
-# prompt-injection config is NOT in the app JSON today (lives only in `them.middleware_wirings`,
-# outside the JSON entirely) — app export/import doesn't exist yet as a feature, but when it's
-# built, guard config must be included, not just canvas nodes/edges.
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
 
-## Known gaps / next tasks (2026-09-28)
+## Known gaps / next tasks (2026-09-29)
 
 1. **`loadWiringCfgForDef`'s blank-`node_id` fallback can silently apply a wiring to every
-   node in an app** (`go/internal/middleware/gate.go`). Only the one live-hit row was cleaned
-   up as data; the query itself still has this behavior. Decide: should a blank `node_id` ever
-   be a valid "applies to all nodes" wiring (intentional), or should it always mean "orphaned,
-   ignore" now that per-node wiring is the norm? Needs a decision before writing a code fix.
-2. **App export/import is not complete — full plan now written: `docs/
-   APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md`.** Three existing pieces already exist and must be
-   reconciled, not duplicated: (1) canvas-JSON-only frontend export/import (`docs/
-   APP_CANVAS_EXPORT_IMPORT_PLAN.md`, built 2026-09-22, still live, deliberately excludes
-   Guards/MCP/etc.), (2) "Deploy to Tenant" DB-level clone (`go/internal/admin/dal/
-   app_deploy.go`, has the real ID-remap logic but is missing `middleware_wirings` + 5 other
-   tables), (3) Guard config's own live-DB-query resolution (`internal/middleware/gate.go`,
-   deliberately instant/no-publish, in both debug and prod today — confirmed no existing
-   debug/prod split exists for this). **Next task: Phase 1 of the completeness plan** — extend
-   `app_deploy.go`'s copy list to cover the 6 missing tables, structured as a registry/list
-   (Option C), not bespoke per-table SQL. A related but SEPARATE, not-yet-approved idea
-   (Phase 3, needs its own explicit go-ahead): make Guards publish-gated in production while
-   staying instant in Debug Mode — this is new runtime behavior, ruled out of scope for the
-   export/import fix itself. **Explicitly ruled out:** moving Guards into the canvas JSON
-   ("Option B") — would break Guards' confirmed instant-toggle requirement in both debug and
-   prod; see the completeness plan's "What NOT to do" section for the full reasoning.
-3. **Run ID display is trimmed in the UI**, no copy button — user-reported, not yet started.
-   Add more space + a copy-to-clipboard button (watch for the documented http/https copy-button
-   quirk raised by the user before implementing).
-4. Phases 1-4 of `docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md` (the actual guard-output-ports
-   feature — writing guard outcomes into FlowVars so a `condition` node can branch on them) —
-   not started. Phase 0 (this session's work) was the prerequisite; do not start Phase 1 without
-   explicit user confirmation first, per this session's established pattern.
+   node in an app** (`go/internal/middleware/gate.go`). Still open — only the one live-hit row
+   was cleaned up as data on 2026-09-28; the query logic itself is unchanged. Decide: should a
+   blank `node_id` ever be a valid "applies to all nodes" wiring (intentional), or should it
+   always mean "orphaned, ignore" now that per-node wiring is the norm? Needs a decision before
+   writing a code fix.
+2. ~~App export/import~~ — **DONE** (see header above). `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md`
+   fully shipped, all 3 phases.
+3. ~~Run ID display trimmed, no copy button~~ — **DONE** (see header above).
+4. ~~Guard Output Ports~~ — **DONE**, all 4 phases (see header above).
+5. **Nothing currently queued.** Both feature threads that were open at the end of the prior
+   session are closed. Good point to pick a new subsystem or ask the user what's next — do not
+   start a new subsystem in the same session per this project's Session Lifecycle rule if this
+   session has already run long (check commit count below).
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `f3b9cc25` (local; not yet pushed this session — ask before pushing, per this project's
-git rules). Remote is `origin` → `aviciot/theM` on GitHub (credentials already configured in the
-remote URL from a prior session).
+HEAD: `65846f8c` (pushed to `origin/main`). Remote is `origin` → `aviciot/theM` on GitHub
+(credentials already configured in the remote URL from a prior session).
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -72,6 +84,21 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+65846f8c  feat(app-canvas): Phase 3 — condition node example + guard-var alias fix
+72736a00  feat(app-canvas): source-side port popover — drag from any node's guard vars
+34e3f653  feat(app-canvas): Writes panel — show every FlowVar a node produces
+0ec76a44  feat(appflow): Guard Output Ports Phase 1.5 — per-category PII detail in FlowVars
+c9a284bb  fix: allow multiple guards per canvas node; add Guard Output Ports Phase 1
+9f80d3f9  feat: export/import access control + placement fixes
+6c8f63e1  feat(frontend): full-app export/import UI; remove old canvas-only version
+0b7656ba  docs: LESSONS.md entries for Phase 2's two real bugs
+6c80da95  feat(admin): file-based app export/import (Phase 2)
+0fc511b3  docs: Phase 2 design — file-based app export/import
+296a64b0  feat(admin): DeployApplication now copies guard config + 5 other tables
+4a52d85f  docs: app canvas config completeness plan (export/import + guards)
+14f6c826  fix(admin): DeployApplication no longer leaks secret app_params to target tenant
+2adf84eb  docs: app export/import completeness rule; session handover
+f3b9cc25  docs: File Guard Phase 0 live-verified; document restart-vs-up gotcha
 8e6785fc  fix(appflow): remove extra data-port dots from llm/condition nodes
 6c8261de  feat(appflow): Phase 4 — data-port handles on llm/condition, guard real wiring
 33bc72e4  feat(appflow): Phase 3 — read-only "Reads" panel for llm/condition nodes
@@ -79,43 +106,31 @@ Recent commits (newest first):
 737ce858  docs(claude): make chat answers short and friendly by default
 4b7ca19e  feat(appflow): Phase 1 named data ports — llm output port registry metadata
 a78c3ca9  docs: plan AppFlow named data ports (Phase 0 complete)
-79fa7956  docs(current): record Platform-as-Tenant Phase 3 completion
-d5ad1575  feat(db): Platform-as-Tenant Phase 3 — RLS verification
-47407692  docs(current): record Platform-as-Tenant Phase 2 completion
-9cf638a8  feat(db): Platform-as-Tenant Phase 2 — backend consolidation
-8b9511b5  fix(ci): satisfy go vet lostcancel check in two context-cancellation tests
-dc529235  feat(db): Platform-as-Tenant Phase 1 — migrate platform LLM rows to bootstrap tenant
-91028cfa  fix(appflow): sync step cursor across fork so post-join node needs its own Step click
-efb443e3  docs: remove closed playground EP investigation doc
-935a3320  config(keycloak): point frontendUrl at LAN IP instead of localhost
-5f1353d4  docs(current): record Phase 6 completion — App Canvas Debug Mode plan done
-557254f2  feat(app-canvas): Debug Mode Phase 6 — Step controls with lockstep multi-branch pausing
-950a587f  docs: record c1f01aa2 review follow-up — bounded debug lifetime + UI wiring
-79ec09ef  feat(app-canvas): wire model selector + Base URL field into debug credential picker
-f0adfecc  fix(appflow): bound debug-run lifetime and derive credential TTL from it
-962ddb62  docs: record the 4-issue review follow-up for AppFlow runtime params
-b715373b  fix(app-canvas): 4 review issues in per-node debug LLM credentials (d941aca3)
-03133ca8  docs: AppFlow runtime-params plan complete + two lessons from this session
-04e9f4ee  feat(app-canvas): per-node LLM credential picker in the debug panel
-9a19aab4  feat(app-canvas): per-node debug LLM credential overrides + tenant-ownership fix
-857034c1  feat(admin): the-M admin gets General/Custom LLM key parity with tenants
-21569888  feat(admin): security_scanner as a third tenant_system_agent_config role
-7cb2728d  feat(app-canvas): debug mode frontend — setup panel, Run All, real WS consumer (Phase 5)
-b27d0423  fix(dashboard): /ws/dashboard run:* channels never delivered live events
-46c9f9b8  feat(admin): LLM Providers UI/UX cleanup + seed missing gemini/groq rows
-e8115751  docs(current): update HEAD reference to a3fdcc61
-a3fdcc61  docs: tenant LLM provider keys plan — step 7 sign-off, all 7 steps complete
-220adc05  feat(admin): tenant General/Custom switch for classifier & card_synthesizer (step 6)
-283db880  feat(admin): tenant system-agent role config — general/custom mode (step 5)
-8269eae2  feat(app-canvas): debug run backend — draft execution, no publish required (Phase 5 slice 1)
 ```
 
 ---
 
-## START HERE — next session
+## START HERE — next session (updated 2026-09-29)
 
-**Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-5 COMPLETE, including a 2026-09-26
-follow-up round from the user's first real browser click-through.** Only Phase 6 (optional
+**No active thread — pick a new one.** Both feature threads that were open when the
+2026-09-28 entry below was written are now fully closed:
+- `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md` (app export/import) — all 3 phases DONE.
+- `docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md` (guard results as draggable FlowVars) — all 4
+  phases DONE.
+
+Known open gap, not yet scheduled: `loadWiringCfgForDef`'s blank-`node_id` fallback
+(`go/internal/middleware/gate.go`) — see "Known gaps / next tasks" item 1 above. Needs a
+product decision (is a blank `node_id` ever a valid "applies to all nodes" wiring?) before
+any code change.
+
+Everything below this line, through the rest of this "START HERE" section, is HISTORICAL —
+it documents `docs/APPFLOW_NAMED_PORTS_PLAN.md`'s Phases 1-5, which finished 2026-09-25/26 and
+is superseded by the Guard Output Ports work above (Phase 2 of that later plan directly reused
+and extended this same drag-to-wire system). Kept for the bug-history detail, not as a live
+pointer.
+
+~~Active thread: `docs/APPFLOW_NAMED_PORTS_PLAN.md` — Phases 1-5 COMPLETE, including a 2026-09-26
+follow-up round from the user's first real browser click-through.~~ Only Phase 6 (optional
 static-validation pass, not yet approved) remains, and it's explicitly opt-in — do not start it
 without asking first. Read that doc's Phase 5 "DONE" entry (both the original write-up and the
 "Follow-up fixes, 2026-09-26" block right after it) before touching this feature again — 4 real
