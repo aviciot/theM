@@ -5,6 +5,7 @@ import { C } from '../../../constants';
 import { fieldStyle } from './panelShared';
 import { InlinePortsSection } from './InlinePortsSection';
 import { AgentGuardsSection } from './AgentGuardsSection';
+import { WritesSection } from './WritesSection';
 import type { Agent } from '@/lib/api';
 
 // ── InlineNodePanel (LLM + Condition) ────────────────────────────────────────
@@ -148,6 +149,10 @@ export function InlineNodePanel({
           <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
             Stored but not yet applied — the shared LLM provider interface takes no options (Phase 2).
           </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+          <WritesSection appId={appId} selectedNode={selectedNode} outputVar={outputVar || 'output'} />
         </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>

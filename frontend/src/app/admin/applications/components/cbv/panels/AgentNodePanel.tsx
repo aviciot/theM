@@ -4,6 +4,7 @@ import type { AgentNodeData } from '../../../types';
 import { C } from '../../../constants';
 import { fieldStyle, chipStyle } from './panelShared';
 import { AgentGuardsSection } from './AgentGuardsSection';
+import { WritesSection } from './WritesSection';
 import type { Agent } from '@/lib/api';
 
 // ── AgentNodePanel ────────────────────────────────────────────────────────────
@@ -59,6 +60,9 @@ export function AgentNodePanel({
             } catch { setConfigPanelErr(true); showToast('Invalid JSON', false); }
           }}
         />
+      </div>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+        <WritesSection appId={appId} selectedNode={selectedNode} />
       </div>
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
         <AgentGuardsSection appId={appId} selectedNode={selectedNode} agents={agents} showToast={showToast} />

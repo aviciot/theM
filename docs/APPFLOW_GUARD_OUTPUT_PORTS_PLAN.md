@@ -1,11 +1,10 @@
 # AppFlow Guard Output Ports Plan
 # Status: Phase 0 DONE (2026-09-28). Phase 1 DONE (2026-09-29, flat status
 # var per guard, real Temporal tests). Phase 1.5 DONE (2026-09-29,
-# per-category detail plumbed through, flat key convention). Phase 2-3
-# REDESIGNED 2026-09-29 after live design discussion — nested per-category
-# display vars ({{pii_guard.email.status}}) + a new "Writes" panel + a new
-# source-side port-picker popover. Phase 2's (a)/(b) FlowVars-shape decision
-# must be made before writing code — see below. Not started.
+# per-category detail plumbed through, flat key convention). Phase 2 IN
+# PROGRESS (2026-09-29): (a)/(b) FlowVars-shape decided (b, flat storage +
+# display translation), "Writes" panel DONE. Source-side port-picker
+# popover (multi-output drag UI) NOT yet started. Phase 3 not started.
 # Owner: platform
 # Last updated: 2026-09-29
 
@@ -292,25 +291,51 @@ template access actually resolves as real field access, or (b) a
 lower-level flat storage key (`nodeID_defSlug_category_status`, matching
 Phase 1's existing convention) with the DISPLAY/AUTOCOMPLETE layer showing
 the nicer dotted form and translating it before rendering the template.
-**Decide (a) vs (b) before writing code** — (a) is more "correct" but
-touches `FlowVars`'s type everywhere it's used (`renderFlowTemplate`,
-every `vars[x] = y` call site); (b) is a smaller, additive change (new
-naming/display convention only, `FlowVars` stays a flat map) at the cost
-of the display name and the real template reference not being identical
-strings — needs an explicit decision, not an assumption.
+**Decided 2026-09-29: (b).** `FlowVars` stays `map[string]string`, flat
+keys unchanged (`nodeID_defSlug_category_status`, matching Phase 1/1.5
+exactly — zero backend risk). A display-layer translation shows the
+dotted form (`{{pii_guard.email.status}}`) in the UI (Writes panel,
+drag-to-wire) while the flat key is what's actually stored in
+`PortBinding.source_var` and rendered by `text/template`. Trade-off
+accepted: the on-screen "nice name" and the literal template string a
+user could hand-type are not identical — acceptable since dragging (not
+typing) is the primary UX, matching the existing Reads-panel/target-popover
+convention where users drag rather than type.
 
-**New "Writes" panel section**, mirroring `InlinePortsSection.tsx`'s
-existing "Reads" section exactly (same visual style, collapsible) — shows
-every var THIS node produces: its own real output (`output_var` for `llm`;
+**New "Writes" panel section — DONE (2026-09-29).** Mirrors
+`InlinePortsSection.tsx`'s existing "Reads" section visually — shows every
+var THIS node produces: its own real output (`output_var` for `llm`;
 nothing static for `agent`, which never writes to FlowVars directly) plus
-one entry per enabled guard, each showing its full dotted reference
-(`{{pii_guard.email.status}}`) with a copy affordance. A collapsible
-"Guards" subsection inside Writes groups guard-produced vars separately
-from the node's own primary output, per the live design discussion.
-Populated by reading the SAME per-app `listMiddlewareWirings(appId)` call
-the Guards section itself already makes — confirmed no new backend
-endpoint needed for existence/visibility, this part of the original sketch
-was right.
+one entry per enabled guard, each showing its dotted display reference
+(`{{pii_guard.email.status}}`). A "Guards" subsection inside Writes groups
+guard-produced vars separately from the node's own primary output, per the
+live design discussion. Populated by reading the SAME per-app
+`listMiddlewareWirings(appId)` call the Guards section itself already
+makes — confirmed no new backend endpoint needed, this part of the
+original sketch was right.
+
+Shipped as: new `guardWriteVarsForNode(nodeId, wirings)` in new
+`frontend/.../cbv/guardWriteVars.ts` — pure function computing every
+`GuardWriteVar{flatVar, displayRef, guardLabel}` an enabled wiring on a
+node writes, kept in exact sync with `workflow.go`'s naming (flat
+`nodeID_defSlug_status`, plus `nodeID_defSlug_category_status` for
+`pii_redact` only — `prompt_inject` has no per-category detail today, per
+Phase 1.5). One real footgun handled: File Guard's wiring `def_slug` is
+`"file-guard"` (hyphen) but its FlowVar segment is the literal
+`"file_guard"` (underscore, from `writeFileGuardVar`'s hardcoded string) —
+`guardWriteVarsForNode` special-cases this rather than assuming
+`def_slug` is always the var segment. New `WritesSection.tsx` (new file,
+`frontend/.../cbv/panels/`) renders it, wired into `InlineNodePanel.tsx`
+(llm, alongside its existing `output_var`) and `AgentNodePanel.tsx`
+(agent, guard vars only). Read-only display only — no drag-to-wire yet,
+that's the source-side popover below, still not started. New
+`frontend/.../cbv/__tests__/guardWriteVars.test.js` (8 tests, plain
+`node`-run, no framework — matches this repo's existing frontend test
+convention): pins the exact flat-var strings for the no-categories-configured
+(expands to all 4), restricted-categories, file-guard segment mismatch,
+prompt_inject (no expansion), disabled-wiring (nothing), wrong-node
+(nothing), and two-guards-same-node cases. `tsc --noEmit` clean; all 91
+frontend tests (83 pre-existing + 8 new) pass.
 
 **Source-side port-picker popover — new UI, decided live 2026-09-29.**
 Today, `useInlinePortWiring.ts`'s drag-to-wire system has NO source-side
