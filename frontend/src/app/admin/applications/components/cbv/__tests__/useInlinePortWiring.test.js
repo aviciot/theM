@@ -106,7 +106,9 @@ function sanitizeAliasChars(s) {
 
 function defaultAliasFor(sourceNode, sourceVar, existing) {
   const label = sourceNode.data.display_name || sourceNode.id;
-  const base = sanitizeAliasChars(`${label}_${sourceVar}`);
+  const nodeIdPrefix = `${sourceNode.id}_`;
+  const varSuffix = sourceVar.startsWith(nodeIdPrefix) ? sourceVar.slice(nodeIdPrefix.length) : sourceVar;
+  const base = sanitizeAliasChars(`${label}_${varSuffix}`);
   if (!(base in existing)) return base;
   let i = 2;
   while (`${base}_${i}` in existing) i++;
@@ -347,6 +349,19 @@ test('accepts an explicit sourceVar override (guard var), instead of always defa
   const updated = result.find(n => n.id === 'tgt');
   const [, binding] = Object.entries(updated.data.config.input_aliases)[0];
   assert.equal(binding.source_var, 'src_pii_redact_email_status');
+});
+
+test('a guard var alias strips the redundant node-id prefix instead of doubling the node identity', () => {
+  // Regression case: naively doing "<display_name>_<sourceVar>" on a guard
+  // var (which already embeds "src_" as its own prefix) would produce
+  // "Agent1_src_pii_redact_email_status" — the node identity appears twice.
+  const source = node('src', 'agent', {}, 'Agent1');
+  const target = node('tgt', 'condition', { expression: '' });
+  const field = { key: 'expression', label: 'Expression' };
+
+  const result = runSetNodes([source, target], commit => commitInlinePortBinding(source, 'tgt', field, commit, 'src_pii_redact_email_status'));
+  const updated = result.find(n => n.id === 'tgt');
+  assert.deepEqual(Object.keys(updated.data.config.input_aliases), ['Agent1_pii_redact_email_status']);
 });
 
 test('defaults source var to "output" when output_var is unset', () => {

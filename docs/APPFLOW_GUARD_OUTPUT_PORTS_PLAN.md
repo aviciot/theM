@@ -1,11 +1,11 @@
 # AppFlow Guard Output Ports Plan
-# Status: Phase 0 DONE (2026-09-28). Phase 1 DONE (2026-09-29, flat status
-# var per guard, real Temporal tests). Phase 1.5 DONE (2026-09-29,
-# per-category detail plumbed through, flat key convention). Phase 2 DONE
-# (2026-09-29): (a)/(b) FlowVars-shape decided (b, flat storage + display
-# translation); "Writes" panel; source-side port-picker popover (any node
-# with >1 output can now be dragged from, popover asks which). Phase 3
-# (condition node UX polish for the final var shape) not started.
+# Status: ALL PHASES DONE (2026-09-29). Phase 0 (sync File Guard scan),
+# Phase 1 (flat status var per guard), Phase 1.5 (per-category detail),
+# Phase 2 ((a)/(b) decided b — flat storage + display translation;
+# "Writes" panel; source-side port-picker popover for any node with >1
+# output), Phase 3 (condition-node example + alias-naming polish). A guard's
+# result is now a real, draggable FlowVar a condition node can branch on,
+# end to end from detector to canvas.
 # Owner: platform
 # Last updated: 2026-09-29
 
@@ -400,18 +400,39 @@ change). All 98 frontend tests across the 8 standalone `.test.js` files
 pass (up from 91 before this change — 7 net new: `useInlinePortWiring`
 grew by 7, `guardWriteVars` unchanged at 8 from the prior commit).
 
-### Phase 3 — condition node UX for nested guard vars
-- Confirm the `condition` node's existing expression editor and example
-  presets (`CONDITION_EXAMPLES` in `InlineNodePanel.tsx`) work with the
-  final chosen var shape from Phase 2 (flat storage + dotted display, or
-  real nested `FlowVars`) — add a guard-specific example once the shape
-  is locked, e.g. `{{eq .pii_guard_email_status "flagged"}}` (flat) or
-  `{{eq .pii_guard.email.status "flagged"}}` (nested, pending Phase 2's
-  (a)/(b) decision).
-- Confirm dragging a guard var into a `condition` node's Expression field
-  (the only nameable field `condition` has today, so this already
-  auto-binds via the EXISTING target-side popover, no new target-side
-  code needed) produces a working, readable expression.
+### Phase 3 — condition node UX for guard vars
+
+**DONE (2026-09-29).** Both items below confirmed with real code, not
+assumed.
+
+- `CONDITION_EXAMPLES` (`InlineNodePanel.tsx`) gained a 4th example,
+  `{{eq .agent1_pii_redact_status "flagged"}}` — the FLAT form, matching
+  Phase 2's (b) decision (FlowVars stays flat; the dotted form is
+  display-only). Like the pre-existing 3 examples, it's a template to
+  hand-edit, not a working expression out of the box — a condition node
+  can't know generically which upstream node/guard the user means (a
+  condition reads whatever an UPSTREAM node wrote, it has no guards of its
+  own), same reasoning the original 3 examples' genericness already
+  reflected.
+- Confirmed dragging a guard var into a `condition` node's Expression
+  field DOES produce a working, readable expression — `condition` has
+  exactly one nameable field (`nameableFields('condition')` →
+  `[expression]`), so `resolveDropTarget` always returns `kind: 'auto'`
+  for it, meaning the NEW source-side popover (Phase 2) is the only pick
+  needed; no new target-side code was required. One real rough edge found
+  and fixed while confirming this: the default alias
+  (`defaultAliasFor` in `useInlinePortWiring.ts`) naively prepended the
+  source's display name onto the FULL sourceVar string — since a guard
+  var already embeds its own source node's id as a prefix
+  (`nodeID_defSlug_status`), this doubled the node identity
+  (`Agent1_agent1_pii_redact_status` instead of the intended
+  `Agent1_pii_redact_status`). Fixed by stripping the redundant
+  `${sourceNode.id}_` prefix off `sourceVar` before building the alias —
+  valid either way (Go template syntax doesn't care), but the fix makes
+  the auto-generated alias actually readable. New regression test in
+  `useInlinePortWiring.test.js`: `'a guard var alias strips the redundant
+  node-id prefix instead of doubling the node identity'`. All 99 frontend
+  tests pass, `tsc --noEmit` clean.
 
 ---
 

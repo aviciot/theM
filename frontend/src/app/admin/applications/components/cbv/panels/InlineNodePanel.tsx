@@ -28,6 +28,15 @@ const CONDITION_EXAMPLES = [
   '{{eq .output "APPROVED"}}',
   '{{gt (len .output) 100}}',
   '{{contains .output "error"}}',
+  // Guard var example (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2/3):
+  // Phase 2 decided (b) — FlowVars stays flat, so the real template
+  // reference is the flat key (nodeID_defSlug_status), not the dotted
+  // display form shown in the Writes panel. Drag a var in from an
+  // upstream node's Writes section for a real, correct reference — this
+  // is a template to hand-edit, same as the 3 above (which node/guard it
+  // is can't be known generically, since a condition reads whatever an
+  // UPSTREAM node wrote, not its own vars).
+  '{{eq .agent1_pii_redact_status "flagged"}}',
 ];
 
 export function InlineNodePanel({

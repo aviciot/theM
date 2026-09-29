@@ -126,12 +126,24 @@ function sanitizeAliasChars(s: string): string {
   return s.trim().replace(/[\s{}"'`.]+/g, '_');
 }
 
-/** `<SourceDisplayName>_output` — falls back to a numeric suffix only if two
+/**
+ * `<SourceDisplayName>_output` — falls back to a numeric suffix only if two
  * source nodes genuinely share the same display name (rare, already an
- * existing ambiguity elsewhere on the canvas). */
+ * existing ambiguity elsewhere on the canvas).
+ *
+ * A guard var already embeds its own source node's id as a prefix
+ * (`nodeID_defSlug_status`, `guardWriteVarsForNode`'s convention) — naively
+ * prepending the display name again would double up the node identity
+ * (`Agent1_agent1_pii_redact_status`, redundant but valid). Stripped back
+ * down to just the guard-specific suffix (`pii_redact_status`) before the
+ * label is re-added, so the alias reads as `Agent1_pii_redact_status`
+ * instead.
+ */
 function defaultAliasFor(sourceNode: Node, sourceVar: string, existing: Record<string, PortBinding>): string {
   const label = (sourceNode.data as unknown as InlineLikeData).display_name || sourceNode.id;
-  const base = sanitizeAliasChars(`${label}_${sourceVar}`);
+  const nodeIdPrefix = `${sourceNode.id}_`;
+  const varSuffix = sourceVar.startsWith(nodeIdPrefix) ? sourceVar.slice(nodeIdPrefix.length) : sourceVar;
+  const base = sanitizeAliasChars(`${label}_${varSuffix}`);
   if (!(base in existing)) return base;
   let i = 2;
   while (`${base}_${i}` in existing) i++;
