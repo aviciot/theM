@@ -56,6 +56,9 @@ export function FlowControlNodePanel({
       setLabels(next);
     }
 
+    const trimmed = labels.map(l => l.trim().toLowerCase());
+    const duplicates = new Set(trimmed.filter((l, i) => l && trimmed.indexOf(l) !== i));
+
     return (
       <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: nodeDef.border, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{nodeDef.label}</div>
@@ -64,21 +67,27 @@ export function FlowControlNodePanel({
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Output Labels</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {labels.map((label, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6 }}>
-                <input
-                  style={{ ...fieldStyle, flex: 1 }}
-                  placeholder={`label_${i + 1}`}
-                  value={label}
-                  onChange={e => editLabel(i, e.target.value)}
-                />
-                <button
-                  onClick={() => removeLabel(i)}
-                  style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'rgba(239,68,68,0.15)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}
-                >✕</button>
-              </div>
-            ))}
+            {labels.map((label, i) => {
+              const isDup = label.trim() && duplicates.has(label.trim().toLowerCase());
+              return (
+                <div key={i} style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    style={{ ...fieldStyle, flex: 1, ...(isDup ? { borderColor: '#f87171' } : {}) }}
+                    placeholder={`label_${i + 1}`}
+                    value={label}
+                    onChange={e => editLabel(i, e.target.value)}
+                  />
+                  <button
+                    onClick={() => removeLabel(i)}
+                    style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'rgba(239,68,68,0.15)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}
+                  >✕</button>
+                </div>
+              );
+            })}
           </div>
+          {duplicates.size > 0 && (
+            <div style={{ fontSize: 10, color: '#f87171', marginTop: 4 }}>Labels must be unique — duplicates highlighted in red.</div>
+          )}
           <button
             onClick={addLabel}
             style={{ marginTop: 6, padding: '6px 12px', borderRadius: 6, border: '1px solid rgba(6,182,212,0.3)', background: 'rgba(6,182,212,0.08)', color: '#06b6d4', cursor: 'pointer', fontSize: 12 }}
