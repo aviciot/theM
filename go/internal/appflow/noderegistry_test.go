@@ -137,31 +137,50 @@ func TestAllAppCanvasNodeInfos_ReturnsCopyNotSharedSlice(t *testing.T) {
 }
 
 // TestAllAppCanvasNodeInfos_LLMDeclaresCredentialRuntimeParam verifies the
-// llm kind declares a required "llm_credential"-typed runtime param — this is
-// what the App Canvas Debug Mode setup panel scans for
+// llm and router kinds each declare a required "llm_credential"-typed runtime
+// param — this is what the App Canvas Debug Mode setup panel scans for
 // (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) to render a per-node provider/model/
-// key picker. Also verifies no other kind unexpectedly gained one.
+// key picker. Both kinds make real LLM calls and require a credential at
+// debug time. Also verifies no other kind unexpectedly gained one.
 func TestAllAppCanvasNodeInfos_LLMDeclaresCredentialRuntimeParam(t *testing.T) {
+	// Kinds that must declare exactly one llm_credential RuntimeParam.
+	llmKinds := map[string]bool{"llm": true, "router": true}
 	infos := AllAppCanvasNodeInfos()
 	for _, info := range infos {
-		if info.Type != "llm" {
+		if !llmKinds[info.Type] {
 			if len(info.RuntimeParams) != 0 {
 				t.Errorf("kind %q: expected no RuntimeParams, got %+v", info.Type, info.RuntimeParams)
 			}
 			continue
 		}
 		if len(info.RuntimeParams) != 1 {
-			t.Fatalf("llm: expected exactly 1 RuntimeParams entry, got %d", len(info.RuntimeParams))
+			t.Fatalf("%s: expected exactly 1 RuntimeParams entry, got %d", info.Type, len(info.RuntimeParams))
 		}
 		p := info.RuntimeParams[0]
 		if p.Key == "" {
-			t.Error("llm: RuntimeParams[0].Key must not be empty")
+			t.Errorf("%s: RuntimeParams[0].Key must not be empty", info.Type)
 		}
 		if p.Type != "llm_credential" {
-			t.Errorf("llm: expected Type=\"llm_credential\", got %q", p.Type)
+			t.Errorf("%s: expected Type=\"llm_credential\", got %q", info.Type, p.Type)
 		}
 		if !p.Required {
-			t.Error("llm: expected Required=true")
+			t.Errorf("%s: expected Required=true", info.Type)
 		}
 	}
+}
+
+// TestRouterDynamicControlOutputSource verifies the router declares
+// DynamicControlOutputSource="output_labels" so the frontend can render one
+// spread handle per label without hardcoding the router type.
+func TestRouterDynamicControlOutputSource(t *testing.T) {
+	for _, info := range AllAppCanvasNodeInfos() {
+		if info.Type != "router" {
+			continue
+		}
+		if info.DynamicControlOutputSource != "output_labels" {
+			t.Errorf("router: expected DynamicControlOutputSource=\"output_labels\", got %q", info.DynamicControlOutputSource)
+		}
+		return
+	}
+	t.Fatal("router kind not found in AllAppCanvasNodeInfos")
 }

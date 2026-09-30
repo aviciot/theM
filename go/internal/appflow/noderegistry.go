@@ -49,6 +49,12 @@ type AppCanvasNodeInfo struct {
 	AcceptsDynamicInputs bool   `json:"accepts_dynamic_inputs"`
 	DynamicOutputs       bool   `json:"dynamic_outputs"`
 	Executable           bool   `json:"executable"`
+	// DynamicControlOutputSource names the config key whose []string value
+	// drives per-instance control-output port names (e.g. "output_labels" for
+	// the router node). The frontend reads this field to generate one labeled
+	// sourceHandle per entry, spread along the exit edge exactly like a static
+	// control_output_ports list. Empty means no dynamic control ports.
+	DynamicControlOutputSource string `json:"dynamic_control_output_source,omitempty"`
 	// RuntimeParams declares runtime parameters this node kind needs — see
 	// RuntimeParamDecl. Omitted (nil) for kinds that need none.
 	RuntimeParams []RuntimeParamDecl `json:"app_params,omitempty"`
@@ -123,8 +129,13 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 			},
 			UsageNotes: "Best-effort classifier: if the model returns a label with no matching edge and the router has exactly one outgoing edge, that edge is taken rather than failing the run. With multiple outgoing edges and no match, the run fails non-retryably.",
 		},
-		OutputArity: "multi",
-		Executable:  true,
+		OutputArity:                "multi",
+		Executable:                 true,
+		DynamicControlOutputSource: "output_labels",
+		RuntimeParams: []RuntimeParamDecl{
+			{Key: "llm_key", Label: "LLM API Key", Type: "llm_credential", Required: true,
+				Description: "Provider + key this node uses when debugging — tenant key or a one-off custom key for this run only."},
+		},
 	},
 	{
 		Type:    "hil",

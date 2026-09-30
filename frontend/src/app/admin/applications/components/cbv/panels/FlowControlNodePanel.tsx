@@ -85,6 +85,11 @@ export function FlowControlNodePanel({
           >+ Add Label</button>
           <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
             Each label must have a matching outgoing edge to an agent or node.
+            {labels.length > 0 && (
+              <span style={{ marginLeft: 6, color: nodeDef.border, fontWeight: 700 }}>
+                {labels.length} port{labels.length === 1 ? '' : 's'} will appear on the node.
+              </span>
+            )}
           </div>
         </div>
 

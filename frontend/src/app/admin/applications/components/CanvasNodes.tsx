@@ -242,6 +242,8 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
   const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const nodeDef = getNodeDef(data.node_type, 'appflow');
   const meta = { emoji: nodeDef.emoji, color: nodeDef.border, label: nodeDef.label };
+  const outputPorts = resolveOutputPorts(nodeDef, (data.config ?? {}) as Record<string, unknown>);
+  const controlPorts = outputPorts.filter(p => p.kind === 'control' && p.id !== 'ctrl-out');
   const hasError = data._error || data._shake;
   const dbgState = data._debug?.state;
   const dbgAccent = dbgState ? debugAccent[dbgState] : null;
@@ -249,6 +251,7 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
   const accent = dbgAccent ?? (hasError ? '#f87171' : meta.color);
   const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${meta.color}59`;
   const selBg   = hasError ? 'rgba(248,113,113,0.10)' : `${meta.color}1a`;
+  const handleStyle = { background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 };
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
       title={data._debug?.error || data._errorMsg || undefined}>
@@ -267,7 +270,7 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="target" position={targetPos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="target" position={targetPos} style={handleStyle} />
       <div
         className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
         style={{
@@ -297,7 +300,28 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
           <div style={{ fontSize: 9, color: '#c084fc' }}>⏸ paused</div>
         )}
       </div>
-      <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      {controlPorts.length > 0 ? (
+        <>
+          {controlPorts.map((port, i) => {
+            const spreadPct = `${(100 / (controlPorts.length + 1)) * (i + 1)}%`;
+            const spreadStyle = sourcePos === Position.Right
+              ? { top: spreadPct }
+              : { left: spreadPct };
+            return (
+              <Handle
+                key={port.id}
+                type="source"
+                id={port.id}
+                position={sourcePos}
+                style={{ ...handleStyle, background: port.color, ...spreadStyle }}
+                title={port.label}
+              />
+            );
+          })}
+        </>
+      ) : (
+        <Handle type="source" position={sourcePos} style={handleStyle} />
+      )}
     </div>
   );
 }

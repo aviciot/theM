@@ -180,9 +180,12 @@ export function docToCanvas(
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const inlineNodeTypeById = new Map<string, string>();
+  const flowCtrlNodeTypeById = new Map<string, string>();
   (doc.components ?? []).forEach(c => {
     if (c.definition_ref.kind === 'inline') {
       inlineNodeTypeById.set(c.instance_id, (c.config.node_type as string) ?? c.definition_ref.name);
+    } else if (c.definition_ref.kind === 'flow_control') {
+      flowCtrlNodeTypeById.set(c.instance_id, (c.config.node_type as string) ?? c.definition_ref.name);
     }
   });
   (doc.components ?? []).forEach(c => {
@@ -216,7 +219,13 @@ export function docToCanvas(
       // e.g. condition's true/false) carries its branch on the sourceHandle
       // using the "ctrl-out-{portID}" convention (see lib/nodeRegistry.ts).
       const srcInlineType = inlineNodeTypeById.get(conn.source);
-      const hasControlPorts = !!srcInlineType && (getNodeDef(srcInlineType, 'appflow').control_output_ports?.length ?? 0) > 0;
+      const hasInlineCtrlPorts = !!srcInlineType && (getNodeDef(srcInlineType, 'appflow').control_output_ports?.length ?? 0) > 0;
+      // flow_control nodes with dynamic_control_output_source (e.g. router) also
+      // carry their chosen label on a named sourceHandle so each edge connects
+      // to the correct spread handle on the node.
+      const srcFlowCtrlType = flowCtrlNodeTypeById.get(conn.source);
+      const hasFlowCtrlDynPorts = !!srcFlowCtrlType && !!getNodeDef(srcFlowCtrlType, 'appflow').dynamic_control_output_source;
+      const hasControlPorts = hasInlineCtrlPorts || hasFlowCtrlDynPorts;
       edges.push({
         id: `e_${conn.source}_${conn.target}${conn.label ? '_' + conn.label : ''}`,
         source: conn.source,

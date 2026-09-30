@@ -68,11 +68,18 @@ endpoint + `go/internal/appflow/workflow.go` cross-check, 2026-09-26):
   paired `join`.
 - **`join`** — needs ≥2 incoming edges; results merged with a newline
   separator.
-- **`router`** — LLM-based intent classifier; `output_labels` must match
-  edge labels exactly, or the run fails (unless there's exactly 1 outgoing
-  edge, which is always taken as a fallback).
+- **`router`** — LLM-based intent classifier; `output_labels` (array) drives
+  both the edge labels AND the port handles on the node — one spread handle
+  per label appears automatically. Edge labels must match `output_labels`
+  entries exactly (case-insensitive), or the run fails. **Debug requires an
+  `llm_key` param** (same picker as the `llm` node) — the credential field
+  appears in the debug setup panel because the router makes a real LLM call.
+  Optional `classifier_prompt` lets you guide the LLM's classification logic.
 - **`hil`** — pauses for human approval; a rejection ends the run with
-  status `"rejected"`, no false-path edge like condition has.
+  status `"rejected"`, no false-path edge like condition has. **No pre-run
+  debug params** — approve/reject happens mid-run: click the HIL node in the
+  debug inspector panel while it is in `running` state to see the
+  Approve/Reject buttons.
 
 Agent/middleware/orchestrator components are NOT node types — they're
 looked up via `GET /api/v1/admin/component-definitions` (separate endpoint,

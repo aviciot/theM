@@ -122,6 +122,14 @@ export interface NodeTypeInfo {
    * Format: "functions[].output_var" — iterate cfg[array], collect field value.
    */
   dynamic_output_source?: string;
+  /**
+   * Config key whose string[] value drives dynamic control-output port names.
+   * Set on nodes like router ("output_labels") where the number of output
+   * branches is determined by a flat string array in the node's config.
+   * When set, resolveOutputPorts generates one ctrl-out-{label} handle per entry
+   * instead of the single anonymous ctrl-out handle.
+   */
+  dynamic_control_output_source?: string;
   /** Baseline execution policy for this node type. */
   default_policy?: ExecutionPolicy;
   /** Maximum allowed values; canvas overrides are clamped to these. */
@@ -245,6 +253,14 @@ export function resolveOutputPorts(
 
   // Named control-flow outputs (e.g. branch: true/false)
   const ctrlPorts = nodeDef.control_output_ports ?? [];
+
+  // Dynamic control ports from a flat string[] config key (e.g. router's output_labels).
+  // Takes precedence over the single anonymous ctrl-out when labels are present.
+  const dynCtrlSrc = nodeDef.dynamic_control_output_source;
+  const dynCtrlLabels: string[] = dynCtrlSrc
+    ? ((cfg[dynCtrlSrc] as string[] | undefined) ?? []).filter(l => typeof l === 'string' && l.trim())
+    : [];
+
   if (ctrlPorts.length > 0) {
     for (const port of ctrlPorts) {
       ports.push({
@@ -255,6 +271,19 @@ export function resolveOutputPorts(
         color: port.color || nodeDef.border || '#64748b',
         required: port.required ?? false,
         maxConnections: port.max_connections ?? 1,
+      });
+    }
+  } else if (dynCtrlLabels.length > 0) {
+    // One labeled port per entry in the dynamic source array (e.g. router labels).
+    for (const label of dynCtrlLabels) {
+      ports.push({
+        id: `ctrl-out-${label}`,
+        label: truncLabel(label),
+        kind: 'control',
+        direction: 'out',
+        color: nodeDef.border || '#64748b',
+        required: false,
+        maxConnections: 1,
       });
     }
   } else if (!nodeDef.is_sink) {
@@ -337,6 +366,10 @@ const SUMMARY_FNS: Record<string, SummaryFn> = {
   mcp_call:   (cfg) => (cfg.tool_name as string) || '',
   a2a_call:   (cfg) => (cfg.agent_url as string) ? (cfg.agent_url as string).replace(/^https?:\/\//, '').slice(0, 22) : '',
   loop:       (cfg) => (cfg.items_var as string) ? `→ ${cfg.items_var as string}` : 'set items_var',
+  router:     (cfg) => {
+    const labels = cfg.output_labels as string[] | undefined;
+    return labels?.length ? `${labels.length} route${labels.length === 1 ? '' : 's'}` : 'add labels';
+  },
 };
 
 const FALLBACK_SUMMARY: SummaryFn = () => '';
