@@ -24,10 +24,23 @@ func NewHILApprovalsHandler(db DBQuerier, temporal TemporalSignaler) *HILApprova
 	return &HILApprovalsHandler{db: db, temporal: temporal}
 }
 
-// Routes mounts the HIL approval endpoints under /runs/{run_id}/hil/{node_id}.
+// Routes mounts the HIL approval endpoints.
 func (h *HILApprovalsHandler) Routes(r chi.Router) {
+	r.Get("/runs/pending-hil", h.ListPending)
 	r.Post("/runs/{run_id}/hil/{node_id}/approve", h.Approve)
 	r.Post("/runs/{run_id}/hil/{node_id}/reject", h.Reject)
+}
+
+// ListPending handles GET /api/v1/runs/pending-hil.
+// Returns all HIL approval rows with status='pending' for the tenant.
+func (h *HILApprovalsHandler) ListPending(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	rows, err := dal.NewDB(h.db).ListPendingHIL(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 type hilDecisionRequest struct {

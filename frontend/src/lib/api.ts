@@ -619,6 +619,14 @@ export const themApi = {
   deleteAppFlowDebugPreset: (appId: string, presetId: string) =>
     api.delete<{ deleted: boolean }>(`/admin/applications/${appId}/debug/presets/${presetId}`),
 
+  // HIL approval actions — used by the debug inspector and the pending-HIL inbox.
+  hilApprove: (runId: string, nodeId: string, comment?: string) =>
+    api.post<{ run_id: string; node_id: string; status: string }>(`/runs/${runId}/hil/${nodeId}/approve`, { comment: comment ?? '' }),
+  hilReject: (runId: string, nodeId: string, comment?: string) =>
+    api.post<{ run_id: string; node_id: string; status: string }>(`/runs/${runId}/hil/${nodeId}/reject`, { comment: comment ?? '' }),
+  listPendingHIL: () =>
+    api.get<{ run_id: string; node_id: string; application_id: string; approver_role: string; prompt: string; fallback_action: string; created_at: string; run_status: string; run_started_at: string }[]>('/runs/pending-hil'),
+
   // Canvas A2A Agent Builder (Phase 2)
   listAgentDefinitions: () =>
     api.get<AgentDefinition[]>('/admin/agent-definitions'),
