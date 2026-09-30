@@ -4,6 +4,7 @@ import type { FlowControlNodeData } from '../../../types';
 import { C } from '../../../constants';
 import { fieldStyle } from './panelShared';
 import { getNodeDef } from '@/lib/nodeRegistry';
+import { NodeVarsSection } from './NodeVarsSection';
 
 // ── FlowControlNodePanel (Router + HIL) ──────────────────────────────────────
 
@@ -111,6 +112,16 @@ export function FlowControlNodePanel({
             onChange={e => updateFcConfig({ classifier_prompt: e.target.value })}
           />
         </div>
+
+        <NodeVarsSection
+          reads={[{ name: 'input', note: 'accumulated flow text passed to the classifier' }]}
+          writes={[
+            { name: 'router_label', note: 'chosen label (e.g. "billing")' },
+            { name: 'router_confidence', note: 'LLM confidence 0.0–1.0' },
+            { name: `${d.instance_id ?? 'node'}_label`, note: 'same as router_label — scoped to this node' },
+            { name: `${d.instance_id ?? 'node'}_confidence`, note: 'same as router_confidence — scoped to this node' },
+          ]}
+        />
       </div>
     );
   }
@@ -171,6 +182,10 @@ export function FlowControlNodePanel({
             <option value="abort">Abort (fail the run)</option>
           </select>
         </div>
+
+        <NodeVarsSection
+          reads={[{ name: 'input', note: 'accumulated flow text shown to the approver' }]}
+        />
       </div>
     );
   }

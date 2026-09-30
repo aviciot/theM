@@ -6,6 +6,7 @@ import { fieldStyle } from './panelShared';
 import { InlinePortsSection } from './InlinePortsSection';
 import { AgentGuardsSection } from './AgentGuardsSection';
 import { WritesSection } from './WritesSection';
+import { NodeVarsSection } from './NodeVarsSection';
 import type { Agent, MiddlewareWiring } from '@/lib/api';
 
 // ── InlineNodePanel (LLM + Condition) ────────────────────────────────────────
@@ -234,6 +235,14 @@ export function InlineNodePanel({
             </div>
           </div>
         </div>
+
+        <NodeVarsSection
+          reads={[
+            { name: 'input', note: 'accumulated flow text' },
+            { name: 'router_confidence', note: 'if upstream router — confidence 0.0–1.0' },
+            { name: 'router_label', note: 'if upstream router — chosen label' },
+          ]}
+        />
       </div>
     );
   }
