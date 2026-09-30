@@ -13,7 +13,6 @@ import type {
 import type {
   OrchNodeData,
   AgentNodeData,
-  MwNodeData,
   EpNodeData,
   FlowControlNodeData,
   InlineNodeData,
@@ -102,7 +101,7 @@ function sanitize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
 }
 
-export function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'ep' | 'flow_control' | 'inline', defName: string | undefined, existing: Set<string>): string {
+export function genInstanceId(kind: 'orchestrator' | 'agent' | 'ep' | 'flow_control' | 'inline', defName: string | undefined, existing: Set<string>): string {
   let base: string;
   if (kind === 'orchestrator') base = 'orch';
   else if (kind === 'ep') base = 'ep_' + sanitize(defName ?? 'ep');
@@ -135,9 +134,6 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
       const comp: ComponentInstance = { instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config };
       if (d.secret_bindings && Object.keys(d.secret_bindings).length) comp.secret_bindings = d.secret_bindings;
       components.push(comp);
-    } else if (n.type === 'middleware') {
-      const d = n.data as unknown as MwNodeData;
-      components.push({ instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config });
     } else if (n.type === 'flowControl') {
       const d = n.data as unknown as FlowControlNodeData;
       components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name } });
@@ -155,8 +151,6 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     if (srcType === 'entryPoint' && tgtType === 'orchestrator') return;
     if (srcType === 'orchestrator' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'tool' });
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
-    if (srcType === 'orchestrator' && tgtType === 'middleware') connections.push({ source: e.source, target: e.target, type: 'middleware' });
-    if (srcType === 'middleware' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'middleware' });
     if (srcType === 'flowControl' || tgtType === 'flowControl' ||
         srcType === 'inline'      || tgtType === 'inline') {
       // Condition (and any future branching inline kind) carries its branch on
@@ -179,7 +173,6 @@ export function docToCanvas(
   componentDefs: ComponentDefinitionSummary[],
   layout: Record<string, { x: number; y: number }>,
   agentIconBySlug?: Map<string, string>,
-  mwVisualById?: Map<string, { emoji: string; color: string; bg_color: string }>,
 ): { nodes: Node[]; edges: Edge[] } {
   const defById = new Map(componentDefs.map(cd => [cd.id, cd]));
   const refKey = (r: DefinitionRef) => `${r.kind}:${r.namespace}:${r.name}:${r.version}`;
@@ -200,9 +193,6 @@ export function docToCanvas(
     } else if (c.definition_ref.kind === 'agent') {
       const agentIcon = agentIconBySlug?.get(c.definition_ref.name);
       nodes.push({ id: c.instance_id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings, icon: agentIcon } as unknown as Record<string, unknown> });
-    } else if (c.definition_ref.kind === 'middleware') {
-      const mwVis = c.definition_id ? mwVisualById?.get(c.definition_id) : undefined;
-      nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, emoji: mwVis?.emoji, color: mwVis?.color, bg_color: mwVis?.bg_color } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'flow_control') {
       const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
       const displayName = (c.config.display_name as string) || getNodeDef(nodeType, 'appflow').label || nodeType;
@@ -221,7 +211,7 @@ export function docToCanvas(
     if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default' });
   });
   (doc.connections ?? []).forEach(conn => {
-    if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'middleware' || conn.type === 'flow_control') {
+    if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'flow_control') {
       // Any inline node type with named control_output_ports (registry-driven,
       // e.g. condition's true/false) carries its branch on the sourceHandle
       // using the "ctrl-out-{portID}" convention (see lib/nodeRegistry.ts).

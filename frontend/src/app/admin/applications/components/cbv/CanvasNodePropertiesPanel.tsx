@@ -5,7 +5,6 @@ import type { MCPServer, Agent, MiddlewareWiring } from '@/lib/api';
 import { OrchestratorNodePanel } from './panels/OrchestratorNodePanel';
 import { AgentNodePanel } from './panels/AgentNodePanel';
 import { EntryPointNodePanel } from './panels/EntryPointNodePanel';
-import { MiddlewareNodePanel } from './panels/MiddlewareNodePanel';
 import { FlowControlNodePanel } from './panels/FlowControlNodePanel';
 import { InlineNodePanel } from './panels/InlineNodePanel';
 
@@ -102,19 +101,6 @@ export function CanvasNodePropertiesPanel({
         setIsDirty={setIsDirty}
         setLogoResult={setLogoResult}
         setEpConfig={setEpConfig}
-      />
-    );
-  }
-
-  if (selectedNode.type === 'middleware') {
-    return (
-      <MiddlewareNodePanel
-        appId={appId}
-        selectedNode={selectedNode}
-        nodes={nodes}
-        edges={edges}
-        setNodes={setNodes}
-        showToast={showToast}
       />
     );
   }

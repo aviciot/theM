@@ -91,36 +91,6 @@ export function CanvasPalette({
           ))}
         </div>
 
-        {/* Middleware — component kind */}
-        {(['middleware'] as const).map(kind => {
-          const items = componentDefs.filter(cd => cd.kind === kind);
-          if (items.length === 0) return null;
-          const kindColor = '245,158,11';
-          const kindIconColor = '#f59e0b';
-          const defaultKindIcon = 'shield';
-          return (
-            <div key={kind} style={{ padding: '0 8px 12px' }}>
-              <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
-              {items.map(cd => {
-                const itemIcon = cd.name.includes('guard') ? 'shield' : 'bolt';
-                return (
-                  <div
-                    key={cd.id}
-                    draggable
-                    onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{itemIcon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
-                      {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
 
         {/* Orchestrators — component kind */}
         {(['orchestrator'] as const).map(kind => {

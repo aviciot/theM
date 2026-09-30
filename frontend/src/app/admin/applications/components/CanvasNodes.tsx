@@ -1,6 +1,6 @@
 'use client';
 import { Handle, Position, useReactFlow, type NodeTypes } from '@xyflow/react';
-import type { EntryPointData, OrchestratorData, AgentData, MiddlewareData, FlowControlNodeData, InlineNodeData } from '../types';
+import type { EntryPointData, OrchestratorData, AgentData, FlowControlNodeData, InlineNodeData } from '../types';
 import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
 import { useAppLayoutDir } from '../AppLayoutContext';
@@ -229,71 +229,6 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
   );
 }
 
-// ── MiddlewareNode ────────────────────────────────────────────────────────────
-export function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
-  const { deleteElements } = useReactFlow();
-  const dir = useAppLayoutDir();
-  const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
-  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
-  const hasError = data._error || data._shake;
-  const nodeColor = data.color || C.amber;
-  const nodeBgColor = data.bg_color || 'transparent';
-  const accent = hasError ? '#f87171' : nodeColor;
-  const selGlow = hasError ? 'rgba(248,113,113,0.35)' : `${nodeColor}59`;
-  const selBg   = hasError ? 'rgba(248,113,113,0.10)' : `${nodeColor}1a`;
-  const emoji = data.emoji || (data.kind === 'guard' ? '🛡️' : '⚡');
-  return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
-      title={data._errorMsg || undefined}>
-      {selected && (
-        <button
-          className="nodrag"
-          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
-          style={{
-            position: 'absolute', top: -8, right: -8,
-            width: 18, height: 18, borderRadius: '50%',
-            background: '#f87171', border: '2px solid #051424',
-            color: '#fff', fontSize: 10, fontWeight: 700,
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            lineHeight: 1, padding: 0, zIndex: 10,
-          }}
-          title="Delete node (or press Delete key)"
-        >✕</button>
-      )}
-      <Handle type="target" position={targetPos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-      <div style={{ position: 'relative' }}>
-        <div
-          className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
-          style={{
-            width: 56, height: 56, borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: selected ? selBg : data._scanning ? nodeBgColor : 'transparent',
-            border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
-            boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
-            transition: 'all 0.18s ease',
-          }}>
-          <div style={{ fontSize: 26, lineHeight: 1 }}>{emoji}</div>
-        </div>
-        {data.wiringEnabled && (
-          <div style={{
-            position: 'absolute', top: 2, right: 2,
-            width: 10, height: 10, borderRadius: '50%',
-            background: '#22c55e', border: '2px solid #051424',
-          }} title="File Guard active" />
-        )}
-      </div>
-      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
-          {data.displayName}
-        </div>
-        <div style={{ fontSize: 9, color: accent, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.8 }}>
-          {data.kind}
-        </div>
-      </div>
-      <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-    </div>
-  );
-}
 
 // ── FlowControlNode ───────────────────────────────────────────────────────────
 // Metadata (emoji/color/label) comes from the appflow family of
@@ -477,7 +412,6 @@ export const NODE_TYPES: NodeTypes = {
   entryPoint: EntryPointNode as any,
   orchestrator: OrchestratorNode as any,
   agent: AgentNode as any,
-  middleware: MiddlewareNode as any,
   flowControl: FlowControlNode as any,
   inline: InlineNode as any,
 };

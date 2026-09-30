@@ -77,22 +77,6 @@ export interface AgentData {
   [key: string]: unknown;
 }
 
-export interface MiddlewareData {
-  defId: string;
-  slug: string;
-  kind: 'guard' | 'cache';
-  displayName: string;
-  description: string;
-  config: Record<string, unknown>;
-  configOverride: Record<string, unknown>;
-  nodeId: string;
-  wiringEnabled?: boolean;
-  emoji?: string;
-  color?: string;
-  bg_color?: string;
-  [key: string]: unknown;
-}
-
 // ── Canvas V2 node data interfaces ───────────────────────────────────────────
 export interface OrchNodeData {
   _kind: 'orchestrator';
@@ -116,21 +100,6 @@ export interface AgentNodeData {
   config: Record<string, unknown>;
   secret_bindings?: Record<string, string>;
   icon?: string;
-  _error?: boolean;
-  _shake?: boolean;
-  _errorMsg?: string;
-}
-
-export interface MwNodeData {
-  _kind: 'middleware';
-  instance_id: string;
-  display_name: string;
-  definition_ref: import('@/lib/api').DefinitionRef;
-  definition_id?: string;
-  config: Record<string, unknown>;
-  emoji?: string;
-  color?: string;
-  bg_color?: string;
   _error?: boolean;
   _shake?: boolean;
   _errorMsg?: string;
@@ -220,7 +189,7 @@ export interface InlineNodeData {
   _debug?: AppFlowNodeDebugInfo;
 }
 
-export type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData | FlowControlNodeData | InlineNodeData;
+export type CanvasNodeData = OrchNodeData | AgentNodeData | EpNodeData | FlowControlNodeData | InlineNodeData;
 
 // ── Chain/validation types ───────────────────────────────────────────────────
 export interface ChainStatus {
