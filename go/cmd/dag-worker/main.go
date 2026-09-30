@@ -749,22 +749,43 @@ func (c *dbLLMCaller) ClassifyIntent(
 	userMessage, systemPrompt string,
 	labels []string,
 	providerName, model, tenantID, applicationID string,
-) (string, error) {
+) (string, float64, error) {
 	apiKey := c.resolveKey(ctx, providerName, tenantID, applicationID)
 	if apiKey == "" {
-		return "", fmt.Errorf("router: no API key for provider %q (tenant %s, app %s)", providerName, tenantID, applicationID)
+		return "", 0, fmt.Errorf("router: no API key for provider %q (tenant %s, app %s)", providerName, tenantID, applicationID)
 	}
 	if model == "" {
 		model = "claude-haiku-4-5-20251001" // lean classification model
 	}
 
-	provider, err := c.factory.NewProvider(providerName, model, 64, apiKey)
+	provider, err := c.factory.NewProvider(providerName, model, 128, apiKey)
 	if err != nil {
-		return "", fmt.Errorf("router: create provider: %w", err)
+		return "", 0, fmt.Errorf("router: create provider: %w", err)
 	}
 
 	userPrompt := fmt.Sprintf("User message: %s\n\nChoose one label from: %v", userMessage, labels)
-	return provider.Complete(ctx, systemPrompt, userPrompt)
+	raw, err := provider.Complete(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// Parse JSON response: {"label":"...","confidence":0.92}
+	// Strip markdown fences the LLM may add despite instructions.
+	cleaned := strings.TrimSpace(raw)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var result struct {
+		Label      string  `json:"label"`
+		Confidence float64 `json:"confidence"`
+	}
+	if jsonErr := json.Unmarshal([]byte(cleaned), &result); jsonErr != nil {
+		// Fallback: treat the raw response as a plain label with unknown confidence.
+		return strings.TrimSpace(raw), 0.5, nil
+	}
+	return result.Label, result.Confidence, nil
 }
 
 // resolveKey looks up the API key for providerName via the shared

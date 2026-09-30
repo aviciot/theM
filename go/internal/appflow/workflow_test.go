@@ -1041,12 +1041,13 @@ func TestExecuteHILActivity_EmitsStartThenErrorTrace_NilDB(t *testing.T) {
 }
 
 type fakeRouterLLMCaller struct {
-	label string
-	err   error
+	label      string
+	confidence float64
+	err        error
 }
 
-func (f *fakeRouterLLMCaller) ClassifyIntent(_ context.Context, _, _ string, _ []string, _, _, _, _ string) (string, error) {
-	return f.label, f.err
+func (f *fakeRouterLLMCaller) ClassifyIntent(_ context.Context, _, _ string, _ []string, _, _, _, _ string) (string, float64, error) {
+	return f.label, f.confidence, f.err
 }
 
 // AF-TR-06b: ExecuteRouterActivity emits node_start then node_done with
@@ -1054,7 +1055,7 @@ func (f *fakeRouterLLMCaller) ClassifyIntent(_ context.Context, _, _ string, _ [
 func TestExecuteRouterActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	streamPub := &fakeStreamPub{}
 	acts := &AppFlowActivities{
-		LLMCaller: &fakeRouterLLMCaller{label: "billing"},
+		LLMCaller: &fakeRouterLLMCaller{label: "billing", confidence: 0.95},
 		StreamPub: streamPub,
 	}
 	out, err := acts.ExecuteRouterActivity(context.Background(), RouterActivityInput{
@@ -1068,12 +1069,17 @@ func TestExecuteRouterActivity_EmitsStartAndDoneTrace(t *testing.T) {
 	if out.ChosenLabel != "billing" {
 		t.Fatalf("chosen label: want %q, got %q", "billing", out.ChosenLabel)
 	}
+	if out.Confidence != 0.95 {
+		t.Fatalf("confidence: want 0.95, got %v", out.Confidence)
+	}
 	dones := tracePayloadsOfType(t, streamPub, "node_done")
 	if len(dones) != 1 {
 		t.Fatalf("want 1 node_done, got %d", len(dones))
 	}
-	if dones[0]["detail"] != "label=billing" {
-		t.Errorf("detail: want %q, got %v", "label=billing", dones[0]["detail"])
+	// Detail now includes confidence score.
+	detail, _ := dones[0]["detail"].(string)
+	if !strings.Contains(detail, "label=billing") {
+		t.Errorf("detail: want to contain %q, got %v", "label=billing", detail)
 	}
 }
 

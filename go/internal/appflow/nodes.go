@@ -27,20 +27,22 @@ import (
 // one outgoing edge, that edge is taken. A router is a best-effort N-way
 // classifier, so degrading to the only available path beats failing the run.
 // Condition makes no such concession — see execConditionBranch's caller.
+// execRouterNode runs the Router activity and returns the next node ID plus
+// the chosen label and confidence score so the caller can write flow vars.
 func execRouterNode(
 	ctx workflow.Context,
 	node *AppFlowNode,
 	input AppFlowWorkflowInput,
 	outEdges []AppFlowEdge,
 	accumulated string,
-) (string, error) {
+) (nextID string, chosenLabel string, confidence float64, err error) {
 	var cfg RouterConfig
 	if len(node.Config) > 0 {
 		_ = json.Unmarshal(node.Config, &cfg)
 	}
 
 	var routerOut RouterActivityOutput
-	err := workflow.ExecuteActivity(ctx, AppFlowExecuteRouterActivityName, RouterActivityInput{
+	if aErr := workflow.ExecuteActivity(ctx, AppFlowExecuteRouterActivityName, RouterActivityInput{
 		RunID:            input.RunID,
 		TenantID:         input.TenantID,
 		ApplicationID:    input.ApplicationID,
@@ -52,23 +54,22 @@ func execRouterNode(
 		LLMProvider:      input.LLMProvider,
 		LLMModel:         input.LLMModel,
 		Verbosity:        input.LogVerbosity,
-	}).Get(ctx, &routerOut)
-	if err != nil {
-		return "", fmt.Errorf("router %q: %w", node.ID, err)
+	}).Get(ctx, &routerOut); aErr != nil {
+		return "", "", 0, fmt.Errorf("router %q: %w", node.ID, aErr)
 	}
 
 	// Find the outgoing edge matching the chosen label.
-	nextID := findEdgeByLabel(outEdges, routerOut.ChosenLabel)
-	if nextID == "" {
+	nID := findEdgeByLabel(outEdges, routerOut.ChosenLabel)
+	if nID == "" {
 		if len(outEdges) == 1 {
-			return outEdges[0].Target, nil
+			return outEdges[0].Target, routerOut.ChosenLabel, routerOut.Confidence, nil
 		}
-		return "", temporalerr.NewNonRetryableApplicationError(
+		return "", "", 0, temporalerr.NewNonRetryableApplicationError(
 			fmt.Sprintf("router %q: no outgoing edge matches label %q", node.ID, routerOut.ChosenLabel),
 			"RouterNoMatch", nil,
 		)
 	}
-	return nextID, nil
+	return nID, routerOut.ChosenLabel, routerOut.Confidence, nil
 }
 
 // execHILNode persists an approval request, then blocks the workflow until a

@@ -48,6 +48,9 @@ type RouterActivityInput struct {
 type RouterActivityOutput struct {
 	// ChosenLabel is the intent label chosen by the classifier.
 	ChosenLabel string `json:"chosen_label"`
+	// Confidence is the LLM's self-reported confidence (0.0–1.0).
+	// Written to flow vars as "router_confidence" by the workflow dispatch loop.
+	Confidence float64 `json:"confidence"`
 }
 
 // HILActivityInput is the input to AppFlowExecuteHILActivity.
@@ -310,8 +313,9 @@ type StreamPublisher interface {
 // RouterLLMCaller is the interface the Router activity uses to call an LLM.
 // The implementation resolves the API key from DB using providerName + tenantID + applicationID
 // so the key is never stored in Temporal workflow history.
+// Returns the chosen label and a confidence score (0.0–1.0).
 type RouterLLMCaller interface {
-	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, providerName, model, tenantID, applicationID string) (string, error)
+	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, providerName, model, tenantID, applicationID string) (label string, confidence float64, err error)
 }
 
 // InlineLLMCaller is the interface the inline LLM activity uses. Deliberately
@@ -367,7 +371,7 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 		prompt = defaultRouterPrompt(input.Labels)
 	}
 
-	label, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProviderName, input.LLMModel, input.TenantID, input.ApplicationID)
+	label, confidence, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProviderName, input.LLMModel, input.TenantID, input.ApplicationID)
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", err.Error(), input.Verbosity)
 		return RouterActivityOutput{}, fmt.Errorf("router classify: %w", err)
@@ -376,8 +380,9 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 	// Validate the returned label is in the allowed set.
 	for _, l := range input.Labels {
 		if strings.EqualFold(l, label) {
-			a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_done", "label="+l, input.Verbosity)
-			return RouterActivityOutput{ChosenLabel: l}, nil
+			a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_done",
+				fmt.Sprintf("label=%s confidence=%.2f", l, confidence), input.Verbosity)
+			return RouterActivityOutput{ChosenLabel: l, Confidence: confidence}, nil
 		}
 	}
 
@@ -946,6 +951,7 @@ func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input Final
 }
 
 // defaultRouterPrompt generates a default system prompt for the router classifier.
+// The LLM must reply with JSON: {"label":"<chosen>","confidence":<0.0-1.0>}
 func defaultRouterPrompt(labels []string) string {
 	quoted := make([]string, len(labels))
 	for i, l := range labels {
@@ -953,7 +959,7 @@ func defaultRouterPrompt(labels []string) string {
 	}
 	return fmt.Sprintf(
 		"You are an intent classifier. Based on the user message, choose exactly one of these labels: %s.\n"+
-			"Reply with only the label, nothing else.",
+			"Reply with JSON only, no markdown, no explanation: {\"label\":\"<chosen_label>\",\"confidence\":<0.0-1.0>}",
 		strings.Join(quoted, ", "),
 	)
 }

@@ -508,12 +508,19 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 
 		switch node.Kind {
 		case "router":
-			nextID, rErr := execRouterNode(ctx, node, input, outEdgesBySource[node.ID], accumulated)
+			nextID, chosenLabel, confidence, rErr := execRouterNode(ctx, node, input, outEdgesBySource[node.ID], accumulated)
 			if rErr != nil {
 				out.Status = "failed"
 				retErr = rErr
 				return
 			}
+			// Write router result into flow vars so downstream nodes can use them.
+			// router_label: the chosen intent label (e.g. "billing")
+			// router_confidence: LLM's self-reported confidence (0.0–1.0)
+			vars["router_label"] = chosenLabel
+			vars[fmt.Sprintf("%s_label", node.ID)] = chosenLabel
+			vars["router_confidence"] = fmt.Sprintf("%.4f", confidence)
+			vars[fmt.Sprintf("%s_confidence", node.ID)] = fmt.Sprintf("%.4f", confidence)
 			currentID = nextID
 			continue
 
