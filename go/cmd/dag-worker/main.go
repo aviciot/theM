@@ -789,19 +789,16 @@ func (c *dbLLMCaller) ClassifyIntent(ctx context.Context, req appflow.RouterLLMR
 	}
 
 	// Parse JSON response: {"label":"...","confidence":0.92}
-	// Strip markdown fences the LLM may add despite instructions.
-	cleaned := strings.TrimSpace(raw)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
+	// Extract the first JSON object from the response — the LLM sometimes wraps
+	// it in markdown fences or appends an explanation after the closing brace.
+	cleaned := extractFirstJSON(raw)
 
 	var result struct {
 		Label      string  `json:"label"`
 		Confidence float64 `json:"confidence"`
 	}
 	if jsonErr := json.Unmarshal([]byte(cleaned), &result); jsonErr != nil {
-		// Fallback: treat the raw response as a plain label with unknown confidence.
+		// Fallback: treat the trimmed response as a plain label.
 		return strings.TrimSpace(raw), 0.5, nil
 	}
 	return result.Label, result.Confidence, nil
@@ -812,6 +809,20 @@ func (c *dbLLMCaller) ClassifyIntent(ctx context.Context, req appflow.RouterLLMR
 // llm_providers -> platform llm_providers). Errors are logged and treated as
 // "no key found" — the caller (multiLLMFactory.NewProvider) already errors
 // clearly for any provider that needs a key and didn't get one.
+// extractFirstJSON finds the first {...} JSON object in s, stripping any
+// surrounding markdown fences or trailing explanation text the LLM may add.
+func extractFirstJSON(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start == -1 {
+		return strings.TrimSpace(s)
+	}
+	end := strings.LastIndexByte(s, '}')
+	if end <= start {
+		return strings.TrimSpace(s)
+	}
+	return s[start : end+1]
+}
+
 func (c *dbLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, applicationID string) string {
 	resolved, err := c.resolver.ResolveProvider(ctx, applicationID, tenantID, providerName)
 	if err != nil {
