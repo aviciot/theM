@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Node } from '@xyflow/react';
 import { C } from '../constants';
 import type { AppFlowNodeDebugInfo } from '../types';
@@ -32,6 +32,23 @@ export function AppFlowDebugInspector({ selectedNode, runId }: { selectedNode: N
   const [hilComment, setHilComment] = useState('');
   const [hilBusy, setHilBusy] = useState(false);
   const [hilDone, setHilDone] = useState<string | null>(null);
+  const [hilPrompt, setHilPrompt] = useState<string | null>(null);
+
+  const nodeType = (selectedNode?.data as { node_type?: string })?.node_type ?? selectedNode?.type ?? '';
+  const state = debugInfo?.state ?? 'idle';
+
+  // Fetch the rendered HIL prompt from pending-hil when this node is parked.
+  useEffect(() => {
+    setHilPrompt(null);
+    if (nodeType !== 'hil' || state !== 'running' || !runId || !selectedNode) return;
+    let cancelled = false;
+    themApi.listPendingHIL().then(rows => {
+      if (cancelled) return;
+      const match = rows.find(r => r.run_id === runId && r.node_id === selectedNode.id);
+      if (match?.prompt) setHilPrompt(match.prompt);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [nodeType, state, runId, selectedNode?.id]);
 
   async function sendHIL(approve: boolean) {
     if (!runId || !selectedNode || hilBusy) return;
@@ -52,9 +69,7 @@ export function AppFlowDebugInspector({ selectedNode, runId }: { selectedNode: N
     );
   }
 
-  const nodeType = (selectedNode.data as { node_type?: string })?.node_type ?? selectedNode.type ?? '';
   const displayName = (selectedNode.data as { display_name?: string })?.display_name;
-  const state = debugInfo?.state ?? 'idle';
 
   return (
     <div style={{ padding: '14px 16px', fontSize: '12px', color: C.text, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -74,7 +89,13 @@ export function AppFlowDebugInspector({ selectedNode, runId }: { selectedNode: N
       {nodeType === 'hil' && state === 'running' && !hilDone && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 0' }}>
           <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>HUMAN REVIEW</div>
-          <div style={{ fontSize: '11px', color: C.textMuted }}>This run is waiting for your decision.</div>
+          {hilPrompt ? (
+            <div style={{ padding: '8px 10px', borderRadius: 6, background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.25)', fontSize: '12px', color: '#e2d9f3', lineHeight: 1.5 }}>
+              {hilPrompt}
+            </div>
+          ) : (
+            <div style={{ fontSize: '11px', color: C.textMuted }}>This run is waiting for your decision.</div>
+          )}
           <textarea
             value={hilComment}
             onChange={e => setHilComment(e.target.value)}
