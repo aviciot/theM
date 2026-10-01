@@ -242,6 +242,17 @@ built and their results.
 
 ## 5. Practical tips
 
+- **After patching a published definition directly in the DB** (e.g. adding a
+  connection), also update any existing draft definitions for that app — the
+  canvas always loads the latest draft, not the published version. Drafts are
+  auto-created by seeding from the published definition the first time the app
+  is opened, so any draft created before the patch will be stale. Fix:
+  ```sql
+  UPDATE them.application_definitions
+  SET definition = (SELECT definition FROM them.application_definitions WHERE id = '<published_id>')
+  WHERE application_id = '<app_id>' AND status = 'draft';
+  ```
+
 - Run everything from inside `them-frontend` (`docker exec them-frontend node <script>`)
   — it's on the same Docker network as `them-go-bridge`/`them-auth-go`, no
   port-forwarding needed, and `node`'s built-in `fetch` is available.
