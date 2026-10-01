@@ -203,9 +203,13 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 
 	startedAt := time.Now()
 	input := appflow.AppFlowWorkflowInput{
-		Spec:        singleEPSpec,
-		UserMessage: userMessage,
-		StepMode:    stepMode,
+		Spec:          singleEPSpec,
+		UserMessage:   userMessage,
+		StepMode:      stepMode,
+		RunID:         handle.RunID,
+		TenantID:      handle.EPConfig.TenantID,
+		ApplicationID: handle.EPConfig.AppID,
+		Debug:         true,
 	}
 	if _, err := s.lc.StartAppFlow(ctx, handle, input, true); err != nil {
 		return DebugStartResult{}, fmt.Errorf("start appflow workflow: %w", err)
