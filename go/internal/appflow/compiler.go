@@ -353,7 +353,7 @@ func (c connDef) edgeLabel() string {
 func isLabelRoutingSource(c *compInst) bool {
 	switch c.DefinitionRef.Kind {
 	case "flow_control":
-		return c.DefinitionRef.Name == "router"
+		return c.DefinitionRef.Name == "router" || c.DefinitionRef.Name == "hil"
 	case "inline":
 		return c.DefinitionRef.Name == "condition"
 	}
