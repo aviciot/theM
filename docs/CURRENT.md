@@ -1,5 +1,23 @@
 # Current Session State — the-M
-# Last updated: 2026-09-29 — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md ALL PHASES DONE.
+# Last updated: 2026-10-01 — Router, HIL, and demo app work shipped this session.
+#
+# This session completed multiple back-to-back feature threads (all committed as of 30be9e55):
+# 1) Router node: dynamic label output ports (one handle per label, spread like condition's
+#    true/false); llm_key RuntimeParam so debug credential picker appears; label uniqueness
+#    validation (red highlight on duplicates) in properties panel.
+# 2) Router confidence: LLM now returns JSON {"label":"...","confidence":0.92}; written as
+#    `router_label` + `router_confidence` (and node-scoped variants) as flow vars.
+# 3) HIL improvements: prompt template rendered against flow vars at runtime before saving
+#    to DB (so approver sees live values); approver comment injected as `hil_comment` flow var;
+#    debug inspector shows rendered HIL prompt (fetched from pending-hil endpoint).
+# 4) READS/WRITES sections added to all node property panels (NodeVarsSection component).
+# 5) Smart Refund Handler demo app created in DB (slug: smart-refund-handler). Uses all
+#    flow control nodes: router (intent) → condition (refund size) → hil (manager approval)
+#    → fork/join (parallel account + order agent lookup) → llm (compose response).
+#    Billing and general intents route directly to LLM. No code changes needed — pure DB
+#    insert. Open the app in the canvas UI to see it reconstruct from the definition JSON.
+#
+# --- Prior entry (2026-09-29) ---
 # Since the 2026-09-28 entry below (kept for history), two full feature threads shipped:
 #
 # 1) Application Export/Import (docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md) — all phases done:
@@ -73,7 +91,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `65846f8c` (pushed to `origin/main`). Remote is `origin` → `aviciot/theM` on GitHub
+HEAD: `30be9e55` (pushed to `origin/main`). Remote is `origin` → `aviciot/theM` on GitHub
 (credentials already configured in the remote URL from a prior session).
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
@@ -84,6 +102,14 @@ other session's entries.
 
 Recent commits (newest first):
 ```
+30be9e55  feat(debug): show rendered HIL prompt in inspector when node is parked
+95b7cb37  feat(hil): inject approver comment as hil_comment flow var
+3562989e  feat(canvas): HIL READS/WRITES section + NodeVarsSection free-text notes
+ba5d5084  feat(hil): render prompt template against flow vars at runtime
+131d7783  feat(canvas): READS/WRITES vars section in node properties panels
+945fe664  feat(router): confidence score as flow vars — router_confidence + router_label
+d7f8340c  feat(canvas): router label uniqueness validation — highlight duplicates in red
+2726eb8a  feat(canvas): router dynamic label ports + llm_key debug param
 65846f8c  feat(app-canvas): Phase 3 — condition node example + guard-var alias fix
 72736a00  feat(app-canvas): source-side port popover — drag from any node's guard vars
 34e3f653  feat(app-canvas): Writes panel — show every FlowVar a node produces
@@ -110,10 +136,27 @@ a78c3ca9  docs: plan AppFlow named data ports (Phase 0 complete)
 
 ---
 
-## START HERE — next session (updated 2026-09-29)
+## START HERE — next session (updated 2026-10-01)
 
-**No active thread — pick a new one.** Both feature threads that were open when the
-2026-09-28 entry below was written are now fully closed:
+**Demo app ready to test.** Open "Smart Refund Handler" in the App Canvas UI. The definition
+reconstructs from JSON automatically (dagre layout). Try a debug run with a customer message like
+"I need a refund for order 12345" to exercise the full router→condition→HIL→fork/join→LLM flow.
+
+**Known gaps from this session:**
+
+1. **HIL rejection path has no dedicated node** — when a manager rejects the HIL, the run ends
+   with `rejected` status. This is correct by design but the demo app would benefit from a
+   "rejected" LLM response branch. To add it: wire a second outgoing edge from `hil_approval` with
+   label `rejected` to a new `llm_refund_rejected` node. The workflow code already supports this —
+   the HIL node returns `approved=false` and the caller checks it.
+2. **Condition expression in demo is placeholder** — `{{gt (len .input) 100}}` checks message
+   length, not actual refund amount. A real app would need a prior LLM node to extract the amount
+   into a flow var (e.g. `amount`), then condition on `{{gt .amount "200"}}`.
+3. **`loadWiringCfgForDef`'s blank-`node_id` fallback** (from 2026-09-28) — still open.
+
+**No active code thread — pick a new one or do canvas walkthrough of the demo app.**
+
+Both feature threads that were open when the 2026-09-28 entry below was written are now fully closed:
 - `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md` (app export/import) — all 3 phases DONE.
 - `docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md` (guard results as draggable FlowVars) — all 4
   phases DONE.
