@@ -1,6 +1,9 @@
 package registry
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Resolver is the design-time component definition resolver.
 // Used at publish/compile time and by the Canvas palette.
@@ -28,6 +31,9 @@ func NewResolver(q DBQuerier) *Resolver {
 // Deprecated definitions are returned (allowed for read-only palette queries).
 // Use ResolveForPublish to block deprecated definitions at publish time.
 func (r *Resolver) Resolve(ctx context.Context, tenantID string, ref DefinitionRef, _ string) (*ComponentDefinition, error) {
+	// The canvas encodes tenant namespaces as "them.tenant.{uuid}" but
+	// component_definitions stores the bare UUID. Normalize before lookup.
+	ref.Namespace = strings.TrimPrefix(ref.Namespace, "them.tenant.")
 	def, err := r.dal.ResolveByRef(ctx, ref, tenantID)
 	if err != nil {
 		return nil, ErrNotFound
