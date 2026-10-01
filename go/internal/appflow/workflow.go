@@ -531,6 +531,11 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				retErr = hErr
 				return
 			}
+			// Write approver comment into flow vars so downstream nodes can use it.
+			// hil_comment: the approver's comment (empty string if none provided)
+			// {node_id}_comment: scoped version for apps with multiple HIL nodes
+			vars["hil_comment"] = comment
+			vars[node.ID+"_comment"] = comment
 			if !approved {
 				out = AppFlowWorkflowOutput{Status: "rejected", FinalText: "HIL gate rejected: " + comment}
 				return

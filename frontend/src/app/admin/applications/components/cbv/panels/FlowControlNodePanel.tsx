@@ -188,7 +188,10 @@ export function FlowControlNodePanel({
 
         <NodeVarsSection
           readsNote="All flow variables available at this point in the flow — use {{.varname}} in the prompt above to reference them (e.g. {{.amount}}, {{.customer_name}})."
-          writesNote="HIL writes no flow variables. The approver's comment is recorded in the audit log but not injected back into the flow."
+          writes={[
+            { name: 'hil_comment', note: "approver's comment (empty if none given)" },
+            { name: `${d.instance_id ?? 'node'}_comment`, note: 'same — scoped to this node for multi-HIL flows' },
+          ]}
         />
       </div>
     );
