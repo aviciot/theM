@@ -83,6 +83,7 @@ func execHILNode(
 	node *AppFlowNode,
 	input AppFlowWorkflowInput,
 	shortAO workflow.ActivityOptions,
+	vars FlowVars,
 ) (approved bool, comment string, err error) {
 	var cfg HILConfig
 	if len(node.Config) > 0 {
@@ -95,6 +96,15 @@ func execHILNode(
 		cfg.ApproverRole = "admin"
 	}
 
+	// Render the prompt template against current flow vars so the approver
+	// sees live data (e.g. "Approve transfer of ${{.amount}} for {{.customer}}?").
+	renderedPrompt := cfg.Prompt
+	if cfg.Prompt != "" {
+		if rp, rErr := renderFlowTemplate(cfg.Prompt, vars); rErr == nil {
+			renderedPrompt = rp
+		}
+	}
+
 	// The HIL activity persists the approval request and returns immediately;
 	// the wait happens below on a signal, not inside the activity.
 	var hilOut HILActivityOutput
@@ -105,7 +115,7 @@ func execHILNode(
 		ApplicationID:  input.ApplicationID,
 		NodeID:         node.ID,
 		ApproverRole:   cfg.ApproverRole,
-		Prompt:         cfg.Prompt,
+		Prompt:         renderedPrompt,
 		TimeoutSecs:    cfg.TimeoutSeconds,
 		FallbackAction: cfg.FallbackAction,
 		Verbosity:      input.LogVerbosity,

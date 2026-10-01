@@ -154,10 +154,13 @@ export function FlowControlNodePanel({
           <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Approval Prompt</label>
           <textarea
             style={{ ...fieldStyle, minHeight: 70, resize: 'vertical', fontFamily: 'inherit' }}
-            placeholder="Describe what the approver should review…"
+            placeholder="e.g. Approve transfer of ${{.amount}} for {{.customer_name}}?"
             value={prompt}
             onChange={e => updateFcConfig({ prompt: e.target.value })}
           />
+          <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
+            Supports {'{{.varname}}'} — flow variables are substituted at runtime before the approver sees the message.
+          </div>
         </div>
 
         <div>

@@ -525,7 +525,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "hil":
-			approved, comment, hErr := execHILNode(ctx, node, input, shortAO)
+			approved, comment, hErr := execHILNode(ctx, node, input, shortAO, vars)
 			if hErr != nil {
 				out.Status = "failed"
 				retErr = hErr
