@@ -117,6 +117,10 @@ type RouterConfig struct {
 	// OutputLabels defines the ordered list of intent labels the router can route to.
 	// Each label must match the label on one outgoing flow_control edge.
 	OutputLabels []string `json:"output_labels,omitempty"`
+	// Provider and Model mirror InlineLLMConfig so the Runtime screen can set
+	// the LLM credential for the router node just like inline LLM nodes.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // HILConfig is the configuration stored in a HIL node's config JSON.
@@ -198,21 +202,31 @@ func ApplyLLMOverrides(spec *AppFlowSpec, overrides map[string]LLMOverride) {
 	for i := range spec.EntryPoints {
 		nodes := spec.EntryPoints[i].Nodes
 		for j := range nodes {
-			if nodes[j].Kind != "llm" {
-				continue
-			}
 			ov, ok := overrides[nodes[j].ID]
 			if !ok {
 				continue
 			}
-			var cfg InlineLLMConfig
-			if len(nodes[j].Config) > 0 {
-				_ = json.Unmarshal(nodes[j].Config, &cfg)
-			}
-			cfg.Provider = ov.Provider
-			cfg.Model = ov.Model
-			if b, err := json.Marshal(cfg); err == nil {
-				nodes[j].Config = b
+			switch nodes[j].Kind {
+			case "llm":
+				var cfg InlineLLMConfig
+				if len(nodes[j].Config) > 0 {
+					_ = json.Unmarshal(nodes[j].Config, &cfg)
+				}
+				cfg.Provider = ov.Provider
+				cfg.Model = ov.Model
+				if b, err := json.Marshal(cfg); err == nil {
+					nodes[j].Config = b
+				}
+			case "router":
+				var cfg RouterConfig
+				if len(nodes[j].Config) > 0 {
+					_ = json.Unmarshal(nodes[j].Config, &cfg)
+				}
+				cfg.Provider = ov.Provider
+				cfg.Model = ov.Model
+				if b, err := json.Marshal(cfg); err == nil {
+					nodes[j].Config = b
+				}
 			}
 		}
 	}
@@ -225,18 +239,28 @@ func collectLLMNodes(epFlows []EPFlow) []AppFlowLLMNodeSpec {
 	var nodes []AppFlowLLMNodeSpec
 	for _, epf := range epFlows {
 		for _, n := range epf.Nodes {
-			if n.Kind != "llm" {
-				continue
+			switch n.Kind {
+			case "llm":
+				var cfg InlineLLMConfig
+				if len(n.Config) > 0 {
+					_ = json.Unmarshal(n.Config, &cfg)
+				}
+				nodes = append(nodes, AppFlowLLMNodeSpec{
+					NodeID:           n.ID,
+					CompiledProvider: cfg.Provider,
+					CompiledModel:    cfg.Model,
+				})
+			case "router":
+				var cfg RouterConfig
+				if len(n.Config) > 0 {
+					_ = json.Unmarshal(n.Config, &cfg)
+				}
+				nodes = append(nodes, AppFlowLLMNodeSpec{
+					NodeID:           n.ID,
+					CompiledProvider: cfg.Provider,
+					CompiledModel:    cfg.Model,
+				})
 			}
-			var cfg InlineLLMConfig
-			if len(n.Config) > 0 {
-				_ = json.Unmarshal(n.Config, &cfg)
-			}
-			nodes = append(nodes, AppFlowLLMNodeSpec{
-				NodeID:           n.ID,
-				CompiledProvider: cfg.Provider,
-				CompiledModel:    cfg.Model,
-			})
 		}
 	}
 	return nodes

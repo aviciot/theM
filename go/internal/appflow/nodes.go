@@ -50,9 +50,8 @@ func execRouterNode(
 		UserMessage:      accumulated,
 		Labels:           cfg.OutputLabels,
 		ClassifierPrompt: cfg.ClassifierPrompt,
-		LLMProviderName:  input.LLMProviderName,
-		LLMProvider:      input.LLMProvider,
-		LLMModel:         input.LLMModel,
+		LLMProviderName:  cfg.Provider,
+		LLMModel:         cfg.Model,
 		Debug:            input.Debug,
 		Verbosity:        input.LogVerbosity,
 	}).Get(ctx, &routerOut); aErr != nil {
