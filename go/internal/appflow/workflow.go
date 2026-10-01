@@ -531,17 +531,35 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				retErr = hErr
 				return
 			}
-			// Write approver comment into flow vars so downstream nodes can use it.
-			// hil_comment: the approver's comment (empty string if none provided)
-			// {node_id}_comment: scoped version for apps with multiple HIL nodes
+			// Write approver comment and decision into flow vars.
+			// hil_comment / {node_id}_comment — the approver's text (empty if none given)
+			// hil_decision / {node_id}_decision — "approved" or "rejected"
 			vars["hil_comment"] = comment
 			vars[node.ID+"_comment"] = comment
+			decision := "rejected"
+			if approved {
+				decision = "approved"
+			}
+			vars["hil_decision"] = decision
+			vars[node.ID+"_decision"] = decision
+
 			if !approved {
+				// If the app wired a "rejected" outgoing edge, follow it so the flow
+				// can compose a rejection response rather than hard-terminating.
+				if rejID := findEdgeByLabel(outEdgesBySource[node.ID], "rejected"); rejID != "" {
+					currentID = rejID
+					continue
+				}
+				// No rejection branch wired — end the run.
 				out = AppFlowWorkflowOutput{Status: "rejected", FinalText: "HIL gate rejected: " + comment}
 				return
 			}
-			// Approved — continue to next node.
-			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			// Approved — follow the "approved" labeled edge if present, else the first edge.
+			if appID := findEdgeByLabel(outEdgesBySource[node.ID], "approved"); appID != "" {
+				currentID = appID
+			} else {
+				currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			}
 			continue
 
 		case "agent":

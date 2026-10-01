@@ -2884,6 +2884,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AF-08 | `TestCompile_EdgeLabelPreserved` | conn.Label flows through compilation into AppFlowEdge.Label |
 | AF-09 | `TestCompile_UnresolvedAgent_CaughtByValidate` | missing agentByInstanceID entry → empty AgentID (no DefinitionID fallback) → Validate catches unresolved_agent |
 | AF-10 | `TestFindEdgeByLabel` | findEdgeByLabel case-insensitive match + no-match returns "" |
+| AF-WF-28 | `TestFindEdgeByLabel_HILBranches` | findEdgeByLabel resolves "approved"/"rejected" HIL branch labels; absent rejected label returns "" (workflow falls through to hard-terminate) |
 | AF-11 | `TestCompile_ForkJoinNodes` | fork and join definition_ref.name compile to kind=fork and kind=join |
 | AF-12 | `TestValidate_ForkInsufficientBranches` | Validate returns fork_insufficient_branches when fork has <2 outgoing edges |
 | AF-13 | `TestValidate_JoinInsufficientBranches` | Validate returns join_insufficient_branches when join has <2 incoming edges |

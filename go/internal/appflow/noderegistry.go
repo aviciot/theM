@@ -145,16 +145,20 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 			Description: "Pause the flow and wait for a human approval or rejection before continuing.",
 			Emoji:       "✋",
 			Color:       "#a855f7",
-			Edges:       nodedefs.EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
+			Edges:       nodedefs.EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 2},
+			ControlOutputPorts: []nodedefs.PortDef{
+				{ID: "approved", Label: "Approved", Color: "#4ade80", MaxConnections: 1},
+				{ID: "rejected", Label: "Rejected", Color: "#f87171", MaxConnections: 1},
+			},
 			ConfigFields: []nodedefs.ConfigFieldDoc{
 				{Key: "approver_role", Type: "string", Required: false, Description: "Minimum RBAC role required to approve. Defaults to \"admin\".", Example: "admin"},
 				{Key: "prompt", Type: "string", Required: false, Description: "Message shown to the human approver.", Example: "Approve this refund request?"},
 				{Key: "timeout_seconds", Type: "int", Required: false, Description: "How long to wait before applying fallback_action. 0 or absent waits indefinitely.", Example: "3600"},
 				{Key: "fallback_action", Type: "string", Required: false, Description: "What happens on timeout: \"reject\" (default), \"approve\", or \"abort\".", Example: "reject"},
 			},
-			UsageNotes: "A rejection ends the run with status \"rejected\" rather than routing onward — HIL has no false-path edge like Condition.",
+			UsageNotes: "Optionally wire an \"approved\" edge (green) and/or a \"rejected\" edge (red). If a rejection edge is wired, the flow continues on that branch instead of terminating; if no rejection edge is wired, the run ends with status \"rejected\". The unlabelled edge (or the \"approved\" edge) is taken on approval.",
 		},
-		OutputArity: "single",
+		OutputArity: "multi",
 		Executable:  true,
 	},
 	{

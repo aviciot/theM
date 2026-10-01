@@ -75,9 +75,16 @@ endpoint + `go/internal/appflow/workflow.go` cross-check, 2026-09-26):
   `llm_key` param** (same picker as the `llm` node) — the credential field
   appears in the debug setup panel because the router makes a real LLM call.
   Optional `classifier_prompt` lets you guide the LLM's classification logic.
-- **`hil`** — pauses for human approval; a rejection ends the run with
-  status `"rejected"`, no false-path edge like condition has. **No pre-run
-  debug params** — approve/reject happens mid-run: click the HIL node in the
+- **`hil`** — pauses for human approval. Has two optional outgoing edge
+  labels: **`"approved"`** (green port, taken when approved) and
+  **`"rejected"`** (red port, taken when rejected). If no `"rejected"` edge
+  is wired, rejection ends the run with status `"rejected"`. If a `"rejected"`
+  edge is wired, the flow continues down that branch instead of terminating —
+  use this to compose a rejection-response LLM node. An unlabelled edge is
+  treated as the approval path (same as labelling it `"approved"`). Writes
+  `hil_decision` (`"approved"`/`"rejected"`) and `hil_comment` (approver's
+  text) as FlowVars. **No pre-run debug params** — approve/reject happens
+  mid-run: click the HIL node in the
   debug inspector panel while it is in `running` state to see the
   Approve/Reject buttons.
 

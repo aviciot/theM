@@ -189,8 +189,10 @@ export function FlowControlNodePanel({
         <NodeVarsSection
           readsNote="All flow variables available at this point in the flow — use {{.varname}} in the prompt above to reference them (e.g. {{.amount}}, {{.customer_name}})."
           writes={[
+            { name: 'hil_decision', note: '"approved" or "rejected"' },
             { name: 'hil_comment', note: "approver's comment (empty if none given)" },
-            { name: `${d.instance_id ?? 'node'}_comment`, note: 'same — scoped to this node for multi-HIL flows' },
+            { name: `${d.instance_id ?? 'node'}_decision`, note: 'same as hil_decision — scoped to this node' },
+            { name: `${d.instance_id ?? 'node'}_comment`, note: 'same as hil_comment — scoped to this node' },
           ]}
         />
       </div>

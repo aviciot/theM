@@ -488,6 +488,30 @@ func TestFindEdgeByLabel(t *testing.T) {
 	}
 }
 
+// AF-WF-28: HIL rejection-branch routing — findEdgeByLabel must return the
+// correct target for "approved" and "rejected" labels so the workflow can
+// follow them instead of hard-terminating. This tests the edge-resolution
+// primitive used by the HIL case in workflow.go's dispatch loop.
+func TestFindEdgeByLabel_HILBranches(t *testing.T) {
+	edges := []AppFlowEdge{
+		{Source: "hil_1", Target: "fork_1", Label: "approved"},
+		{Source: "hil_1", Target: "llm_reject", Label: "rejected"},
+	}
+	if got := findEdgeByLabel(edges, "approved"); got != "fork_1" {
+		t.Errorf("approved: want fork_1, got %q", got)
+	}
+	if got := findEdgeByLabel(edges, "rejected"); got != "llm_reject" {
+		t.Errorf("rejected: want llm_reject, got %q", got)
+	}
+	// No rejection edge wired — fall back to hard-terminate in workflow.go.
+	noRejEdges := []AppFlowEdge{
+		{Source: "hil_1", Target: "fork_1"},
+	}
+	if got := findEdgeByLabel(noRejEdges, "rejected"); got != "" {
+		t.Errorf("absent rejected edge: want empty, got %q", got)
+	}
+}
+
 // AF-15: Compile maps definition_ref.kind="inline"/name="llm" to Kind="llm", config preserved verbatim.
 func TestCompile_InlineLLMNode(t *testing.T) {
 	raw := json.RawMessage(`{
