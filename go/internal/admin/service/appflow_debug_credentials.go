@@ -111,16 +111,24 @@ func resolveLLMOverride(ctx context.Context, d AppFlowDebugCredentialDAL, fernet
 }
 
 // llmCredentialNodeIDs returns the IDs of every node in spec that declares a
-// required "llm_credential" runtime param — currently just every "llm" kind
-// node, per appflow.RuntimeParams on the llm entry in noderegistry.go. Kept
-// as its own function (rather than inlined into Start) so the "which nodes
-// need a credential" question has one answer shared by both validation and
-// override-writing, instead of two independently-maintained node-kind checks.
+// required "llm_credential" runtime param. Driven by the node registry so any
+// new node kind with an llm_credential param is included automatically without
+// touching this function.
 func llmCredentialNodeIDs(spec *appflow.AppFlowSpec) []string {
+	// Build a set of node kinds that have at least one llm_credential param.
+	needsCred := map[string]bool{}
+	for _, info := range appflow.AllAppCanvasNodeInfos() {
+		for _, p := range info.RuntimeParams {
+			if p.Type == "llm_credential" {
+				needsCred[info.Type] = true
+				break
+			}
+		}
+	}
 	var ids []string
 	for _, ep := range spec.EntryPoints {
 		for _, n := range ep.Nodes {
-			if n.Kind == "llm" {
+			if needsCred[n.Kind] {
 				ids = append(ids, n.ID)
 			}
 		}
