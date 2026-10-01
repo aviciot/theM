@@ -14,6 +14,10 @@ interface VarEntry {
 interface Props {
   reads?: VarEntry[];
   writes?: VarEntry[];
+  /** Free-text note shown under READS when vars are dynamic/unknown at design time */
+  readsNote?: string;
+  /** Free-text note shown under WRITES when node produces nothing */
+  writesNote?: string;
 }
 
 const varChip = (v: VarEntry, color: string) => (
@@ -23,20 +27,24 @@ const varChip = (v: VarEntry, color: string) => (
   </div>
 );
 
-export function NodeVarsSection({ reads, writes }: Props) {
-  if (!reads?.length && !writes?.length) return null;
+export function NodeVarsSection({ reads, writes, readsNote, writesNote }: Props) {
+  const hasReads = (reads?.length ?? 0) > 0 || !!readsNote;
+  const hasWrites = (writes?.length ?? 0) > 0 || !!writesNote;
+  if (!hasReads && !hasWrites) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
-      {reads && reads.length > 0 && (
+      {hasReads && (
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: '#f97316', marginBottom: 6, textTransform: 'uppercase' }}>Reads</div>
-          {reads.map(v => varChip(v, '#f97316'))}
+          {reads?.map(v => varChip(v, '#f97316'))}
+          {readsNote && <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>{readsNote}</div>}
         </div>
       )}
-      {writes && writes.length > 0 && (
+      {hasWrites && (
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: 6, textTransform: 'uppercase' }}>Writes</div>
-          {writes.map(v => varChip(v, C.cyan))}
+          {writes?.map(v => varChip(v, C.cyan))}
+          {writesNote && <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>{writesNote}</div>}
         </div>
       )}
     </div>

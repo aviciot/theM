@@ -187,7 +187,8 @@ export function FlowControlNodePanel({
         </div>
 
         <NodeVarsSection
-          reads={[{ name: 'input', note: 'accumulated flow text shown to the approver' }]}
+          readsNote="All flow variables available at this point in the flow — use {{.varname}} in the prompt above to reference them (e.g. {{.amount}}, {{.customer_name}})."
+          writesNote="HIL writes no flow variables. The approver's comment is recorded in the audit log but not injected back into the flow."
         />
       </div>
     );
