@@ -1046,7 +1046,7 @@ type fakeRouterLLMCaller struct {
 	err        error
 }
 
-func (f *fakeRouterLLMCaller) ClassifyIntent(_ context.Context, _, _ string, _ []string, _, _, _, _ string) (string, float64, error) {
+func (f *fakeRouterLLMCaller) ClassifyIntent(_ context.Context, _ RouterLLMRequest) (string, float64, error) {
 	return f.label, f.confidence, f.err
 }
 

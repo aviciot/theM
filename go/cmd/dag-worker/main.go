@@ -744,27 +744,46 @@ type dbLLMCaller struct {
 	debugStore debugCredentialGetter
 }
 
-func (c *dbLLMCaller) ClassifyIntent(
-	ctx context.Context,
-	userMessage, systemPrompt string,
-	labels []string,
-	providerName, model, tenantID, applicationID string,
-) (string, float64, error) {
-	apiKey := c.resolveKey(ctx, providerName, tenantID, applicationID)
-	if apiKey == "" {
-		return "", 0, fmt.Errorf("router: no API key for provider %q (tenant %s, app %s)", providerName, tenantID, applicationID)
+func (c *dbLLMCaller) ClassifyIntent(ctx context.Context, req appflow.RouterLLMRequest) (string, float64, error) {
+	providerName := req.ProviderName
+	model := req.Model
+	var apiKey, baseURL string
+
+	if req.Debug {
+		if c.debugStore == nil {
+			return "", 0, fmt.Errorf("router %q: debug run but no debug credential store configured on this worker", req.NodeID)
+		}
+		ov, found, err := c.debugStore.Get(ctx, req.TenantID, req.RunID, req.NodeID)
+		if err != nil {
+			return "", 0, fmt.Errorf("router %q: debug credential lookup failed: %w", req.NodeID, err)
+		}
+		if !found {
+			return "", 0, fmt.Errorf("router %q: debug credential unavailable for this run (expired or evicted) — retry the debug run", req.NodeID)
+		}
+		providerName = ov.Provider
+		if ov.Model != "" {
+			model = ov.Model
+		}
+		apiKey = ov.APIKey
+		baseURL = ov.BaseURL
+	} else {
+		apiKey = c.resolveKey(ctx, providerName, req.TenantID, req.ApplicationID)
+		if apiKey == "" {
+			return "", 0, fmt.Errorf("router: no API key for provider %q (tenant %s, app %s)", providerName, req.TenantID, req.ApplicationID)
+		}
 	}
+
 	if model == "" {
 		model = "claude-haiku-4-5-20251001" // lean classification model
 	}
 
-	provider, err := c.factory.NewProvider(providerName, model, 128, apiKey)
+	provider, err := c.factory.NewProviderWithBaseURL(providerName, model, 128, apiKey, baseURL)
 	if err != nil {
 		return "", 0, fmt.Errorf("router: create provider: %w", err)
 	}
 
-	userPrompt := fmt.Sprintf("User message: %s\n\nChoose one label from: %v", userMessage, labels)
-	raw, err := provider.Complete(ctx, systemPrompt, userPrompt)
+	userPrompt := fmt.Sprintf("User message: %s\n\nChoose one label from: %v", req.UserMessage, req.Labels)
+	raw, err := provider.Complete(ctx, req.SystemPrompt, userPrompt)
 	if err != nil {
 		return "", 0, err
 	}

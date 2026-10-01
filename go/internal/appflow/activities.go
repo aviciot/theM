@@ -39,6 +39,10 @@ type RouterActivityInput struct {
 	LLMProviderName string `json:"llm_provider_name,omitempty"`
 	LLMProvider     string `json:"llm_provider,omitempty"`
 	LLMModel        string `json:"llm_model,omitempty"`
+	// Debug=true routes credential resolution to the debug credential store
+	// (same llm_key param the user picks in the debug panel) instead of the
+	// tenant/platform provider key chain. Must never be set on production runs.
+	Debug bool `json:"debug,omitempty"`
 	// Verbosity is the resolved effective log-verbosity for this run
 	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
 	Verbosity string `json:"verbosity,omitempty"`
@@ -310,12 +314,27 @@ type StreamPublisher interface {
 	XAdd(ctx context.Context, key string, fields map[string]interface{}) error
 }
 
+// RouterLLMRequest is the request passed to RouterLLMCaller.ClassifyIntent.
+// Mirrors InlineLLMRequest so the same debug-credential lookup pattern applies.
+type RouterLLMRequest struct {
+	UserMessage   string
+	SystemPrompt  string
+	Labels        []string
+	ProviderName  string
+	Model         string
+	TenantID      string
+	ApplicationID string
+	RunID         string
+	NodeID        string
+	Debug         bool
+}
+
 // RouterLLMCaller is the interface the Router activity uses to call an LLM.
-// The implementation resolves the API key from DB using providerName + tenantID + applicationID
-// so the key is never stored in Temporal workflow history.
+// The implementation resolves the API key from DB (or the debug credential store
+// when req.Debug=true) so the key is never stored in Temporal workflow history.
 // Returns the chosen label and a confidence score (0.0–1.0).
 type RouterLLMCaller interface {
-	ClassifyIntent(ctx context.Context, userMessage, systemPrompt string, labels []string, providerName, model, tenantID, applicationID string) (label string, confidence float64, err error)
+	ClassifyIntent(ctx context.Context, req RouterLLMRequest) (label string, confidence float64, err error)
 }
 
 // InlineLLMCaller is the interface the inline LLM activity uses. Deliberately
@@ -371,7 +390,18 @@ func (a *AppFlowActivities) ExecuteRouterActivity(ctx context.Context, input Rou
 		prompt = defaultRouterPrompt(input.Labels)
 	}
 
-	label, confidence, err := a.LLMCaller.ClassifyIntent(ctx, input.UserMessage, prompt, input.Labels, input.LLMProviderName, input.LLMModel, input.TenantID, input.ApplicationID)
+	label, confidence, err := a.LLMCaller.ClassifyIntent(ctx, RouterLLMRequest{
+		UserMessage:   input.UserMessage,
+		SystemPrompt:  prompt,
+		Labels:        input.Labels,
+		ProviderName:  input.LLMProviderName,
+		Model:         input.LLMModel,
+		TenantID:      input.TenantID,
+		ApplicationID: input.ApplicationID,
+		RunID:         input.RunID,
+		NodeID:        input.NodeID,
+		Debug:         input.Debug,
+	})
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "router", "node_error", err.Error(), input.Verbosity)
 		return RouterActivityOutput{}, fmt.Errorf("router classify: %w", err)

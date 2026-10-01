@@ -53,6 +53,7 @@ func execRouterNode(
 		LLMProviderName:  input.LLMProviderName,
 		LLMProvider:      input.LLMProvider,
 		LLMModel:         input.LLMModel,
+		Debug:            input.Debug,
 		Verbosity:        input.LogVerbosity,
 	}).Get(ctx, &routerOut); aErr != nil {
 		return "", "", 0, fmt.Errorf("router %q: %w", node.ID, aErr)
