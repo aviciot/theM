@@ -106,6 +106,7 @@ func (s *Server) runWorkflow(
 	input := temporal.WorkflowInput{
 		OrchestratorName:  orchName,
 		AppOrchestratorID: h.EPConfig.AppOrchestratorID,
+		EntryPointID:      h.EPConfig.EPID,
 		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
 	}
 	wfRun, startErr := s.lc.Start(ctx, h, input)
