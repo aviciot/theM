@@ -239,6 +239,9 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     }
   });
   edges.forEach(e => {
+    // Skip synthetic pin-in edges — they are derived from entry_node_id at load
+    // time and must not be persisted as plain connections.
+    if (e.sourceHandle === 'pin-in') return;
     const srcType = nodeTypeById.get(e.source);
     const tgtType = nodeTypeById.get(e.target);
     if (srcType === 'entryPoint' && tgtType === 'orchestrator') return;

@@ -524,19 +524,11 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ position: 'relative', transform: 'none', top: 'auto', left: 'auto', right: 'auto', bottom: 'auto', background: '#4ade80', border: '2px solid #051424', width: 7, height: 7 }}
         />
       </div>
-      {/* OUT pin — cosmetic label only; the outer source handle is the real exit */}
-      <div className="nodrag" style={{
-        position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 10px', borderRadius: 10,
-        background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.4)',
-        pointerEvents: 'none',
-      }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8 }}>OUT ▶</span>
-      </div>
-      {/* Outer handles — connect cycle to external nodes */}
-      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
-      <Handle type="source" position={sourcePos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
+      {/* Outer handles — connect cycle to external nodes.
+          Source handle is oversized and high z-index so it stays grabbable
+          even when child nodes are rendered inside the same frame. */}
+      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 10, height: 10, zIndex: 30 }} />
+      <Handle type="source" position={sourcePos} style={{ background: accent, border: '2px solid #051424', width: 14, height: 14, zIndex: 30, bottom: -7 }} />
     </div>
   );
 }

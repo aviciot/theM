@@ -56,7 +56,9 @@ export function validateConnection(
   }
 
   if (src.maxOutgoing !== undefined) {
-    const out = edges.filter(e => e.source === sourceId).length;
+    // Exclude internal pin-in edges (cycle → entry body node) from the count —
+    // those are synthetic and don't consume the cycle's one real exit slot.
+    const out = edges.filter(e => e.source === sourceId && e.sourceHandle !== 'pin-in').length;
     if (out >= src.maxOutgoing) return `Entry point already has an orchestrator — remove it first`;
   }
 
