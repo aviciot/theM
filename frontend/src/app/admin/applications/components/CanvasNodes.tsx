@@ -537,6 +537,7 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
 
       {/* Outer target handle — top-center, cyan: previous node/EP flows IN to cycle */}
       <Handle type="target" position={targetPos} style={{ background: '#22d3ee', border: '2px solid #021520', width: 10, height: 10, zIndex: 40 }} />
+      <span style={{ position: 'absolute', top: -18, left: '50%', transform: 'translateX(-50%)', fontSize: 8, fontWeight: 700, color: '#22d3ee', letterSpacing: 0.6, pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap' }}>FLOW IN</span>
       {/* Outer source handle — bottom-center, protruding: cycle flows OUT to next node */}
       <Handle type="source" position={sourcePos} style={{
         background: accent, border: '2px solid #051424',
@@ -544,6 +545,7 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
         bottom: -7,
         zIndex: 40,
       }} />
+      <span style={{ position: 'absolute', bottom: -18, left: '50%', transform: 'translateX(-50%)', fontSize: 8, fontWeight: 700, color: accent, letterSpacing: 0.6, pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap' }}>FLOW OUT</span>
     </div>
   );
 }
