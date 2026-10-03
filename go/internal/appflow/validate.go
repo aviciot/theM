@@ -133,6 +133,33 @@ func Validate(spec *AppFlowSpec) []ValidationError {
 					})
 				}
 			}
+			if n.Kind == "cycle" {
+				var cfg CycleConfig
+				if len(n.Config) > 0 {
+					_ = json.Unmarshal(n.Config, &cfg)
+				}
+				if strings.TrimSpace(cfg.BreakWhenVar) == "" {
+					errs = append(errs, ValidationError{
+						Code:       "cycle_no_break_condition",
+						Message:    "cycle node has no break_when_var configured",
+						InstanceID: n.ID,
+					})
+				}
+				if cfg.MaxIterations < 1 || cfg.MaxIterations > 100 {
+					errs = append(errs, ValidationError{
+						Code:       "cycle_invalid_max_iterations",
+						Message:    fmt.Sprintf("cycle node max_iterations must be 1–100, got %d", cfg.MaxIterations),
+						InstanceID: n.ID,
+					})
+				}
+				if len(cfg.BodyNodes) == 0 {
+					errs = append(errs, ValidationError{
+						Code:       "cycle_empty_body",
+						Message:    "cycle node has no body nodes",
+						InstanceID: n.ID,
+					})
+				}
+			}
 			if n.Kind == "inline" {
 				errs = append(errs, ValidationError{
 					Code:       "unknown_inline_node",

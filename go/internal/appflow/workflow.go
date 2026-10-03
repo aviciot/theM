@@ -984,6 +984,17 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 
+		case "cycle":
+			var cycleErr error
+			accumulated, vars, cycleErr = execCycleNode(ctx, node, input, accumulated, vars, ao, shortAO, tick, mainLastSeenGen)
+			if cycleErr != nil {
+				out.Status = "failed"
+				retErr = cycleErr
+				return
+			}
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
 		case "orchestrator":
 			// Orchestrator nodes act as pass-through routing containers in the app canvas.
 			// The actual agent invocation happens at the agent leaf nodes.

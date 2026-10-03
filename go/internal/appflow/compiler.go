@@ -80,11 +80,12 @@ type appDoc struct {
 }
 
 type compInst struct {
-	InstanceID   string          `json:"instance_id"`
-	Name         string          `json:"name,omitempty"`
-	DefinitionRef defRef         `json:"definition_ref"`
-	DefinitionID  string         `json:"definition_id,omitempty"`
-	Config        json.RawMessage `json:"config,omitempty"`
+	InstanceID       string          `json:"instance_id"`
+	Name             string          `json:"name,omitempty"`
+	DefinitionRef    defRef          `json:"definition_ref"`
+	DefinitionID     string          `json:"definition_id,omitempty"`
+	Config           json.RawMessage `json:"config,omitempty"`
+	ParentInstanceID string          `json:"parent_instance_id,omitempty"`
 }
 
 type defRef struct {
@@ -121,6 +122,19 @@ type RouterConfig struct {
 	// the LLM credential for the router node just like inline LLM nodes.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+}
+
+// CycleConfig is the configuration stored in a Cycle node's config JSON.
+// The Cycle body is embedded as BodyNodes/BodyEdges so the outer graph
+// treats the Cycle as one opaque node.
+type CycleConfig struct {
+	BreakWhenVar  string        `json:"break_when_var"`
+	BreakWhenOp   string        `json:"break_when_op"` // "eq"|"neq"|"truthy"
+	BreakWhenVal  string        `json:"break_when_val"`
+	MaxIterations int           `json:"max_iterations"`
+	EntryNodeID   string        `json:"entry_node_id"`
+	BodyNodes     []AppFlowNode `json:"body_nodes"`
+	BodyEdges     []AppFlowEdge `json:"body_edges"`
 }
 
 // HILConfig is the configuration stored in a HIL node's config JSON.
@@ -272,6 +286,15 @@ func compileEP(ep epInst, compByID map[string]*compInst, outEdges map[string][]c
 	// The entry point connects to an orchestrator (root) or directly to an agent/router.
 	// We collect all reachable component IDs and their edges.
 
+	// Index child components (nodes nested inside a Cycle) so they are excluded
+	// from the outer BFS — they will be compiled into the CycleConfig body instead.
+	childNodes := make(map[string]bool)
+	for i := range compByID {
+		if compByID[i].ParentInstanceID != "" {
+			childNodes[compByID[i].InstanceID] = true
+		}
+	}
+
 	visited := make(map[string]bool)
 	var nodeIDs []string // ordered by BFS discovery
 
@@ -289,12 +312,12 @@ func compileEP(ep epInst, compByID map[string]*compInst, outEdges map[string][]c
 			continue
 		}
 		visited[cur] = true
-		// Add only component nodes (not the EP itself).
-		if cur != ep.InstanceID {
+		// Add only component nodes (not the EP itself, not cycle children).
+		if cur != ep.InstanceID && !childNodes[cur] {
 			nodeIDs = append(nodeIDs, cur)
 		}
 		for _, conn := range outEdges[cur] {
-			if !visited[conn.Target] {
+			if !visited[conn.Target] && !childNodes[conn.Target] {
 				queue = append(queue, conn.Target)
 			}
 		}
@@ -325,6 +348,17 @@ func compileEP(ep epInst, compByID map[string]*compInst, outEdges map[string][]c
 			return EPFlow{}, fmt.Errorf("node %q: %w", id, err)
 		}
 		nodes = append(nodes, node)
+	}
+
+	// For each cycle node, compile its children into the embedded CycleConfig body.
+	for i := range nodes {
+		if nodes[i].Kind != "cycle" {
+			continue
+		}
+		cycleInstID := nodes[i].ID
+		if err := compileCycleBody(&nodes[i], cycleInstID, compByID, outEdges, agentByInstanceID); err != nil {
+			return EPFlow{}, fmt.Errorf("cycle %q: %w", cycleInstID, err)
+		}
 	}
 
 	// Build AppFlowEdges from connections between component nodes.
@@ -422,6 +456,8 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 			node.Kind = "fork"
 		case "join":
 			node.Kind = "join"
+		case "cycle":
+			node.Kind = "cycle"
 		default:
 			node.Kind = "flow_control"
 		}
@@ -434,6 +470,73 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 	}
 
 	return node, nil
+}
+
+// compileCycleBody populates the CycleConfig.BodyNodes, BodyEdges, and EntryNodeID
+// for the given cycle node by collecting all compInst children (ParentInstanceID == cycleInstID).
+func compileCycleBody(cycleNode *AppFlowNode, cycleInstID string, compByID map[string]*compInst, outEdges map[string][]connDef, agentByInstanceID map[string]string) error {
+	// Parse existing config (BreakWhenVar/Op/Val/MaxIterations from canvas).
+	var cfg CycleConfig
+	if len(cycleNode.Config) > 0 {
+		_ = json.Unmarshal(cycleNode.Config, &cfg)
+	}
+
+	// Collect child instance IDs.
+	var childIDs []string
+	childSet := make(map[string]bool)
+	for id, c := range compByID {
+		if c.ParentInstanceID == cycleInstID {
+			childIDs = append(childIDs, id)
+			childSet[id] = true
+		}
+	}
+
+	// Compile child nodes.
+	bodyNodes := make([]AppFlowNode, 0, len(childIDs))
+	for _, id := range childIDs {
+		c := compByID[id]
+		n, err := compileNode(c, agentByInstanceID)
+		if err != nil {
+			return fmt.Errorf("body node %q: %w", id, err)
+		}
+		bodyNodes = append(bodyNodes, n)
+	}
+
+	// Collect edges between children only.
+	var bodyEdges []AppFlowEdge
+	for _, id := range childIDs {
+		for _, conn := range outEdges[id] {
+			if childSet[conn.Target] {
+				edge := AppFlowEdge{Source: conn.Source, Target: conn.Target}
+				if src, ok := compByID[conn.Source]; ok && isLabelRoutingSource(src) {
+					edge.Label = conn.edgeLabel()
+				}
+				bodyEdges = append(bodyEdges, edge)
+			}
+		}
+	}
+
+	// Determine entry node: child with no incoming edges from other children.
+	inCount := make(map[string]int, len(childIDs))
+	for _, e := range bodyEdges {
+		inCount[e.Target]++
+	}
+	for _, id := range childIDs {
+		if inCount[id] == 0 {
+			cfg.EntryNodeID = id
+			break
+		}
+	}
+
+	cfg.BodyNodes = bodyNodes
+	cfg.BodyEdges = bodyEdges
+
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal cycle config: %w", err)
+	}
+	cycleNode.Config = b
+	return nil
 }
 
 // ── Definition helpers ────────────────────────────────────────────────────────
