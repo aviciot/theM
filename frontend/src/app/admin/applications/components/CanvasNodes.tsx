@@ -509,26 +509,28 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN pin — source handle inside frame, wires to the entry body node */}
+      {/* IN pin — marks the entry edge of the cycle body */}
       <div className="nodrag" style={{
         position: 'absolute', top: 44, left: '50%', transform: 'translateX(-50%)',
         display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 10px 2px 6px', borderRadius: 10,
+        padding: '2px 10px', borderRadius: 10,
         background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.4)',
+        pointerEvents: 'none',
       }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8 }}>▶ IN</span>
-        <Handle
-          type="source"
-          id="pin-in"
-          position={Position.Bottom}
-          style={{ position: 'relative', transform: 'none', top: 'auto', left: 'auto', right: 'auto', bottom: 'auto', background: '#4ade80', border: '2px solid #051424', width: 7, height: 7 }}
-        />
       </div>
-      {/* Outer handles — connect cycle to external nodes.
-          Source handle is oversized and high z-index so it stays grabbable
-          even when child nodes are rendered inside the same frame. */}
-      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 10, height: 10, zIndex: 30 }} />
-      <Handle type="source" position={sourcePos} style={{ background: accent, border: '2px solid #051424', width: 14, height: 14, zIndex: 30, bottom: -7 }} />
+      {/* OUT pin — marks the exit edge of the cycle body */}
+      <div className="nodrag" style={{
+        position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '2px 10px', borderRadius: 10,
+        background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.4)',
+        pointerEvents: 'none',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8 }}>OUT ▶</span>
+      </div>
+      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
+      <Handle type="source" position={sourcePos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
     </div>
   );
 }
