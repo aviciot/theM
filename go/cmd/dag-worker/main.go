@@ -223,6 +223,7 @@ func run() error {
 	textGateReg.Register(pii.New())
 	textGateReg.Register(promptguard.New())
 	textGate := &appFlowTextGateAdapter{gate: middleware.NewTextGate(middleware.NewPgxQuerier(rlsPools.Admin), textGateReg)}
+	pendingWait := cache.NewPendingWaitRedisClient(redisCache.Client())
 	appFlowActs := &appflow.AppFlowActivities{
 		LLMCaller:        llmCaller,
 		InlineLLM:        llmCaller,
@@ -234,6 +235,7 @@ func run() error {
 		FileGate:         fileGate,
 		TextGate:         textGate,
 		FileGateWaiter:   fileGateWaiter,
+		PendingWait:      pendingWait,
 	}
 	appFlowTaskQueue := appflow.AppFlowTaskQueue
 	if cfg.AppFlowTaskQueueOverride != "" {
@@ -269,6 +271,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.TraceNodeEventActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowTraceNodeEventActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.PendingWaitSetActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowPendingWaitSetActivityName,
 	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)

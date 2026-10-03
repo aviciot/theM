@@ -190,6 +190,25 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 		SingleInput: false,
 		Executable:  true,
 	},
+	{
+		Type:    "wait_for_input",
+		Version: 1,
+		Meta: nodedefs.Meta{
+			Label:       "Wait for Input",
+			Description: "Pause the workflow and wait for the user to send another message. Stores the reply in a named flow variable.",
+			Emoji:       "⏳",
+			Color:       "#f59e0b",
+			Edges:       nodedefs.EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 1, MaxOut: 1},
+			ConfigFields: []nodedefs.ConfigFieldDoc{
+				{Key: "prompt", Type: "string", Required: false, Description: "Message sent to the user while waiting. Supports {{.varname}} interpolation. Empty = no prompt.", Example: "Please re-enter the refund amount."},
+				{Key: "output_var", Type: "string", Required: false, Description: "Flow variable to store the user's reply. Defaults to \"input\".", Example: "user_reply"},
+				{Key: "timeout_seconds", Type: "int", Required: false, Description: "How long to wait before failing (0 = indefinite).", Example: "300"},
+			},
+			UsageNotes: "Requires exactly one outgoing edge. The user's reply is stored in output_var (default: \"input\"). Use inside a Cycle node to build clarification loops that genuinely pause and wait for the user to retype.",
+		},
+		OutputArity: "single",
+		Executable:  true,
+	},
 }
 
 // AllAppCanvasNodeInfos returns the public API representation of the 6

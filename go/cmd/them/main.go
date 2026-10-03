@@ -319,10 +319,16 @@ func run() error {
 	// execLifecycle. The WS handler retains only upgrade, frame I/O, and metrics.
 	sessionPubRedis := cache.NewSessionRedisClient(redisCache.Client())
 	sessionPub := dashboard.NewSessionPublisher(sessionPubRedis, log)
-	wsHandler := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).
+	wsHandlerBuilder := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).
 		WithRunStreamer(rsStreamer).
 		WithSessionPublisher(sessionPub).
 		WithMetricsRecorder(metricsRec)
+	if temporalCli != nil {
+		wsHandlerBuilder = wsHandlerBuilder.WithUserInputSignaler(
+			cache.NewUserInputSignaler(redisCache.Client(), temporalCli),
+		)
+	}
+	wsHandler := wsHandlerBuilder
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 

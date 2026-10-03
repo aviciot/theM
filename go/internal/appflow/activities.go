@@ -252,6 +252,11 @@ type AppFlowActivities struct {
 	// May be nil — FileGateActivityWait then fails open immediately
 	// (ScanStatus:"timeout"), same nil-safe convention as FileGate/TextGate.
 	FileGateWaiter FileGateWaiter
+	// PendingWait writes/deletes the them:wait:{runID} Redis key used by the
+	// WS/SSE handler to route subsequent user messages as Temporal signals.
+	// May be nil — PendingWaitSetActivity then no-ops (wait_for_input still
+	// works but the WS handler won't know to route the reply automatically).
+	PendingWait PendingWaitStore
 }
 
 // DebugCredCleaner deletes every per-node debug credential override for one
@@ -978,6 +983,19 @@ func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input Final
 		_ = a.DebugCredCleaner.DeleteAllForRun(ctx, input.TenantID, input.RunID)
 	}
 	return nil
+}
+
+// PendingWaitSetActivity writes them:wait:{RunID} = NodeID to Redis with a 4-hour
+// TTL. This tells the WS/SSE handler "the next message on this run should be
+// forwarded to the workflow as a Temporal signal instead of being discarded."
+//
+// Registered as AppFlowPendingWaitSetActivityName on the dag-worker.
+// May be no-op when a.PendingWait is nil (see AppFlowActivities.PendingWait).
+func (a *AppFlowActivities) PendingWaitSetActivity(ctx context.Context, input PendingWaitSetInput) error {
+	if a.PendingWait == nil {
+		return nil
+	}
+	return a.PendingWait.SetWait(ctx, input.RunID, input.NodeID)
 }
 
 // defaultRouterPrompt generates a default system prompt for the router classifier.

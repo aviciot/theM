@@ -70,6 +70,16 @@ const (
 	// AppFlowSignalHILApproval is the signal name for HIL human approval.
 	AppFlowSignalHILApproval = "hil_approval"
 
+	// AppFlowSignalUserInput is the prefix for wait_for_input signals.
+	// Full signal name per node: AppFlowSignalUserInput + ":" + nodeID
+	// so a flow with multiple wait points doesn't mix up replies.
+	AppFlowSignalUserInput = "appflow_user_input"
+
+	// AppFlowPendingWaitSetActivityName is the registered name for the
+	// activity that writes them:wait:{runID} to Redis so the WS handler
+	// knows to signal this workflow instead of ignoring subsequent messages.
+	AppFlowPendingWaitSetActivityName = "AppFlowPendingWaitSetActivity"
+
 	// AppFlowSignalStep is the signal name for the debug "Step" control
 	// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). One signal = one tick: every
 	// currently-paused node (including every node in every currently-active
@@ -992,6 +1002,18 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				retErr = cycleErr
 				return
 			}
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
+		case "wait_for_input":
+			newAccumulated, newVars, wErr := execWaitForInputNode(ctx, node, input, accumulated, vars, shortAO)
+			if wErr != nil {
+				out.Status = "failed"
+				retErr = wErr
+				return
+			}
+			accumulated = newAccumulated
+			vars = newVars
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 

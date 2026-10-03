@@ -160,6 +160,26 @@ func Validate(spec *AppFlowSpec) []ValidationError {
 					})
 				}
 			}
+			if n.Kind == "wait_for_input" {
+				var cfg WaitForInputConfig
+				if len(n.Config) > 0 {
+					_ = json.Unmarshal(n.Config, &cfg)
+				}
+				if cfg.OutputVar != "" && strings.ContainsAny(cfg.OutputVar, " \t\n") {
+					errs = append(errs, ValidationError{
+						Code:       "wait_for_input_invalid_output_var",
+						Message:    fmt.Sprintf("wait_for_input output_var %q must not contain whitespace", cfg.OutputVar),
+						InstanceID: n.ID,
+					})
+				}
+				if outCount[n.ID] == 0 {
+					errs = append(errs, ValidationError{
+						Code:       "wait_for_input_no_outgoing_edge",
+						Message:    "wait_for_input node must have exactly one outgoing edge",
+						InstanceID: n.ID,
+					})
+				}
+			}
 			if n.Kind == "inline" {
 				errs = append(errs, ValidationError{
 					Code:       "unknown_inline_node",

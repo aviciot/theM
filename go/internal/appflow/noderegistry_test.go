@@ -3,18 +3,18 @@ package appflow
 import "testing"
 
 // TestAllAppCanvasNodeInfos_ReturnsSixKinds verifies the registry declares
-// exactly the 6 app-canvas node kinds the compiler/workflow/validate switches
+// the core app-canvas node kinds the compiler/workflow/validate switches
 // dispatch on, each with a non-empty label and color, and that mutating the
 // returned slice does not affect the shared static registry.
 func TestAllAppCanvasNodeInfos_ReturnsSixKinds(t *testing.T) {
 	infos := AllAppCanvasNodeInfos()
-	if len(infos) != 6 {
-		t.Fatalf("expected 6 app-canvas node kinds, got %d", len(infos))
+	if len(infos) != 7 {
+		t.Fatalf("expected 7 app-canvas node kinds, got %d", len(infos))
 	}
 
 	wantTypes := map[string]bool{
 		"llm": false, "condition": false, "router": false,
-		"hil": false, "fork": false, "join": false,
+		"hil": false, "fork": false, "join": false, "wait_for_input": false,
 	}
 	for _, info := range infos {
 		if _, ok := wantTypes[info.Type]; !ok {

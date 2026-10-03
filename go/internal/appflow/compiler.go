@@ -137,6 +137,19 @@ type CycleConfig struct {
 	BodyEdges     []AppFlowEdge `json:"body_edges"`
 }
 
+// WaitForInputConfig is the configuration stored in a Wait-for-Input node's config JSON.
+// The node pauses the Temporal workflow until the user sends another WS/SSE message,
+// then stores that message in OutputVar and continues.
+type WaitForInputConfig struct {
+	// Prompt is sent to the user while the workflow is paused (rendered against flow vars).
+	// When empty no prompt message is emitted before waiting.
+	Prompt string `json:"prompt,omitempty"`
+	// OutputVar names the flow variable that receives the user's reply. Default: "input".
+	OutputVar string `json:"output_var,omitempty"`
+	// TimeoutSeconds: 0 = wait indefinitely (default for user-facing waits).
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+}
+
 // HILConfig is the configuration stored in a HIL node's config JSON.
 type HILConfig struct {
 	// ApproverRole is the minimum RBAC role required to approve. Default: "admin".
@@ -458,6 +471,8 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 			node.Kind = "join"
 		case "cycle":
 			node.Kind = "cycle"
+		case "wait_for_input":
+			node.Kind = "wait_for_input"
 		default:
 			node.Kind = "flow_control"
 		}

@@ -103,6 +103,19 @@ type TemporalClientExecutor = transport.TemporalClientExecutor
 //
 // Auth, EPConfig, gate, session, CreateRun, and ExecuteWorkflow identity
 // enforcement all live in execution.Lifecycle.Admit/Start/Release.
+// UserInputSignaler routes a subsequent user message to a paused wait_for_input
+// node by checking whether the run has a pending-wait record in Redis and, if
+// so, sending a Temporal signal. Called from the streamEvents goroutine when
+// the client sends a message after the initial one.
+type UserInputSignaler interface {
+	// SignalUserInput checks them:wait:{runID} in Redis. If the key exists (the
+	// workflow is paused at a wait_for_input node), it fires a Temporal signal
+	// with the user's message and deletes the key. Returns (true, nil) when a
+	// signal was sent, (false, nil) when the run is not waiting, or (false, err)
+	// on a Redis or Temporal error.
+	SignalUserInput(ctx context.Context, tenantID, runID, message string) (signalled bool, err error)
+}
+
 type Handler struct {
 	lc            *execution.Lifecycle
 	bus           event.Bus
@@ -113,6 +126,7 @@ type Handler struct {
 	sessionPub    *dashboard.SessionPublisher
 	slugResolver  SlugResolver
 	metricsRec    metrics.Recorder
+	userInput     UserInputSignaler
 }
 
 // NewHandler creates a Handler. All admission/session/gate logic is delegated
@@ -161,6 +175,14 @@ func (h *Handler) WithSlugResolver(r SlugResolver) *Handler {
 // WithMetricsRecorder attaches a metrics.Recorder for fire-and-forget user session recording.
 func (h *Handler) WithMetricsRecorder(rec metrics.Recorder) *Handler {
 	h.metricsRec = rec
+	return h
+}
+
+// WithUserInputSignaler attaches the signaler used to route subsequent user
+// messages to a paused wait_for_input node. When not attached, subsequent
+// messages are silently discarded (same behaviour as before wait_for_input).
+func (h *Handler) WithUserInputSignaler(s UserInputSignaler) *Handler {
+	h.userInput = s
 	return h
 }
 
@@ -487,7 +509,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// ── 10. Stream run events to client ──────────────────────────────────────
-	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
+	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone, handle.EPConfig.TenantID, handle.RunID)
 }
 
 // startAppFlow compiles the active AppFlowSpec from handle.EPConfig and launches
@@ -580,13 +602,28 @@ func (h *Handler) readClientMessage(conn *websocket.Conn) (domain.Message, strin
 // termCh is the dedicated terminal-event channel (capacity 1) from the in-process
 // bus (R-0 L-1 fix). Pass nil when using the Redis run-stream path (termCh not needed
 // there because the stream itself guarantees terminal event delivery).
-func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, evCh <-chan event.Event, termCh <-chan event.Event, orchDone <-chan struct{}) {
+// tenantID and runID are used to route subsequent user messages to a paused
+// wait_for_input node when h.userInput is set.
+func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, evCh <-chan event.Event, termCh <-chan event.Event, orchDone <-chan struct{}, tenantID, runID string) {
 	clientGone := make(chan struct{})
 	go func() {
 		defer close(clientGone)
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, msgBytes, err := conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			// Route subsequent user messages to a paused wait_for_input node.
+			if h.userInput != nil && runID != "" {
+				var cm clientMsg
+				if jsonErr := json.Unmarshal(msgBytes, &cm); jsonErr == nil && cm.Content != "" {
+					signalled, sigErr := h.userInput.SignalUserInput(ctx, tenantID, runID, cm.Content)
+					if sigErr != nil {
+						h.logger.Warn("ws: signal user input failed", "run_id", runID, "error", sigErr)
+					} else if !signalled {
+						h.logger.Debug("ws: subsequent message discarded — run not waiting", "run_id", runID)
+					}
+				}
 			}
 		}
 	}()
