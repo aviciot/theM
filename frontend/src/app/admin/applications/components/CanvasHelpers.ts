@@ -197,7 +197,9 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
   const nodeTypeById = new Map(nodes.map(n => [n.id, n.type]));
   const rootByEp = new Map<string, string>();
   edges.forEach(e => {
-    if (nodeTypeById.get(e.source) === 'entryPoint' && nodeTypeById.get(e.target) === 'orchestrator') {
+    if (nodeTypeById.get(e.source) === 'entryPoint' &&
+        (nodeTypeById.get(e.target) === 'orchestrator' || nodeTypeById.get(e.target) === 'cycle' ||
+         nodeTypeById.get(e.target) === 'flowControl'  || nodeTypeById.get(e.target) === 'inline')) {
       rootByEp.set(e.source, e.target);
     }
   });
@@ -243,11 +245,12 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     if (e.sourceHandle === 'cycle-in' || e.targetHandle === 'cycle-out') return;
     const srcType = nodeTypeById.get(e.source);
     const tgtType = nodeTypeById.get(e.target);
-    if (srcType === 'entryPoint' && tgtType === 'orchestrator') return;
+    if (srcType === 'entryPoint') return; // root stored in ep.root, not in connections
     if (srcType === 'orchestrator' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'tool' });
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
     if (srcType === 'flowControl' || tgtType === 'flowControl' ||
-        srcType === 'inline'      || tgtType === 'inline') {
+        srcType === 'inline'      || tgtType === 'inline'      ||
+        srcType === 'cycle'       || tgtType === 'cycle') {
       // Condition (and any future branching inline kind) carries its branch on
       // the sourceHandle, using the registry's "ctrl-out-{portID}" convention
       // (see lib/nodeRegistry.ts resolveOutputPorts). The wire format expects
