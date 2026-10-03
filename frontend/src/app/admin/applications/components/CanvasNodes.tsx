@@ -509,26 +509,35 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN handle — protrudes left, same pattern as the working bottom source handle.
-          User drags FROM this TO the first body node to declare cycle entry. */}
+      {/* IN internal handle — top-left corner, protrudes above the frame body.
+          User drags FROM this dot TO the first body node inside the cycle. */}
       <Handle
         id="cycle-in"
         type="source"
-        position={Position.Left}
-        style={{ background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, top: 52, left: -6, zIndex: 41 }}
+        position={Position.Top}
+        style={{ background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, left: 24, top: -6, zIndex: 41 }}
       />
-      <span style={{ position: 'absolute', top: 46, left: 10, fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, pointerEvents: 'none', userSelect: 'none' }}>IN ▶</span>
-      {/* OUT handle — body node drags TO this to declare cycle exit. Same protrude pattern. */}
+      {/* IN label pill — inside the frame, top-left */}
+      <div style={{ position: 'absolute', top: 8, left: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.35)', pointerEvents: 'none' }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, userSelect: 'none' }}>▶ IN</span>
+      </div>
+
+      {/* OUT internal handle — bottom-left corner, protrudes below the frame.
+          Body node drags TO this dot to declare the cycle exit path. */}
       <Handle
         id="cycle-out"
         type="target"
-        position={Position.Left}
-        style={{ background: '#60a5fa', border: '2px solid #021520', width: 12, height: 12, top: 76, left: -6, zIndex: 41 }}
+        position={Position.Bottom}
+        style={{ background: '#fb923c', border: '2px solid #021520', width: 12, height: 12, left: 24, bottom: -6, zIndex: 41 }}
       />
-      <span style={{ position: 'absolute', top: 70, left: 10, fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8, pointerEvents: 'none', userSelect: 'none' }}>OUT ▶</span>
-      {/* Outer target handle: sits on the top border — EP/prev-node → cycle */}
-      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 10, height: 10, zIndex: 40 }} />
-      {/* Outer source handle: protrudes below the frame — cycle → next node */}
+      {/* OUT label pill — inside the frame, bottom-left */}
+      <div style={{ position: 'absolute', bottom: 8, left: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.35)', pointerEvents: 'none' }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#fb923c', letterSpacing: 0.8, userSelect: 'none' }}>OUT ▶</span>
+      </div>
+
+      {/* Outer target handle — top-center, cyan: previous node/EP flows IN to cycle */}
+      <Handle type="target" position={targetPos} style={{ background: '#22d3ee', border: '2px solid #021520', width: 10, height: 10, zIndex: 40 }} />
+      {/* Outer source handle — bottom-center, protruding: cycle flows OUT to next node */}
       <Handle type="source" position={sourcePos} style={{
         background: accent, border: '2px solid #051424',
         width: 14, height: 14,
