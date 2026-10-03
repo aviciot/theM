@@ -509,30 +509,27 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN internal handle — LEFT side, protrudes outside frame.
-          Left side is unoccupied by outer handles (which are Top/Bottom only).
-          User drags FROM this dot TO the first body node inside the cycle. */}
+      {/* IN internal handle — top-left corner, protrudes above-left.
+          User drags FROM this dot TO the first body node. */}
       <Handle
         id="cycle-in"
         type="source"
         position={Position.Left}
-        style={{ background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, top: 60, left: -6, zIndex: 41 }}
+        style={{ background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, top: 48, left: -6, zIndex: 41 }}
       />
-      {/* IN label — inside the frame next to the handle dot */}
-      <div style={{ position: 'absolute', top: 54, left: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.35)', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', top: 42, left: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.35)', pointerEvents: 'none' }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, userSelect: 'none' }}>▶ IN</span>
       </div>
 
-      {/* OUT internal handle — LEFT side, lower than IN, same protrude pattern.
-          Body node drags TO this dot to declare the cycle exit path. */}
+      {/* OUT internal handle — bottom-right corner, protrudes right.
+          Body node drags TO this dot to declare the cycle exit. */}
       <Handle
         id="cycle-out"
         type="target"
-        position={Position.Left}
-        style={{ background: '#fb923c', border: '2px solid #021520', width: 12, height: 12, top: 88, left: -6, zIndex: 41 }}
+        position={Position.Right}
+        style={{ background: '#fb923c', border: '2px solid #021520', width: 12, height: 12, bottom: 16, right: -6, zIndex: 41 }}
       />
-      {/* OUT label — inside the frame next to the handle dot */}
-      <div style={{ position: 'absolute', top: 82, left: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.35)', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', bottom: 10, right: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.35)', pointerEvents: 'none' }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#fb923c', letterSpacing: 0.8, userSelect: 'none' }}>OUT ▶</span>
       </div>
 
