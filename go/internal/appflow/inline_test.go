@@ -128,6 +128,35 @@ func TestInlineLLMConfig_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, cfg.OutputVar, got.OutputVar)
 }
 
+// AF-IN-07: numgt/numgte/numlt compare string-encoded numbers correctly.
+func TestFlowFuncs_NumericComparison(t *testing.T) {
+	tests := []struct {
+		expr   string
+		vars   FlowVars
+		truthy bool
+	}{
+		{"{{if numgt .amount \"200\"}}yes{{end}}", FlowVars{"amount": "500"}, true},
+		{"{{if numgt .amount \"200\"}}yes{{end}}", FlowVars{"amount": "100"}, false},
+		{"{{if numgt .amount \"200\"}}yes{{end}}", FlowVars{"amount": "200"}, false},
+		{"{{if numgte .amount \"200\"}}yes{{end}}", FlowVars{"amount": "200"}, true},
+		{"{{if numlt .amount \"200\"}}yes{{end}}", FlowVars{"amount": "100"}, true},
+		// non-numeric → false, no error
+		{"{{if numgt .amount \"200\"}}yes{{end}}", FlowVars{"amount": "unknown"}, false},
+		{"{{if numgt .amount \"200\"}}yes{{end}}", FlowVars{}, false},
+	}
+	for _, tt := range tests {
+		out, err := renderFlowTemplate(tt.expr, tt.vars)
+		if err != nil {
+			t.Errorf("expr=%q: unexpected error: %v", tt.expr, err)
+			continue
+		}
+		got := isTruthy(out)
+		if got != tt.truthy {
+			t.Errorf("expr=%q vars=%v: got truthy=%v want %v", tt.expr, tt.vars, got, tt.truthy)
+		}
+	}
+}
+
 // AF-IN-06: InlineConditionConfig's Expression survives a marshal/unmarshal
 // round trip.
 func TestInlineConditionConfig_JSONRoundTrip(t *testing.T) {

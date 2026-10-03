@@ -3,6 +3,7 @@ package appflow
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -70,6 +71,24 @@ var flowFuncs = template.FuncMap{
 	"lower":     strings.ToLower,
 	"upper":     strings.ToUpper,
 	"trim":      strings.TrimSpace,
+	// numgt/numgte compare two string-encoded numbers (float-safe).
+	// Usage: {{if numgt .refund_amount "200"}}...{{end}}
+	// Returns false (not an error) when either value is not a valid number.
+	"numgt": func(a, b string) bool {
+		fa, ea := strconv.ParseFloat(strings.TrimSpace(a), 64)
+		fb, eb := strconv.ParseFloat(strings.TrimSpace(b), 64)
+		return ea == nil && eb == nil && fa > fb
+	},
+	"numgte": func(a, b string) bool {
+		fa, ea := strconv.ParseFloat(strings.TrimSpace(a), 64)
+		fb, eb := strconv.ParseFloat(strings.TrimSpace(b), 64)
+		return ea == nil && eb == nil && fa >= fb
+	},
+	"numlt": func(a, b string) bool {
+		fa, ea := strconv.ParseFloat(strings.TrimSpace(a), 64)
+		fb, eb := strconv.ParseFloat(strings.TrimSpace(b), 64)
+		return ea == nil && eb == nil && fa < fb
+	},
 }
 
 // renderFlowTemplate executes a Go text/template over flow vars.
