@@ -133,6 +133,7 @@ type CycleConfig struct {
 	BreakWhenVal  string        `json:"break_when_val"`
 	MaxIterations int           `json:"max_iterations"`
 	EntryNodeID   string        `json:"entry_node_id"`
+	ExitNodeID    string        `json:"exit_node_id"`
 	BodyNodes     []AppFlowNode `json:"body_nodes"`
 	BodyEdges     []AppFlowEdge `json:"body_edges"`
 }
@@ -531,15 +532,20 @@ func compileCycleBody(cycleNode *AppFlowNode, cycleInstID string, compByID map[s
 		}
 	}
 
-	// Determine entry node: child with no incoming edges from other children.
+	// Determine entry node: child with no incoming body edges.
+	// Determine exit node: child with no outgoing body edges.
 	inCount := make(map[string]int, len(childIDs))
+	outCount := make(map[string]int, len(childIDs))
 	for _, e := range bodyEdges {
 		inCount[e.Target]++
+		outCount[e.Source]++
 	}
 	for _, id := range childIDs {
 		if inCount[id] == 0 {
 			cfg.EntryNodeID = id
-			break
+		}
+		if outCount[id] == 0 {
+			cfg.ExitNodeID = id
 		}
 	}
 

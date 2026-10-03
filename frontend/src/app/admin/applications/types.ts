@@ -195,6 +195,8 @@ export interface CycleNodeData {
   break_when_val?: string;
   max_iterations?: number;
   display_name?: string;
+  entry_node_id?: string;
+  exit_node_id?: string;
   _error?: boolean;
   _shake?: boolean;
   _errorMsg?: string;

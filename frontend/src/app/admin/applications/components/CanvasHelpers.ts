@@ -230,6 +230,8 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
           break_when_op: d.break_when_op ?? 'eq',
           break_when_val: d.break_when_val ?? '',
           max_iterations: d.max_iterations ?? 10,
+          ...(d.entry_node_id ? { entry_node_id: d.entry_node_id } : {}),
+          ...(d.exit_node_id  ? { exit_node_id:  d.exit_node_id  } : {}),
         },
       });
     } else if (n.type === 'entryPoint') {
@@ -244,7 +246,8 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     if (srcType === 'orchestrator' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'tool' });
     if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
     if (srcType === 'flowControl' || tgtType === 'flowControl' ||
-        srcType === 'inline'      || tgtType === 'inline') {
+        srcType === 'inline'      || tgtType === 'inline'      ||
+        srcType === 'cycle'       || tgtType === 'cycle') {
       // Condition (and any future branching inline kind) carries its branch on
       // the sourceHandle, using the registry's "ctrl-out-{portID}" convention
       // (see lib/nodeRegistry.ts resolveOutputPorts). The wire format expects
@@ -280,6 +283,39 @@ export function docToCanvas(
       flowCtrlNodeTypeById.set(c.instance_id, (c.config.node_type as string) ?? c.definition_ref.name);
     }
   });
+  // Pre-compute entry/exit node IDs for each cycle from connections.
+  // entry = child that the cycle frame connects TO (cycle → child edge in connections)
+  // exit  = child with no outgoing connection to another child of the same cycle
+  const cycleEntryById = new Map<string, string>(); // cycleId → entryNodeId
+  const cycleExitById  = new Map<string, string>(); // cycleId → exitNodeId
+  const parentByCycleChild = new Map<string, string>(); // childId → cycleId
+  (doc.components ?? []).forEach(c => {
+    if (c.parent_instance_id) parentByCycleChild.set(c.instance_id, c.parent_instance_id);
+  });
+  (doc.connections ?? []).forEach(conn => {
+    // cycle → child edge marks the entry
+    if (parentByCycleChild.get(conn.target) === conn.source) {
+      cycleEntryById.set(conn.source, conn.target);
+    }
+  });
+  // exit = child that has no outgoing edge to a sibling child
+  const cycleChildIds = new Map<string, Set<string>>(); // cycleId → Set<childId>
+  parentByCycleChild.forEach((cycleId, childId) => {
+    if (!cycleChildIds.has(cycleId)) cycleChildIds.set(cycleId, new Set());
+    cycleChildIds.get(cycleId)!.add(childId);
+  });
+  cycleChildIds.forEach((children, cycleId) => {
+    const hasOutgoingToSibling = new Set<string>();
+    (doc.connections ?? []).forEach(conn => {
+      if (children.has(conn.source) && children.has(conn.target)) {
+        hasOutgoingToSibling.add(conn.source);
+      }
+    });
+    children.forEach(childId => {
+      if (!hasOutgoingToSibling.has(childId)) cycleExitById.set(cycleId, childId);
+    });
+  });
+
   (doc.components ?? []).forEach(c => {
     const cd = defById.get(c.definition_id ?? '') ?? defByRef.get(refKey(c.definition_ref));
     const pos = layout[c.instance_id] ?? { x: 0, y: 0 };
@@ -294,6 +330,8 @@ export function docToCanvas(
           break_when_op: (c.config.break_when_op as string) ?? 'eq',
           break_when_val: (c.config.break_when_val as string) ?? '',
           max_iterations: (c.config.max_iterations as number) ?? 10,
+          entry_node_id: cycleEntryById.get(c.instance_id) ?? (c.config.entry_node_id as string) ?? '',
+          exit_node_id:  cycleExitById.get(c.instance_id)  ?? (c.config.exit_node_id  as string) ?? '',
         } as unknown as Record<string, unknown>,
       });
     } else if (c.definition_ref.kind === 'orchestrator') {
@@ -318,8 +356,16 @@ export function docToCanvas(
     nodes.push({ id: ep.instance_id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: ep.instance_id, slug: ep.slug, protocol: ep.protocol, label: EP_META[ep.protocol]?.title ?? ep.protocol, config: ep.config ?? {} } as unknown as Record<string, unknown> });
     if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default' });
   });
+  // Set of cycle→entry connections already stored as plain flow_control edges
+  // — skip them here so we don't render a duplicate edge on top of the pin edge.
+  const cycleEntryEdgeKey = new Set(
+    [...cycleEntryById.entries()].map(([cyc, entry]) => `${cyc}_${entry}`)
+  );
+
   (doc.connections ?? []).forEach(conn => {
     if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'flow_control') {
+      // Skip the cycle→entry connection — it is rendered as the pin-in edge below.
+      if (cycleEntryEdgeKey.has(`${conn.source}_${conn.target}`)) return;
       // Any inline node type with named control_output_ports (registry-driven,
       // e.g. condition's true/false) carries its branch on the sourceHandle
       // using the "ctrl-out-{portID}" convention (see lib/nodeRegistry.ts).
@@ -340,6 +386,28 @@ export function docToCanvas(
         ...(conn.label ? { label: conn.label, data: { label: conn.label } } : {}),
       });
     }
+  });
+
+  // Emit pin edges: cycle pin-in → entry body node, exit body node → cycle pin-out.
+  // These are derived from entry_node_id / exit_node_id and kept out of the
+  // connections array so export/import doesn't double them.
+  cycleEntryById.forEach((entryId, cycleId) => {
+    edges.push({
+      id: `e_pin_in_${cycleId}`,
+      source: cycleId, sourceHandle: 'pin-in',
+      target: entryId,
+      type: 'default',
+      style: { stroke: '#4ade80', strokeWidth: 1.5, strokeDasharray: '4 3' },
+    });
+  });
+  cycleExitById.forEach((exitId, cycleId) => {
+    edges.push({
+      id: `e_pin_out_${cycleId}`,
+      source: exitId,
+      target: cycleId, targetHandle: 'pin-out',
+      type: 'default',
+      style: { stroke: '#60a5fa', strokeWidth: 1.5, strokeDasharray: '4 3' },
+    });
   });
   if (Object.keys(layout).length === 0 && nodes.length > 0) {
     const laid = applyDagreLayout(nodes, edges);
