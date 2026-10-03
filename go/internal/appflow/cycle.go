@@ -189,6 +189,14 @@ func walkCycleBody(
 			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch, input.LogVerbosity)
 			curID = nextID
 
+		case "wait_for_input":
+			var waitErr error
+			accumulated, vars, waitErr = execWaitForInputNode(ctx, node, input, accumulated, vars, shortAO)
+			if waitErr != nil {
+				return accumulated, vars, fmt.Errorf("cycle body wait_for_input %q: %w", node.ID, waitErr)
+			}
+			curID = firstEdgeTarget(outEdges[node.ID])
+
 		case "orchestrator", "middleware":
 			curID = firstEdgeTarget(outEdges[node.ID])
 
