@@ -74,12 +74,15 @@ export function validateConnection(
   }
 
   if (src.maxOutgoing !== undefined) {
-    const out = edges.filter(e => e.source === sourceId).length;
+    // Exclude internal cycle-in edges from the outgoing count — they use a
+    // separate handle and don't represent a flow-control exit connection.
+    const out = edges.filter(e => e.source === sourceId && e.sourceHandle !== 'cycle-in').length;
     if (out >= src.maxOutgoing) return `Entry point already has an orchestrator — remove it first`;
   }
 
   if (tgt.maxIncoming !== undefined) {
-    const inc = edges.filter(e => e.target === targetId).length;
+    // Exclude internal cycle-out edges from the incoming count.
+    const inc = edges.filter(e => e.target === targetId && e.targetHandle !== 'cycle-out').length;
     if (inc >= tgt.maxIncoming) return `This node already has the maximum number of incoming connections`;
   }
 
