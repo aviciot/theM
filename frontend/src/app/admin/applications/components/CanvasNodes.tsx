@@ -529,8 +529,17 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
       }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8 }}>OUT ▶</span>
       </div>
-      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
-      <Handle type="source" position={sourcePos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
+      {/* Target handle: standard size, sits on the top border */}
+      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 10, height: 10, zIndex: 40 }} />
+      {/* Source handle: larger, protrudes below the frame so child nodes can't
+          block it — ReactFlow parent nodes have z-index issues with handles
+          that sit inside the frame when children are present. */}
+      <Handle type="source" position={sourcePos} style={{
+        background: accent, border: '2px solid #051424',
+        width: 14, height: 14,
+        bottom: -7,
+        zIndex: 40,
+      }} />
     </div>
   );
 }
