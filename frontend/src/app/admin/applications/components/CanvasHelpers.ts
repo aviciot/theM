@@ -79,22 +79,91 @@ export function agentIconForLibrary(a: { slug?: string; icon?: string | null }):
 }
 
 // ── Dagre auto-layout ─────────────────────────────────────────────────────────
+const CYCLE_PADDING = 48; // px inside cycle frame around child nodes
+
 export function applyDagreLayout(nodes: Node[], edges: Edge[], dir: 'TB' | 'LR' = 'TB'): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: dir, nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
-
-  nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
-  edges.forEach(e => g.setEdge(e.source, e.target));
-
-  dagre.layout(g);
-
   const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
-  return nodes.map(n => {
-    const pos = g.node(n.id);
-    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 }, sourcePosition: sourcePos, targetPosition: targetPos };
+
+  // 1. Identify cycle frames and their children.
+  const cycleIds = new Set(nodes.filter(n => n.type === 'cycle').map(n => n.id));
+  const childrenByCycle = new Map<string, Node[]>();
+  const outerNodes: Node[] = [];
+
+  for (const n of nodes) {
+    const pid = (n as Node & { parentId?: string }).parentId;
+    if (pid && cycleIds.has(pid)) {
+      if (!childrenByCycle.has(pid)) childrenByCycle.set(pid, []);
+      childrenByCycle.get(pid)!.push(n);
+    } else {
+      outerNodes.push(n);
+    }
+  }
+
+  // 2. Layout each cycle body with dagre (TB always) and compute frame size.
+  const cycleFrameSizes = new Map<string, { width: number; height: number }>();
+  const laidOutChildren: Node[] = [];
+
+  for (const [cycleId, children] of childrenByCycle) {
+    const childEdges = edges.filter(
+      e => children.some(c => c.id === e.source) && children.some(c => c.id === e.target)
+    );
+    const bg = new dagre.graphlib.Graph();
+    bg.setDefaultEdgeLabel(() => ({}));
+    bg.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: CYCLE_PADDING, marginy: CYCLE_PADDING });
+    children.forEach(c => bg.setNode(c.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
+    childEdges.forEach(e => bg.setEdge(e.source, e.target));
+    dagre.layout(bg);
+
+    // Compute bounding box of positioned children.
+    let maxX = 0, maxY = 0;
+    const positioned = children.map(c => {
+      const pos = bg.node(c.id);
+      const x = pos.x - NODE_WIDTH / 2;
+      const y = pos.y - NODE_HEIGHT / 2;
+      maxX = Math.max(maxX, x + NODE_WIDTH);
+      maxY = Math.max(maxY, y + NODE_HEIGHT);
+      return { ...c, position: { x, y }, sourcePosition: sourcePos, targetPosition: targetPos };
+    });
+    laidOutChildren.push(...positioned);
+
+    cycleFrameSizes.set(cycleId, {
+      width:  maxX + CYCLE_PADDING,
+      height: maxY + CYCLE_PADDING,
+    });
+  }
+
+  // 3. Layout the outer graph, using computed frame sizes for cycle nodes.
+  const og = new dagre.graphlib.Graph();
+  og.setDefaultEdgeLabel(() => ({}));
+  og.setGraph({ rankdir: dir, nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+
+  outerNodes.forEach(n => {
+    const size = cycleFrameSizes.get(n.id);
+    og.setNode(n.id, size ?? { width: NODE_WIDTH, height: NODE_HEIGHT });
   });
+  // Only outer edges (both endpoints are outer nodes).
+  const outerIds = new Set(outerNodes.map(n => n.id));
+  edges.forEach(e => {
+    if (outerIds.has(e.source) && outerIds.has(e.target)) og.setEdge(e.source, e.target);
+  });
+  dagre.layout(og);
+
+  const laidOutOuter = outerNodes.map(n => {
+    const pos = og.node(n.id);
+    const size = cycleFrameSizes.get(n.id);
+    const w = size?.width  ?? NODE_WIDTH;
+    const h = size?.height ?? NODE_HEIGHT;
+    return {
+      ...n,
+      position: { x: pos.x - w / 2, y: pos.y - h / 2 },
+      ...(size ? { style: { ...n.style, width: size.width, height: size.height } } : {}),
+      sourcePosition: sourcePos,
+      targetPosition: targetPos,
+    };
+  });
+
+  return [...laidOutOuter, ...laidOutChildren];
 }
 
 // ── Canvas V2 serialization helpers ──────────────────────────────────────────
