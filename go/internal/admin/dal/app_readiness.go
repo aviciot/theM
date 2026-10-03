@@ -100,6 +100,10 @@ WHERE id             = $1::uuid
 // It tells the service whether a LLM provider+model is configured and whether
 // an API key exists (either in app provider_keys or tenant llm_providers).
 type AppReadinessRow struct {
+	// IsAppFlow is true when the app has a published appflow definition (schema_version 2).
+	// AppFlow apps use inline nodes rather than an orchestrator binding, so the
+	// HasOrchestrator check is skipped for them.
+	IsAppFlow bool
 	// HasOrchestrator is true when at least one enabled app_orchestrator is linked to the app.
 	HasOrchestrator bool
 	// Provider is the resolved provider name ("anthropic", "openai", …).
@@ -150,8 +154,19 @@ ep AS (
     WHERE ep.application_id = $1::uuid AND ep.enabled = true
     ORDER BY ep.created_at ASC
     LIMIT 1
+),
+appflow AS (
+    -- Detect whether this app has a published appflow (schema_version 2) definition.
+    SELECT EXISTS(
+        SELECT 1 FROM them.application_definitions
+        WHERE application_id = $1::uuid
+          AND status = 'published'
+          AND (definition->>'schema_version')::int = 2
+    ) AS is_appflow
 )
 SELECT
+    -- IsAppFlow
+    (SELECT is_appflow FROM appflow),
     -- HasOrchestrator
     EXISTS(SELECT 1 FROM orch) AS has_orch,
     -- Resolved provider: EP override first, then orchestrator, then empty
@@ -202,6 +217,7 @@ WHERE a.id = $1::uuid`
 
 	var r AppReadinessRow
 	err := d.q.QueryRow(ctx, q, appID, tenantID).Scan(
+		&r.IsAppFlow,
 		&r.HasOrchestrator,
 		&r.Provider,
 		&r.Model,

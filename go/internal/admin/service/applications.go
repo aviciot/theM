@@ -231,6 +231,10 @@ func (s *AppService) validateReadiness(ctx context.Context, tenantID, appID stri
 	if err != nil {
 		return fmt.Errorf("readiness check failed: %w", err)
 	}
+	if info.IsAppFlow {
+		// AppFlow apps use per-run llm_overrides — no orchestrator or tenant key required.
+		return nil
+	}
 	if !info.HasOrchestrator {
 		return &FieldError{Kind: ErrNotReady, Message: "This app has no orchestrator. Connect one in the Canvas before enabling."}
 	}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -130,6 +131,18 @@ func llmCredentialNodeIDs(spec *appflow.AppFlowSpec) []string {
 		for _, n := range ep.Nodes {
 			if needsCred[n.Kind] {
 				ids = append(ids, n.ID)
+			}
+			// Also walk body nodes inside cycle nodes.
+			if n.Kind == "cycle" {
+				var cfg appflow.CycleConfig
+				if len(n.Config) > 0 {
+					_ = json.Unmarshal(n.Config, &cfg)
+				}
+				for _, bn := range cfg.BodyNodes {
+					if needsCred[bn.Kind] {
+						ids = append(ids, bn.ID)
+					}
+				}
 			}
 		}
 	}

@@ -144,6 +144,145 @@ A labelled edge (condition's true/false) adds `"label": "true"` or `"false"`.
 
 ---
 
+## 2b. Cycle nodes — ground truth (read compiler.go + workflow.go, 2026-10-03)
+
+A `cycle` node is a loop container. It is `kind: "flow_control"`, `name: "cycle"`.
+All nodes **inside** the loop body get `"parent_instance_id": "<cycle_instance_id>"` on their component.
+The cycle node itself has NO `parent_instance_id`.
+
+### Cycle component config fields (CycleConfig in compiler.go)
+```json
+{
+  "node_type": "cycle",
+  "display_name": "My Loop",
+  "break_when_var": "done",
+  "break_when_op": "eq",
+  "break_when_val": "true",
+  "max_iterations": 10,
+  "entry_node_id": "first_body_node_id"
+}
+```
+- `break_when_op`: `"eq"` | `"neq"` | `"truthy"`
+- `break_when_val`: omit or `""` when `break_when_op` is `"truthy"`
+- `entry_node_id`: instance_id of the **first** body node to run. **Required** — the compiler
+  falls back to auto-detect (zero-in-count), but explicit is always correct.
+- `break_when_var`: the flow variable the loop checks after each iteration.
+
+### How body nodes are defined
+```json
+{
+  "instance_id": "cond_inside",
+  "parent_instance_id": "cycle_1",         ← REQUIRED — links to the cycle
+  "definition_ref": { "kind": "inline", "name": "condition", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "condition", "expression": "{{numgt .refund_amount \"0\"}}" }
+}
+```
+Every body node must have `"parent_instance_id"` set to the cycle's `instance_id`.
+Use the correct `definition_ref.kind` just like top-level nodes: `"inline"` for llm/condition,
+`"flow_control"` for hil/fork/join/router/wait_for_input.
+
+### How body edges are defined
+Body-internal edges go in the top-level `connections` array — same as any other edge.
+The compiler extracts them into `CycleConfig.BodyEdges` automatically (it selects edges
+whose source AND target both have `parent_instance_id == cycleInstID`).
+
+```json
+{ "type": "flow_control", "source": "cond_inside", "target": "llm_set_flag", "label": "true" }
+```
+
+Loop-back edges (e.g. last body node → first body node) are also in `connections`:
+```json
+{ "type": "flow_control", "source": "llm_reextract", "target": "cond_inside" }
+```
+
+### Outer connections (FLOW IN / FLOW OUT)
+The cycle node is treated as a single opaque node in the outer graph:
+```json
+{ "type": "flow_control", "source": "llm_before", "target": "cycle_1" }      ← FLOW IN
+{ "type": "flow_control", "source": "cycle_1", "target": "next_node" }        ← FLOW OUT
+```
+These are plain top-level connections. No special label needed.
+
+### Rejected/escape edges from body nodes to the outer graph
+If a body node (e.g. `hil` inside the cycle) routes to a node **outside** the cycle on reject,
+that edge source is inside the cycle but target is outside. The compiler's `compileCycleBody`
+only collects edges where BOTH source and target are children — so the outer edge goes in
+`connections` and is handled at the outer EPFlow level, not in BodyEdges:
+```json
+{ "type": "flow_control", "source": "hil_approval", "target": "llm_refund_rejected", "label": "rejected" }
+```
+Note: `llm_refund_rejected` must NOT have a `parent_instance_id` — it lives at the root level.
+
+### wait_for_input node (used inside cycle bodies or standalone)
+```json
+{
+  "instance_id": "wait_user_amount",
+  "parent_instance_id": "cycle_1",
+  "definition_ref": { "kind": "flow_control", "name": "wait_for_input", "version": 1, "namespace": "builtin" },
+  "config": {
+    "node_type": "wait_for_input",
+    "display_name": "Wait for Corrected Amount",
+    "prompt": "{{.rephrase_prompt}}",
+    "output_var": "input",
+    "timeout_seconds": 300
+  }
+}
+```
+`output_var` defaults to `"input"` — the next user message is stored in that flow variable.
+
+### Complete minimal cycle example (validate-amount pattern)
+```json
+// Components (at root level):
+{ "instance_id": "cycle_1",
+  "definition_ref": { "kind": "flow_control", "name": "cycle", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "cycle", "display_name": "Validate Amount", "break_when_var": "amount_valid",
+              "break_when_op": "truthy", "break_when_val": "", "max_iterations": 3,
+              "entry_node_id": "cond_valid" } }
+
+// Body nodes (parent_instance_id = "cycle_1"):
+{ "instance_id": "cond_valid", "parent_instance_id": "cycle_1",
+  "definition_ref": { "kind": "inline", "name": "condition", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "condition", "expression": "{{numgt .amount \"0\"}}" } }
+
+{ "instance_id": "llm_set_flag", "parent_instance_id": "cycle_1",
+  "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "llm", "display_name": "Mark Valid", "output_var": "amount_valid",
+              "user_prompt": "true", "system_prompt": "Output only the word true." } }
+
+{ "instance_id": "llm_ask", "parent_instance_id": "cycle_1",
+  "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "llm", "display_name": "Ask User", "output_var": "ask_prompt",
+              "user_prompt": "Ask them to re-enter the amount as a number.", "system_prompt": "You are helpful." } }
+
+{ "instance_id": "wait_1", "parent_instance_id": "cycle_1",
+  "definition_ref": { "kind": "flow_control", "name": "wait_for_input", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "wait_for_input", "display_name": "Wait for Amount",
+              "prompt": "{{.ask_prompt}}", "output_var": "input", "timeout_seconds": 300 } }
+
+{ "instance_id": "llm_reextract", "parent_instance_id": "cycle_1",
+  "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+  "config": { "node_type": "llm", "display_name": "Re-Extract", "output_var": "amount",
+              "user_prompt": "{{.input}}", "system_prompt": "Extract only the number. Reply with digits only." } }
+
+// Connections:
+{ "type": "flow_control", "source": "llm_before_cycle", "target": "cycle_1" }       // FLOW IN
+{ "type": "flow_control", "source": "cycle_1", "target": "next_after_cycle" }        // FLOW OUT
+{ "type": "flow_control", "source": "cond_valid", "target": "llm_set_flag", "label": "true" }
+{ "type": "flow_control", "source": "cond_valid", "target": "llm_ask", "label": "false" }
+{ "type": "flow_control", "source": "llm_ask", "target": "wait_1" }
+{ "type": "flow_control", "source": "wait_1", "target": "llm_reextract" }
+{ "type": "flow_control", "source": "llm_reextract", "target": "cond_valid" }        // loop-back
+```
+
+### Common mistakes
+1. **Forgetting `parent_instance_id`** on body nodes → compiler treats them as outer nodes → cycle has empty body.
+2. **Putting cycle node itself inside another cycle** without intending nesting — check no `parent_instance_id` on the cycle component itself (unless intentionally nested).
+3. **Adding an edge from a body node to the cycle's FLOW OUT target** — wrong. Body nodes connect to `cycle_1`, not to the outer target. The FLOW OUT edge is `cycle_1 → next_node`.
+4. **Omitting `entry_node_id`** — auto-detect works only if one body node has zero incoming body edges. If the body has a loop-back (which all real cycles do), auto-detect will find zero-in-count nodes correctly only if the loop-back arrives at a non-entry node. Always set `entry_node_id` explicitly.
+5. **Using `"kind": "inline"` for `wait_for_input`** — it must be `"flow_control"`.
+
+---
+
 ## 3. Entry points — a REAL GOTCHA, easy to miss
 
 The definition JSON's `entry_points` array is **only a description that gets

@@ -296,6 +296,7 @@ export function docToCanvas(
         style: { width: 320, height: 220 },
         ...parentProps,
         data: {
+          display_name: (c.config.display_name as string) ?? '',
           break_when_var: (c.config.break_when_var as string) ?? '',
           break_when_op: (c.config.break_when_op as string) ?? 'eq',
           break_when_val: (c.config.break_when_val as string) ?? '',

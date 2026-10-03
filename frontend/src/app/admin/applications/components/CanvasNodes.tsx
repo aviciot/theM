@@ -481,7 +481,7 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
         flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 14, lineHeight: 1 }}>↻</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: 0.8 }}>Cycle</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: 0.8 }}>{data.display_name || 'Cycle'}</span>
         <span style={{ fontSize: 10, color: 'rgba(129,140,248,0.6)', marginRight: 4 }}>break when</span>
         <input
           className="nodrag"
