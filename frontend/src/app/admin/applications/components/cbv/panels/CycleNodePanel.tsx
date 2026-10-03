@@ -37,6 +37,17 @@ export function CycleNodePanel({ selectedNode, nodes, setNodes, setIsDirty }: Pr
     <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>↻ Cycle</div>
 
+      {/* Display name */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Name</label>
+        <input
+          style={fieldStyle}
+          value={d.display_name ?? ''}
+          placeholder="e.g. Approval Retry Loop"
+          onChange={e => patch({ display_name: e.target.value })}
+        />
+      </div>
+
       {/* Break condition */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Break Condition</div>

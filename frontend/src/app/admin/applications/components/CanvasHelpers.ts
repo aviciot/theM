@@ -341,12 +341,16 @@ export function docToCanvas(
       const srcFlowCtrlType = flowCtrlNodeTypeById.get(conn.source);
       const hasFlowCtrlDynPorts = !!srcFlowCtrlType && !!getNodeDef(srcFlowCtrlType, 'appflow').dynamic_control_output_source;
       const hasControlPorts = hasInlineCtrlPorts || hasFlowCtrlDynPorts;
+      const isCycleTarget = flowCtrlNodeTypeById.get(conn.target) === 'cycle';
+      const isCycleSource = flowCtrlNodeTypeById.get(conn.source) === 'cycle';
       edges.push({
         id: `e_${conn.source}_${conn.target}${conn.label ? '_' + conn.label : ''}`,
         source: conn.source,
         target: conn.target,
         type: 'default',
         ...(hasControlPorts && conn.label ? { sourceHandle: `ctrl-out-${conn.label}` } : {}),
+        ...(isCycleTarget ? { targetHandle: 'cycle-flow-in' } : {}),
+        ...(isCycleSource ? { sourceHandle: 'cycle-flow-out' } : {}),
         ...(conn.label ? { label: conn.label, data: { label: conn.label } } : {}),
       });
     }
