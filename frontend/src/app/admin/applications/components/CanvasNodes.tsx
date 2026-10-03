@@ -1,6 +1,6 @@
 'use client';
-import { Handle, Position, useReactFlow, type NodeTypes } from '@xyflow/react';
-import type { EntryPointData, OrchestratorData, AgentData, FlowControlNodeData, InlineNodeData } from '../types';
+import { Handle, Position, NodeResizer, useReactFlow, type NodeTypes } from '@xyflow/react';
+import type { EntryPointData, OrchestratorData, AgentData, FlowControlNodeData, InlineNodeData, CycleNodeData } from '../types';
 import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
 import { useAppLayoutDir } from '../AppLayoutContext';
@@ -431,6 +431,89 @@ export function InlineNode({ id, data, selected }: { id: string; data: InlineNod
   );
 }
 
+// ── CycleNode ─────────────────────────────────────────────────────────────────
+export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeData; selected?: boolean }) {
+  const { deleteElements } = useReactFlow();
+  const dir = useAppLayoutDir();
+  const targetPos = dir === 'LR' ? Position.Left : Position.Top;
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
+  const accent = '#818cf8';
+  const bg = selected ? 'rgba(129,140,248,0.08)' : 'rgba(129,140,248,0.04)';
+  const border = selected ? `2px solid ${accent}` : `2px dashed ${accent}`;
+  return (
+    <div style={{
+      width: '100%', height: '100%',
+      borderRadius: 16,
+      background: bg,
+      border,
+      boxShadow: selected ? '0 0 18px rgba(129,140,248,0.35)' : 'none',
+      transition: 'all 0.18s ease',
+      fontFamily: 'Inter, sans-serif',
+      position: 'relative',
+    }}>
+      <NodeResizer
+        color={accent}
+        isVisible={selected}
+        minWidth={200}
+        minHeight={160}
+        handleStyle={{ width: 8, height: 8, borderRadius: 2 }}
+      />
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 20,
+          }}
+          title="Delete Cycle (inner nodes will remain)"
+        >✕</button>
+      )}
+      <div className="nodrag" style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 12px',
+        borderBottom: `1px solid rgba(129,140,248,0.2)`,
+        flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 14, lineHeight: 1 }}>↻</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: 0.8 }}>Cycle</span>
+        <span style={{ fontSize: 10, color: 'rgba(129,140,248,0.6)', marginRight: 4 }}>break when</span>
+        <input
+          className="nodrag"
+          type="text"
+          readOnly
+          value={data.break_when_var ?? ''}
+          placeholder="var"
+          style={{ width: 60, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
+        />
+        <span style={{ fontSize: 10, color: 'rgba(129,140,248,0.6)' }}>=</span>
+        <input
+          className="nodrag"
+          type="text"
+          readOnly
+          value={data.break_when_val ?? ''}
+          placeholder="value"
+          style={{ width: 60, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
+        />
+        <span style={{ fontSize: 10, color: 'rgba(129,140,248,0.6)', marginLeft: 4 }}>max</span>
+        <input
+          className="nodrag"
+          type="number"
+          readOnly
+          value={data.max_iterations ?? 10}
+          style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
+        />
+      </div>
+      <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
+      <Handle type="source" position={sourcePos} style={{ background: accent, border: '2px solid #051424', width: 8, height: 8 }} />
+    </div>
+  );
+}
+
 // ── NODE_TYPES — must live here since it references the node components ────────
 export const NODE_TYPES: NodeTypes = {
   entryPoint: EntryPointNode as any,
@@ -438,4 +521,5 @@ export const NODE_TYPES: NodeTypes = {
   agent: AgentNode as any,
   flowControl: FlowControlNode as any,
   inline: InlineNode as any,
+  cycle: CycleNode as any,
 };

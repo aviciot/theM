@@ -528,6 +528,7 @@ export interface ComponentInstance {
   definition_id?: string; // UUID fast-path
   config: Record<string, unknown>;
   secret_bindings?: Record<string, string>;
+  parent_instance_id?: string; // set for nodes nested inside a Cycle container
 }
 
 export interface EPInstance {

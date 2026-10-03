@@ -519,6 +519,19 @@ export function CanvasBuilderView({
       const autoSlug = id.replace(/_/g, '-');
       const newNode: Node = { id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: id, slug: autoSlug, protocol, label: EP_META[protocol]?.title ?? protocol, config: {} } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
+    } else if (nodeType === 'cycle') {
+      const parsed = (payload as Record<string, unknown>);
+      const id = genInstanceId('flow_control', 'cycle', existingIds);
+      const newNode: Node = {
+        id, type: 'cycle', position: pos,
+        style: { width: 320, height: 220 },
+        data: {
+          break_when_var: (parsed.break_when_var as string) ?? '',
+          break_when_val: (parsed.break_when_val as string) ?? 'true',
+          max_iterations: (parsed.max_iterations as number) ?? 10,
+        } as unknown as Record<string, unknown>,
+      };
+      setNodes(ns => [...ns, newNode]);
     }
     setIsDirty(true);
     setLogoResult('none');

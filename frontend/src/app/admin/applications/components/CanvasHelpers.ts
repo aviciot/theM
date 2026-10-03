@@ -16,6 +16,7 @@ import type {
   EpNodeData,
   FlowControlNodeData,
   InlineNodeData,
+  CycleNodeData,
   EntryPointData,
   EntryPointType,
   OrchestratorData,
@@ -126,20 +127,33 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
   const entry_points: EPInstance[] = [];
   const connections: ConnectionDef[] = [];
   nodes.forEach(n => {
+    const parentId = (n as Node & { parentId?: string }).parentId;
     if (n.type === 'orchestrator') {
       const d = n.data as unknown as OrchNodeData;
-      components.push({ instance_id: n.id, name: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: { ...d.config, display_name: d.display_name } });
+      components.push({ instance_id: n.id, name: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: { ...d.config, display_name: d.display_name }, ...(parentId ? { parent_instance_id: parentId } : {}) });
     } else if (n.type === 'agent') {
       const d = n.data as unknown as AgentNodeData;
-      const comp: ComponentInstance = { instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config };
+      const comp: ComponentInstance = { instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config, ...(parentId ? { parent_instance_id: parentId } : {}) };
       if (d.secret_bindings && Object.keys(d.secret_bindings).length) comp.secret_bindings = d.secret_bindings;
       components.push(comp);
     } else if (n.type === 'flowControl') {
       const d = n.data as unknown as FlowControlNodeData;
-      components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name } });
+      components.push({ instance_id: n.id, definition_ref: { kind: 'flow_control', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name }, ...(parentId ? { parent_instance_id: parentId } : {}) });
     } else if (n.type === 'inline') {
       const d = n.data as unknown as InlineNodeData;
-      components.push({ instance_id: n.id, definition_ref: { kind: 'inline', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name } });
+      components.push({ instance_id: n.id, definition_ref: { kind: 'inline', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name }, ...(parentId ? { parent_instance_id: parentId } : {}) });
+    } else if (n.type === 'cycle') {
+      const d = n.data as unknown as CycleNodeData;
+      components.push({
+        instance_id: n.id,
+        definition_ref: { kind: 'flow_control', namespace: 'builtin', name: 'cycle', version: 1 },
+        config: {
+          break_when_var: d.break_when_var ?? '',
+          break_when_op: d.break_when_op ?? 'eq',
+          break_when_val: d.break_when_val ?? '',
+          max_iterations: d.max_iterations ?? 10,
+        },
+      });
     } else if (n.type === 'entryPoint') {
       const d = n.data as unknown as EpNodeData;
       entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '', config: d.config ?? {} });
@@ -191,18 +205,31 @@ export function docToCanvas(
   (doc.components ?? []).forEach(c => {
     const cd = defById.get(c.definition_id ?? '') ?? defByRef.get(refKey(c.definition_ref));
     const pos = layout[c.instance_id] ?? { x: 0, y: 0 };
-    if (c.definition_ref.kind === 'orchestrator') {
-      nodes.push({ id: c.instance_id, type: 'orchestrator', position: pos, data: { _kind: 'orchestrator', instance_id: c.instance_id, display_name: (c.config.display_name as string) ?? cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
+    const parentProps = c.parent_instance_id ? { parentId: c.parent_instance_id, extent: 'parent' as const } : {};
+    if (c.definition_ref.kind === 'flow_control' && c.definition_ref.name === 'cycle') {
+      nodes.push({
+        id: c.instance_id, type: 'cycle', position: pos,
+        style: { width: 320, height: 220 },
+        ...parentProps,
+        data: {
+          break_when_var: (c.config.break_when_var as string) ?? '',
+          break_when_op: (c.config.break_when_op as string) ?? 'eq',
+          break_when_val: (c.config.break_when_val as string) ?? '',
+          max_iterations: (c.config.max_iterations as number) ?? 10,
+        } as unknown as Record<string, unknown>,
+      });
+    } else if (c.definition_ref.kind === 'orchestrator') {
+      nodes.push({ id: c.instance_id, type: 'orchestrator', position: pos, ...parentProps, data: { _kind: 'orchestrator', instance_id: c.instance_id, display_name: (c.config.display_name as string) ?? cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'agent') {
       const agentIcon = agentIconBySlug?.get(c.definition_ref.name);
-      nodes.push({ id: c.instance_id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings, icon: agentIcon } as unknown as Record<string, unknown> });
+      nodes.push({ id: c.instance_id, type: 'agent', position: pos, ...parentProps, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings, icon: agentIcon } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'flow_control') {
       const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
       const displayName = (c.config.display_name as string) || getNodeDef(nodeType, 'appflow').label || nodeType;
-      nodes.push({ id: c.instance_id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: c.instance_id, node_type: nodeType, display_name: displayName, config: c.config } as unknown as Record<string, unknown> });
+      nodes.push({ id: c.instance_id, type: 'flowControl', position: pos, ...parentProps, data: { _kind: 'flow_control', instance_id: c.instance_id, node_type: nodeType, display_name: displayName, config: c.config } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'inline') {
       const nodeType = (c.config.node_type as string) ?? c.definition_ref.name;
-      nodes.push({ id: c.instance_id, type: 'inline', position: pos,
+      nodes.push({ id: c.instance_id, type: 'inline', position: pos, ...parentProps,
         data: { _kind: 'inline', instance_id: c.instance_id, node_type: nodeType,
           display_name: (c.config.display_name as string) || getNodeDef(nodeType, 'appflow').label || nodeType,
           config: c.config } as unknown as Record<string, unknown> });

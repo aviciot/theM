@@ -7,6 +7,7 @@ import { AgentNodePanel } from './panels/AgentNodePanel';
 import { EntryPointNodePanel } from './panels/EntryPointNodePanel';
 import { FlowControlNodePanel } from './panels/FlowControlNodePanel';
 import { InlineNodePanel } from './panels/InlineNodePanel';
+import { CycleNodePanel } from './panels/CycleNodePanel';
 
 // ── CanvasNodePropertiesPanel ────────────────────────────────────────────────
 
@@ -48,6 +49,17 @@ export function CanvasNodePropertiesPanel({
       <div style={{ padding: 20, color: C.textMuted, fontSize: 13, fontStyle: 'italic' }}>
         Select a node to configure properties
       </div>
+    );
+  }
+
+  if (selectedNode.type === 'cycle') {
+    return (
+      <CycleNodePanel
+        selectedNode={selectedNode}
+        nodes={nodes}
+        setNodes={setNodes}
+        setIsDirty={setIsDirty}
+      />
     );
   }
 

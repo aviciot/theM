@@ -53,6 +53,26 @@ export function CanvasPalette({
           ))}
         </div>
 
+        {/* Cycle container */}
+        <div style={{ padding: '0 8px 12px' }}>
+          <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Containers</div>
+          <div
+            draggable
+            onDragStart={e => {
+              e.dataTransfer.setData('nodeType', 'cycle');
+              e.dataTransfer.setData('nodeData', JSON.stringify({ break_when_var: '', break_when_val: 'true', max_iterations: 10 }));
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.2)' }}
+          >
+            <span style={{ fontSize: 16 }}>↻</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>Cycle</div>
+              <div style={{ fontSize: 10, color: C.textMuted }}>Repeat inner nodes until condition</div>
+            </div>
+          </div>
+        </div>
+
         {/* Flow Control nodes — driven by GET /admin/node-types (appflow family) */}
         <div style={{ padding: '0 8px 12px' }}>
           <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Flow Control</div>

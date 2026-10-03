@@ -486,6 +486,8 @@ export const NODE_PORTS: Record<string, { accepts: string[]; emits: string[]; ma
   // inline (LLM + Condition): same graph positions as flowControl, same port vocabulary.
   inline: { accepts: ['request', 'task', 'signal', 'fc_in', 'fc_out', 'result'],
             emits:   ['fc_out', 'fc_in', 'request', 'task'] },
+  // cycle: a container node — accepts flow in, emits flow out (one exit edge)
+  cycle: { accepts: ['request', 'task', 'signal', 'fc_in', 'fc_out', 'result'], emits: ['fc_out', 'fc_in', 'request', 'task'], maxOutgoing: 1 },
 };
 
 // ── Canvas rules ──────────────────────────────────────────────────────────────

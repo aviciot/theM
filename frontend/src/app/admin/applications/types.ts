@@ -189,7 +189,18 @@ export interface InlineNodeData {
   _debug?: AppFlowNodeDebugInfo;
 }
 
-export type CanvasNodeData = OrchNodeData | AgentNodeData | EpNodeData | FlowControlNodeData | InlineNodeData;
+export interface CycleNodeData {
+  break_when_var?: string;
+  break_when_op?: string;
+  break_when_val?: string;
+  max_iterations?: number;
+  display_name?: string;
+  _error?: boolean;
+  _shake?: boolean;
+  _errorMsg?: string;
+}
+
+export type CanvasNodeData = OrchNodeData | AgentNodeData | EpNodeData | FlowControlNodeData | InlineNodeData | CycleNodeData;
 
 // ── Chain/validation types ───────────────────────────────────────────────────
 export interface ChainStatus {
