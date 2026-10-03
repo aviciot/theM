@@ -44,7 +44,7 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
   // Fetch the rendered HIL prompt from pending-hil when this node is parked.
   useEffect(() => {
     setHilPrompt(null);
-    if (nodeType !== 'hil' || state !== 'running' || !runId || !selectedNode) return;
+    if (nodeType !== 'hil' || (state !== 'running' && state !== 'paused') || !runId || !selectedNode) return;
     let cancelled = false;
     themApi.listPendingHIL().then(rows => {
       if (cancelled) return;
@@ -132,8 +132,8 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
         </div>
       )}
 
-      {/* HIL approve/reject — shown when this is a hil node and it's running (parked) */}
-      {nodeType === 'hil' && state === 'running' && !hilDone && (
+      {/* HIL approve/reject — shown when this is a hil node and it's running or paused (step mode parks it as paused) */}
+      {nodeType === 'hil' && (state === 'running' || state === 'paused') && !hilDone && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 0' }}>
           <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>HUMAN REVIEW</div>
           {hilPrompt ? (
