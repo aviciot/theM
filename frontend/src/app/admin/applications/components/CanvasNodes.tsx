@@ -524,19 +524,14 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ position: 'relative', transform: 'none', top: 'auto', left: 'auto', right: 'auto', bottom: 'auto', background: '#4ade80', border: '2px solid #051424', width: 7, height: 7 }}
         />
       </div>
-      {/* OUT pin — target handle inside frame, receives from exit body node */}
+      {/* OUT pin — cosmetic label only; the outer source handle is the real exit */}
       <div className="nodrag" style={{
         position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
         display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 6px 2px 10px', borderRadius: 10,
+        padding: '2px 10px', borderRadius: 10,
         background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.4)',
+        pointerEvents: 'none',
       }}>
-        <Handle
-          type="target"
-          id="pin-out"
-          position={Position.Top}
-          style={{ position: 'relative', transform: 'none', top: 'auto', left: 'auto', right: 'auto', bottom: 'auto', background: '#60a5fa', border: '2px solid #051424', width: 7, height: 7 }}
-        />
         <span style={{ fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8 }}>OUT ▶</span>
       </div>
       {/* Outer handles — connect cycle to external nodes */}

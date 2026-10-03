@@ -231,7 +231,6 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
           break_when_val: d.break_when_val ?? '',
           max_iterations: d.max_iterations ?? 10,
           ...(d.entry_node_id ? { entry_node_id: d.entry_node_id } : {}),
-          ...(d.exit_node_id  ? { exit_node_id:  d.exit_node_id  } : {}),
         },
       });
     } else if (n.type === 'entryPoint') {
@@ -283,37 +282,25 @@ export function docToCanvas(
       flowCtrlNodeTypeById.set(c.instance_id, (c.config.node_type as string) ?? c.definition_ref.name);
     }
   });
-  // Pre-compute entry/exit node IDs for each cycle from connections.
-  // entry = child that the cycle frame connects TO (cycle → child edge in connections)
-  // exit  = child with no outgoing connection to another child of the same cycle
+  // Pre-compute entry node ID for each cycle.
+  // Source of truth (in priority order):
+  //  1. entry_node_id stored in the cycle component's config (set by canvasToDoc round-trip)
+  //  2. cycle → child edge in connections (the canonical "entry" marker edge)
   const cycleEntryById = new Map<string, string>(); // cycleId → entryNodeId
-  const cycleExitById  = new Map<string, string>(); // cycleId → exitNodeId
   const parentByCycleChild = new Map<string, string>(); // childId → cycleId
   (doc.components ?? []).forEach(c => {
     if (c.parent_instance_id) parentByCycleChild.set(c.instance_id, c.parent_instance_id);
+    // Seed from stored config first
+    if (c.definition_ref.kind === 'flow_control' && c.definition_ref.name === 'cycle') {
+      const storedEntry = c.config.entry_node_id as string | undefined;
+      if (storedEntry) cycleEntryById.set(c.instance_id, storedEntry);
+    }
   });
   (doc.connections ?? []).forEach(conn => {
-    // cycle → child edge marks the entry
+    // cycle → child edge also marks the entry (overrides stored value if present)
     if (parentByCycleChild.get(conn.target) === conn.source) {
       cycleEntryById.set(conn.source, conn.target);
     }
-  });
-  // exit = child that has no outgoing edge to a sibling child
-  const cycleChildIds = new Map<string, Set<string>>(); // cycleId → Set<childId>
-  parentByCycleChild.forEach((cycleId, childId) => {
-    if (!cycleChildIds.has(cycleId)) cycleChildIds.set(cycleId, new Set());
-    cycleChildIds.get(cycleId)!.add(childId);
-  });
-  cycleChildIds.forEach((children, cycleId) => {
-    const hasOutgoingToSibling = new Set<string>();
-    (doc.connections ?? []).forEach(conn => {
-      if (children.has(conn.source) && children.has(conn.target)) {
-        hasOutgoingToSibling.add(conn.source);
-      }
-    });
-    children.forEach(childId => {
-      if (!hasOutgoingToSibling.has(childId)) cycleExitById.set(cycleId, childId);
-    });
   });
 
   (doc.components ?? []).forEach(c => {
@@ -331,7 +318,6 @@ export function docToCanvas(
           break_when_val: (c.config.break_when_val as string) ?? '',
           max_iterations: (c.config.max_iterations as number) ?? 10,
           entry_node_id: cycleEntryById.get(c.instance_id) ?? (c.config.entry_node_id as string) ?? '',
-          exit_node_id:  cycleExitById.get(c.instance_id)  ?? (c.config.exit_node_id  as string) ?? '',
         } as unknown as Record<string, unknown>,
       });
     } else if (c.definition_ref.kind === 'orchestrator') {
@@ -388,9 +374,8 @@ export function docToCanvas(
     }
   });
 
-  // Emit pin edges: cycle pin-in → entry body node, exit body node → cycle pin-out.
-  // These are derived from entry_node_id / exit_node_id and kept out of the
-  // connections array so export/import doesn't double them.
+  // Emit pin-in edges: cycle pin-in handle → entry body node.
+  // These are synthetic (not stored in connections) — derived from entry_node_id.
   cycleEntryById.forEach((entryId, cycleId) => {
     edges.push({
       id: `e_pin_in_${cycleId}`,
@@ -398,15 +383,6 @@ export function docToCanvas(
       target: entryId,
       type: 'default',
       style: { stroke: '#4ade80', strokeWidth: 1.5, strokeDasharray: '4 3' },
-    });
-  });
-  cycleExitById.forEach((exitId, cycleId) => {
-    edges.push({
-      id: `e_pin_out_${cycleId}`,
-      source: exitId,
-      target: cycleId, targetHandle: 'pin-out',
-      type: 'default',
-      style: { stroke: '#60a5fa', strokeWidth: 1.5, strokeDasharray: '4 3' },
     });
   });
   if (Object.keys(layout).length === 0 && nodes.length > 0) {
