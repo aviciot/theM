@@ -42,6 +42,24 @@ export function validateConnection(
     return `Named data port wiring isn't available yet`;
   }
 
+  // Internal cycle handles: cycle-in (cycle→body entry) and cycle-out (body exit→cycle).
+  // These bypass the standard port-compatibility check.
+  if (sourceHandle === 'cycle-in') {
+    if (sourceType !== 'cycle') return `cycle-in is only valid on a cycle node`;
+    // The target must be a body node nested inside this cycle (parentId === sourceId).
+    // We can't check parentId here (no nodes list), so allow the wiring and rely on
+    // ReactFlow's parent-child containment to prevent cross-cycle mis-wiring.
+    if (edges.some(e => e.source === sourceId && e.sourceHandle === 'cycle-in')) {
+      return `Cycle already has an entry node wired — remove the existing IN connection first`;
+    }
+    return null;
+  }
+  if (targetHandle === 'cycle-out') {
+    if (targetType !== 'cycle') return `cycle-out is only valid on a cycle node`;
+    // Any body node may wire its exit to the cycle-out handle.
+    return null;
+  }
+
   const src = NODE_PORTS[sourceType];
   const tgt = NODE_PORTS[targetType];
   if (!src || !tgt) return `Unknown node type`;

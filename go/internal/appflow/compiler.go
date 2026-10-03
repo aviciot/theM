@@ -531,15 +531,19 @@ func compileCycleBody(cycleNode *AppFlowNode, cycleInstID string, compByID map[s
 		}
 	}
 
-	// Determine entry node: child with no incoming edges from other children.
-	inCount := make(map[string]int, len(childIDs))
-	for _, e := range bodyEdges {
-		inCount[e.Target]++
-	}
-	for _, id := range childIDs {
-		if inCount[id] == 0 {
-			cfg.EntryNodeID = id
-			break
+	// Determine entry node: prefer the explicit entry_node_id stored in canvas
+	// config (set when the user wires the cycle-in handle); fall back to
+	// auto-detection (node with no incoming body edges) for backward compat.
+	if cfg.EntryNodeID == "" || !childSet[cfg.EntryNodeID] {
+		inCount := make(map[string]int, len(childIDs))
+		for _, e := range bodyEdges {
+			inCount[e.Target]++
+		}
+		for _, id := range childIDs {
+			if inCount[id] == 0 {
+				cfg.EntryNodeID = id
+				break
+			}
 		}
 	}
 

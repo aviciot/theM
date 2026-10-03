@@ -509,31 +509,29 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN pin — marks the entry edge of the cycle body */}
-      <div className="nodrag" style={{
-        position: 'absolute', top: 44, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 10px', borderRadius: 10,
-        background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.4)',
-        pointerEvents: 'none',
-      }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8 }}>▶ IN</span>
+      {/* IN internal handle — user wires this to the first body node to declare entry */}
+      <div style={{ position: 'absolute', top: 44, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none', zIndex: 41 }}>
+        <Handle
+          id="cycle-in"
+          type="source"
+          position={Position.Bottom}
+          style={{ position: 'static', transform: 'none', width: 10, height: 10, background: '#4ade80', border: '2px solid #021520', borderRadius: '50%', pointerEvents: 'all', flexShrink: 0, zIndex: 41 }}
+        />
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, userSelect: 'none' }}>IN</span>
       </div>
-      {/* OUT pin — marks the exit edge of the cycle body */}
-      <div className="nodrag" style={{
-        position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 10px', borderRadius: 10,
-        background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.4)',
-        pointerEvents: 'none',
-      }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8 }}>OUT ▶</span>
+      {/* OUT internal handle — user wires from last body node to this to declare exit path */}
+      <div style={{ position: 'absolute', bottom: 26, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none', zIndex: 41 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8, userSelect: 'none' }}>OUT</span>
+        <Handle
+          id="cycle-out"
+          type="target"
+          position={Position.Top}
+          style={{ position: 'static', transform: 'none', width: 10, height: 10, background: '#60a5fa', border: '2px solid #021520', borderRadius: '50%', pointerEvents: 'all', flexShrink: 0, zIndex: 41 }}
+        />
       </div>
-      {/* Target handle: standard size, sits on the top border */}
+      {/* Outer target handle: sits on the top border — for wiring EP/prev-node → cycle */}
       <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 10, height: 10, zIndex: 40 }} />
-      {/* Source handle: larger, protrudes below the frame so child nodes can't
-          block it — ReactFlow parent nodes have z-index issues with handles
-          that sit inside the frame when children are present. */}
+      {/* Outer source handle: protrudes below the frame so child nodes can't block it */}
       <Handle type="source" position={sourcePos} style={{
         background: accent, border: '2px solid #051424',
         width: 14, height: 14,
