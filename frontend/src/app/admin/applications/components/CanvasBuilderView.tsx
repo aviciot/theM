@@ -43,6 +43,7 @@ const APPFLOW_NODE_COMPONENT: Record<string, 'inline' | 'flow_control'> = {
   hil: 'flow_control',
   fork: 'flow_control',
   join: 'flow_control',
+  wait_for_input: 'flow_control',
 };
 
 // Per-kind default config seeded when a node is dropped onto the canvas.
