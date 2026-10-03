@@ -81,18 +81,21 @@
    fully shipped, all 3 phases.
 3. ~~Run ID display trimmed, no copy button~~ — **DONE** (see header above).
 4. ~~Guard Output Ports~~ — **DONE**, all 4 phases (see header above).
-5. **Nothing currently queued.** Both feature threads that were open at the end of the prior
-   session are closed. Good point to pick a new subsystem or ask the user what's next — do not
-   start a new subsystem in the same session per this project's Session Lifecycle rule if this
-   session has already run long (check commit count below).
+5. **Cycle node** — backend and frontend fully committed. End-to-end test (drop Cycle on canvas,
+   add a child node inside the frame, configure break condition, publish app, run it) has NOT
+   been done — do that as a smoke test in the next session before declaring it production-ready.
+   See `docs/CYCLE_NODE_PLAN.md` for Phase 2 (backward edge) and Phase 3 (list iteration) deferred work.
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `30be9e55` (pushed to `origin/main`). Remote is `origin` → `aviciot/theM` on GitHub
+HEAD: `5a21d744` (local, not yet pushed). Remote is `origin` → `aviciot/theM` on GitHub
 (credentials already configured in the remote URL from a prior session).
+
+Recent: `9f132c4f` — Go Cycle node backend (compiler, executor, validator, tests)
+Recent: `5a21d744` — Frontend Cycle node (CycleNode canvas frame, CycleNodePanel, canvasToDoc + docToCanvas, palette)
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
