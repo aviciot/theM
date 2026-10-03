@@ -8,6 +8,7 @@ package admin_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ import (
 // AFD-1: malformed {id} → 400, never reaches the service layer.
 func TestAppFlowDebugHandler_Start_InvalidAppID_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	body, _ := json.Marshal(map[string]any{"entry_point_slug": "chat"})
@@ -38,7 +39,7 @@ func TestAppFlowDebugHandler_Start_InvalidAppID_Returns400(t *testing.T) {
 // AFD-2: missing entry_point_slug → 400.
 func TestAppFlowDebugHandler_Start_MissingEntryPointSlug_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	body, _ := json.Marshal(map[string]any{"user_message": "hi"})
@@ -53,7 +54,7 @@ func TestAppFlowDebugHandler_Start_MissingEntryPointSlug_Returns400(t *testing.T
 // AFD-3: invalid JSON body → 400.
 func TestAppFlowDebugHandler_Start_InvalidJSON_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/start", bytes.NewReader([]byte("{not json")))
@@ -68,7 +69,7 @@ func TestAppFlowDebugHandler_Start_InvalidJSON_Returns400(t *testing.T) {
 func TestAppFlowDebugHandler_Step_InvalidRunID_Returns400(t *testing.T) {
 	db := &fakeDB{}
 	temp := &fakeTemporal{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, temp, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, temp, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/not-a-uuid/step", nil)
@@ -87,7 +88,7 @@ func TestAppFlowDebugHandler_Step_RunNotFound_Returns404(t *testing.T) {
 	runID := "00000000-0000-0000-0000-0000000000c1"
 	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
 	temp := &fakeTemporal{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, temp, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, temp, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/"+runID+"/step", nil)
@@ -104,7 +105,7 @@ func TestAppFlowDebugHandler_Step_RunNotFound_Returns404(t *testing.T) {
 func TestAppFlowDebugHandler_Step_NoTemporalConfigured_Returns503(t *testing.T) {
 	runID := "00000000-0000-0000-0000-0000000000c1"
 	db := &fakeDB{} // GetRun succeeds (queryRowErr nil, fakeRow.Scan returns nil)
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/"+runID+"/step", nil)
@@ -120,7 +121,7 @@ func TestAppFlowDebugHandler_Step_Success_SignalsWorkflow(t *testing.T) {
 	runID := "00000000-0000-0000-0000-0000000000c1"
 	db := &fakeDB{}
 	temp := &fakeTemporal{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, temp, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, temp, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/"+runID+"/step", nil)
@@ -141,7 +142,7 @@ func TestAppFlowDebugHandler_Step_Success_SignalsWorkflow(t *testing.T) {
 // mechanics as the Step route's own AFD-3-equivalent guard.
 func TestAppFlowDebugHandler_Result_InvalidRunID_Returns400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/debug/not-a-uuid/result", nil)
@@ -158,7 +159,7 @@ func TestAppFlowDebugHandler_Result_InvalidRunID_Returns400(t *testing.T) {
 func TestAppFlowDebugHandler_Result_RunNotFound_Returns404(t *testing.T) {
 	runID := "00000000-0000-0000-0000-0000000000c1"
 	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
-	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil)
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
 	r := mountAppRoute(h.AppRoutes)
 
 	req := httptest.NewRequest(http.MethodGet, "/applications/"+testAppID+"/debug/"+runID+"/result", nil)
@@ -166,4 +167,68 @@ func TestAppFlowDebugHandler_Result_RunNotFound_Returns404(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// fakeUserInput is a test double for DebugUserInputSignaler.
+type fakeUserInput struct {
+	signalled bool
+	err       error
+	gotMsg    string
+}
+
+func (f *fakeUserInput) SignalUserInput(_ context.Context, _, _ string, message string) (bool, error) {
+	f.gotMsg = message
+	return f.signalled, f.err
+}
+
+// AFD-10: malformed run_id → 400 before reaching any service.
+func TestAppFlowDebugHandler_Send_InvalidRunID_Returns400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, nil, nil)
+	r := mountAppRoute(h.AppRoutes)
+
+	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/not-a-uuid/send", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// AFD-11: run not waiting (SignalUserInput returns false) → 409.
+func TestAppFlowDebugHandler_Send_NotWaiting_Returns409(t *testing.T) {
+	runID := "00000000-0000-0000-0000-0000000000c2"
+	db := &fakeDB{}
+	ui := &fakeUserInput{signalled: false}
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, ui, nil)
+	r := mountAppRoute(h.AppRoutes)
+
+	body, _ := json.Marshal(map[string]any{"message": "hello"})
+	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/"+runID+"/send", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// AFD-12: happy path — run is waiting, signal delivered, returns 200.
+func TestAppFlowDebugHandler_Send_Success_Returns200(t *testing.T) {
+	runID := "00000000-0000-0000-0000-0000000000c2"
+	db := &fakeDB{}
+	ui := &fakeUserInput{signalled: true}
+	h := admin.NewAppFlowDebugHandler(db, nil, nil, nil, nil, ui, nil)
+	r := mountAppRoute(h.AppRoutes)
+
+	body, _ := json.Marshal(map[string]any{"message": "my reply"})
+	req := httptest.NewRequest(http.MethodPost, "/applications/"+testAppID+"/debug/"+runID+"/send", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "my reply", ui.gotMsg)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["signalled"])
 }

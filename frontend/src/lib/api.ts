@@ -599,6 +599,12 @@ export const themApi = {
   stepAppFlowDebug: (appId: string, runId: string) =>
     api.post<{ run_id: string; status: string }>(`/admin/applications/${appId}/debug/${runId}/step`, {}),
 
+  // Sends a user message to a debug run paused at a wait_for_input node.
+  // The backend reads the pending-wait Redis key to find the node, fires the
+  // Temporal signal, and returns 409 if the run is not currently waiting.
+  sendDebugUserInput: (appId: string, runId: string, message: string) =>
+    api.post<{ run_id: string; signalled: boolean }>(`/admin/applications/${appId}/debug/${runId}/send`, { message }),
+
   // Structured, LLM-readable debug run result: an up-front pass/fail
   // verdict plus every node's status/output/error in execution order —
   // the same underlying them.run_steps data the WS-driven inspector

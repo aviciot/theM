@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -15,13 +16,20 @@ import (
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
+// DebugUserInputSignaler routes a user message to a paused wait_for_input node
+// by checking Redis and firing a Temporal signal — same contract as ws.UserInputSignaler.
+type DebugUserInputSignaler interface {
+	SignalUserInput(ctx context.Context, tenantID, runID, message string) (signalled bool, err error)
+}
+
 // AppFlowDebugHandler handles starting a debug run of an application's draft
 // canvas (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — a new, dedicated route so
 // production run-start traffic (ws/sse) is never touched by debug concerns.
 type AppFlowDebugHandler struct {
-	db       DBQuerier
-	svc      *service.AppFlowDebugService
-	temporal TemporalSignaler
+	db          DBQuerier
+	svc         *service.AppFlowDebugService
+	temporal    TemporalSignaler
+	userInput   DebugUserInputSignaler
 }
 
 // NewAppFlowDebugHandler creates an AppFlowDebugHandler. credStore persists
@@ -31,20 +39,23 @@ type AppFlowDebugHandler struct {
 // (e.g. NewAgentsHandler). temporal sends the debug Step signal
 // (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — same TemporalSignaler
 // HILApprovalsHandler already uses; nil disables the Step route only (Start
-// still works, since Run-All debug sessions never need a signal). reg is the
-// same RegistryResolver NewDefinitionsHandlerWithRegistry uses — passing nil
-// means an unpublished draft with agent nodes still fails with
-// unresolved_agent (pre-existing behavior); passing a real resolver lets
-// Start resolve agent nodes live, without requiring a publish first.
-func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte, temporal TemporalSignaler, reg service.RegistryResolver) *AppFlowDebugHandler {
-	return &AppFlowDebugHandler{db: db, svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey, reg), temporal: temporal}
+// still works, since Run-All debug sessions never need a signal). userInput
+// sends a Temporal signal to a paused wait_for_input node; nil disables the
+// Send route only. reg is the same RegistryResolver
+// NewDefinitionsHandlerWithRegistry uses — passing nil means an unpublished
+// draft with agent nodes still fails with unresolved_agent (pre-existing
+// behavior); passing a real resolver lets Start resolve agent nodes live,
+// without requiring a publish first.
+func NewAppFlowDebugHandler(db DBQuerier, lc service.AppFlowDebugStarter, credStore service.AppFlowDebugCredentialStore, fernetKey []byte, temporal TemporalSignaler, userInput DebugUserInputSignaler, reg service.RegistryResolver) *AppFlowDebugHandler {
+	return &AppFlowDebugHandler{db: db, svc: service.NewAppFlowDebugService(dal.NewDB(db), lc, credStore, fernetKey, reg), temporal: temporal, userInput: userInput}
 }
 
-// AppRoutes mounts the debug-start, debug-step, and debug-result routes.
+// AppRoutes mounts the debug-start, debug-step, debug-send, and debug-result routes.
 // Must be registered under a RequireTenantAdmin group with {id} = application UUID.
 func (h *AppFlowDebugHandler) AppRoutes(r chi.Router) {
 	r.Post("/debug/start", h.Start)
 	r.Post("/debug/{run_id}/step", h.Step)
+	r.Post("/debug/{run_id}/send", h.Send)
 	r.Get("/debug/{run_id}/result", h.Result)
 }
 
@@ -176,6 +187,55 @@ func (h *AppFlowDebugHandler) Step(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "status": "stepped"})
+}
+
+// Send handles POST /admin/applications/{id}/debug/{run_id}/send — delivers a
+// user message to a debug run paused at a wait_for_input node. Reads the
+// pending-wait Redis key (set by PendingWaitSetActivity) to find the node ID,
+// then fires the appflow_user_input:{nodeID} Temporal signal. Returns 409 when
+// the run is not currently waiting (no-op); returns 200 with signalled=true
+// when the signal was delivered.
+func (h *AppFlowDebugHandler) Send(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	if _, err := uuid.Parse(runID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid run id")
+		return
+	}
+
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	d := dal.NewDB(h.db)
+	if _, err := d.GetRun(r.Context(), tenantID, runID); err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusNotFound, "run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if h.userInput == nil {
+		writeError(w, http.StatusServiceUnavailable, "user input signaling not configured")
+		return
+	}
+
+	signalled, err := h.userInput.SignalUserInput(r.Context(), tenantID, runID, body.Message)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signal error")
+		return
+	}
+	if !signalled {
+		writeError(w, http.StatusConflict, "run is not currently waiting for user input")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "signalled": true})
 }
 
 // Result handles GET /admin/applications/{id}/debug/{run_id}/result — a

@@ -27,12 +27,16 @@ const stateLabel: Record<AppFlowNodeDebugInfo['state'], string> = {
   idle: 'Idle', pending: 'Pending', running: 'Running…', paused: 'Paused — waiting for Step', done: 'Done', error: 'Error',
 };
 
-export function AppFlowDebugInspector({ selectedNode, runId }: { selectedNode: Node | null; runId: string | null }) {
+export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: string; selectedNode: Node | null; runId: string | null }) {
   const debugInfo = (selectedNode?.data as { _debug?: AppFlowNodeDebugInfo } | undefined)?._debug;
   const [hilComment, setHilComment] = useState('');
   const [hilBusy, setHilBusy] = useState(false);
   const [hilDone, setHilDone] = useState<string | null>(null);
   const [hilPrompt, setHilPrompt] = useState<string | null>(null);
+  const [wfiMessage, setWfiMessage] = useState('');
+  const [wfiBusy, setWfiBusy] = useState(false);
+  const [wfiDone, setWfiDone] = useState(false);
+  const [wfiError, setWfiError] = useState<string | null>(null);
 
   const nodeType = (selectedNode?.data as { node_type?: string })?.node_type ?? selectedNode?.type ?? '';
   const state = debugInfo?.state ?? 'idle';
@@ -49,6 +53,20 @@ export function AppFlowDebugInspector({ selectedNode, runId }: { selectedNode: N
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [nodeType, state, runId, selectedNode?.id]);
+
+  async function sendWFI() {
+    if (!runId || !selectedNode || wfiBusy || !wfiMessage.trim()) return;
+    setWfiBusy(true);
+    setWfiError(null);
+    try {
+      await themApi.sendDebugUserInput(appId, runId, wfiMessage.trim());
+      setWfiDone(true);
+      setWfiMessage('');
+    } catch (e) {
+      setWfiError(e instanceof Error ? e.message : 'Failed to send message');
+    }
+    setWfiBusy(false);
+  }
 
   async function sendHIL(approve: boolean) {
     if (!runId || !selectedNode || hilBusy) return;
@@ -84,6 +102,35 @@ export function AppFlowDebugInspector({ selectedNode, runId }: { selectedNode: N
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: stateColor[state], flexShrink: 0 }} />
         <span style={{ color: stateColor[state], fontWeight: 700 }}>{stateLabel[state]}</span>
       </div>
+
+      {/* Wait-for-Input — shown when this is a wait_for_input node and it's running (parked) */}
+      {nodeType === 'wait_for_input' && state === 'running' && !wfiDone && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 0' }}>
+          <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>SEND MESSAGE</div>
+          <div style={{ fontSize: '11px', color: C.textMuted }}>This run is paused, waiting for your reply.</div>
+          <textarea
+            value={wfiMessage}
+            onChange={e => setWfiMessage(e.target.value)}
+            placeholder="Type your message…"
+            rows={3}
+            style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.25)', color: C.text, fontSize: 11, resize: 'vertical', outline: 'none' }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendWFI(); } }}
+          />
+          {wfiError && <div style={{ color: '#f87171', fontSize: '11px' }}>✗ {wfiError}</div>}
+          <button
+            disabled={wfiBusy || !wfiMessage.trim()}
+            onClick={() => void sendWFI()}
+            style={{ padding: '7px 0', borderRadius: 6, border: 'none', background: '#4ade80', color: '#021520', fontWeight: 700, fontSize: 12, cursor: wfiBusy || !wfiMessage.trim() ? 'not-allowed' : 'pointer', opacity: wfiBusy || !wfiMessage.trim() ? 0.6 : 1 }}
+          >
+            {wfiBusy ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      )}
+      {nodeType === 'wait_for_input' && wfiDone && (
+        <div style={{ padding: '8px 10px', borderRadius: 6, background: 'rgba(74,222,128,0.12)', color: '#4ade80', fontSize: 12, fontWeight: 700 }}>
+          ✓ Message sent — run will continue
+        </div>
+      )}
 
       {/* HIL approve/reject — shown when this is a hil node and it's running (parked) */}
       {nodeType === 'hil' && state === 'running' && !hilDone && (

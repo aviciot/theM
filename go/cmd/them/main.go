@@ -466,7 +466,11 @@ func run() error {
 	adminHITLStore := agentgen.NewHITLStore(adminHITLRedis)
 	adminIDPKey, _ := idpcrypto.ParseKey(cfg.IDPEncryptionKey) // validated at startup; err is nil here
 	logoDir := getEnvDefault("TENANT_LOGO_DIR", "/app/data/tenants")
-	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey, logoDir, execLifecycle)
+	var adminUserInputSig admin.DebugUserInputSignaler
+	if temporalCli != nil {
+		adminUserInputSig = cache.NewUserInputSignaler(redisCache.Client(), temporalCli)
+	}
+	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler, adminIDPKey, logoDir, execLifecycle, adminUserInputSig)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

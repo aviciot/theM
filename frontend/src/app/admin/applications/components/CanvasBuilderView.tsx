@@ -666,7 +666,7 @@ export function CanvasBuilderView({
               {appFlowDebug.debug.active ? 'Debug Inspector' : 'Properties'}
             </div>
             {appFlowDebug.debug.active ? (
-              <AppFlowDebugInspector selectedNode={selectedNode} runId={appFlowDebug.debug.runId} />
+              <AppFlowDebugInspector appId={app.id} selectedNode={selectedNode} runId={appFlowDebug.debug.runId} />
             ) : (
               <CanvasNodePropertiesPanel
                 appId={app.id}
