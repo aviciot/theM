@@ -79,7 +79,11 @@ export function agentIconForLibrary(a: { slug?: string; icon?: string | null }):
 }
 
 // ── Dagre auto-layout ─────────────────────────────────────────────────────────
-const CYCLE_PADDING = 48; // px inside cycle frame around child nodes
+// Cycle frame internal layout constants — must stay in sync with CycleNode pin positions.
+const CYCLE_HEADER_H  = 44;  // px: cycle frame header (title + break inputs)
+const CYCLE_PIN_H     = 28;  // px: IN / OUT pin label height
+const CYCLE_SIDE_PAD  = 48;  // px: left/right padding inside frame
+const CYCLE_INNER_SEP = 20;  // px: gap between pin label and first/last body node
 
 export function applyDagreLayout(nodes: Node[], edges: Edge[], dir: 'TB' | 'LR' = 'TB'): Node[] {
   const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
@@ -101,6 +105,11 @@ export function applyDagreLayout(nodes: Node[], edges: Edge[], dir: 'TB' | 'LR' 
   }
 
   // 2. Layout each cycle body with dagre (TB always) and compute frame size.
+  // Children are offset downward by CYCLE_HEADER_H + CYCLE_PIN_H + CYCLE_INNER_SEP
+  // so they sit below the IN pin, and the OUT pin sits below the last child.
+  const topOffset = CYCLE_HEADER_H + CYCLE_PIN_H + CYCLE_INNER_SEP;
+  const bottomReserve = CYCLE_PIN_H + CYCLE_INNER_SEP;
+
   const cycleFrameSizes = new Map<string, { width: number; height: number }>();
   const laidOutChildren: Node[] = [];
 
@@ -110,17 +119,17 @@ export function applyDagreLayout(nodes: Node[], edges: Edge[], dir: 'TB' | 'LR' 
     );
     const bg = new dagre.graphlib.Graph();
     bg.setDefaultEdgeLabel(() => ({}));
-    bg.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: CYCLE_PADDING, marginy: CYCLE_PADDING });
+    bg.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: CYCLE_SIDE_PAD, marginy: CYCLE_INNER_SEP });
     children.forEach(c => bg.setNode(c.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
     childEdges.forEach(e => bg.setEdge(e.source, e.target));
     dagre.layout(bg);
 
-    // Compute bounding box of positioned children.
+    // Shift children down so they start below the IN pin.
     let maxX = 0, maxY = 0;
     const positioned = children.map(c => {
       const pos = bg.node(c.id);
       const x = pos.x - NODE_WIDTH / 2;
-      const y = pos.y - NODE_HEIGHT / 2;
+      const y = pos.y - NODE_HEIGHT / 2 + topOffset;
       maxX = Math.max(maxX, x + NODE_WIDTH);
       maxY = Math.max(maxY, y + NODE_HEIGHT);
       return { ...c, position: { x, y }, sourcePosition: sourcePos, targetPosition: targetPos };
@@ -128,8 +137,8 @@ export function applyDagreLayout(nodes: Node[], edges: Edge[], dir: 'TB' | 'LR' 
     laidOutChildren.push(...positioned);
 
     cycleFrameSizes.set(cycleId, {
-      width:  maxX + CYCLE_PADDING,
-      height: maxY + CYCLE_PADDING,
+      width:  maxX + CYCLE_SIDE_PAD,
+      height: maxY + bottomReserve,
     });
   }
 
