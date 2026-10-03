@@ -509,27 +509,43 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN internal handle — top-left corner, protrudes above-left.
-          User drags FROM this dot TO the first body node. */}
+      {/* IN internal handle — always on the axis NOT used by outer handles.
+          TB: outer=Top/Bottom → IN on Left. LR: outer=Left/Right → IN on Top. */}
       <Handle
         id="cycle-in"
         type="source"
-        position={Position.Left}
-        style={{ background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, top: 48, left: -6, zIndex: 41 }}
+        position={dir === 'LR' ? Position.Top : Position.Left}
+        style={{
+          background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, zIndex: 41,
+          ...(dir === 'LR' ? { top: -6, left: 24 } : { top: 48, left: -6 }),
+        }}
       />
-      <div style={{ position: 'absolute', top: 42, left: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.35)', pointerEvents: 'none' }}>
+      <div style={{
+        position: 'absolute', display: 'flex', alignItems: 'center', gap: 4,
+        padding: '2px 7px', borderRadius: 8,
+        background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.35)', pointerEvents: 'none',
+        ...(dir === 'LR' ? { top: 8, left: 18 } : { top: 42, left: 12 }),
+      }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, userSelect: 'none' }}>▶ IN</span>
       </div>
 
-      {/* OUT internal handle — bottom-right corner, protrudes right.
-          Body node drags TO this dot to declare the cycle exit. */}
+      {/* OUT internal handle — opposite corner from IN.
+          TB: OUT on Right. LR: OUT on Bottom. */}
       <Handle
         id="cycle-out"
         type="target"
-        position={Position.Right}
-        style={{ background: '#fb923c', border: '2px solid #021520', width: 12, height: 12, bottom: 16, right: -6, zIndex: 41 }}
+        position={dir === 'LR' ? Position.Bottom : Position.Right}
+        style={{
+          background: '#fb923c', border: '2px solid #021520', width: 12, height: 12, zIndex: 41,
+          ...(dir === 'LR' ? { bottom: -6, right: 24 } : { bottom: 16, right: -6 }),
+        }}
       />
-      <div style={{ position: 'absolute', bottom: 10, right: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.35)', pointerEvents: 'none' }}>
+      <div style={{
+        position: 'absolute', display: 'flex', alignItems: 'center', gap: 4,
+        padding: '2px 7px', borderRadius: 8,
+        background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.35)', pointerEvents: 'none',
+        ...(dir === 'LR' ? { bottom: 8, right: 18 } : { bottom: 10, right: 12 }),
+      }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#fb923c', letterSpacing: 0.8, userSelect: 'none' }}>OUT ▶</span>
       </div>
 
