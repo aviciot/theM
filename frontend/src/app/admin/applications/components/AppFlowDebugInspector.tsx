@@ -41,6 +41,14 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
   const nodeType = (selectedNode?.data as { node_type?: string })?.node_type ?? selectedNode?.type ?? '';
   const state = debugInfo?.state ?? 'idle';
 
+  // Reset wfiDone when the node comes back to running (cycle looped back to wait_for_input).
+  useEffect(() => {
+    if (nodeType === 'wait_for_input' && state === 'running') {
+      setWfiDone(false);
+      setWfiMessage('');
+    }
+  }, [nodeType, state]);
+
   // Fetch the rendered HIL prompt from pending-hil when this node is parked.
   useEffect(() => {
     setHilPrompt(null);
