@@ -509,26 +509,26 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN internal handle — sits on the left side of the header, clearly separate
-          from the outer top/bottom handles. User drags FROM this TO a body node. */}
+      {/* IN handle — protrudes left, same pattern as the working bottom source handle.
+          User drags FROM this TO the first body node to declare cycle entry. */}
       <Handle
         id="cycle-in"
         type="source"
-        position={Position.Right}
-        style={{ top: 52, right: -6, width: 11, height: 11, background: '#4ade80', border: '2px solid #021520', borderRadius: '50%', zIndex: 41 }}
+        position={Position.Left}
+        style={{ background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, top: 52, left: -6, zIndex: 41 }}
       />
-      <span style={{ position: 'absolute', top: 47, right: 8, fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, userSelect: 'none', pointerEvents: 'none' }}>IN</span>
-      {/* OUT internal handle — body node drags TO this. Left side, lower in the frame. */}
+      <span style={{ position: 'absolute', top: 46, left: 10, fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, pointerEvents: 'none', userSelect: 'none' }}>IN ▶</span>
+      {/* OUT handle — body node drags TO this to declare cycle exit. Same protrude pattern. */}
       <Handle
         id="cycle-out"
         type="target"
-        position={Position.Right}
-        style={{ top: 72, right: -6, width: 11, height: 11, background: '#60a5fa', border: '2px solid #021520', borderRadius: '50%', zIndex: 41 }}
+        position={Position.Left}
+        style={{ background: '#60a5fa', border: '2px solid #021520', width: 12, height: 12, top: 76, left: -6, zIndex: 41 }}
       />
-      <span style={{ position: 'absolute', top: 67, right: 8, fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8, userSelect: 'none', pointerEvents: 'none' }}>OUT</span>
-      {/* Outer target handle: sits on the top border — for wiring EP/prev-node → cycle */}
+      <span style={{ position: 'absolute', top: 70, left: 10, fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: 0.8, pointerEvents: 'none', userSelect: 'none' }}>OUT ▶</span>
+      {/* Outer target handle: sits on the top border — EP/prev-node → cycle */}
       <Handle type="target" position={targetPos} style={{ background: accent, border: '2px solid #051424', width: 10, height: 10, zIndex: 40 }} />
-      {/* Outer source handle: protrudes below the frame so child nodes can't block it */}
+      {/* Outer source handle: protrudes below the frame — cycle → next node */}
       <Handle type="source" position={sourcePos} style={{
         background: accent, border: '2px solid #051424',
         width: 14, height: 14,

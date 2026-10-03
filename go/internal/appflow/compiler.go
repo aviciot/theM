@@ -531,9 +531,9 @@ func compileCycleBody(cycleNode *AppFlowNode, cycleInstID string, compByID map[s
 		}
 	}
 
-	// Determine entry node: prefer the explicit entry_node_id stored in canvas
-	// config (set when the user wires the cycle-in handle); fall back to
-	// auto-detection (node with no incoming body edges) for backward compat.
+	// Determine entry node: prefer the explicit entry_node_id stored by the canvas
+	// (set when user wires the cycle-in handle); fall back to auto-detect for
+	// apps saved before the IN handle existed.
 	if cfg.EntryNodeID == "" || !childSet[cfg.EntryNodeID] {
 		inCount := make(map[string]int, len(childIDs))
 		for _, e := range bodyEdges {

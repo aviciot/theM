@@ -222,8 +222,6 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
       components.push({ instance_id: n.id, definition_ref: { kind: 'inline', namespace: 'builtin', name: d.node_type, version: 1 }, config: { ...d.config, node_type: d.node_type, display_name: d.display_name }, ...(parentId ? { parent_instance_id: parentId } : {}) });
     } else if (n.type === 'cycle') {
       const d = n.data as unknown as CycleNodeData;
-      // entry_node_id is declared by the user wiring the internal cycle-in handle
-      // to the first body node — collect that from edges, not from data.
       const entryEdge = edges.find(e => e.source === n.id && e.sourceHandle === 'cycle-in');
       components.push({
         instance_id: n.id,
@@ -242,8 +240,6 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
     }
   });
   edges.forEach(e => {
-    // Internal cycle-in/cycle-out wiring edges are stored in the cycle's
-    // component config (entry_node_id), not as connections.
     if (e.sourceHandle === 'cycle-in' || e.targetHandle === 'cycle-out') return;
     const srcType = nodeTypeById.get(e.source);
     const tgtType = nodeTypeById.get(e.target);
@@ -303,11 +299,9 @@ export function docToCanvas(
           max_iterations: (c.config.max_iterations as number) ?? 10,
         } as unknown as Record<string, unknown>,
       });
-      // Synthesize the internal cycle-in edge so the user can see which body
-      // node is wired as the entry point.
       const entryNodeId = c.config.entry_node_id as string | undefined;
       if (entryNodeId) {
-        edges.push({ id: `e_cycle_in_${c.instance_id}_${entryNodeId}`, source: c.instance_id, target: entryNodeId, sourceHandle: 'cycle-in', type: 'default' });
+        edges.push({ id: `e_cyclein_${c.instance_id}_${entryNodeId}`, source: c.instance_id, target: entryNodeId, sourceHandle: 'cycle-in', type: 'default' });
       }
     } else if (c.definition_ref.kind === 'orchestrator') {
       nodes.push({ id: c.instance_id, type: 'orchestrator', position: pos, ...parentProps, data: { _kind: 'orchestrator', instance_id: c.instance_id, display_name: (c.config.display_name as string) ?? cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
