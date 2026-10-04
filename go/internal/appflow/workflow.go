@@ -998,6 +998,17 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			var cycleErr error
 			accumulated, vars, cycleErr = execCycleNode(ctx, node, input, accumulated, vars, ao, shortAO, tick, mainLastSeenGen)
 			if cycleErr != nil {
+				// If a HIL inside the cycle was rejected with no body-level rejected
+				// edge, follow the cycle node's own outer "rejected" edge if wired.
+				if _, isRej := cycleErr.(cycleHILRejectedError); isRej {
+					if rejID := findEdgeByLabel(outEdgesBySource[node.ID], "rejected"); rejID != "" {
+						currentID = rejID
+						continue
+					}
+					// No outer rejected edge — end the run as rejected.
+					out = AppFlowWorkflowOutput{Status: "rejected", FinalText: cycleErr.Error()}
+					return
+				}
 				out.Status = "failed"
 				retErr = cycleErr
 				return

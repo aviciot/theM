@@ -8,6 +8,16 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+// cycleHILRejectedError is returned by execCycleNode when a HIL node inside the
+// cycle body was rejected and has no body-level "rejected" edge to follow.
+// The outer workflow checks for this type to follow the cycle node's own outer
+// "rejected" edge rather than failing the run.
+type cycleHILRejectedError struct{ comment string }
+
+func (e cycleHILRejectedError) Error() string {
+	return "hil rejected: " + e.comment
+}
+
 // evalBreakCondition reports whether the loop should exit given the current vars.
 // op: "eq" (default when blank), "neq", "truthy"
 func evalBreakCondition(vars FlowVars, varName, op, wantVal string) bool {
@@ -64,6 +74,11 @@ func execCycleNode(
 		var bodyErr error
 		accumulated, vars, bodyErr = walkCycleBody(ctx, cfg.EntryNodeID, bodyNodeByID, bodyEdgesBySource, input, accumulated, vars, ao, shortAO, tick, seedGen)
 		if bodyErr != nil {
+			// Propagate HIL-rejected sentinel as-is so the outer workflow can
+			// follow the cycle node's own "rejected" edge.
+			if _, isRej := bodyErr.(cycleHILRejectedError); isRej {
+				return accumulated, vars, bodyErr
+			}
 			return accumulated, vars, fmt.Errorf("cycle %q iteration %d: %w", node.ID, i+1, bodyErr)
 		}
 		if evalBreakCondition(vars, cfg.BreakWhenVar, cfg.BreakWhenOp, cfg.BreakWhenVal) {
@@ -196,6 +211,32 @@ func walkCycleBody(
 				return accumulated, vars, fmt.Errorf("cycle body wait_for_input %q: %w", node.ID, waitErr)
 			}
 			curID = firstEdgeTarget(outEdges[node.ID])
+
+		case "hil":
+			approved, comment, hErr := execHILNode(ctx, node, input, shortAO, vars)
+			if hErr != nil {
+				return accumulated, vars, fmt.Errorf("cycle body hil %q: %w", node.ID, hErr)
+			}
+			vars["hil_comment"] = comment
+			vars[node.ID+"_comment"] = comment
+			decision := "rejected"
+			if approved {
+				decision = "approved"
+			}
+			vars["hil_decision"] = decision
+			vars[node.ID+"_decision"] = decision
+			if !approved {
+				// Follow "rejected" edge if wired, otherwise exit cycle early.
+				if rejID := findEdgeByLabel(outEdges[node.ID], "rejected"); rejID != "" {
+					curID = rejID
+				} else {
+					// No rejection branch inside the cycle body — bubble up so the
+					// outer workflow can follow the cycle node's own "rejected" edge.
+					return accumulated, vars, cycleHILRejectedError{comment: comment}
+				}
+			} else {
+				curID = firstEdgeTarget(outEdges[node.ID])
+			}
 
 		case "orchestrator", "middleware":
 			curID = firstEdgeTarget(outEdges[node.ID])
