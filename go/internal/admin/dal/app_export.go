@@ -198,10 +198,17 @@ func (d *DB) exportScopedConfig(ctx context.Context, sourceAppID string) (Export
 // time in ImportApplication, against whichever tenant is doing the import.
 func (d *DB) exportAgents(ctx context.Context, sourceAppID string) ([]ExportedAgent, error) {
 	const agentIDsQ = `
-SELECT DISTINCT unnest(ao.allowed_agent_ids)::text
-FROM them.app_orchestrators ao
-WHERE ao.application_id = $1::uuid
-  AND ao.allowed_agent_ids IS NOT NULL`
+SELECT DISTINCT agent_id::text FROM (
+    SELECT unnest(ao.allowed_agent_ids) AS agent_id
+    FROM them.app_orchestrators ao
+    WHERE ao.application_id = $1::uuid
+      AND ao.allowed_agent_ids IS NOT NULL
+    UNION
+    SELECT b.agent_id
+    FROM them.app_agent_bindings b
+    WHERE b.application_id = $1::uuid
+      AND b.agent_id IS NOT NULL
+) ids`
 
 	rows, err := d.q.Query(ctx, agentIDsQ, sourceAppID)
 	if err != nil {
@@ -649,7 +656,7 @@ ON CONFLICT (tenant_id, slug) DO NOTHING`
 	const insertAgentDefQ = `
 INSERT INTO them.agent_definitions (id, tenant_id, agent_slug, revision, definition, definition_hash, status, created_at, updated_at, owner_id)
 VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, $6, $7, now(), now(), NULL)
-ON CONFLICT (tenant_id, agent_slug) DO NOTHING`
+ON CONFLICT (tenant_id, agent_slug, revision) DO NOTHING`
 	const insertSpecQ = `
 INSERT INTO them.agent_runtime_specs (id, tenant_id, definition_id, agent_id, spec, spec_hash, deployed_at)
 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $2::uuid, $3::jsonb, $4, now())

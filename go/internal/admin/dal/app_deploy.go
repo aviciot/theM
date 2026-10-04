@@ -33,11 +33,21 @@ type CopyAgentsForDeployResult struct {
 // Returns IDMap (old UUID → new/existing UUID), CopiedSlugs, ReusedSlugs, and
 // ConflictSlugs (reused agents whose content_hash differs from the source).
 func (d *DB) CopyAgentsForDeploy(ctx context.Context, sourceAppID, targetTenantID string) (CopyAgentsForDeployResult, error) {
+	// Union app_orchestrators.allowed_agent_ids with app_agent_bindings.agent_id
+	// so agents bound only via the bindings table (AppFlow apps with no delegating
+	// orchestrator) are also copied into the target tenant.
 	const agentIDsQ = `
-SELECT DISTINCT unnest(ao.allowed_agent_ids)::text
-FROM them.app_orchestrators ao
-WHERE ao.application_id = $1::uuid
-  AND ao.allowed_agent_ids IS NOT NULL`
+SELECT DISTINCT agent_id::text FROM (
+    SELECT unnest(ao.allowed_agent_ids) AS agent_id
+    FROM them.app_orchestrators ao
+    WHERE ao.application_id = $1::uuid
+      AND ao.allowed_agent_ids IS NOT NULL
+    UNION
+    SELECT b.agent_id
+    FROM them.app_agent_bindings b
+    WHERE b.application_id = $1::uuid
+      AND b.agent_id IS NOT NULL
+) ids`
 
 	rows, err := d.q.Query(ctx, agentIDsQ, sourceAppID)
 	if err != nil {
@@ -160,7 +170,7 @@ INSERT INTO them.agent_definitions
 SELECT $2::uuid, $1::uuid, agent_slug, revision, definition, definition_hash, status, now(), now(), NULL
 FROM them.agent_definitions
 WHERE id = $3::uuid
-ON CONFLICT (tenant_id, agent_slug) DO NOTHING`
+ON CONFLICT (tenant_id, agent_slug, revision) DO NOTHING`
 
 	// srcSpecExistsQ checks that the source agent_runtime_specs row exists.
 	const srcSpecExistsQ = `SELECT EXISTS(SELECT 1 FROM them.agent_runtime_specs WHERE agent_id = $1::uuid)`
