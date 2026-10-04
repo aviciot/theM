@@ -95,6 +95,8 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/runtime", h.PutRuntime)
 		app.Get("/flow-llm-nodes", h.GetAppFlowLLMNodes)
 		app.Put("/flow-llm-nodes/{node_id}", h.PutAppFlowLLMOverride)
+		app.Get("/flow-http-nodes", h.GetAppFlowHTTPNodes)
+		app.Put("/flow-http-nodes/{node_id}/{param_key}", h.PutAppFlowHTTPParam)
 		app.Get("/provider-keys", h.GetProviderKeys)
 		app.Put("/provider-keys/{provider}", h.SetProviderKey)
 		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
@@ -538,6 +540,76 @@ func (h *ApplicationsHandler) PutAppFlowLLMOverride(w http.ResponseWriter, r *ht
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"node_id": nodeID, "updated": true})
+}
+
+// GetAppFlowHTTPNodes handles GET /api/v1/admin/applications/{id}/flow-http-nodes.
+// Returns HTTP nodes from the active definition with credential set-status (never plaintext values).
+func (h *ApplicationsHandler) GetAppFlowHTTPNodes(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	nodes, err := svc.GetAppFlowHTTPNodes(r.Context(), id)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get app flow http nodes")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, nodes)
+}
+
+// PutAppFlowHTTPParam handles PUT /api/v1/admin/applications/{id}/flow-http-nodes/{node_id}/{param_key}.
+// Body: {"value":"<plaintext>","inject_mode":"header","inject_header_name":""}
+func (h *ApplicationsHandler) PutAppFlowHTTPParam(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	nodeID := chi.URLParam(r, "node_id")
+	paramKey := chi.URLParam(r, "param_key")
+	if id == "" || nodeID == "" || paramKey == "" {
+		writeError(w, http.StatusBadRequest, "invalid application, node, or param key")
+		return
+	}
+	var body struct {
+		Value            string `json:"value"`
+		InjectMode       string `json:"inject_mode"`
+		InjectHeaderName string `json:"inject_header_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.PutAppFlowHTTPParam(r.Context(), id, nodeID, paramKey, body.Value, body.InjectMode, body.InjectHeaderName); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "put app flow http param")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"node_id": nodeID, "param_key": paramKey, "updated": true})
 }
 
 // GetProviderKeys handles GET /api/v1/admin/applications/{id}/provider-keys.

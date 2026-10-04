@@ -697,6 +697,12 @@ func (f *fakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, nodeID, provide
 	f.lastUpsertOverride = dal.AppFlowLLMOverride{NodeID: nodeID, Provider: provider, Model: model}
 	return f.upsertOverrideErr
 }
+func (f *fakeDal) ListAppFlowHTTPParams(_ context.Context, _ string) ([]dal.AppFlowHTTPParam, error) {
+	return nil, nil
+}
+func (f *fakeDal) UpsertAppFlowHTTPParam(_ context.Context, _, _, _, _, _, _ string) error {
+	return nil
+}
 
 // fakeCache implements service.Cache.
 type fakeCache struct {

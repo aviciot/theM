@@ -835,6 +835,21 @@ export interface AppFlowLLMNodeStatus {
   override_model?: string;
 }
 
+export interface AppFlowHTTPParamStatus {
+  param_key: string;
+  is_set: boolean;
+  inject_mode: string;
+  inject_header_name?: string;
+}
+
+export interface AppFlowHTTPNodeStatus {
+  application_id: string;
+  node_id: string;
+  method?: string;
+  url_template?: string;
+  params: AppFlowHTTPParamStatus[];
+}
+
 // ── MCP Store ──────────────────────────────────────────────────────────────
 
 export interface MCPTool {

@@ -32,6 +32,9 @@ type AppFlowSpec struct {
 	// canvas-compiled provider/model. Mirrors agentgen's AgentLLMNodeSpec so the
 	// Runtime screen can show/override provider+model without a re-publish.
 	LLMNodes []AppFlowLLMNodeSpec `json:"llm_nodes,omitempty"`
+	// HTTPNodes lists every HTTP node across all entry points so the Runtime
+	// screen can display and manage their credentials (bearer_token, api_key).
+	HTTPNodes []AppFlowHTTPNodeSpec `json:"http_nodes,omitempty"`
 }
 
 // AppFlowLLMNodeSpec describes one inline LLM node in a compiled app flow.
@@ -39,6 +42,14 @@ type AppFlowLLMNodeSpec struct {
 	NodeID           string `json:"node_id"`
 	CompiledProvider string `json:"compiled_provider"`
 	CompiledModel    string `json:"compiled_model"`
+}
+
+// AppFlowHTTPNodeSpec describes one HTTP node in a compiled app flow.
+// Credentials are not stored here — they live in app_flow_http_params.
+type AppFlowHTTPNodeSpec struct {
+	NodeID      string `json:"node_id"`
+	Method      string `json:"method,omitempty"`
+	URLTemplate string `json:"url_template,omitempty"`
 }
 
 // EPFlow is the compiled flow for one entry point.
@@ -234,6 +245,7 @@ func Compile(raw json.RawMessage, agentByInstanceID map[string]string) (*AppFlow
 		ExecutionBackend: doc.ExecutionBackend,
 		EntryPoints:      epFlows,
 		LLMNodes:         collectLLMNodes(epFlows),
+		HTTPNodes:        collectHTTPNodes(epFlows),
 	}, nil
 }
 
@@ -314,6 +326,29 @@ func collectLLMNodes(epFlows []EPFlow) []AppFlowLLMNodeSpec {
 					CompiledModel:    cfg.Model,
 				})
 			}
+		}
+	}
+	return nodes
+}
+
+// collectHTTPNodes walks all entry points and returns one AppFlowHTTPNodeSpec
+// per HTTP node, recording its node ID, method, and URL template (no credentials).
+func collectHTTPNodes(epFlows []EPFlow) []AppFlowHTTPNodeSpec {
+	var nodes []AppFlowHTTPNodeSpec
+	for _, epf := range epFlows {
+		for _, n := range epf.Nodes {
+			if n.Kind != "http" {
+				continue
+			}
+			var cfg HTTPNodeConfig
+			if len(n.Config) > 0 {
+				_ = json.Unmarshal(n.Config, &cfg)
+			}
+			nodes = append(nodes, AppFlowHTTPNodeSpec{
+				NodeID:      n.ID,
+				Method:      cfg.Method,
+				URLTemplate: cfg.URLTemplate,
+			})
 		}
 	}
 	return nodes

@@ -448,6 +448,12 @@ func (f *agentDefFakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) (
 func (f *agentDefFakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
+func (f *agentDefFakeDal) ListAppFlowHTTPParams(_ context.Context, _ string) ([]dal.AppFlowHTTPParam, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) UpsertAppFlowHTTPParam(_ context.Context, _, _, _, _, _, _ string) error {
+	return nil
+}
 
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 

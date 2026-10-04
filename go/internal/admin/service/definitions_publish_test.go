@@ -513,6 +513,12 @@ func (f *publishFakeDal) ListAppFlowLLMOverrides(_ context.Context, _ string) ([
 func (f *publishFakeDal) UpsertAppFlowLLMOverride(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
+func (f *publishFakeDal) ListAppFlowHTTPParams(_ context.Context, _ string) ([]dal.AppFlowHTTPParam, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) UpsertAppFlowHTTPParam(_ context.Context, _, _, _, _, _, _ string) error {
+	return nil
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

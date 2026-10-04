@@ -1,12 +1,13 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type AppFlowLLMNodeStatus, type AppGuardHealth } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type AppFlowLLMNodeStatus, type AppFlowHTTPNodeStatus, type AppGuardHealth } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, PROVIDER_LIST, CLOUD_PROVIDERS_LIST, LOCAL_PROVIDERS_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
 import { EPSections } from './RuntimeEPSections';
 import { CanvasAgentsSection } from './RuntimeAgentsSection';
 import { RuntimeAppFlowLLMSection } from './RuntimeAppFlowLLMSection';
+import { RuntimeAppFlowHTTPSection } from './RuntimeAppFlowHTTPSection';
 import type { VoiceDraft } from './RuntimeVoicePanel';
 import { RuntimeTemporalTab } from './RuntimeTemporalTab';
 import { RuntimeLogVerbosityTab } from './RuntimeLogVerbosityTab';
@@ -83,6 +84,10 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
   const [flowLLMSaving,    setFlowLLMSaving]    = useState<string | null>(null);
   const [flowLLMMsg,       setFlowLLMMsg]       = useState<Record<string, string>>({});
 
+  const [flowHTTPNodes,    setFlowHTTPNodes]    = useState<AppFlowHTTPNodeStatus[]>([]);
+  const [flowHTTPSaving,   setFlowHTTPSaving]   = useState<string | null>(null);
+  const [flowHTTPMsg,      setFlowHTTPMsg]      = useState<Record<string, string>>({});
+
   const [appParams,       setAppParams]       = useState<AppGlobalParam[]>([]);
   const [newParamName,    setNewParamName]    = useState('');
   const [newParamType,    setNewParamType]    = useState('string');
@@ -155,6 +160,9 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
       (nodes ?? []).forEach(n => { d[n.node_id] = { provider: n.override_provider ?? n.compiled_provider ?? '', model: n.override_model ?? n.compiled_model ?? '' }; });
       setFlowLLMDrafts(d);
     }).catch(() => {});
+  }, [app.id]);
+  useEffect(() => {
+    themApi.getAppFlowHTTPNodes(app.id).then(nodes => setFlowHTTPNodes(nodes ?? [])).catch(() => {});
   }, [app.id]);
 
   const setProviders = [...new Set([...keyStatuses.filter(k => k.key_set).map(k => k.provider), 'mock'])];
@@ -238,6 +246,15 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
     const d = flowLLMDrafts[nodeId]; if (!d?.provider || !d?.model) return; setFlowLLMSaving(nodeId);
     try { await themApi.putAppFlowLLMOverride(app.id, nodeId, d.provider, d.model); setFlowLLMNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, override_provider: d.provider, override_model: d.model } : n)); setFlowLLMMsg(m => ({ ...m, [nodeId]: 'Saved' })); setTimeout(() => setFlowLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500); }
     catch (e: unknown) { setFlowLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' })); } finally { setFlowLLMSaving(null); }
+  }
+  async function handleSaveFlowHTTP(nodeId: string, paramKey: string, value: string, injectMode: string, injectHeaderName: string) {
+    if (!value.trim()) return;
+    const k = `${nodeId}::${paramKey}`; setFlowHTTPSaving(k);
+    try {
+      await themApi.putAppFlowHTTPParam(app.id, nodeId, paramKey, value, injectMode, injectHeaderName);
+      setFlowHTTPNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, params: n.params.map((p: AppFlowHTTPNodeStatus['params'][number]) => p.param_key === paramKey ? { ...p, is_set: true, inject_mode: injectMode, inject_header_name: injectHeaderName || undefined } : p) } : n));
+      setFlowHTTPMsg(m => ({ ...m, [k]: 'Saved' })); setTimeout(() => setFlowHTTPMsg(m => ({ ...m, [k]: '' })), 2500);
+    } catch (e: unknown) { setFlowHTTPMsg(m => ({ ...m, [k]: e instanceof Error ? e.message : 'Failed' })); } finally { setFlowHTTPSaving(null); }
   }
   async function handleSaveAgentParams(agentId: string) {
     const inputs = agentParamInputs[agentId] ?? {}; const nonEmpty = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== '')); if (!Object.keys(nonEmpty).length) return; setAgentParamSaving(agentId);
@@ -356,6 +373,11 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
           nodes={flowLLMNodes} drafts={flowLLMDrafts} setDrafts={setFlowLLMDrafts}
           saving={flowLLMSaving} msg={flowLLMMsg} setProviders={setProviders} saveBtn={saveBtn}
           onSave={handleSaveFlowLLM}
+        />
+
+        <RuntimeAppFlowHTTPSection
+          nodes={flowHTTPNodes} saving={flowHTTPSaving} msg={flowHTTPMsg}
+          saveBtn={saveBtn} onSave={handleSaveFlowHTTP}
         />
 
         <Section title="Session Limits" icon="timer" accent="#f59e0b" defaultOpen={false}>

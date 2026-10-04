@@ -72,6 +72,8 @@ export type {
   AgentParamsResponse,
   AgentLLMNodeStatus,
   AppFlowLLMNodeStatus,
+  AppFlowHTTPNodeStatus,
+  AppFlowHTTPParamStatus,
   MCPTool,
   MCPServer,
   MCPServerPatch,
@@ -177,6 +179,8 @@ import type {
   AgentParamsResponse,
   AgentLLMNodeStatus,
   AppFlowLLMNodeStatus,
+  AppFlowHTTPNodeStatus,
+  AppFlowHTTPParamStatus,
   MCPServer,
   MCPServerPatch,
   MCPServerCreate,
@@ -712,6 +716,12 @@ export const themApi = {
     api.get<AppFlowLLMNodeStatus[]>(`/admin/applications/${appId}/flow-llm-nodes`),
   putAppFlowLLMOverride: (appId: string, nodeId: string, provider: string, model: string) =>
     api.put<{ node_id: string; updated: boolean }>(`/admin/applications/${appId}/flow-llm-nodes/${nodeId}`, { provider, model }),
+
+  // App-canvas HTTP node credential management
+  getAppFlowHTTPNodes: (appId: string) =>
+    api.get<AppFlowHTTPNodeStatus[]>(`/admin/applications/${appId}/flow-http-nodes`),
+  putAppFlowHTTPParam: (appId: string, nodeId: string, paramKey: string, value: string, injectMode?: string, injectHeaderName?: string) =>
+    api.put<{ node_id: string; param_key: string; updated: boolean }>(`/admin/applications/${appId}/flow-http-nodes/${nodeId}/${paramKey}`, { value, inject_mode: injectMode ?? 'header', inject_header_name: injectHeaderName ?? '' }),
 
   // MCP Store — server registry + app credentials
   listMCPServers: () =>

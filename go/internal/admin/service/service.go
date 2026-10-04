@@ -148,6 +148,8 @@ type Dal interface {
 	GetActiveDefinitionJSON(ctx context.Context, applicationID string) ([]byte, error)
 	ListAppFlowLLMOverrides(ctx context.Context, applicationID string) ([]dal.AppFlowLLMOverride, error)
 	UpsertAppFlowLLMOverride(ctx context.Context, applicationID, nodeID, provider, model string) error
+	ListAppFlowHTTPParams(ctx context.Context, applicationID string) ([]dal.AppFlowHTTPParam, error)
+	UpsertAppFlowHTTPParam(ctx context.Context, applicationID, nodeID, paramKey, valueEncrypted, injectMode, injectHeaderName string) error
 
 	// Publish pipeline — Phase C
 	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string, resolvedAgentIDs map[string]string) (dal.PublishResult, error)
