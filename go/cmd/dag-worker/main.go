@@ -41,6 +41,8 @@ import (
 	temporalactivity "go.temporal.io/sdk/activity"
 	temporalworker "go.temporal.io/sdk/worker"
 
+	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/cache"
@@ -236,6 +238,7 @@ func run() error {
 		TextGate:         textGate,
 		FileGateWaiter:   fileGateWaiter,
 		PendingWait:      pendingWait,
+		HTTPParams:       dal.NewDBWithPool(admin.NewPgxQuerier(rlsPools.Admin), rlsPools.Admin),
 	}
 	appFlowTaskQueue := appflow.AppFlowTaskQueue
 	if cfg.AppFlowTaskQueueOverride != "" {
@@ -274,6 +277,9 @@ func run() error {
 	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.PendingWaitSetActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowPendingWaitSetActivityName,
+	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.HTTPActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowHTTPActivityName,
 	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)

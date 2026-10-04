@@ -74,6 +74,7 @@ export function AppFlowDebugPanel({
   const credentialSpecs = runtimeParamSpecs.filter(s => s.type === 'llm_credential');
   const [selectedPresetId, setSelectedPresetId] = useState('');
   const [savingName, setSavingName] = useState('');
+  const [llmOpen, setLlmOpen] = useState(credentialSpecs.length <= 3);
   // At least one node is genuinely paused, waiting for the next Step click —
   // derived from nodeStates rather than a separate tracked field, since
   // "paused" is already an observed backend state (docs/APP_CANVAS_DEBUG_PLAN.md
@@ -307,16 +308,32 @@ export function AppFlowDebugPanel({
       )}
 
       {credentialSpecs.length > 0 && (
-        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {credentialSpecs.map(spec => (
-            <AppFlowLLMCredentialField
-              key={spec.specKey}
-              spec={spec}
-              value={debug.credentials[spec.specKey]}
-              disabled={debug.running}
-              onChange={value => onSetCredential(spec.specKey, value)}
-            />
-          ))}
+        <div style={{ marginTop: 8 }}>
+          <button
+            onClick={() => setLlmOpen(o => !o)}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 5,
+              color: C.textMuted, fontSize: '11px', fontWeight: 700,
+              letterSpacing: '0.06em', padding: '2px 0',
+            }}
+          >
+            <span style={{ fontSize: '10px' }}>{llmOpen ? '▾' : '▸'}</span>
+            LLM CREDENTIALS ({credentialSpecs.length})
+          </button>
+          {llmOpen && (
+            <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {credentialSpecs.map(spec => (
+                <AppFlowLLMCredentialField
+                  key={spec.specKey}
+                  spec={spec}
+                  value={debug.credentials[spec.specKey]}
+                  disabled={debug.running}
+                  onChange={value => onSetCredential(spec.specKey, value)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

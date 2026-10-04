@@ -150,6 +150,32 @@ type WaitForInputConfig struct {
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 
+// HTTPNodeConfig is the configuration stored in an HTTP node's config JSON.
+// Stored inside application_definitions.definition — travels with export/import
+// automatically. Credentials (bearer_token, api_key) are NOT stored here;
+// they live in app_flow_http_params, resolved by the activity at execution time.
+type HTTPNodeConfig struct {
+	// Method is the HTTP method: GET, POST, PUT, PATCH, DELETE.
+	Method string `json:"method,omitempty"`
+	// URLTemplate is a Go template rendered against flow vars, e.g. "https://api.example.com/orders/{{.order_id}}".
+	URLTemplate string `json:"url_template,omitempty"`
+	// Headers are static key→value pairs added to every request.
+	Headers map[string]string `json:"headers,omitempty"`
+	// BodyTemplate is a Go template rendered against flow vars for the request body.
+	BodyTemplate string `json:"body_template,omitempty"`
+	// Extractions maps response JSON paths to flow variable names.
+	// e.g. [{var:"order_status", path:"$.status"}]
+	Extractions []HTTPExtraction `json:"extractions,omitempty"`
+	// TimeoutSeconds: 0 = 30s default, max 300.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+}
+
+// HTTPExtraction defines one JSON-path → flow-variable mapping.
+type HTTPExtraction struct {
+	Var  string `json:"var"`  // flow variable to write the extracted value into
+	Path string `json:"path"` // dot-separated JSON path, e.g. "$.data.id"
+}
+
 // HILConfig is the configuration stored in a HIL node's config JSON.
 type HILConfig struct {
 	// ApproverRole is the minimum RBAC role required to approve. Default: "admin".
@@ -454,6 +480,8 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 			node.Kind = "llm"
 		case "condition":
 			node.Kind = "condition"
+		case "http":
+			node.Kind = "http"
 		default:
 			// Unknown inline name: keep the kind so Validate reports it as
 			// unknown_inline_node rather than the workflow failing at run time.

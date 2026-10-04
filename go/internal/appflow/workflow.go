@@ -61,6 +61,9 @@ const (
 	// AppFlowInlineLLMActivityName is the registered name for the inline LLM node activity.
 	AppFlowInlineLLMActivityName = "AppFlowInlineLLMActivity"
 
+	// AppFlowHTTPActivityName is the registered name for the HTTP node activity.
+	AppFlowHTTPActivityName = "AppFlowHTTPActivity"
+
 	// AppFlowTraceNodeEventActivityName is the registered name for the live
 	// node_start/node_done/node_error trace-publish activity (Phase 2 of
 	// docs/APP_CANVAS_DEBUG_PLAN.md). Used by Condition/Fork/Join, which have
@@ -1036,6 +1039,43 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 
 		case "middleware":
 			// Middleware nodes affect agent calls but are not directly executed here.
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
+		case "http":
+			var cfg HTTPNodeConfig
+			if len(node.Config) > 0 {
+				_ = json.Unmarshal(node.Config, &cfg)
+			}
+			vars["input"] = accumulated
+
+			var httpOut HTTPActivityOutput
+			httpErr := workflow.ExecuteActivity(ctx, AppFlowHTTPActivityName, HTTPActivityInput{
+				RunID:          input.RunID,
+				TenantID:       input.TenantID,
+				ApplicationID:  input.ApplicationID,
+				NodeID:         node.ID,
+				Method:         cfg.Method,
+				URLTemplate:    cfg.URLTemplate,
+				Headers:        cfg.Headers,
+				BodyTemplate:   cfg.BodyTemplate,
+				Extractions:    cfg.Extractions,
+				TimeoutSeconds: cfg.TimeoutSeconds,
+				Vars:           vars,
+				Debug:          input.Debug,
+				Verbosity:      input.LogVerbosity,
+			}).Get(ctx, &httpOut)
+			if httpErr != nil {
+				out.Status = "failed"
+				retErr = fmt.Errorf("http %q: %w", node.ID, httpErr)
+				return
+			}
+			vars["http_status"] = fmt.Sprintf("%d", httpOut.StatusCode)
+			vars["http_response"] = httpOut.ResponseBody
+			for k, v := range httpOut.Extracted {
+				vars[k] = v
+			}
+			accumulated = httpOut.ResponseBody
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 

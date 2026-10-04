@@ -191,6 +191,41 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 		Executable:  true,
 	},
 	{
+		Type:    "http",
+		Version: 1,
+		Meta: nodedefs.Meta{
+			Label:       "HTTP Request",
+			Description: "Call an external REST API and extract values from the JSON response into flow variables.",
+			Emoji:       "🌐",
+			Color:       "#38bdf8",
+			Edges:       nodedefs.EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
+			ConfigFields: []nodedefs.ConfigFieldDoc{
+				{Key: "method", Type: "string", Required: true, Description: "HTTP method: GET, POST, PUT, PATCH, DELETE.", Example: "POST"},
+				{Key: "url_template", Type: "string", Required: true, Description: "Request URL. Supports {{.varname}} interpolation over flow vars.", Example: "https://api.example.com/orders/{{.order_id}}"},
+				{Key: "headers", Type: "object", Required: false, Description: "Static key→value headers added to every request.", Example: `{"Content-Type":"application/json"}`},
+				{Key: "body_template", Type: "string", Required: false, Description: "Request body. Supports {{.varname}} interpolation. Leave empty for GET requests.", Example: `{"amount":{{.amount}}}`},
+				{Key: "extractions", Type: "array", Required: false, Description: "List of {var, path} mappings that extract values from the JSON response into flow variables.", Example: `[{"var":"order_status","path":"$.status"}]`},
+				{Key: "timeout_seconds", Type: "int", Required: false, Description: "Request timeout in seconds. 0 = 30s default, max 300.", Example: "30"},
+			},
+			OutputPorts: []nodedefs.PortDef{
+				{ID: "output", Label: "Output", Required: true, TypeHint: "text"},
+			},
+			UsageNotes: "Credentials (bearer token, API key) are configured in the Runtime screen or Debug panel — never stored in the canvas definition. " +
+				"The full response body is always available as the flow variable http_response. " +
+				"http_status (integer) is also written after every call. " +
+				"Use extractions to pull specific fields: path uses dot notation, e.g. $.data.id.",
+		},
+		OutputArity:          "single",
+		AcceptsDynamicInputs: true,
+		Executable:           true,
+		RuntimeParams: []RuntimeParamDecl{
+			{Key: "bearer_token", Label: "Bearer Token", Type: "secret", Required: false,
+				Description: "Injected as Authorization: Bearer <token>. Leave empty if the API uses an API key instead."},
+			{Key: "api_key", Label: "API Key", Type: "secret", Required: false,
+				Description: "Injected according to inject_mode (header, query, basic, or custom_header)."},
+		},
+	},
+	{
 		Type:    "wait_for_input",
 		Version: 1,
 		Meta: nodedefs.Meta{
@@ -211,9 +246,9 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 	},
 }
 
-// AllAppCanvasNodeInfos returns the public API representation of the 6
-// app-canvas node kinds (llm, condition, router, hil, fork, join). Returns a
-// fresh slice copy so callers cannot mutate the shared static registry.
+// AllAppCanvasNodeInfos returns the public API representation of all
+// app-canvas node kinds. Returns a fresh slice copy so callers cannot mutate
+// the shared static registry.
 func AllAppCanvasNodeInfos() []AppCanvasNodeInfo {
 	out := make([]AppCanvasNodeInfo, len(appCanvasNodeRegistry))
 	copy(out, appCanvasNodeRegistry)

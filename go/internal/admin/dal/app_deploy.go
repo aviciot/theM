@@ -586,6 +586,23 @@ SELECT to_jsonb(t) FROM (
     WHERE c.application_id = $1::uuid
 ) t`,
 	},
+	{
+		// value_encrypted (credentials) intentionally excluded on export — same
+		// redaction policy as agent auth tokens and LLM API keys. inject_mode and
+		// inject_header_name are configured behavior and travel with the deploy.
+		name: "app_flow_http_params",
+		copySQL: `
+INSERT INTO them.app_flow_http_params (application_id, node_id, param_key, value_encrypted, inject_mode, inject_header_name, updated_at)
+SELECT $2::uuid, p.node_id, p.param_key, NULL, p.inject_mode, p.inject_header_name, now()
+FROM them.app_flow_http_params p
+WHERE p.application_id = $1::uuid`,
+		exportSQL: `
+SELECT to_jsonb(t) FROM (
+    SELECT p.node_id, p.param_key, p.inject_mode, p.inject_header_name
+    FROM them.app_flow_http_params p
+    WHERE p.application_id = $1::uuid
+) t`,
+	},
 }
 
 // copyAppScopedConfigForDeploy walks appScopedConfigTables and copies every

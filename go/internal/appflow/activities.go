@@ -10,15 +10,20 @@
 package appflow
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	temporalerr "go.temporal.io/sdk/temporal"
 
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/domain"
 )
 
@@ -190,6 +195,42 @@ type InlineLLMActivityOutput struct {
 	OutputVar string `json:"output_var"`
 }
 
+// HTTPActivityInput is the input to AppFlowHTTPActivity.
+// No credential is ever present — the activity resolves bearer_token and
+// api_key from app_flow_http_params at execution time (Temporal history safety).
+type HTTPActivityInput struct {
+	RunID         string `json:"run_id"`
+	TenantID      string `json:"tenant_id"`
+	ApplicationID string `json:"application_id"`
+	NodeID        string `json:"node_id"`
+
+	// Config fields from the canvas node definition.
+	Method         string            `json:"method"`
+	URLTemplate    string            `json:"url_template"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	BodyTemplate   string            `json:"body_template,omitempty"`
+	Extractions    []HTTPExtraction  `json:"extractions,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+
+	// Vars is a snapshot of current flow vars — used for template rendering.
+	Vars FlowVars `json:"vars,omitempty"`
+
+	// Debug marks this as a debug session (same semantics as InlineLLMActivityInput.Debug).
+	Debug bool `json:"debug,omitempty"`
+	// Verbosity is the resolved effective log-verbosity for this run.
+	Verbosity string `json:"verbosity,omitempty"`
+}
+
+// HTTPActivityOutput is returned by AppFlowHTTPActivity.
+type HTTPActivityOutput struct {
+	// StatusCode is the HTTP response status code written to flow var "http_status".
+	StatusCode int `json:"status_code"`
+	// ResponseBody is the full response body written to flow var "http_response".
+	ResponseBody string `json:"response_body"`
+	// Extracted holds values pulled out by the extractions config, keyed by var name.
+	Extracted map[string]string `json:"extracted,omitempty"`
+}
+
 // TraceEventInput is the input to AppFlowTraceActivity — a live, unconditional
 // per-node progress event (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). Emitted for
 // every run, debug or not; not persisted anywhere (Phase 3's job). Kept
@@ -257,6 +298,17 @@ type AppFlowActivities struct {
 	// May be nil — PendingWaitSetActivity then no-ops (wait_for_input still
 	// works but the WS handler won't know to route the reply automatically).
 	PendingWait PendingWaitStore
+	// HTTPParams reads HTTP node credentials from app_flow_http_params.
+	// May be nil — HTTPActivity returns a non-retryable error when nil.
+	HTTPParams HTTPParamStore
+	// HTTPClient is used by HTTPActivity to make outbound calls.
+	// May be nil — HTTPActivity uses http.DefaultClient when nil.
+	HTTPClient *http.Client
+}
+
+// HTTPParamStore reads stored HTTP node credentials from the DB.
+type HTTPParamStore interface {
+	GetAppFlowHTTPNodeCredential(ctx context.Context, applicationID, nodeID, paramKey string) (string, error)
 }
 
 // DebugCredCleaner deletes every per-node debug credential override for one
@@ -821,6 +873,196 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		ResponseText: responseText,
 		OutputVar:    input.OutputVar,
 	}, nil
+}
+
+// HTTPActivity calls an external REST API for an http canvas node.
+// Credentials are resolved from app_flow_http_params at execution time —
+// none appear in HTTPActivityInput (Temporal history safety invariant).
+// GET requests are retryable; POST/PUT/PATCH/DELETE are not.
+func (a *AppFlowActivities) HTTPActivity(ctx context.Context, input HTTPActivityInput) (HTTPActivityOutput, error) {
+	a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_start", "", input.Verbosity)
+
+	// Resolve credentials from DB — never from input.
+	client := a.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	// Render URL.
+	urlStr, err := renderFlowTemplate(input.URLTemplate, input.Vars)
+	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_error", "render url failed", input.Verbosity)
+		return HTTPActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			fmt.Sprintf("http %q: render url_template: %v", input.NodeID, err),
+			"HTTPRenderFailed", nil,
+		)
+	}
+
+	// Render body.
+	var bodyBytes []byte
+	if input.BodyTemplate != "" {
+		bodyStr, err := renderFlowTemplate(input.BodyTemplate, input.Vars)
+		if err != nil {
+			a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_error", "render body failed", input.Verbosity)
+			return HTTPActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+				fmt.Sprintf("http %q: render body_template: %v", input.NodeID, err),
+				"HTTPRenderFailed", nil,
+			)
+		}
+		bodyBytes = []byte(bodyStr)
+	}
+
+	timeout := time.Duration(input.TimeoutSeconds) * time.Second
+	if timeout <= 0 || timeout > 300*time.Second {
+		timeout = 30 * time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	method := strings.ToUpper(input.Method)
+	if method == "" {
+		method = "GET"
+	}
+
+	req, err := http.NewRequestWithContext(reqCtx, method, urlStr, bytes.NewReader(bodyBytes))
+	if err != nil {
+		a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_error", "create request failed", input.Verbosity)
+		return HTTPActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+			fmt.Sprintf("http %q: create request: %v", input.NodeID, err),
+			"HTTPRequestFailed", nil,
+		)
+	}
+
+	// Static canvas headers.
+	for k, v := range input.Headers {
+		req.Header.Set(k, v)
+	}
+
+	// Runtime credentials from DB.
+	if a.HTTPParams != nil {
+		if bearer, err := a.HTTPParams.GetAppFlowHTTPNodeCredential(ctx, input.ApplicationID, input.NodeID, "bearer_token"); err == nil && bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		if apiKey, err := a.HTTPParams.GetAppFlowHTTPNodeCredential(ctx, input.ApplicationID, input.NodeID, "api_key"); err == nil && apiKey != "" {
+			// Read inject_mode from DB row — GetAppFlowHTTPNodeCredential returns value only,
+			// so we do a targeted list query to get the full row for api_key.
+			if dalDB, ok := a.HTTPParams.(*dal.DB); ok {
+				params, listErr := dalDB.ListAppFlowHTTPParams(ctx, input.ApplicationID)
+				if listErr == nil {
+					for _, p := range params {
+						if p.NodeID == input.NodeID && p.ParamKey == "api_key" && p.ValueEncrypted != nil {
+							headerName := ""
+							if p.InjectHeaderName != nil {
+								headerName = *p.InjectHeaderName
+							}
+							_ = appflowInjectAuthParam(req, p.InjectMode, headerName, apiKey)
+						}
+					}
+				}
+			} else {
+				// Fallback: inject as query param with key "api_key".
+				q := req.URL.Query()
+				q.Set("api_key", apiKey)
+				req.URL.RawQuery = q.Encode()
+			}
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		detail := fmt.Sprintf("http %q: request: %v", input.NodeID, err)
+		a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_error", detail, input.Verbosity)
+		// Non-GET requests: non-retryable (not idempotent).
+		if method != "GET" {
+			return HTTPActivityOutput{}, temporalerr.NewNonRetryableApplicationError(detail, "HTTPRequestFailed", nil)
+		}
+		return HTTPActivityOutput{}, fmt.Errorf("http %q: request: %w", input.NodeID, err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB cap
+	statusCode := resp.StatusCode
+
+	if statusCode >= 400 {
+		snippet := strings.TrimSpace(string(rawBody))
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+		detail := fmt.Sprintf("HTTP %d from %s: %s", statusCode, urlStr, snippet)
+		a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_error", detail, input.Verbosity)
+		if method != "GET" {
+			return HTTPActivityOutput{}, temporalerr.NewNonRetryableApplicationError(
+				fmt.Sprintf("http %q: %s", input.NodeID, detail), "HTTPErrorStatus", nil,
+			)
+		}
+		return HTTPActivityOutput{}, fmt.Errorf("http %q: %s", input.NodeID, detail)
+	}
+
+	out := HTTPActivityOutput{
+		StatusCode:   statusCode,
+		ResponseBody: string(rawBody),
+	}
+
+	// JSON extractions.
+	if len(input.Extractions) > 0 {
+		var parsed map[string]any
+		if jsonErr := json.Unmarshal(rawBody, &parsed); jsonErr == nil {
+			out.Extracted = make(map[string]string, len(input.Extractions))
+			for _, ext := range input.Extractions {
+				val := jsonPathGet(parsed, ext.Path)
+				out.Extracted[ext.Var] = fmt.Sprintf("%v", val)
+			}
+		}
+	}
+
+	a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_done",
+		fmt.Sprintf("HTTP %d", statusCode), input.Verbosity)
+	return out, nil
+}
+
+// appflowInjectAuthParam mirrors agentgen's injectAuthParam for the appflow HTTP activity.
+func appflowInjectAuthParam(req *http.Request, mode, headerName, paramVal string) error {
+	switch mode {
+	case "header", "":
+		req.Header.Set("Authorization", "Bearer "+paramVal)
+	case "query":
+		name := headerName
+		if name == "" {
+			name = "api_key"
+		}
+		q := req.URL.Query()
+		q.Set(name, paramVal)
+		req.URL.RawQuery = q.Encode()
+	case "basic":
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(paramVal)))
+	case "custom_header":
+		if headerName == "" {
+			return fmt.Errorf("inject_mode %q requires inject_header_name to be set", mode)
+		}
+		req.Header.Set(headerName, paramVal)
+	default:
+		return fmt.Errorf("unknown inject_mode %q", mode)
+	}
+	return nil
+}
+
+// jsonPathGet extracts a value from a decoded JSON map using dot-notation path
+// (e.g. "$.data.id" or "data.id"). Returns nil when the path is not found.
+func jsonPathGet(obj map[string]any, path string) any {
+	path = strings.TrimPrefix(path, "$.")
+	parts := strings.SplitN(path, ".", 2)
+	val, ok := obj[parts[0]]
+	if !ok {
+		return nil
+	}
+	if len(parts) == 1 {
+		return val
+	}
+	nested, ok := val.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return jsonPathGet(nested, parts[1])
 }
 
 // TraceNodeEventActivity publishes a live node_start/node_done/node_error event

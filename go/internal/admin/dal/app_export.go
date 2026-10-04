@@ -41,6 +41,7 @@ type ExportedScopedConfig struct {
 	AppFlowLLMOverrides []json.RawMessage `json:"app_flow_llm_overrides"`
 	AppTemporalConfig   []json.RawMessage `json:"app_temporal_config"`
 	AppDebugConfig      []json.RawMessage `json:"app_debug_config"`
+	AppFlowHTTPParams   []json.RawMessage `json:"app_flow_http_params"`
 }
 
 // ExportedAgent bundles one agent referenced by the exported app's
@@ -185,6 +186,8 @@ func (d *DB) exportScopedConfig(ctx context.Context, sourceAppID string) (Export
 			out.AppTemporalConfig = msgs
 		case "app_debug_config":
 			out.AppDebugConfig = msgs
+		case "app_flow_http_params":
+			out.AppFlowHTTPParams = msgs
 		default:
 			return ExportedScopedConfig{}, fmt.Errorf("export: unrecognized scoped config table %q — add a case here when adding a registry entry", tbl.name)
 		}
@@ -413,6 +416,13 @@ type importTemporalConfigRow struct {
 
 type importDebugConfigRow struct {
 	LogVerbosity string `json:"log_verbosity"`
+}
+
+type importHTTPParamRow struct {
+	NodeID           string  `json:"node_id"`
+	ParamKey         string  `json:"param_key"`
+	InjectMode       string  `json:"inject_mode"`
+	InjectHeaderName *string `json:"inject_header_name"`
 }
 
 type importComponentDefinitionRow struct {
@@ -837,6 +847,22 @@ func (d *DB) importScopedConfig(ctx context.Context, sc ExportedScopedConfig, ne
 			newAppID, c.LogVerbosity,
 		); err != nil {
 			return fmt.Errorf("import: insert app_debug_config: %w", err)
+		}
+	}
+
+	for _, raw := range sc.AppFlowHTTPParams {
+		var p importHTTPParamRow
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return fmt.Errorf("import: decode app_flow_http_params: %w", err)
+		}
+		// value_encrypted is intentionally not exported — NULL on import, user
+		// must re-enter credentials in the target tenant.
+		if err := d.q.Exec(ctx,
+			`INSERT INTO them.app_flow_http_params (application_id, node_id, param_key, value_encrypted, inject_mode, inject_header_name)
+			 VALUES ($1::uuid, $2, $3, NULL, $4, $5)`,
+			newAppID, p.NodeID, p.ParamKey, p.InjectMode, p.InjectHeaderName,
+		); err != nil {
+			return fmt.Errorf("import: insert app_flow_http_params: %w", err)
 		}
 	}
 

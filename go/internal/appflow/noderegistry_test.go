@@ -8,13 +8,14 @@ import "testing"
 // returned slice does not affect the shared static registry.
 func TestAllAppCanvasNodeInfos_ReturnsSixKinds(t *testing.T) {
 	infos := AllAppCanvasNodeInfos()
-	if len(infos) != 7 {
-		t.Fatalf("expected 7 app-canvas node kinds, got %d", len(infos))
+	if len(infos) != 8 {
+		t.Fatalf("expected 8 app-canvas node kinds, got %d", len(infos))
 	}
 
 	wantTypes := map[string]bool{
 		"llm": false, "condition": false, "router": false,
 		"hil": false, "fork": false, "join": false, "wait_for_input": false,
+		"http": false,
 	}
 	for _, info := range infos {
 		if _, ok := wantTypes[info.Type]; !ok {
@@ -91,34 +92,33 @@ func TestAllAppCanvasNodeInfos_ForkJoinDegreeRules(t *testing.T) {
 	}
 }
 
-// TestAllAppCanvasNodeInfos_LLMHasOutputPort verifies llm declares exactly one
-// named output port ("output") for the AppFlow Named Data Ports feature
-// (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 1) — this is what lets the frontend
-// alias the existing output_var field as a real, drag-connectable port instead
-// of an implicit shared variable name. condition has no data output port (its
-// two outputs are control branches, not a data value) — only llm writes to
-// FlowVars at runtime, so only llm gets an OutputPorts entry.
+// TestAllAppCanvasNodeInfos_LLMHasOutputPort verifies llm and http each declare
+// exactly one named output port ("output"). Control-flow-only nodes (condition,
+// fork, join, etc.) have no data output port; only data-producing nodes get an
+// OutputPorts entry.
 func TestAllAppCanvasNodeInfos_LLMHasOutputPort(t *testing.T) {
+	// Kinds that must declare exactly one "output" OutputPort.
+	dataKinds := map[string]bool{"llm": true, "http": true}
 	infos := AllAppCanvasNodeInfos()
 	for _, info := range infos {
-		if info.Type != "llm" {
+		if !dataKinds[info.Type] {
 			if len(info.OutputPorts) != 0 {
 				t.Errorf("kind %q: expected no OutputPorts, got %+v", info.Type, info.OutputPorts)
 			}
 			continue
 		}
 		if len(info.OutputPorts) != 1 {
-			t.Fatalf("llm: expected exactly 1 OutputPorts entry, got %d", len(info.OutputPorts))
+			t.Fatalf("%s: expected exactly 1 OutputPorts entry, got %d", info.Type, len(info.OutputPorts))
 		}
 		p := info.OutputPorts[0]
 		if p.ID != "output" {
-			t.Errorf("llm: expected OutputPorts[0].ID == \"output\", got %q", p.ID)
+			t.Errorf("%s: expected OutputPorts[0].ID == \"output\", got %q", info.Type, p.ID)
 		}
 		if p.Label == "" {
-			t.Error("llm: OutputPorts[0].Label must not be empty")
+			t.Errorf("%s: OutputPorts[0].Label must not be empty", info.Type)
 		}
 		if !info.AcceptsDynamicInputs {
-			t.Error("llm: expected AcceptsDynamicInputs=true (frontend derives live input aliases per-instance)")
+			t.Errorf("%s: expected AcceptsDynamicInputs=true", info.Type)
 		}
 	}
 }
@@ -138,33 +138,39 @@ func TestAllAppCanvasNodeInfos_ReturnsCopyNotSharedSlice(t *testing.T) {
 
 // TestAllAppCanvasNodeInfos_LLMDeclaresCredentialRuntimeParam verifies the
 // llm and router kinds each declare a required "llm_credential"-typed runtime
-// param — this is what the App Canvas Debug Mode setup panel scans for
-// (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) to render a per-node provider/model/
-// key picker. Both kinds make real LLM calls and require a credential at
-// debug time. Also verifies no other kind unexpectedly gained one.
+// param (the debug panel provider/model/key picker), and http declares
+// "secret"-typed params (bearer_token, api_key). No other kind may have any.
 func TestAllAppCanvasNodeInfos_LLMDeclaresCredentialRuntimeParam(t *testing.T) {
-	// Kinds that must declare exactly one llm_credential RuntimeParam.
-	llmKinds := map[string]bool{"llm": true, "router": true}
 	infos := AllAppCanvasNodeInfos()
 	for _, info := range infos {
-		if !llmKinds[info.Type] {
+		switch info.Type {
+		case "llm", "router":
+			if len(info.RuntimeParams) != 1 {
+				t.Fatalf("%s: expected exactly 1 RuntimeParams entry, got %d", info.Type, len(info.RuntimeParams))
+			}
+			p := info.RuntimeParams[0]
+			if p.Key == "" {
+				t.Errorf("%s: RuntimeParams[0].Key must not be empty", info.Type)
+			}
+			if p.Type != "llm_credential" {
+				t.Errorf("%s: expected Type=\"llm_credential\", got %q", info.Type, p.Type)
+			}
+			if !p.Required {
+				t.Errorf("%s: expected Required=true", info.Type)
+			}
+		case "http":
+			if len(info.RuntimeParams) == 0 {
+				t.Errorf("http: expected at least 1 RuntimeParams entry (bearer_token / api_key), got none")
+			}
+			for _, p := range info.RuntimeParams {
+				if p.Type != "secret" {
+					t.Errorf("http: RuntimeParam %q: expected Type=\"secret\", got %q", p.Key, p.Type)
+				}
+			}
+		default:
 			if len(info.RuntimeParams) != 0 {
 				t.Errorf("kind %q: expected no RuntimeParams, got %+v", info.Type, info.RuntimeParams)
 			}
-			continue
-		}
-		if len(info.RuntimeParams) != 1 {
-			t.Fatalf("%s: expected exactly 1 RuntimeParams entry, got %d", info.Type, len(info.RuntimeParams))
-		}
-		p := info.RuntimeParams[0]
-		if p.Key == "" {
-			t.Errorf("%s: RuntimeParams[0].Key must not be empty", info.Type)
-		}
-		if p.Type != "llm_credential" {
-			t.Errorf("%s: expected Type=\"llm_credential\", got %q", info.Type, p.Type)
-		}
-		if !p.Required {
-			t.Errorf("%s: expected Required=true", info.Type)
 		}
 	}
 }
