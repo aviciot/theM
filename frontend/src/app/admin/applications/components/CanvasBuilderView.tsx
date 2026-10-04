@@ -39,6 +39,7 @@ import { useAuthStore } from '@/stores/authStore';
 const APPFLOW_NODE_COMPONENT: Record<string, 'inline' | 'flow_control'> = {
   llm: 'inline',
   condition: 'inline',
+  http: 'inline',
   router: 'flow_control',
   hil: 'flow_control',
   fork: 'flow_control',
@@ -52,6 +53,7 @@ const APPFLOW_NODE_COMPONENT: Record<string, 'inline' | 'flow_control'> = {
 const APPFLOW_NODE_DEFAULTS: Record<string, Record<string, unknown>> = {
   llm: { user_prompt: '{{.input}}', output_var: 'output', max_tokens: 1024 },
   condition: { expression: '' },
+  http: { method: 'GET', url_template: '', headers: {}, body_template: '', extractions: [], timeout_seconds: 30 },
 };
 
 // ── CanvasBuilderView (V2) ────────────────────────────────────────────────────

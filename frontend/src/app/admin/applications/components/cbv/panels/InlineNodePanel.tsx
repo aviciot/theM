@@ -47,6 +47,7 @@ export function InlineNodePanel({
   const d = (liveNode?.data ?? selectedNode.data) as unknown as InlineNodeData;
   const isLLM = d.node_type === 'llm';
   const isCondition = d.node_type === 'condition';
+  const isHTTP = d.node_type === 'http';
 
   const cfg = (d.config ?? {}) as Record<string, unknown>;
 
@@ -243,6 +244,152 @@ export function InlineNodePanel({
             { name: 'router_label', note: 'if upstream router — chosen label' },
           ]}
         />
+      </div>
+    );
+  }
+
+  if (isHTTP) {
+    const method = (cfg.method as string) ?? 'GET';
+    const urlTemplate = (cfg.url_template as string) ?? '';
+    const bodyTemplate = (cfg.body_template as string) ?? '';
+    const timeoutSeconds = (cfg.timeout_seconds as number) ?? 30;
+    const headers = (cfg.headers as Record<string, string>) ?? {};
+    const extractions = (cfg.extractions as Array<{ var: string; path: string }>) ?? [];
+
+    function setHeader(key: string, val: string) {
+      const next = { ...headers, [key]: val };
+      updateNodeConfig({ headers: next });
+    }
+    function removeHeader(key: string) {
+      const next = { ...headers };
+      delete next[key];
+      updateNodeConfig({ headers: next });
+    }
+    function addHeader() {
+      updateNodeConfig({ headers: { ...headers, '': '' } });
+    }
+    function setExtraction(i: number, field: 'var' | 'path', val: string) {
+      const next = extractions.map((e, idx) => idx === i ? { ...e, [field]: val } : e);
+      updateNodeConfig({ extractions: next });
+    }
+    function removeExtraction(i: number) {
+      updateNodeConfig({ extractions: extractions.filter((_, idx) => idx !== i) });
+    }
+    function addExtraction() {
+      updateNodeConfig({ extractions: [...extractions, { var: '', path: '' }] });
+    }
+
+    return (
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>HTTP Request</div>
+        <div style={{ fontSize: 11, color: C.textMuted }}>
+          Calls an external REST API and writes the response into flow variables. Credentials are set in the Runtime tab.
+        </div>
+
+        {displayNameField}
+
+        <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} wirings={wirings} />
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ width: 90, flexShrink: 0 }}>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Method</label>
+            <select style={fieldStyle} value={method} onChange={e => updateNodeConfig({ method: e.target.value })}>
+              {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>URL Template</label>
+            <input
+              style={{ ...fieldStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}
+              placeholder="https://api.example.com/{{.order_id}}"
+              value={urlTemplate}
+              onChange={e => updateNodeConfig({ url_template: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>
+            Static Headers
+            <button onClick={addHeader} style={{ marginLeft: 8, fontSize: 10, color: '#38bdf8', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>+ Add</button>
+          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {Object.entries(headers).map(([k, v], i) => (
+              <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <input
+                  style={{ ...fieldStyle, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                  placeholder="Header-Name"
+                  value={k}
+                  onChange={e => { const next: Record<string, string> = {}; Object.entries(headers).forEach(([hk, hv], hi) => { next[hi === i ? e.target.value : hk] = hv; }); updateNodeConfig({ headers: next }); }}
+                />
+                <input
+                  style={{ ...fieldStyle, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                  placeholder="value"
+                  value={v}
+                  onChange={e => setHeader(k, e.target.value)}
+                />
+                <button onClick={() => removeHeader(k)} style={{ color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}>✕</button>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>For auth headers (Authorization, X-API-Key), use the Runtime tab instead.</div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Body Template</label>
+          <textarea
+            style={{ ...fieldStyle, minHeight: 70, resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}
+            placeholder={'{"amount": {{.amount}}}'}
+            value={bodyTemplate}
+            onChange={e => updateNodeConfig({ body_template: e.target.value })}
+          />
+          <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Leave empty for GET requests. Use {'{{.varname}}'} for flow variables.</div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>
+            JSON Extractions
+            <button onClick={addExtraction} style={{ marginLeft: 8, fontSize: 10, color: '#38bdf8', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>+ Add</button>
+          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {extractions.map((ext, i) => (
+              <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <input
+                  style={{ ...fieldStyle, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                  placeholder="var_name"
+                  value={ext.var}
+                  onChange={e => setExtraction(i, 'var', e.target.value)}
+                />
+                <input
+                  style={{ ...fieldStyle, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                  placeholder="$.data.id"
+                  value={ext.path}
+                  onChange={e => setExtraction(i, 'path', e.target.value)}
+                />
+                <button onClick={() => removeExtraction(i)} style={{ color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}>✕</button>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Each extraction writes one flow variable from the JSON response. Path uses dot notation: $.status, $.data.id</div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Timeout (seconds)</label>
+          <input
+            type="number" min={1} max={300}
+            style={{ ...fieldStyle, width: 100 }}
+            value={timeoutSeconds}
+            onChange={e => updateNodeConfig({ timeout_seconds: e.target.value === '' ? 30 : Number(e.target.value) })}
+          />
+        </div>
+
+        <div style={{ padding: '8px 10px', borderRadius: 6, background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.15)', fontSize: 11, color: C.textMuted }}>
+          After the call: <code style={{ color: '#38bdf8' }}>http_status</code> (int) and <code style={{ color: '#38bdf8' }}>http_response</code> (full body) are always written to flow vars. Extraction vars listed above are also set.
+        </div>
+
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+          <WritesSection appId={appId} selectedNode={selectedNode} outputVar="http_response" wirings={wirings} />
+        </div>
       </div>
     );
   }
