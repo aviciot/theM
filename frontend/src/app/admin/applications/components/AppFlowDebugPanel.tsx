@@ -42,6 +42,7 @@ export function AppFlowDebugPanel({
   onSetEntryPointSlug,
   onSetUserMessage,
   onSetCredential,
+  onSetSecret,
   onSetStepMode,
   onRunAll,
   onStep,
@@ -60,6 +61,7 @@ export function AppFlowDebugPanel({
   onSetEntryPointSlug: (slug: string) => void;
   onSetUserMessage: (msg: string) => void;
   onSetCredential: (specKey: string, value: AppFlowLLMCredentialValue) => void;
+  onSetSecret: (specKey: string, value: string) => void;
   onSetStepMode: (stepMode: boolean) => void;
   onRunAll: () => void;
   onStep: () => void;
@@ -72,6 +74,7 @@ export function AppFlowDebugPanel({
   onDeletePreset: (presetId: string) => void;
 }) {
   const credentialSpecs = runtimeParamSpecs.filter(s => s.type === 'llm_credential');
+  const secretSpecs = runtimeParamSpecs.filter(s => s.type === 'secret');
   const [selectedPresetId, setSelectedPresetId] = useState('');
   const [savingName, setSavingName] = useState('');
   const [llmOpen, setLlmOpen] = useState(credentialSpecs.length <= 3);
@@ -334,6 +337,35 @@ export function AppFlowDebugPanel({
               ))}
             </div>
           )}
+        </div>
+      )}
+      {secretSpecs.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <span style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, letterSpacing: '0.06em' }}>
+            HTTP CREDENTIALS ({secretSpecs.length}) — overrides Runtime screen value for this run only
+          </span>
+          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {secretSpecs.map(spec => (
+              <div key={spec.specKey} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 220 }}>
+                <span style={{ fontSize: '11px', color: C.textMuted }}>
+                  {spec.nodeLabel ? `${spec.nodeLabel} — ` : ''}{spec.label}
+                </span>
+                <input
+                  type="password"
+                  placeholder={`${spec.label} (optional)`}
+                  value={debug.secrets?.[spec.specKey] ?? ''}
+                  onChange={e => onSetSecret(spec.specKey, e.target.value)}
+                  disabled={debug.running}
+                  autoComplete="new-password"
+                  style={{
+                    background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.outline}`, borderRadius: 6,
+                    color: C.text, padding: '5px 8px', fontSize: '12px', fontFamily: 'JetBrains Mono, monospace',
+                    outline: 'none', width: '100%', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

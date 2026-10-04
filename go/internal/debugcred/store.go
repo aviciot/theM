@@ -75,8 +75,12 @@ func key(tenantID, runID, nodeID string) string {
 	return fmt.Sprintf("them:debug:%s:%s:%s:llm_override", tenantID, runID, nodeID)
 }
 
+func secretKey(tenantID, runID, nodeID, paramKey string) string {
+	return fmt.Sprintf("them:debug:%s:%s:%s:secret:%s", tenantID, runID, nodeID, paramKey)
+}
+
 func keyPattern(tenantID, runID string) string {
-	return fmt.Sprintf("them:debug:%s:%s:*:llm_override", tenantID, runID)
+	return fmt.Sprintf("them:debug:%s:%s:*", tenantID, runID)
 }
 
 // Set writes ov for (tenantID, runID, nodeID), replacing any existing entry,
@@ -119,6 +123,33 @@ func (s *Store) Get(ctx context.Context, tenantID, runID, nodeID string) (Overri
 func (s *Store) Delete(ctx context.Context, tenantID, runID, nodeID string) error {
 	cmd := s.client.B().Del().Key(key(tenantID, runID, nodeID)).Build()
 	return s.client.Do(ctx, cmd).Error()
+}
+
+// SetSecret stores a plaintext per-run secret override (e.g. bearer_token or
+// api_key) for an HTTP node. Same TTL as LLM overrides — keyed separately so
+// LLM and secret overrides never collide in the scan/delete path.
+func (s *Store) SetSecret(ctx context.Context, tenantID, runID, nodeID, paramKey, value string) error {
+	cmd := s.client.B().Set().Key(secretKey(tenantID, runID, nodeID, paramKey)).Value(value).Ex(TTL).Build()
+	return s.client.Do(ctx, cmd).Error()
+}
+
+// GetSecret returns the per-run secret override for (tenantID, runID, nodeID,
+// paramKey). Returns found=false when no override was stored (caller falls
+// through to the permanent Runtime screen value).
+func (s *Store) GetSecret(ctx context.Context, tenantID, runID, nodeID, paramKey string) (string, bool, error) {
+	cmd := s.client.B().Get().Key(secretKey(tenantID, runID, nodeID, paramKey)).Build()
+	res := s.client.Do(ctx, cmd)
+	if err := res.Error(); err != nil {
+		if rueidis.IsRedisNil(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	val, err := res.ToString()
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
 }
 
 // DeleteAllForRun removes every node's override for (tenantID, runID) via a

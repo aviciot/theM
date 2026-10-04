@@ -22,7 +22,7 @@ description: App Canvas build + debug guide for the-M platform — how to constr
 - **App Canvas** (`frontend/src/app/admin/applications/`) — builds a whole
   *application*: entry point(s) → orchestrator/flow → agents. This skill
   covers App Canvas's own node family (`appflow`: `llm`, `condition`, `fork`,
-  `join`, `router`, `hil`) plus agent/middleware/orchestrator components
+  `join`, `router`, `hil`, `http`) plus agent/middleware/orchestrator components
   referenced by slug, not built inline.
 
 This skill is for **App Canvas only**.
@@ -36,7 +36,7 @@ GET /api/v1/admin/node-types
 ```
 (requires an admin JWT — see §4 for login)
 
-Returns all 21 node types across both families, each with: `label`,
+Returns all 22 node types across both families, each with: `label`,
 `description`, `config_fields` (key/type/required/description/**example**),
 `edges` (`min_in`/`max_in`/`min_out`/`max_out`), `control_output_ports` (for
 branching nodes like `condition`), `output_ports`, `usage_notes` (real
@@ -75,6 +75,38 @@ endpoint + `go/internal/appflow/workflow.go` cross-check, 2026-09-26):
   `llm_key` param** (same picker as the `llm` node) — the credential field
   appears in the debug setup panel because the router makes a real LLM call.
   Optional `classifier_prompt` lets you guide the LLM's classification logic.
+- **`http`** — makes an HTTP request inside the flow (added 2026-10-04).
+  `definition_ref.kind: "inline"`, `name: "http"`. Config fields:
+  - `method`: `"GET"` | `"POST"` | `"PUT"` | `"PATCH"` | `"DELETE"` (required)
+  - `url_template`: URL string, supports `{{.varname}}` interpolation (required)
+  - `headers`: static key-value map (e.g. `{"Accept": "application/json"}`) — do NOT put auth headers here
+  - `body_template`: request body string, supports `{{.varname}}` interpolation (used for POST/PUT/PATCH)
+  - `extractions`: array of `{"var": "myVar", "path": "$.data.id"}` — extracts values from the JSON response into flow vars using dot-notation JSON path
+  - `timeout_seconds`: 1–300 (default 30)
+  **Always writes two flow vars regardless of extractions:**
+  - `http_status` — integer HTTP status code (e.g. 200, 404)
+  - `http_response` — raw response body string
+  **Credentials (bearer token, API key) are NOT part of the canvas config** — set them in the Runtime screen's "App Canvas — HTTP Nodes" section. They are resolved from `app_flow_http_params` at execution time inside the Temporal activity (Temporal secrets invariant: no secret in activity input). API key supports inject modes: `header` (Authorization: <val>), `query` (?api_key=<val>), `basic` (Basic base64), `custom_header` (<HeaderName>: <val>).
+  **Debug behavior**: HTTP nodes do NOT require any entry in `debug/start`'s payload. The debug run uses whatever credentials are stored in `app_flow_http_params` for that node (from the Runtime screen). If no credentials are stored and the API requires auth, the request will fail with a 401/403 at runtime — there is **no per-run credential override UI in the debug panel** for HTTP nodes (unlike `llm` nodes which get `llm_overrides`). Store credentials via Runtime screen before debugging.
+  Example component:
+  ```json
+  {
+    "instance_id": "http_1",
+    "definition_ref": { "kind": "inline", "name": "http", "version": 1, "namespace": "builtin" },
+    "config": {
+      "node_type": "http",
+      "display_name": "Call API",
+      "method": "POST",
+      "url_template": "https://api.example.com/v1/items/{{.item_id}}",
+      "headers": { "Accept": "application/json" },
+      "body_template": "{\"name\": \"{{.item_name}}\"}",
+      "extractions": [{"var": "created_id", "path": "$.data.id"}],
+      "timeout_seconds": 30
+    }
+  }
+  ```
+  GET requests are retryable (Temporal retry safe); non-GET are non-retryable (idempotency assumption).
+
 - **`hil`** — pauses for human approval. Has two optional outgoing edge
   labels: **`"approved"`** (green port, taken when approved) and
   **`"rejected"`** (red port, taken when rejected). If no `"rejected"` edge

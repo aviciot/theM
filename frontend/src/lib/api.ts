@@ -588,11 +588,12 @@ export const themApi = {
   // saved Runtime settings. stepMode (Phase 6) starts the run paused before
   // every node's tick instead of running straight through — false (default)
   // is today's Run-All behavior, unchanged.
-  startAppFlowDebug: (appId: string, entryPointSlug: string, userMessage: string, llmOverrides?: Record<string, AppFlowLLMOverrideInput>, stepMode?: boolean) =>
+  startAppFlowDebug: (appId: string, entryPointSlug: string, userMessage: string, llmOverrides?: Record<string, AppFlowLLMOverrideInput>, secretOverrides?: Record<string, Record<string, string>>, stepMode?: boolean) =>
     api.post<AppFlowDebugStartResult>(`/admin/applications/${appId}/debug/start`, {
       entry_point_slug: entryPointSlug,
       user_message: userMessage,
       ...(llmOverrides && Object.keys(llmOverrides).length > 0 ? { llm_overrides: llmOverrides } : {}),
+      ...(secretOverrides && Object.keys(secretOverrides).length > 0 ? { secret_overrides: secretOverrides } : {}),
       ...(stepMode ? { step_mode: true } : {}),
     }),
 

@@ -46,6 +46,7 @@ type AppFlowDebugDAL interface {
 // *debugcred.Store) so tests can inject a fake without a live Redis.
 type AppFlowDebugCredentialStore interface {
 	Set(ctx context.Context, tenantID, runID, nodeID string, ov debugcred.Override) error
+	SetSecret(ctx context.Context, tenantID, runID, nodeID, paramKey, value string) error
 }
 
 // AppFlowDebugService starts a debug run of an application's unpublished draft
@@ -100,7 +101,7 @@ type DebugStartResult struct {
 // the app's saved Runtime settings) — see docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
 // Returns ErrNotFound when the application has no draft saved yet, or the
 // entry point slug doesn't exist on it.
-func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug, userMessage string, userID int64, llmOverrides map[string]LLMOverrideInput, stepMode bool) (DebugStartResult, error) {
+func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug, userMessage string, userID int64, llmOverrides map[string]LLMOverrideInput, secretOverrides map[string]map[string]string, stepMode bool) (DebugStartResult, error) {
 	app, err := s.dal.GetApplication(ctx, tenantID, appID)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -198,6 +199,20 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 		ov.UserID = userID
 		if err := s.credStore.Set(ctx, handle.EPConfig.TenantID, handle.RunID, nodeID, ov); err != nil {
 			return DebugStartResult{}, fmt.Errorf("store debug credential for node %q: %w", nodeID, err)
+		}
+	}
+
+	// Store per-run HTTP secret overrides (bearer_token / api_key) — same
+	// Redis store, different key suffix. No validation: absent = fall through
+	// to the permanent Runtime screen value. Empty string values are skipped.
+	for nodeID, params := range secretOverrides {
+		for paramKey, val := range params {
+			if val == "" {
+				continue
+			}
+			if err := s.credStore.SetSecret(ctx, handle.EPConfig.TenantID, handle.RunID, nodeID, paramKey, val); err != nil {
+				return DebugStartResult{}, fmt.Errorf("store debug secret for node %q param %q: %w", nodeID, paramKey, err)
+			}
 		}
 	}
 

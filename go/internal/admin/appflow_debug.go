@@ -67,6 +67,11 @@ type debugStartBody struct {
 	// llm-kind node in the compiled draft must have an entry here; the
 	// service validates this server-side before admitting the run.
 	LLMOverrides map[string]llmOverrideBody `json:"llm_overrides,omitempty"`
+	// SecretOverrides maps canvas node_id -> { param_key -> plaintext value }
+	// for HTTP node credentials (bearer_token / api_key) that should override
+	// the permanent Runtime screen value for THIS debug run only. Empty string
+	// values are ignored — omit the key to fall through to the stored value.
+	SecretOverrides map[string]map[string]string `json:"secret_overrides,omitempty"`
 	// StepMode starts the run paused before every node's tick, releasing one
 	// tick per POST .../debug/{run_id}/step call instead of running straight
 	// through (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Defaults to false —
@@ -129,7 +134,7 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.svc.Start(r.Context(), tenantID, appID, body.EntryPointSlug, body.UserMessage, userID, overrides, body.StepMode)
+	result, err := h.svc.Start(r.Context(), tenantID, appID, body.EntryPointSlug, body.UserMessage, userID, overrides, body.SecretOverrides, body.StepMode)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return

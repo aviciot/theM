@@ -37,6 +37,9 @@ export interface AppFlowDebugSessionState {
   // (`${nodeId}:${paramKey}`) — never merged/deduped across nodes, per
   // docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
   credentials: Record<string, AppFlowLLMCredentialValue>;
+  // Per-node secret overrides (bearer_token / api_key for HTTP nodes), keyed
+  // by specKey. Override the permanent Runtime screen value for this run only.
+  secrets: Record<string, string>;
   nodeStates: Record<string, AppFlowDebugNodeState>;
   nodeDetails: Record<string, string>;
   nodeErrors: Record<string, string>;
@@ -54,6 +57,7 @@ const INITIAL_STATE: AppFlowDebugSessionState = {
   userMessage: '',
   stepMode: false,
   credentials: {},
+  secrets: {},
   nodeStates: {},
   nodeDetails: {},
   nodeErrors: {},
@@ -103,6 +107,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       userMessage: prev.userMessage,
       stepMode: prev.stepMode,
       credentials: prev.credentials,
+      secrets: prev.secrets,
     }));
     if (!presetsLoaded) void loadPresets();
   }
@@ -119,6 +124,10 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
 
   function setCredential(specKey: string, value: AppFlowLLMCredentialValue) {
     setDebug(prev => ({ ...prev, credentials: { ...prev.credentials, [specKey]: value } }));
+  }
+
+  function setSecret(specKey: string, value: string) {
+    setDebug(prev => ({ ...prev, secrets: { ...prev.secrets, [specKey]: value } }));
   }
 
   function setStepMode(stepMode: boolean) {
@@ -169,7 +178,18 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       // Redis Stream from the beginning on subscribe (runstream.StreamFromRedis
       // replay+live), not a snapshot-only read, so no event is missed even if
       // the run has already finished by the time this WS opens.
-      const { run_id, expires_at, workflow_id } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides, debug.stepMode);
+      // Build secret_overrides: specKey is `${nodeId}:${paramKey}`, backend
+      // expects { nodeId: { paramKey: value } }. Skip empty strings.
+      const secretOverrides: Record<string, Record<string, string>> = {};
+      for (const spec of runtimeParamSpecs) {
+        if (spec.type !== 'secret') continue;
+        const val = debug.secrets?.[spec.specKey];
+        if (!val) continue;
+        if (!secretOverrides[spec.nodeId]) secretOverrides[spec.nodeId] = {};
+        secretOverrides[spec.nodeId][spec.key] = val;
+      }
+
+      const { run_id, expires_at, workflow_id } = await themApi.startAppFlowDebug(appId, debug.entryPointSlug, debug.userMessage, llmOverrides, Object.keys(secretOverrides).length > 0 ? secretOverrides : undefined, debug.stepMode);
       setDebug(prev => ({ ...prev, runId: run_id, expiresAt: expires_at, workflowId: workflow_id }));
 
       const r = await fetch('/api/auth/token');
@@ -243,7 +263,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
       wsRef.current?.close();
       wsRef.current = null;
     }
-  }, [appId, debug.entryPointSlug, debug.userMessage, debug.stepMode, debug.credentials, runtimeParamSpecs]);
+  }, [appId, debug.entryPointSlug, debug.userMessage, debug.stepMode, debug.credentials, debug.secrets, runtimeParamSpecs]);
 
   // Sends one Step signal (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — releases
   // every node currently paused, in lockstep, by exactly one tick. No local
@@ -344,6 +364,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     setEntryPointSlug,
     setUserMessage,
     setCredential,
+    setSecret,
     setStepMode,
     runAll,
     step,

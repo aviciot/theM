@@ -304,6 +304,10 @@ type AppFlowActivities struct {
 	// HTTPClient is used by HTTPActivity to make outbound calls.
 	// May be nil — HTTPActivity uses http.DefaultClient when nil.
 	HTTPClient *http.Client
+	// DebugSecretGetter reads per-run secret overrides (bearer_token / api_key)
+	// stored at debug/start time. May be nil — HTTPActivity falls through to
+	// HTTPParams (the permanent Runtime screen value) when nil or absent.
+	DebugSecretGetter DebugSecretGetter
 }
 
 // HTTPParamStore reads stored HTTP node credentials from the DB.
@@ -317,6 +321,14 @@ type HTTPParamStore interface {
 // internal/debugcred just for this one method's signature.
 type DebugCredCleaner interface {
 	DeleteAllForRun(ctx context.Context, tenantID, runID string) error
+}
+
+// DebugSecretGetter reads a per-run secret override (bearer_token / api_key)
+// stored at debug/start time — same Redis store used for LLM overrides, keyed
+// by (tenantID, runID, nodeID, paramKey). Absence means fall through to the
+// permanent app_flow_http_params row (the Runtime screen value).
+type DebugSecretGetter interface {
+	GetSecret(ctx context.Context, tenantID, runID, nodeID, paramKey string) (string, bool, error)
 }
 
 // AgentInvokeResult is what AgentInvoker.InvokeByID returns — widened in
@@ -938,33 +950,46 @@ func (a *AppFlowActivities) HTTPActivity(ctx context.Context, input HTTPActivity
 		req.Header.Set(k, v)
 	}
 
-	// Runtime credentials from DB.
-	if a.HTTPParams != nil {
-		if bearer, err := a.HTTPParams.GetAppFlowHTTPNodeCredential(ctx, input.ApplicationID, input.NodeID, "bearer_token"); err == nil && bearer != "" {
-			req.Header.Set("Authorization", "Bearer "+bearer)
+	// Credential resolution: debug per-run override wins over the permanent
+	// Runtime screen value (app_flow_http_params). This mirrors the LLM node's
+	// pattern — debug/start stores a per-run override in Redis, HTTPActivity
+	// checks it first; absent = fall through to the permanent DB row.
+	resolveSecret := func(paramKey string) string {
+		if input.Debug && a.DebugSecretGetter != nil {
+			if val, ok, err := a.DebugSecretGetter.GetSecret(ctx, input.TenantID, input.RunID, input.NodeID, paramKey); err == nil && ok {
+				return val
+			}
 		}
-		if apiKey, err := a.HTTPParams.GetAppFlowHTTPNodeCredential(ctx, input.ApplicationID, input.NodeID, "api_key"); err == nil && apiKey != "" {
-			// Read inject_mode from DB row — GetAppFlowHTTPNodeCredential returns value only,
-			// so we do a targeted list query to get the full row for api_key.
-			if dalDB, ok := a.HTTPParams.(*dal.DB); ok {
-				params, listErr := dalDB.ListAppFlowHTTPParams(ctx, input.ApplicationID)
-				if listErr == nil {
-					for _, p := range params {
-						if p.NodeID == input.NodeID && p.ParamKey == "api_key" && p.ValueEncrypted != nil {
-							headerName := ""
-							if p.InjectHeaderName != nil {
-								headerName = *p.InjectHeaderName
-							}
-							_ = appflowInjectAuthParam(req, p.InjectMode, headerName, apiKey)
+		if a.HTTPParams != nil {
+			val, _ := a.HTTPParams.GetAppFlowHTTPNodeCredential(ctx, input.ApplicationID, input.NodeID, paramKey)
+			return val
+		}
+		return ""
+	}
+
+	if bearer := resolveSecret("bearer_token"); bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	if apiKey := resolveSecret("api_key"); apiKey != "" {
+		// Read inject_mode from DB row — GetAppFlowHTTPNodeCredential returns value only,
+		// so we do a targeted list query to get the full row for api_key.
+		if dalDB, ok := a.HTTPParams.(*dal.DB); ok {
+			params, listErr := dalDB.ListAppFlowHTTPParams(ctx, input.ApplicationID)
+			if listErr == nil {
+				for _, p := range params {
+					if p.NodeID == input.NodeID && p.ParamKey == "api_key" && p.ValueEncrypted != nil {
+						headerName := ""
+						if p.InjectHeaderName != nil {
+							headerName = *p.InjectHeaderName
 						}
+						_ = appflowInjectAuthParam(req, p.InjectMode, headerName, apiKey)
 					}
 				}
-			} else {
-				// Fallback: inject as query param with key "api_key".
-				q := req.URL.Query()
-				q.Set("api_key", apiKey)
-				req.URL.RawQuery = q.Encode()
 			}
+		} else {
+			q := req.URL.Query()
+			q.Set("api_key", apiKey)
+			req.URL.RawQuery = q.Encode()
 		}
 	}
 
