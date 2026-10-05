@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-10-01 — Router, HIL, and demo app work shipped this session.
+# Last updated: 2026-10-05 — HTTP node + per-run secret overrides in debug panel; GitHub PR Reviewer demo app.
 #
 # This session completed multiple back-to-back feature threads (all committed as of 30be9e55):
 # 1) Router node: dynamic label output ports (one handle per label, spread like condition's
@@ -16,6 +16,32 @@
 #    → fork/join (parallel account + order agent lookup) → llm (compose response).
 #    Billing and general intents route directly to LLM. No code changes needed — pure DB
 #    insert. Open the app in the canvas UI to see it reconstruct from the definition JSON.
+#
+# --- Prior entry (2026-10-01) ---
+# Since the 2026-10-01 entry below (kept for history), two feature threads shipped:
+#
+# 1) HTTP node — full App Canvas node type: GET/POST/PUT/PATCH/DELETE requests, template URL,
+#    JSON/form/text body, configurable headers, bearer_token + api_key credential support
+#    (inject_mode: header/query/body), response stored as `http_<nodeID>_body` + `_status` flow vars.
+#    Runtime screen section for storing credentials per-app-node. Debug panel exposes HTTP
+#    credentials as per-run password inputs (same debugcred.Store pattern as LLM overrides,
+#    new Redis key: `them:debug:{tenant}:{run}:{node}:secret:{paramKey}`).
+#    Files: go/internal/appflow/activities.go (HTTPActivity, DebugSecretGetter interface),
+#    go/internal/debugcred/store.go (SetSecret/GetSecret, broadened keyPattern),
+#    go/internal/admin/service/appflow_debug.go (secretOverrides param, AppFlowDebugCredentialStore),
+#    go/internal/admin/appflow_debug.go (secret_overrides in request body),
+#    go/cmd/dag-worker/main.go (wired DebugSecretGetter),
+#    frontend: AppFlowDebugPanel.tsx (HTTP CREDENTIALS section), useAppFlowDebugSession.ts,
+#    CanvasBuilderView.tsx (onSetSecret), api.ts.
+#
+# 2) GitHub PR Reviewer demo app — shows HTTP node in a real-world pipeline:
+#    llm_parse → http_diff → http_meta → llm_review
+#    Single LLM extracts PR path (owner/repo/pulls/N) used by both HTTP nodes via {{.pr_path}}.
+#    Both HTTP nodes call the GitHub API (no auth needed for public repos).
+#    App: slug=github-pr-reviewer, ID=5e03a9b5-4fe5-45a9-8b8d-9a9839e6ae29,
+#    entry point: review (websocket), tenant=bootstrap.
+#    To try: open App Canvas, find "GitHub PR Reviewer", debug run with
+#    "Review aviciot/theM PR <N>" — set llm_parse + llm_review to Anthropic key_id 143.
 #
 # --- Prior entry (2026-09-29) ---
 # Since the 2026-09-28 entry below (kept for history), two full feature threads shipped:
@@ -91,11 +117,15 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `5a21d744` (local, not yet pushed). Remote is `origin` → `aviciot/theM` on GitHub
-(credentials already configured in the remote URL from a prior session).
+HEAD: `00c680ce` — feat(appflow-debug): per-run HTTP node secret overrides in debug panel
+Remote: `origin` → `aviciot/theM` on GitHub
 
-Recent: `9f132c4f` — Go Cycle node backend (compiler, executor, validator, tests)
-Recent: `5a21d744` — Frontend Cycle node (CycleNode canvas frame, CycleNodePanel, canvasToDoc + docToCanvas, palette)
+Recent:
+- `00c680ce` — feat(appflow-debug): per-run HTTP node secret overrides in debug panel
+- `e821afe8` — feat(appflow): wire HTTP node into app canvas palette + properties panel
+- `a792869c` — feat(appflow): HTTP node API + Runtime screen section
+- `10166ba2` — feat(appflow): add HTTP node to app canvas
+- `a76c41d9` — fix(deploy): copy agents from app_agent_bindings, fix agent_definitions ON CONFLICT
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -139,25 +169,22 @@ a78c3ca9  docs: plan AppFlow named data ports (Phase 0 complete)
 
 ---
 
-## START HERE — next session (updated 2026-10-01)
+## START HERE — next session (updated 2026-10-05)
 
-**Demo app ready to test.** Open "Smart Refund Handler" in the App Canvas UI. The definition
-reconstructs from JSON automatically (dagre layout). Try a debug run with a customer message like
-"I need a refund for order 12345" to exercise the full router→condition→HIL→fork/join→LLM flow.
+**Two demo apps to try:**
+1. "Smart Refund Handler" — full router→condition→HIL→fork/join→LLM flow.
+2. "GitHub PR Reviewer" — HTTP node showcase: send "Review aviciot/theM PR 42" (or any real PR#),
+   set both LLM nodes to Anthropic key_id 143 in the debug panel's LLM CREDENTIALS section.
+   The app also demonstrates per-run HTTP secret overrides (HTTP CREDENTIALS section in the debug panel).
 
-**Known gaps from this session:**
+**Known gaps from prior sessions:**
 
-1. **HIL rejection path has no dedicated node** — when a manager rejects the HIL, the run ends
-   with `rejected` status. This is correct by design but the demo app would benefit from a
-   "rejected" LLM response branch. To add it: wire a second outgoing edge from `hil_approval` with
-   label `rejected` to a new `llm_refund_rejected` node. The workflow code already supports this —
-   the HIL node returns `approved=false` and the caller checks it.
-2. **Condition expression in demo is placeholder** — `{{gt (len .input) 100}}` checks message
-   length, not actual refund amount. A real app would need a prior LLM node to extract the amount
-   into a flow var (e.g. `amount`), then condition on `{{gt .amount "200"}}`.
-3. **`loadWiringCfgForDef`'s blank-`node_id` fallback** (from 2026-09-28) — still open.
+1. **HIL rejection path** — no dedicated branch node for a manager rejection in the Smart Refund Handler demo.
+2. **Condition expression in demo is placeholder** — `{{gt (len .input) 100}}` checks length, not amount.
+3. **`loadWiringCfgForDef`'s blank-`node_id` fallback** — still open (go/internal/middleware/gate.go).
+4. **Cycle node smoke test** — end-to-end debug run of the Cycle node not yet done.
 
-**No active code thread — pick a new one or do canvas walkthrough of the demo app.**
+**No active code thread — pick a new one.**
 
 Both feature threads that were open when the 2026-09-28 entry below was written are now fully closed:
 - `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md` (app export/import) — all 3 phases DONE.
