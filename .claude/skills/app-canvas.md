@@ -4,7 +4,7 @@ description: App Canvas build + debug guide for the-M platform — how to constr
 ---
 
 # App Canvas — Build & Debug Reference
-# Ground truth as of 2026-09-26. Node-level rules below are LIVE-QUERYABLE
+# Ground truth as of 2026-10-05. Node-level rules below are LIVE-QUERYABLE
 # (see §1) — always re-fetch, never trust a cached copy of the node list.
 # App-level rules (§2-5) are NOT exposed by any endpoint — this file is the
 # only record of them. If they ever seem wrong, re-verify against the Go
@@ -22,8 +22,8 @@ description: App Canvas build + debug guide for the-M platform — how to constr
 - **App Canvas** (`frontend/src/app/admin/applications/`) — builds a whole
   *application*: entry point(s) → orchestrator/flow → agents. This skill
   covers App Canvas's own node family (`appflow`: `llm`, `condition`, `fork`,
-  `join`, `router`, `hil`, `http`) plus agent/middleware/orchestrator components
-  referenced by slug, not built inline.
+  `join`, `router`, `hil`, `http`, `transform`) plus agent/middleware/orchestrator
+  components referenced by slug, not built inline.
 
 This skill is for **App Canvas only**.
 
@@ -107,6 +107,39 @@ endpoint + `go/internal/appflow/workflow.go` cross-check, 2026-09-26):
   ```
   GET requests are retryable (Temporal retry safe); non-GET are non-retryable (idempotency assumption).
 
+- **`transform`** — manipulates flow variables without an LLM call (added 2026-10-05).
+  `definition_ref.kind: "inline"`, `name: "transform"`. Config fields:
+  - `functions`: array of function steps (required — at least one step, or validation fails with `transform_no_functions`)
+  Each step shape: `{"fn": "<name>", "input_var": "<source_var>", "output_var": "<dest_var>", "args": {<fn-specific>}}`
+  **Available functions (from `GET /admin/transform-functions`)** — grouped by category:
+  - `llm-era`: `strip_fences` (removes ` ``` ` markdown fences LLMs add), `normalize_whitespace`, `extract_code_block`
+  - `json`: `parse_json`, `json_path` (dot-notation: `$.city`, `$.data.id`), `merge_json`, `json_keys`, `to_string`
+  - `string`: `trim`, `ltrim`, `rtrim`, `upper`, `lower`, `replace`, `substring`, `length`, `concat` (prefix/suffix args), `split` (→ JSON array), `join` (JSON array → string), `regex_replace`, `regex_extract`
+  - `validation`: `is_json`, `is_empty`, `is_number`, `coalesce`, `default_if_empty`, `assert_json`, `type_of`
+  - `numeric`: `to_number`, `to_int`, `round`, `abs`, `add`, `multiply`
+  - `encoding`: `base64_encode`, `base64_decode`, `url_encode`, `url_decode`
+  **Execution**: runs in-process inside the Temporal activity — pure string manipulation, no I/O, typically microseconds. Steps run in order; each step's `output_var` is available to subsequent steps as an `input_var`.
+  **Validation**: `transform.Validate` checks all `fn` names at publish time — unknown function names fail with `transform_unknown_function`. Empty `functions` array fails with `transform_no_functions`.
+  **Debug**: the `node_done` detail field contains a JSON TraceResult — the debug inspector renders a per-step card showing fn name, input value, output value, duration in ms, and error (if any). No pre-run params needed.
+  **No credentials, no runtime screen config** — pure computation. Does NOT write `accumulated`; only writes the explicitly named `output_var` of each step into flow vars.
+  Common pattern — strip LLM fences then extract a field:
+  ```json
+  {
+    "instance_id": "transform_1",
+    "definition_ref": { "kind": "inline", "name": "transform", "version": 1, "namespace": "builtin" },
+    "config": {
+      "node_type": "transform",
+      "display_name": "Extract Order ID",
+      "functions": [
+        { "fn": "strip_fences", "input_var": "output", "output_var": "clean", "args": {} },
+        { "fn": "json_path",    "input_var": "clean",  "output_var": "order_id", "args": { "path": "$.id" } }
+      ]
+    }
+  }
+  ```
+  After this node, `order_id` is available as a flow var for downstream nodes.
+  **Typical placement**: after an `llm` node (to parse its JSON output) or after an `http` node (to extract fields from `http_response` without using `extractions`).
+
 - **`hil`** — pauses for human approval. Has two optional outgoing edge
   labels: **`"approved"`** (green port, taken when approved) and
   **`"rejected"`** (red port, taken when rejected). If no `"rejected"` edge
@@ -149,14 +182,14 @@ Top-level shape (`schema_version: 2`):
   "config": { "node_type": "llm", "display_name": "...", /* fields per §1's config_fields */ }
 }
 ```
-- `kind: "inline"` for `llm`/`condition` ONLY. `kind: "flow_control"` for
-  `fork`/`join`/`router`/`hil` — a DIFFERENT `definition_ref.kind`, not
+- `kind: "inline"` for `llm`, `condition`, `http`, `transform`. `kind: "flow_control"` for
+  `fork`/`join`/`router`/`hil`/`cycle`/`wait_for_input` — a DIFFERENT `definition_ref.kind`, not
   `"inline"` (confirmed 2026-09-26 the hard way: using `"inline"` for a
   `fork`/`join` node fails validation with `unknown_inline_node` —
   `go/internal/appflow/compiler.go`'s `compileNode` switches on
   `DefinitionRef.Kind` first, and only `"inline"` name-switches into
-  `llm`/`condition`; `"flow_control"` is the separate branch that
-  name-switches into `router`/`hil`/`fork`/`join`). `namespace` is always
+  `llm`/`condition`/`http`/`transform`; `"flow_control"` is the separate branch that
+  name-switches into `router`/`hil`/`fork`/`join`/`cycle`/`wait_for_input`). `namespace` is always
   `"builtin"` for both cases.
 - `kind: "agent"` for an agent component, e.g.:
   ```json
