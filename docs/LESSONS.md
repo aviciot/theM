@@ -3,6 +3,15 @@
 
 ---
 
+## 2026-10-05 — `docker restart` does NOT switch to a freshly built image
+
+**Symptom:** rebuilt all 3 dag-worker images (`docker compose build them-dag-worker them-dag-worker-2 them-dag-worker-debug`), then ran `docker compose restart` — containers still ran the old image. New code was not active, same errors persisted.
+**Root cause:** `docker compose restart` (and `docker restart`) restart the container with its **existing image layer** — it does not re-pull or re-apply the new build. Only `docker compose up -d` recreates containers from the freshly built image.
+**Fix:** always use `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d <service>` after building. Verify with `docker inspect <container> --format '{{.Image}}'` and compare against `docker images | grep <service>` — the digests must match.
+**Watch for:** after any `docker compose build`, confirm `docker inspect` digest matches image list digest before trusting the new binary is running. `docker restart` is only for restarting with the SAME image (e.g. picking up new env vars from a restarted compose service).
+
+---
+
 ## 2026-09-27 — A shared pipeline's "clean vs flagged" status was silently wrong since day one
 
 **Symptom:** building a PII Guard demo app with `mode="warn"`, the guard genuinely detected an

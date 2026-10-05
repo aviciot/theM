@@ -161,7 +161,7 @@ func TestAppFlowDebugService_Start_UnpublishedAgentDraft_NoLongerBlocked(t *test
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), reg)
 
-	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
+	result, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, nil, false)
 	require.NoError(t, err, "an unpublished draft with an agent node must debug successfully once the registry can resolve it live")
 	assert.Equal(t, "run-1", result.RunID)
 	assert.True(t, lc.startCalled)
@@ -178,7 +178,7 @@ func TestAppFlowDebugService_Start_UnpublishedAgentDraft_NilRegistry_StillBlocke
 	credStore := &fakeAppFlowDebugCredentialStore{}
 	svc := NewAppFlowDebugService(d, lc, credStore, []byte("test-fernet-key-32-bytes-long!!"), nil)
 
-	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, false)
+	_, err := svc.Start(context.Background(), "tenant-1", "app-1", "chat", "hello", 7, nil, nil, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unresolved_agent")
 	assert.False(t, lc.startCalled, "must never admit or start a run when an agent node can't be resolved")

@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-10-05 — HTTP node + per-run secret overrides in debug panel; GitHub PR Reviewer demo app.
+# Last updated: 2026-10-05 — Transform node for App Canvas implemented and live-verified.
 #
 # This session completed multiple back-to-back feature threads (all committed as of 30be9e55):
 # 1) Router node: dynamic label output ports (one handle per label, spread like condition's
@@ -16,6 +16,25 @@
 #    → fork/join (parallel account + order agent lookup) → llm (compose response).
 #    Billing and general intents route directly to LLM. No code changes needed — pure DB
 #    insert. Open the app in the canvas UI to see it reconstruct from the definition JSON.
+#
+# Transform node (2026-10-05):
+# - New 9th App Canvas node type: inline/transform. Reuses internal/agentgen/transform engine (20+
+#   functions: json_path, strip_fences, regex_extract, upper, lower, trim, concat, split, join,
+#   length, substring, to_number, normalize_whitespace, assert_json, merge_json, …).
+# - Backend: go/internal/appflow/transform_activity.go (TransformActivity, execTransformNode),
+#   cycle.go + workflow.go both dispatch case "transform", compiler.go sets Kind="transform",
+#   validate.go checks empty functions + unknown fn names, noderegistry.go entry (color #8b5cf6),
+#   cmd/dag-worker/main.go registers AppFlowTransformActivity.
+# - Frontend: frontend/.../cbv/panels/CanvasTransformPanel.tsx (recipe shortcuts + var dropdowns),
+#   AppFlowDebugInspector.tsx (per-step trace card), CanvasBuilderView.tsx + CanvasNodePropertiesPanel.tsx wired.
+# - HIL+Wait Test app (ed664c59) updated to rev 5: 3 transform nodes added + cycle bug fixed
+#   (cond_clear had no true edge → added transform_confirm as true-branch target). Live debug session
+#   confirmed transform_normalise fires inside cycle body with correct per-step trace JSON
+#   ({"steps":[{"fn":"trim",...},{"fn":"lower",...}]}) visible in run_steps.output.
+# - Skill: .claude/skills/app-canvas.md updated with full transform section + kind mapping correction.
+# - Tests: transform_activity_test.go (5 tests), noderegistry_test.go updated (count 8→9). 1593 total.
+# - GOTCHA: docker restart does NOT apply new images. Must use `docker compose up -d` after build.
+#   See docs/LESSONS.md (2026-10-05 entry).
 #
 # --- Prior entry (2026-10-01) ---
 # Since the 2026-10-01 entry below (kept for history), two feature threads shipped:
