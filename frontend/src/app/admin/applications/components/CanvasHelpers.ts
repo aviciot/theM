@@ -327,7 +327,9 @@ export function docToCanvas(
   (doc.entry_points ?? []).forEach(ep => {
     const pos = layout[ep.instance_id] ?? { x: 0, y: 0 };
     nodes.push({ id: ep.instance_id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: ep.instance_id, slug: ep.slug, protocol: ep.protocol, label: EP_META[ep.protocol]?.title ?? ep.protocol, config: ep.config ?? {} } as unknown as Record<string, unknown> });
-    if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default' });
+    if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default',
+      ...(flowCtrlNodeTypeById.get(ep.root) === 'cycle' ? { targetHandle: 'cycle-flow-in' } : {}),
+    });
   });
   (doc.connections ?? []).forEach(conn => {
     if (conn.type === 'tool' || conn.type === 'delegation' || conn.type === 'flow_control') {

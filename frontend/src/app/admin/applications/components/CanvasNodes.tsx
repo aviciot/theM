@@ -509,45 +509,39 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
           style={{ width: 40, fontSize: 10, padding: '2px 5px', borderRadius: 4, border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(0,0,0,0.3)', color: '#e0e7ff', outline: 'none' }}
         />
       </div>
-      {/* IN internal handle — always on the axis NOT used by outer handles.
-          TB: outer=Top/Bottom → IN on Left. LR: outer=Left/Right → IN on Top. */}
+      {/* ▶ IN — green diamond, top-left inside box, below header */}
       <Handle
         id="cycle-in"
         type="source"
-        position={dir === 'LR' ? Position.Top : Position.Left}
+        position={dir === 'LR' ? Position.Left : Position.Top}
         style={{
-          background: '#4ade80', border: '2px solid #021520', width: 12, height: 12, zIndex: 41,
-          ...(dir === 'LR' ? { top: -6, left: 24 } : { top: 48, left: -6 }),
+          background: '#4ade80', border: '2px solid #021520', width: 14, height: 14,
+          borderRadius: 2, transform: 'rotate(45deg)', zIndex: 41,
+          top: 58, left: 20, bottom: 'auto', right: 'auto',
         }}
       />
-      <div style={{
-        position: 'absolute', display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 7px', borderRadius: 8,
-        background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.35)', pointerEvents: 'none',
-        ...(dir === 'LR' ? { top: 8, left: 18 } : { top: 42, left: 12 }),
-      }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8, userSelect: 'none' }}>▶ IN</span>
-      </div>
+      <span style={{
+        position: 'absolute', top: 76, left: 13,
+        fontSize: 9, fontWeight: 700, color: '#4ade80', letterSpacing: 0.8,
+        pointerEvents: 'none', userSelect: 'none',
+      }}>▶ IN</span>
 
-      {/* OUT internal handle — opposite corner from IN.
-          TB: OUT on Right. LR: OUT on Bottom. */}
+      {/* OUT ▶ — orange diamond, top-right inside box, below header */}
       <Handle
         id="cycle-out"
         type="target"
-        position={dir === 'LR' ? Position.Bottom : Position.Right}
+        position={dir === 'LR' ? Position.Right : Position.Bottom}
         style={{
-          background: '#fb923c', border: '2px solid #021520', width: 12, height: 12, zIndex: 41,
-          ...(dir === 'LR' ? { bottom: -6, right: 24 } : { bottom: 16, right: -6 }),
+          background: '#fb923c', border: '2px solid #021520', width: 14, height: 14,
+          borderRadius: 2, transform: 'rotate(45deg)', zIndex: 41,
+          top: 58, right: 20, bottom: 'auto', left: 'auto',
         }}
       />
-      <div style={{
-        position: 'absolute', display: 'flex', alignItems: 'center', gap: 4,
-        padding: '2px 7px', borderRadius: 8,
-        background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.35)', pointerEvents: 'none',
-        ...(dir === 'LR' ? { bottom: 8, right: 18 } : { bottom: 10, right: 12 }),
-      }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#fb923c', letterSpacing: 0.8, userSelect: 'none' }}>OUT ▶</span>
-      </div>
+      <span style={{
+        position: 'absolute', top: 76, right: 13,
+        fontSize: 9, fontWeight: 700, color: '#fb923c', letterSpacing: 0.8,
+        pointerEvents: 'none', userSelect: 'none',
+      }}>OUT ▶</span>
 
       {/* Outer target handle — FLOW IN: EP/prev-node connects here */}
       <Handle id="cycle-flow-in" type="target" position={targetPos} style={{ background: '#22d3ee', border: '2px solid #021520', width: 10, height: 10, zIndex: 40 }} />
@@ -560,7 +554,6 @@ export function CycleNode({ id, data, selected }: { id: string; data: CycleNodeD
       <Handle id="cycle-flow-out" type="source" position={sourcePos} style={{
         background: accent, border: '2px solid #051424',
         width: 14, height: 14,
-        bottom: -7,
         zIndex: 40,
       }} />
       <span style={{
