@@ -238,6 +238,14 @@ func walkCycleBody(
 				curID = firstEdgeTarget(outEdges[node.ID])
 			}
 
+		case "transform":
+			var transformErr error
+			vars, transformErr = execTransformNode(ctx, node, input, vars, shortAO)
+			if transformErr != nil {
+				return accumulated, vars, fmt.Errorf("cycle body transform %q: %w", node.ID, transformErr)
+			}
+			curID = firstEdgeTarget(outEdges[node.ID])
+
 		case "orchestrator", "middleware":
 			curID = firstEdgeTarget(outEdges[node.ID])
 

@@ -202,6 +202,53 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
       )}
 
       {debugInfo?.detail && (() => {
+        // Attempt to parse detail as a structured transform trace card.
+        type TransformStep = { fn: string; input_var: string; output_var: string; in: string; out?: string; error?: string; ok: boolean; duration_ns: number };
+        let transformCard: { steps: TransformStep[] } | null = null;
+        try {
+          const parsed = JSON.parse(debugInfo.detail);
+          if (typeof parsed === 'object' && parsed !== null && Array.isArray(parsed.steps) && parsed.steps.length > 0 && 'fn' in parsed.steps[0]) {
+            transformCard = parsed;
+          }
+        } catch { /* not JSON */ }
+
+        if (transformCard) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>TRANSFORM STEPS</div>
+              {transformCard.steps.map((step, i) => (
+                <div key={i} style={{
+                  background: step.ok ? 'rgba(74,222,128,0.06)' : 'rgba(248,113,113,0.06)',
+                  border: `1px solid ${step.ok ? 'rgba(74,222,128,0.25)' : 'rgba(248,113,113,0.35)'}`,
+                  borderRadius: 6, padding: '8px 10px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 700, fontSize: 11, color: step.ok ? '#4ade80' : '#f87171' }}>{step.ok ? '✓' : '✗'}</span>
+                    <code style={{ fontSize: 11, color: '#c4b5fd' }}>{step.fn}</code>
+                    <span style={{ fontSize: 10, color: C.textMuted }}>{step.input_var} → {step.output_var}</span>
+                    <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 'auto' }}>{(step.duration_ns / 1_000_000).toFixed(2)}ms</span>
+                  </div>
+                  {step.in && (
+                    <div style={{ display: 'flex', gap: 6, fontSize: 10, marginBottom: 2 }}>
+                      <span style={{ color: C.textMuted, flexShrink: 0 }}>in:</span>
+                      <code style={{ color: '#94a3b8', wordBreak: 'break-all' }}>{step.in.length > 120 ? step.in.slice(0, 120) + '…' : step.in}</code>
+                    </div>
+                  )}
+                  {step.ok && step.out !== undefined && (
+                    <div style={{ display: 'flex', gap: 6, fontSize: 10 }}>
+                      <span style={{ color: C.textMuted, flexShrink: 0 }}>out:</span>
+                      <code style={{ color: '#4ade80', wordBreak: 'break-all' }}>{step.out.length > 120 ? step.out.slice(0, 120) + '…' : step.out}</code>
+                    </div>
+                  )}
+                  {!step.ok && step.error && (
+                    <div style={{ fontSize: 10, color: '#f87171', marginTop: 2 }}>{step.error}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        }
+
         // Attempt to parse detail as a structured HTTP trace card.
         let httpCard: { status?: number; url?: string; body?: string; extracted?: Record<string, string> } | null = null;
         try {

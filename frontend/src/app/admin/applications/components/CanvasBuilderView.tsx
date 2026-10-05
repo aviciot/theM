@@ -40,6 +40,7 @@ const APPFLOW_NODE_COMPONENT: Record<string, 'inline' | 'flow_control'> = {
   llm: 'inline',
   condition: 'inline',
   http: 'inline',
+  transform: 'inline',
   router: 'flow_control',
   hil: 'flow_control',
   fork: 'flow_control',
@@ -54,6 +55,7 @@ const APPFLOW_NODE_DEFAULTS: Record<string, Record<string, unknown>> = {
   llm: { user_prompt: '{{.input}}', output_var: 'output', max_tokens: 1024 },
   condition: { expression: '' },
   http: { method: 'GET', url_template: '', headers: {}, body_template: '', extractions: [], timeout_seconds: 30 },
+  transform: { functions: [] },
 };
 
 // ── CanvasBuilderView (V2) ────────────────────────────────────────────────────
@@ -586,6 +588,7 @@ export function CanvasBuilderView({
           onSetEntryPointSlug={appFlowDebug.setEntryPointSlug}
           onSetUserMessage={appFlowDebug.setUserMessage}
           onSetCredential={appFlowDebug.setCredential}
+          onSetSecret={appFlowDebug.setSecret}
           onSetStepMode={appFlowDebug.setStepMode}
           onRunAll={appFlowDebug.runAll}
           onStep={appFlowDebug.step}

@@ -282,6 +282,9 @@ func run() error {
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.HTTPActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowHTTPActivityName,
 	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.TransformActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowTransformActivityName,
+	})
 	if err := appFlowWorker.Start(); err != nil {
 		return fmt.Errorf("startup: appflow temporal worker: %w", err)
 	}

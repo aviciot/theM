@@ -8,6 +8,7 @@ import { EntryPointNodePanel } from './panels/EntryPointNodePanel';
 import { FlowControlNodePanel } from './panels/FlowControlNodePanel';
 import { InlineNodePanel } from './panels/InlineNodePanel';
 import { CycleNodePanel } from './panels/CycleNodePanel';
+import { CanvasTransformPanel } from './panels/CanvasTransformPanel';
 
 // ── CanvasNodePropertiesPanel ────────────────────────────────────────────────
 
@@ -130,6 +131,18 @@ export function CanvasNodePropertiesPanel({
   }
 
   if (selectedNode.type === 'inline') {
+    const nodeType = (selectedNode.data as Record<string, unknown>).node_type as string | undefined;
+    if (nodeType === 'transform') {
+      return (
+        <CanvasTransformPanel
+          selectedNode={selectedNode}
+          nodes={nodes}
+          edges={edges}
+          setNodes={setNodes}
+          setIsDirty={setIsDirty}
+        />
+      );
+    }
     return (
       <InlineNodePanel
         appId={appId}

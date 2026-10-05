@@ -1079,6 +1079,17 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue
 
+		case "transform":
+			var transformErr error
+			vars, transformErr = execTransformNode(ctx, node, input, vars, shortAO)
+			if transformErr != nil {
+				out.Status = "failed"
+				retErr = transformErr
+				return
+			}
+			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
+			continue
+
 		default:
 			out.Status = "failed"
 			retErr = temporalerr.NewNonRetryableApplicationError(

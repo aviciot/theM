@@ -517,6 +517,8 @@ func compileNode(c *compInst, agentByInstanceID map[string]string) (AppFlowNode,
 			node.Kind = "condition"
 		case "http":
 			node.Kind = "http"
+		case "transform":
+			node.Kind = "transform"
 		default:
 			// Unknown inline name: keep the kind so Validate reports it as
 			// unknown_inline_node rather than the workflow failing at run time.

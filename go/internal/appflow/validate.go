@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/aviciot/them/internal/agentgen/transform"
 )
 
 // ValidationError is a structured compilation/validation error.
@@ -176,6 +178,25 @@ func Validate(spec *AppFlowSpec) []ValidationError {
 					errs = append(errs, ValidationError{
 						Code:       "wait_for_input_no_outgoing_edge",
 						Message:    "wait_for_input node must have exactly one outgoing edge",
+						InstanceID: n.ID,
+					})
+				}
+			}
+			if n.Kind == "transform" {
+				var cfg TransformNodeConfig
+				if len(n.Config) > 0 {
+					_ = json.Unmarshal(n.Config, &cfg)
+				}
+				if len(cfg.Functions) == 0 {
+					errs = append(errs, ValidationError{
+						Code:       "transform_no_functions",
+						Message:    "transform node has no function steps configured",
+						InstanceID: n.ID,
+					})
+				} else if err := transform.Validate(cfg.Functions); err != nil {
+					errs = append(errs, ValidationError{
+						Code:       "transform_unknown_function",
+						Message:    err.Error(),
 						InstanceID: n.ID,
 					})
 				}

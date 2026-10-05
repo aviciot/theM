@@ -8,14 +8,14 @@ import "testing"
 // returned slice does not affect the shared static registry.
 func TestAllAppCanvasNodeInfos_ReturnsSixKinds(t *testing.T) {
 	infos := AllAppCanvasNodeInfos()
-	if len(infos) != 8 {
-		t.Fatalf("expected 8 app-canvas node kinds, got %d", len(infos))
+	if len(infos) != 9 {
+		t.Fatalf("expected 9 app-canvas node kinds, got %d", len(infos))
 	}
 
 	wantTypes := map[string]bool{
 		"llm": false, "condition": false, "router": false,
 		"hil": false, "fork": false, "join": false, "wait_for_input": false,
-		"http": false,
+		"http": false, "transform": false,
 	}
 	for _, info := range infos {
 		if _, ok := wantTypes[info.Type]; !ok {
@@ -98,7 +98,7 @@ func TestAllAppCanvasNodeInfos_ForkJoinDegreeRules(t *testing.T) {
 // OutputPorts entry.
 func TestAllAppCanvasNodeInfos_LLMHasOutputPort(t *testing.T) {
 	// Kinds that must declare exactly one "output" OutputPort.
-	dataKinds := map[string]bool{"llm": true, "http": true}
+	dataKinds := map[string]bool{"llm": true, "http": true, "transform": true}
 	infos := AllAppCanvasNodeInfos()
 	for _, info := range infos {
 		if !dataKinds[info.Type] {

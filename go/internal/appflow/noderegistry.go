@@ -226,6 +226,27 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 		},
 	},
 	{
+		Type:    "transform",
+		Version: 1,
+		Meta: nodedefs.Meta{
+			Label:       "Transform",
+			Description: "Manipulate flow variables without an LLM — extract JSON fields, strip formatting, regex, string ops, and more. Runs in-process with no external calls.",
+			Emoji:       "⚙",
+			Color:       "#8b5cf6",
+			Edges:       nodedefs.EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 0, MaxOut: 0},
+			ConfigFields: []nodedefs.ConfigFieldDoc{
+				{Key: "functions", Type: "array", Required: true, Description: "Ordered list of transform steps. Each: {\"fn\": \"json_path\", \"input_var\": \"output\", \"output_var\": \"order_id\", \"args\": {\"path\": \"$.id\"}}.", Example: `[{"fn":"strip_fences","input_var":"output","output_var":"clean"},{"fn":"json_path","input_var":"clean","output_var":"order_id","args":{"path":"$.id"}}]`},
+			},
+			OutputPorts: []nodedefs.PortDef{
+				{ID: "output", Label: "Output", Required: true, TypeHint: "text"},
+			},
+			UsageNotes: "Use after an agent or HTTP node to extract structured values from free-form output. Functions run in order; each step's output_var is available to subsequent steps. Available functions: json_path, strip_fences, regex_extract, replace, split, join, upper, lower, trim, concat, to_number, and more — see GET /admin/transform-functions for the full catalog.",
+		},
+		OutputArity:          "single",
+		AcceptsDynamicInputs: true,
+		Executable:           true,
+	},
+	{
 		Type:    "wait_for_input",
 		Version: 1,
 		Meta: nodedefs.Meta{
