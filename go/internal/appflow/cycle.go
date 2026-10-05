@@ -72,7 +72,7 @@ func execCycleNode(
 
 	for i := 0; i < maxIter; i++ {
 		var bodyErr error
-		accumulated, vars, bodyErr = walkCycleBody(ctx, cfg.EntryNodeID, bodyNodeByID, bodyEdgesBySource, input, accumulated, vars, ao, shortAO, tick, seedGen)
+		accumulated, vars, bodyErr = walkCycleBody(ctx, cfg.EntryNodeID, node.ID, bodyNodeByID, bodyEdgesBySource, input, accumulated, vars, ao, shortAO, tick, seedGen)
 		if bodyErr != nil {
 			// Propagate HIL-rejected sentinel as-is so the outer workflow can
 			// follow the cycle node's own "rejected" edge.
@@ -94,9 +94,12 @@ func execCycleNode(
 
 // walkCycleBody executes the cycle body sub-graph from entryID, mirroring
 // walkBranch's dispatch pattern. Returns updated accumulated text and vars.
+// cycleID is the containing cycle node's ID — an edge targeting it via OUT ▶
+// is treated as an explicit body exit (same as no outgoing edge).
 func walkCycleBody(
 	ctx workflow.Context,
 	entryID string,
+	cycleID string,
 	nodeByID map[string]*AppFlowNode,
 	outEdges map[string][]AppFlowEdge,
 	input AppFlowWorkflowInput,
@@ -107,6 +110,12 @@ func walkCycleBody(
 	seedGen int,
 ) (string, FlowVars, error) {
 	lastSeenGen := seedGen
+	exitBody := func(next string) string {
+		if next == cycleID {
+			return ""
+		}
+		return next
+	}
 	curID := entryID
 	for curID != "" {
 		node, ok := nodeByID[curID]
@@ -134,7 +143,7 @@ func walkCycleBody(
 			if agentOut.ResponseText != "" {
 				accumulated = agentOut.ResponseText
 			}
-			curID = firstEdgeTarget(outEdges[node.ID])
+			curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 
 		case "llm":
 			var cfg InlineLLMConfig
@@ -179,7 +188,7 @@ func walkCycleBody(
 			if llmOut.ResponseText != "" {
 				accumulated = llmOut.ResponseText
 			}
-			curID = firstEdgeTarget(outEdges[node.ID])
+			curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 
 		case "condition":
 			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_start", "", input.LogVerbosity)
@@ -202,7 +211,7 @@ func walkCycleBody(
 				return accumulated, vars, fmt.Errorf("cycle condition %q: no edge labelled %q", node.ID, branch)
 			}
 			traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done", "branch="+branch, input.LogVerbosity)
-			curID = nextID
+			curID = exitBody(nextID)
 
 		case "wait_for_input":
 			var waitErr error
@@ -210,7 +219,7 @@ func walkCycleBody(
 			if waitErr != nil {
 				return accumulated, vars, fmt.Errorf("cycle body wait_for_input %q: %w", node.ID, waitErr)
 			}
-			curID = firstEdgeTarget(outEdges[node.ID])
+			curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 
 		case "hil":
 			approved, comment, hErr := execHILNode(ctx, node, input, shortAO, vars)
@@ -235,7 +244,7 @@ func walkCycleBody(
 					return accumulated, vars, cycleHILRejectedError{comment: comment}
 				}
 			} else {
-				curID = firstEdgeTarget(outEdges[node.ID])
+				curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 			}
 
 		case "transform":
@@ -244,10 +253,10 @@ func walkCycleBody(
 			if transformErr != nil {
 				return accumulated, vars, fmt.Errorf("cycle body transform %q: %w", node.ID, transformErr)
 			}
-			curID = firstEdgeTarget(outEdges[node.ID])
+			curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 
 		case "orchestrator", "middleware":
-			curID = firstEdgeTarget(outEdges[node.ID])
+			curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 
 		default:
 			return accumulated, vars, fmt.Errorf("cycle body: unsupported node kind %q at %q", node.Kind, node.ID)
