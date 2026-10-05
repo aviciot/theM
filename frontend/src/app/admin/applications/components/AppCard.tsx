@@ -49,6 +49,7 @@ export function AppCard({
 }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [specOpen, setSpecOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [synthesizing, setSynthesizing] = useState<string | null>(null); // ep id
   const [synthToast, setSynthToast] = useState<string | null>(null);
@@ -193,6 +194,17 @@ export function AppCard({
             </div>
           </div>
 
+          {/* Spec info button — only shown when app has a spec */}
+          {app.spec && (
+            <button
+              onClick={e => { e.stopPropagation(); setSpecOpen(true); }}
+              title="View app spec"
+              style={{ width: 30, height: 30, borderRadius: 7, cursor: 'pointer', background: specOpen ? 'rgba(99,102,241,0.15)' : 'var(--tm-btn-2-bg)', border: `1px solid ${specOpen ? 'rgba(99,102,241,0.5)' : 'var(--tm-btn-2-border)'}`, color: '#818cf8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>description</span>
+            </button>
+          )}
+
           {/* Three-dot menu */}
           <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <button
@@ -325,6 +337,48 @@ export function AppCard({
           </div>
         )}
       </div>
+
+      {/* ── Spec modal ── */}
+      {specOpen && app.spec && (
+        <div
+          onClick={() => setSpecOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 680, maxHeight: '80vh', display: 'flex', flexDirection: 'column', background: '#0d1117', border: '1px solid rgba(99,102,241,0.4)', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.6)', overflow: 'hidden' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#818cf8' }}>description</span>
+                <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{app.name}</span>
+                <span style={{ fontSize: 11, color: C.textMuted }}>— Spec</span>
+              </div>
+              <button
+                onClick={() => setSpecOpen(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}
+                onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+                onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+              </button>
+            </div>
+            <pre style={{ flex: 1, overflow: 'auto', margin: 0, padding: '20px 24px', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, lineHeight: 1.7, color: '#c9d1d9', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {app.spec}
+            </pre>
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '10px 20px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setSpecOpen(false); router.push(`/admin/applications/${app.id}/spec`); }}
+                style={{ fontSize: 12, color: '#818cf8', background: 'none', border: '1px solid rgba(99,102,241,0.35)', borderRadius: 7, padding: '6px 14px', cursor: 'pointer', fontWeight: 600 }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.1)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+              >
+                Edit Spec
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Action buttons ── */}
       <div style={{ borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
