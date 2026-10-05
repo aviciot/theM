@@ -27,6 +27,29 @@ const stateLabel: Record<AppFlowNodeDebugInfo['state'], string> = {
   idle: 'Idle', pending: 'Pending', running: 'Running…', paused: 'Paused — waiting for Step', done: 'Done', error: 'Error',
 };
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }
+  return (
+    <button onClick={copy} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: copied ? '#4ade80' : C.textMuted, fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>
+      {copied ? '✓ Copied' : 'Copy'}
+    </button>
+  );
+}
+
 export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: string; selectedNode: Node | null; runId: string | null }) {
   const debugInfo = (selectedNode?.data as { _debug?: AppFlowNodeDebugInfo } | undefined)?._debug;
   const [hilComment, setHilComment] = useState('');
@@ -194,9 +217,9 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>HTTP RESPONSE</div>
               {/* Status + URL */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{
-                  padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12,
+                  padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12, flexShrink: 0,
                   background: statusOk ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
                   color: statusOk ? '#4ade80' : '#f87171',
                   border: `1px solid ${statusOk ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)'}`,
@@ -204,7 +227,10 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
                   {httpCard.status}
                 </span>
                 {httpCard.url && (
-                  <span style={{ fontSize: 11, color: C.textMuted, wordBreak: 'break-all' }}>{httpCard.url}</span>
+                  <>
+                    <span style={{ fontSize: 11, color: C.textMuted, wordBreak: 'break-all', flex: 1 }}>{httpCard.url}</span>
+                    <CopyButton text={httpCard.url} />
+                  </>
                 )}
               </div>
               {/* Extractions */}
@@ -224,11 +250,14 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
               {/* Response body */}
               {httpCard.body && (
                 <div>
-                  <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em', marginBottom: 4 }}>RESPONSE BODY</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>RESPONSE BODY</div>
+                    <CopyButton text={httpCard.body} />
+                  </div>
                   <pre style={{
                     margin: 0, padding: '8px 10px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.outline}`,
                     borderRadius: 6, fontSize: '11px', color: '#4ade80', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                    maxHeight: 240, overflowY: 'auto',
+                    maxHeight: 400, overflowY: 'auto',
                   }}>
                     {httpCard.body}
                   </pre>

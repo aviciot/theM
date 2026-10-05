@@ -1041,16 +1041,12 @@ func (a *AppFlowActivities) HTTPActivity(ctx context.Context, input HTTPActivity
 	}
 
 	// Build a structured trace detail so the debug inspector can render the
-	// resolved URL, status, response body, and any extractions as a card rather
-	// than a flat string. Body is capped at 500 chars to keep it readable.
-	bodySnippet := strings.TrimSpace(string(rawBody))
-	if len(bodySnippet) > 500 {
-		bodySnippet = bodySnippet[:500] + "…"
-	}
+	// resolved URL, status, response body, and any extractions as a card.
+	// Full body is included — the inspector renders it in a scrollable pane.
 	traceData := map[string]any{
 		"status": statusCode,
 		"url":    urlStr,
-		"body":   bodySnippet,
+		"body":   strings.TrimSpace(string(rawBody)),
 	}
 	if len(out.Extracted) > 0 {
 		traceData["extracted"] = out.Extracted
