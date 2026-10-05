@@ -178,18 +178,79 @@ export function AppFlowDebugInspector({ appId, selectedNode, runId }: { appId: s
         </div>
       )}
 
-      {debugInfo?.detail && (
-        <div>
-          <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em', marginBottom: 4 }}>OUTPUT / DETAIL</div>
-          <pre style={{
-            margin: 0, padding: '8px 10px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.outline}`,
-            borderRadius: 6, fontSize: '11px', color: '#4ade80', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-            maxHeight: 240, overflowY: 'auto',
-          }}>
-            {debugInfo.detail}
-          </pre>
-        </div>
-      )}
+      {debugInfo?.detail && (() => {
+        // Attempt to parse detail as a structured HTTP trace card.
+        let httpCard: { status?: number; url?: string; body?: string; extracted?: Record<string, string> } | null = null;
+        try {
+          const parsed = JSON.parse(debugInfo.detail);
+          if (typeof parsed === 'object' && parsed !== null && typeof parsed.status === 'number') {
+            httpCard = parsed;
+          }
+        } catch { /* not JSON — render as plain text below */ }
+
+        if (httpCard) {
+          const statusOk = (httpCard.status ?? 0) < 400;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>HTTP RESPONSE</div>
+              {/* Status + URL */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{
+                  padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12,
+                  background: statusOk ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
+                  color: statusOk ? '#4ade80' : '#f87171',
+                  border: `1px solid ${statusOk ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)'}`,
+                }}>
+                  {httpCard.status}
+                </span>
+                {httpCard.url && (
+                  <span style={{ fontSize: 11, color: C.textMuted, wordBreak: 'break-all' }}>{httpCard.url}</span>
+                )}
+              </div>
+              {/* Extractions */}
+              {httpCard.extracted && Object.keys(httpCard.extracted).length > 0 && (
+                <div>
+                  <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em', marginBottom: 4 }}>EXTRACTED VARS</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {Object.entries(httpCard.extracted).map(([k, v]) => (
+                      <div key={k} style={{ display: 'flex', gap: 6, fontSize: 11 }}>
+                        <span style={{ color: '#38bdf8', fontWeight: 600, flexShrink: 0 }}>{k}</span>
+                        <span style={{ color: C.text, wordBreak: 'break-all' }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Response body */}
+              {httpCard.body && (
+                <div>
+                  <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em', marginBottom: 4 }}>RESPONSE BODY</div>
+                  <pre style={{
+                    margin: 0, padding: '8px 10px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.outline}`,
+                    borderRadius: 6, fontSize: '11px', color: '#4ade80', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    maxHeight: 240, overflowY: 'auto',
+                  }}>
+                    {httpCard.body}
+                  </pre>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div>
+            <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, letterSpacing: '0.06em', marginBottom: 4 }}>OUTPUT / DETAIL</div>
+            <pre style={{
+              margin: 0, padding: '8px 10px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.outline}`,
+              borderRadius: 6, fontSize: '11px', color: '#4ade80', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: 240, overflowY: 'auto',
+            }}>
+              {debugInfo.detail}
+            </pre>
+          </div>
+        );
+      })()}
 
       {debugInfo?.error && (
         <div>

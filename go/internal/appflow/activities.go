@@ -1040,8 +1040,23 @@ func (a *AppFlowActivities) HTTPActivity(ctx context.Context, input HTTPActivity
 		}
 	}
 
-	a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_done",
-		fmt.Sprintf("HTTP %d", statusCode), input.Verbosity)
+	// Build a structured trace detail so the debug inspector can render the
+	// resolved URL, status, response body, and any extractions as a card rather
+	// than a flat string. Body is capped at 500 chars to keep it readable.
+	bodySnippet := strings.TrimSpace(string(rawBody))
+	if len(bodySnippet) > 500 {
+		bodySnippet = bodySnippet[:500] + "…"
+	}
+	traceData := map[string]any{
+		"status": statusCode,
+		"url":    urlStr,
+		"body":   bodySnippet,
+	}
+	if len(out.Extracted) > 0 {
+		traceData["extracted"] = out.Extracted
+	}
+	traceJSON, _ := json.Marshal(traceData)
+	a.emitTrace(ctx, input.RunID, input.NodeID, "http", "node_done", string(traceJSON), input.Verbosity)
 	return out, nil
 }
 
