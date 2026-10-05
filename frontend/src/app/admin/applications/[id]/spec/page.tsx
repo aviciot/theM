@@ -4,11 +4,11 @@ import { AppDetailShell } from '../AppDetailShell';
 import { AppPageLoader, AppPageError } from '../AppPageLoader';
 import { useAppById } from '../useAppById';
 import { C } from '../../constants';
-import { apiClient } from '@/lib/api';
+import { themApi } from '@/lib/api';
 
 export default function AppSpecPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { app, loading, error, refresh } = useAppById(id);
+  const { app, loading, error } = useAppById(id);
   const [spec, setSpec] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -24,7 +24,7 @@ export default function AppSpecPage({ params }: { params: Promise<{ id: string }
     setSaving(true);
     setSaved(false);
     try {
-      await apiClient.patchAppSpec(id, spec);
+      await themApi.patchAppSpec(id, spec);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
