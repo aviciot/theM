@@ -141,6 +141,7 @@ func (f *agentDefFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) [
 func (f *agentDefFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *agentDefFakeDal) UpdateAppSpec(_ context.Context, _, _, _ string) error { return nil }
 func (f *agentDefFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }

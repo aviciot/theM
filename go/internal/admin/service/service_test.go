@@ -276,6 +276,7 @@ func (f *fakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) 
 	f.updateRuntimeConfigCalled = true
 	return f.updateRuntimeConfigErr
 }
+func (f *fakeDal) UpdateAppSpec(_ context.Context, _, _, _ string) error { return nil }
 func (f *fakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
 	return f.orchNames, f.orchNamesErr
 }

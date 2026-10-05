@@ -227,6 +227,7 @@ func (f *publishFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []
 func (f *publishFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *publishFakeDal) UpdateAppSpec(_ context.Context, _, _, _ string) error { return nil }
 func (f *publishFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }

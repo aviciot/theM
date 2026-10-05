@@ -62,6 +62,7 @@ type Dal interface {
 
 	// Runtime config + bulk delete
 	UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, configJSON []byte) error
+	UpdateAppSpec(ctx context.Context, tenantID, appID, spec string) error
 	ListAppOrchestratorNames(ctx context.Context, appID string) ([]string, error)
 	GetAppGuardHealth(ctx context.Context, appID string) (dal.AppGuardHealth, error)
 	BulkDeleteApplications(ctx context.Context, tenantID string, ids []string) (int64, error)

@@ -8,6 +8,7 @@ import { C } from '../constants';
 
 const TABS = [
   { label: 'Builder',          href: (id: string) => `/admin/applications/${id}/builder` },
+  { label: 'Spec',             href: (id: string) => `/admin/applications/${id}/spec` },
   { label: 'Runtime',          href: (id: string) => `/admin/applications/${id}/runtime` },
   { label: 'MCP Credentials',  href: (id: string) => `/admin/applications/${id}/mcp-credentials` },
   { label: 'Monitor',          href: (id: string) => `/admin/applications/${id}/monitor` },

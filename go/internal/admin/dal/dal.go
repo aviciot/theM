@@ -319,6 +319,7 @@ type Application struct {
 	Enabled          bool                     `json:"enabled"`
 	ActiveRevision   *int                     `json:"active_revision,omitempty"`
 	ActiveStatus     *string                  `json:"active_status,omitempty"`
+	Spec             string                   `json:"spec,omitempty"`
 	EntryPoints      []EntryPoint             `json:"entry_points"`
 	AppOrchestrators []AppOrchestratorSummary `json:"app_orchestrators"`
 }

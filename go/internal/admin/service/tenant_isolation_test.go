@@ -447,6 +447,7 @@ func (f *isolationFakeDal) DeleteAppFlowDebugPreset(_ context.Context, _, _ stri
 func (f *isolationFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *isolationFakeDal) UpdateAppSpec(_ context.Context, _, _, _ string) error { return nil }
 func (f *isolationFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }

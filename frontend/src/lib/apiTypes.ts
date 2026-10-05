@@ -256,6 +256,7 @@ export interface Application {
   slug?: string;
   tenant_slug?: string;
   presentation?: Record<string, unknown>;
+  spec?: string;
   enabled: boolean;
   active_revision?: number | null;
   active_status?: string | null;

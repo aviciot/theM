@@ -92,6 +92,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/", h.Update)
 		app.Patch("/", h.Update) // Python frontend sends PATCH; accept both
 		app.Delete("/", h.Delete)
+		app.Patch("/spec", h.PatchSpec)
 		app.Put("/runtime", h.PutRuntime)
 		app.Get("/flow-llm-nodes", h.GetAppFlowLLMNodes)
 		app.Put("/flow-llm-nodes/{node_id}", h.PutAppFlowLLMOverride)
@@ -277,6 +278,42 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		Action: "app.delete", EntityType: "app", EntityID: id, Actor: actorFromRequest(r),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
+}
+
+// PatchSpec handles PATCH /api/v1/admin/applications/{id}/spec.
+func (h *ApplicationsHandler) PatchSpec(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	var body struct {
+		Spec string `json:"spec"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.UpdateAppSpec(r.Context(), tenantID, id, body.Spec); err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusNotFound, "application not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // ListEntryPoints handles GET /api/v1/admin/applications/{id}/entry-points.

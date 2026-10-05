@@ -510,6 +510,8 @@ export const themApi = {
   getAppParams: (appId: string) => api.get<AppGlobalParam[]>(`/admin/applications/${appId}/app-params`),
   setAppParam: (appId: string, name: string, value: string, type: string) => api.put<{ name: string; updated: boolean }>(`/admin/applications/${appId}/app-params/${name}`, { value, type }),
   deleteAppParam: (appId: string, name: string) => api.delete<{ name: string; deleted: boolean }>(`/admin/applications/${appId}/app-params/${name}`),
+  patchAppSpec: (appId: string, spec: string) => api.patch<{ ok: boolean }>(`/admin/applications/${appId}/spec`, { spec }),
+
   deployApplication: (appId: string, targetTenantId: string): Promise<DeployResult> => api.post<DeployResult>(`/admin/applications/${appId}/deploy`, { target_tenant_id: targetTenantId }),
   // Platform super_admin only — cross-tenant, target_tenant_id may be ANY tenant.
   exportApplication: (appId: string): Promise<AppExportEnvelope> => api.get<AppExportEnvelope>(`/admin/applications/${appId}/export`),

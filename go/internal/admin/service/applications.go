@@ -322,6 +322,11 @@ func (s *AppService) PutRuntime(ctx context.Context, tenantID, appID string, cfg
 	return cfg, nil
 }
 
+// UpdateAppSpec saves the spec markdown into presentation->>'spec'.
+func (s *AppService) UpdateAppSpec(ctx context.Context, tenantID, appID, spec string) error {
+	return s.dal.UpdateAppSpec(ctx, tenantID, appID, spec)
+}
+
 // validProviders is the set of supported provider names for API key storage.
 // Covers both LLM providers and voice providers (STT/TTS).
 var validProviders = map[string]struct{}{

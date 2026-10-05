@@ -19,7 +19,7 @@ func (d *DB) GetAppTenantID(ctx context.Context, appID string) (string, error) {
 }
 
 // listAppQuery is shared by ListApplications and GetApplication.
-// It returns: id, name, slug, tenant_slug, enabled, active_revision, active_status.
+// It returns: id, name, slug, tenant_slug, enabled, active_revision, active_status, spec.
 // app_orchestrators are fetched separately per-app to avoid N×M fanout.
 const listAppQuery = `
 SELECT
@@ -29,7 +29,8 @@ SELECT
     COALESCE(t.slug, ''),
     a.enabled,
     d.revision,
-    d.status
+    d.status,
+    COALESCE(a.presentation->>'spec', '')
 FROM them.applications a
 JOIN  them.tenants t ON t.id = a.tenant_id
 LEFT JOIN them.application_definitions d ON d.id = a.active_definition_id
@@ -38,10 +39,20 @@ WHERE a.tenant_id = $1::uuid`
 // scanApplication scans one application row from listAppQuery.
 func scanApplication(rows SingleRowScanner) (Application, error) {
 	var a Application
-	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.TenantSlug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus, &a.Spec); err != nil {
 		return a, err
 	}
 	return a, nil
+}
+
+// UpdateAppSpec stores the spec markdown inside presentation->>'spec' for the application.
+func (d *DB) UpdateAppSpec(ctx context.Context, tenantID, appID, spec string) error {
+	const q = `UPDATE them.applications
+	           SET presentation = jsonb_set(COALESCE(presentation, '{}'::jsonb), '{spec}', to_jsonb($3::text), true),
+	               updated_at = now()
+	           WHERE id=$1::uuid AND tenant_id=$2::uuid RETURNING id::text`
+	var id string
+	return d.q.ExecReturning(ctx, q, appID, tenantID, spec).Scan(&id)
 }
 
 // listAppOrchSummaries returns lightweight orchestrator summaries for one app.
