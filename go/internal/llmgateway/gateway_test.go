@@ -37,6 +37,9 @@ func (f *fakeDAL) WriteRequest(_ context.Context, r RequestRecord) error {
 	return nil
 }
 func (f *fakeDAL) ClientIDForHash(_ context.Context, _ string) string { return "" }
+func (f *fakeDAL) LoadClientProfileSteps(_ context.Context, _ string) ([]ProfileStep, error) {
+	return nil, nil
+}
 
 // fakeSlugResolver maps slugs to tenant IDs; satisfies tenantctx.SlugResolver.
 type fakeSlugResolver struct{ m map[string]string }

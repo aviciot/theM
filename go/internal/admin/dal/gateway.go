@@ -121,6 +121,7 @@ type GatewayProfileStep struct {
 	ID        string          `json:"id"`
 	ProfileID string          `json:"profile_id"`
 	DefID     string          `json:"def_id"`
+	DefSlug   string          `json:"def_slug,omitempty"`
 	DefName   string          `json:"def_name,omitempty"`
 	Position  int             `json:"position"`
 	Config    json.RawMessage `json:"config"`
@@ -177,10 +178,11 @@ func (db *DB) DeleteGatewayProfile(ctx context.Context, tenantID, id string) err
 	return db.q.Exec(ctx, q, tenantID, id)
 }
 
-// ListGatewayProfileSteps returns ordered steps for a profile, joined with def display_name.
+// ListGatewayProfileSteps returns ordered steps for a profile, joined with def slug and display_name.
 func (db *DB) ListGatewayProfileSteps(ctx context.Context, profileID string) ([]GatewayProfileStep, error) {
 	const q = `
 		SELECT s.id::text, s.profile_id::text, s.def_id::text,
+		       COALESCE(m.slug, ''),
 		       COALESCE(m.display_name, ''),
 		       s.position, s.config
 		FROM them.gateway_profile_steps s
@@ -198,7 +200,7 @@ func (db *DB) ListGatewayProfileSteps(ctx context.Context, profileID string) ([]
 	for rows.Next() {
 		var s GatewayProfileStep
 		var cfg []byte
-		if err := rows.Scan(&s.ID, &s.ProfileID, &s.DefID, &s.DefName, &s.Position, &cfg); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProfileID, &s.DefID, &s.DefSlug, &s.DefName, &s.Position, &cfg); err != nil {
 			return nil, err
 		}
 		if len(cfg) > 0 {
