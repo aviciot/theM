@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type GatewayClient, type GatewayProfile, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest } from '@/lib/api';
+import { themApi, type GatewayClient, type GatewayProfile, type GatewayProfileStep, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest } from '@/lib/api';
+import type { MiddlewareDef } from '@/lib/apiTypes';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 
@@ -168,19 +169,174 @@ function ClientsTab() {
   );
 }
 
+// ── Profile step editor (expand-in-place) ─────────────────────────────────────
+
+const SLUG_LABELS: Record<string, string> = {
+  pii_redact:     'PII Redact',
+  prompt_inject:  'Prompt Injection Guard',
+  guard_default:  'PII + Injection (combined)',
+};
+
+function ProfileStepEditor({ profile, defs }: { profile: GatewayProfile; defs: MiddlewareDef[] }) {
+  const [steps, setSteps]       = useState<GatewayProfileStep[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [selectedDef, setSelectedDef] = useState('');
+  const [position, setPosition] = useState(1);
+  const [adding, setAdding]     = useState(false);
+  const [error, setError]       = useState('');
+
+  const loadSteps = useCallback(async () => {
+    setLoading(true);
+    try { setSteps(await themApi.listGatewayProfileSteps(profile.id)); }
+    catch { setError('Failed to load steps'); }
+    finally { setLoading(false); }
+  }, [profile.id]);
+
+  useEffect(() => { loadSteps(); }, [loadSteps]);
+
+  // Next auto-position: max existing position + 1, minimum 1.
+  useEffect(() => {
+    if (steps.length > 0) {
+      setPosition(Math.max(...steps.map(s => s.position)) + 1);
+    }
+  }, [steps]);
+
+  async function handleAdd() {
+    if (!selectedDef) return;
+    setAdding(true);
+    setError('');
+    try {
+      const step = await themApi.addGatewayProfileStep(profile.id, {
+        def_id: selectedDef,
+        position,
+        config: {},
+      });
+      setSteps(prev => [...prev, step].sort((a, b) => a.position - b.position));
+      setSelectedDef('');
+    } catch { setError('Failed to add step'); }
+    finally { setAdding(false); }
+  }
+
+  async function handleRemove(stepId: string) {
+    try {
+      await themApi.deleteGatewayProfileStep(stepId);
+      setSteps(prev => prev.filter(s => s.id !== stepId));
+    } catch { setError('Failed to remove step'); }
+  }
+
+  // Guard defs only (skip cache/file-guard — async, not hot-path usable).
+  const availableDefs = defs.filter(d =>
+    d.kind === 'guard' && d.slug !== 'file-guard' && d.slug !== 'file_guard'
+  );
+
+  return (
+    <div style={{ marginTop: 12, padding: '12px 16px', background: '#0f172a', borderRadius: 6, border: '1px solid #1e293b' }}>
+      {error && <div style={{ color: '#ef4444', marginBottom: 8, fontSize: 13 }}>{error}</div>}
+
+      {/* Step list */}
+      {loading ? (
+        <div style={{ color: '#64748b', fontSize: 13 }}>Loading steps…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {steps.length === 0 && (
+            <div style={{ color: '#475569', fontSize: 13, fontStyle: 'italic' }}>
+              No steps — requests pass through unfiltered.
+            </div>
+          )}
+          {steps.map((s, i) => {
+            const label = s.def_name || SLUG_LABELS[s.def_slug ?? ''] || s.def_slug || s.def_id;
+            const isPost = s.position >= 100;
+            return (
+              <div key={s.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 10px', borderRadius: 6, background: '#1e293b',
+              }}>
+                <span style={{
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: ACCENT_BG, color: ACCENT, fontSize: 11, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>{i + 1}</span>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span>
+                  <span style={{
+                    marginLeft: 8, fontSize: 11, padding: '1px 6px', borderRadius: 4,
+                    background: isPost ? '#0284c722' : '#7c3aed22',
+                    color: isPost ? '#38bdf8' : '#a78bfa',
+                  }}>{isPost ? 'post-LLM' : 'pre-LLM'}</span>
+                  <span style={{ marginLeft: 6, color: '#475569', fontSize: 11 }}>pos {s.position}</span>
+                </div>
+                <button
+                  onClick={() => handleRemove(s.id)}
+                  style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: '2px 6px' }}
+                >Remove</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add step */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select
+          value={selectedDef}
+          onChange={e => setSelectedDef(e.target.value)}
+          style={{
+            flex: 2, minWidth: 180, padding: '6px 8px', borderRadius: 6,
+            border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 13,
+          }}
+        >
+          <option value="">— pick a guard —</option>
+          {availableDefs.map(d => (
+            <option key={d.id} value={d.id}>{d.display_name || SLUG_LABELS[d.slug] || d.slug}</option>
+          ))}
+        </select>
+        <input
+          type="number"
+          value={position}
+          onChange={e => setPosition(parseInt(e.target.value) || 1)}
+          min={1}
+          title="Position (< 100 = pre-LLM, ≥ 100 = post-LLM)"
+          style={{
+            width: 70, padding: '6px 8px', borderRadius: 6,
+            border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 13,
+          }}
+        />
+        <span style={{ color: '#475569', fontSize: 11, whiteSpace: 'nowrap' }}>&lt;100 pre · ≥100 post</span>
+        <button
+          onClick={handleAdd}
+          disabled={adding || !selectedDef}
+          style={{
+            padding: '6px 14px', borderRadius: 6, background: ACCENT, color: '#fff',
+            border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13,
+            opacity: adding || !selectedDef ? 0.5 : 1,
+          }}
+        >{adding ? '…' : '+ Add step'}</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Profiles tab ──────────────────────────────────────────────────────────────
 
 function ProfilesTab() {
-  const [profiles, setProfiles] = useState<GatewayProfile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState('');
+  const [profiles, setProfiles]   = useState<GatewayProfile[]>([]);
+  const [defs, setDefs]           = useState<MiddlewareDef[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [newName, setNewName]     = useState('');
+  const [creating, setCreating]   = useState(false);
+  const [expanded, setExpanded]   = useState<string | null>(null);
+  const [error, setError]         = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setProfiles(await themApi.listGatewayProfiles()); }
-    catch { setError('Failed to load profiles'); }
+    try {
+      const [p, d] = await Promise.all([
+        themApi.listGatewayProfiles(),
+        themApi.listMiddlewareDefs(),
+      ]);
+      setProfiles(p);
+      setDefs(d);
+    } catch { setError('Failed to load profiles'); }
     finally { setLoading(false); }
   }, []);
 
@@ -190,9 +346,10 @@ function ProfilesTab() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      await themApi.createGatewayProfile({ name: newName.trim() });
+      const p = await themApi.createGatewayProfile({ name: newName.trim() });
       setNewName('');
-      await load();
+      setProfiles(prev => [...prev, p]);
+      setExpanded(p.id); // auto-expand so the user can add steps immediately
     } catch { setError('Failed to create profile'); }
     finally { setCreating(false); }
   }
@@ -202,19 +359,20 @@ function ProfilesTab() {
     try {
       await themApi.deleteGatewayProfile(id);
       setProfiles(prev => prev.filter(p => p.id !== id));
+      if (expanded === id) setExpanded(null);
     } catch { setError('Failed to delete profile'); }
   }
 
   return (
     <div>
       <div style={{ marginBottom: 12, color: '#94a3b8', fontSize: 14 }}>
-        Profiles group middleware pipeline steps. Assign a profile to a client to apply its steps on each request.
-        Pipeline step management will be available in a future release.
+        Profiles are named policy pipelines. Each step runs in order before (pre-LLM) or after (post-LLM) the upstream call.
+        Assign a profile to a client in the Clients tab.
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         <input
-          placeholder="Profile name"
+          placeholder="Profile name e.g. P2-Guarded"
           value={newName}
           onChange={e => setNewName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleCreate()}
@@ -234,20 +392,37 @@ function ProfilesTab() {
       {loading ? <div style={{ color: '#94a3b8' }}>Loading…</div> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {profiles.length === 0 && <div style={{ color: '#64748b', padding: 20, textAlign: 'center' }}>No profiles yet</div>}
-          {profiles.map(p => (
-            <div key={p.id} style={{ background: '#1e293b', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{p.name}</div>
-                <div style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>{p.id}</div>
+          {profiles.map(p => {
+            const isOpen = expanded === p.id;
+            return (
+              <div key={p.id} style={{ background: '#1e293b', borderRadius: 8, overflow: 'hidden', border: isOpen ? `1px solid ${ACCENT}44` : '1px solid transparent' }}>
+                {/* Profile header row */}
+                <div
+                  style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                  onClick={() => setExpanded(isOpen ? null : p.id)}
+                >
+                  <span style={{ color: isOpen ? ACCENT : '#94a3b8', fontSize: 14, width: 16, textAlign: 'center', flexShrink: 0 }}>
+                    {isOpen ? '▾' : '▸'}
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>{p.id}</div>
+                  </div>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 999, fontSize: 12,
+                    background: p.enabled ? '#22c55e22' : '#94a3b822',
+                    color: p.enabled ? '#22c55e' : '#94a3b8',
+                  }}>{p.enabled ? 'enabled' : 'disabled'}</span>
+                  <button
+                    onClick={e => { e.stopPropagation(); handleDelete(p.id); }}
+                    style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}
+                  >Delete</button>
+                </div>
+                {/* Expandable step editor */}
+                {isOpen && <ProfileStepEditor profile={p} defs={defs} />}
               </div>
-              <span style={{
-                padding: '2px 8px', borderRadius: 999, fontSize: 12,
-                background: p.enabled ? '#22c55e22' : '#94a3b822',
-                color: p.enabled ? '#22c55e' : '#94a3b8',
-              }}>{p.enabled ? 'enabled' : 'disabled'}</span>
-              <button onClick={() => handleDelete(p.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>Delete</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
