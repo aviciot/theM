@@ -79,6 +79,7 @@ export function AppCard({
   }, [menuOpen]);
 
   const enabledEps = (app.entry_points ?? []).filter(e => e.enabled);
+  const isGatewayProfile = (app.entry_points ?? []).some(e => e.entry_point_type === 'gateway');
   const firstEp = enabledEps[0] ?? app.entry_points?.[0];
   const ep = epIconColor(firstEp?.entry_point_type ?? 'websocket');
 
@@ -185,8 +186,15 @@ export function AppCard({
 
           {/* Name + subtitle */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {app.name}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {app.name}
+              </div>
+              {isGatewayProfile && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#a78bfa', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)', borderRadius: 5, padding: '1px 6px', letterSpacing: '0.04em', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  GW Profile
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
               {enabledEps.length} entry point{enabledEps.length !== 1 ? 's' : ''}
