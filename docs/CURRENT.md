@@ -114,7 +114,7 @@
 
 ---
 
-## Known gaps / next tasks (2026-09-29)
+## Known gaps / next tasks (2026-10-10)
 
 1. **`loadWiringCfgForDef`'s blank-`node_id` fallback can silently apply a wiring to every
    node in an app** (`go/internal/middleware/gate.go`). Still open — only the one live-hit row
@@ -122,29 +122,39 @@
    blank `node_id` ever be a valid "applies to all nodes" wiring (intentional), or should it
    always mean "orphaned, ignore" now that per-node wiring is the norm? Needs a decision before
    writing a code fix.
-2. ~~App export/import~~ — **DONE** (see header above). `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md`
-   fully shipped, all 3 phases.
-3. ~~Run ID display trimmed, no copy button~~ — **DONE** (see header above).
-4. ~~Guard Output Ports~~ — **DONE**, all 4 phases (see header above).
-5. **Cycle node** — backend and frontend fully committed. End-to-end test (drop Cycle on canvas,
+2. **Cycle node** — backend and frontend fully committed. End-to-end test (drop Cycle on canvas,
    add a child node inside the frame, configure break condition, publish app, run it) has NOT
    been done — do that as a smoke test in the next session before declaring it production-ready.
    See `docs/CYCLE_NODE_PLAN.md` for Phase 2 (backward edge) and Phase 3 (list iteration) deferred work.
+3. **LLM Gateway — E2E working (a913d8e1).** Full flow verified: client bearer token →
+   `GatewayClientMiddleware` → `LoadClientApp` → `AdmitDebug` → `StartAppFlow` (Temporal) →
+   inline LLM node → OpenAI response. Known setup requirements for new gateway profile apps:
+   - Definition in DB must use **schema_version 2** format (components/entry_points/connections),
+     NOT canvas React Flow format (nodes/edges). The canvas "Publish" flow produces schema_version 2
+     automatically — only manually-created definitions need care.
+   - Entry point must have `enabled = true`.
+   - App must have `provider_keys` set (or tenant's `llm_providers.api_key_encrypted` populated).
+     For testing, `plain:sk-ant-...` works in `applications.provider_keys`.
+4. **Gateway token usage not logged** — `tokens_in/out` are 0 in the gateway_requests log for
+   AppFlow-dispatched requests (the inline LLM returns count to Temporal, not to the gateway handler).
+   Wiring token count back through the workflow output is a future step.
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `f5a5782f` — feat(gateway): Step 4 — gateway entry point type + profile app selector UI
+HEAD: `a913d8e1` — feat(gateway): Step 5 — GatewayClientMiddleware + AppFlow E2E working
 Remote: `origin` → `aviciot/theM` on GitHub
 
 Recent (this session — LLM Gateway redesign):
+- `a913d8e1` — feat(gateway): Step 5 — GatewayClientMiddleware + AppFlow E2E working
+- `e16c56d3` — fix(admin): add 'gateway' to validEPTypes allowlist
+- `f8ef703f` — docs(current): update for LLM Gateway profile redesign (Steps 1-4 complete)
 - `f5a5782f` — feat(gateway): Step 4 — gateway entry point type + profile app selector UI
 - `0f1d181c` — feat(llmgateway): Step 3 — AppFlow dispatch for gateway profile apps
 - `5c4b3777` — refactor(gateway): remove inline pipeline — profiles redesigned as gateway-entry App Canvas apps
 - `7e3e5bb3` — feat(schema): migration 120 — gateway entry point type + app_id on gateway_clients
-- `dcaf5548` — feat(gateway-ui): profile step editor — add/remove pipeline steps inline (reverted approach)
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
