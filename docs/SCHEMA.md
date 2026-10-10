@@ -478,7 +478,7 @@ User-composable agentic applications. Each row is one deployable entry point bou
 | id | UUID PK | |
 | name | TEXT | display name |
 | slug | TEXT UNIQUE | URL-safe ID `^[a-z0-9_-]{1,64}$` |
-| entry_point_type | TEXT | `"websocket"` / `"sse"` / `"webrtc"` / `"voice"` / `"a2a"` |
+| entry_point_type | TEXT | `"websocket"` / `"sse"` / `"webrtc"` / `"voice"` / `"a2a"` / `"gateway"` (gateway-profile apps) |
 | orchestrator_id | UUID FK→orchestrators ON DELETE CASCADE | target orchestrator |
 | access_policy | JSONB | `{"mode":"token"}` or `{"mode":"public"}` |
 | presentation | JSONB | UI metadata (title, theme, icon, etc.) |
