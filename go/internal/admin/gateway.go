@@ -114,24 +114,41 @@ func (h *GatewayHandler) GetClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, client)
 }
 
-type patchClientRequest struct {
-	ProfileID *string `json:"profile_id"` // null clears it
-}
-
 func (h *GatewayHandler) PatchClient(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	clientID := chi.URLParam(r, "client_id")
 
-	var body patchClientRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// Decode into a raw map so we can distinguish "key absent" from "key = null".
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	d := dal.NewDB(h.db)
-	if err := d.SetGatewayClientProfile(r.Context(), tenantID, clientID, body.ProfileID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update gateway client")
-		return
+
+	if appIDRaw, ok := raw["app_id"]; ok {
+		var appID *string
+		if err := json.Unmarshal(appIDRaw, &appID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid app_id value")
+			return
+		}
+		if err := d.SetGatewayClientApp(r.Context(), tenantID, clientID, appID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update gateway client")
+			return
+		}
+	}
+
+	if profIDRaw, ok := raw["profile_id"]; ok {
+		var profID *string
+		if err := json.Unmarshal(profIDRaw, &profID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid profile_id value")
+			return
+		}
+		if err := d.SetGatewayClientProfile(r.Context(), tenantID, clientID, profID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update gateway client")
+			return
+		}
 	}
 
 	client, err := d.GetGatewayClient(r.Context(), tenantID, clientID)

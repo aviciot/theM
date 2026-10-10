@@ -62,7 +62,7 @@ export function EntryPointNode({ id, data, selected }: { id: string; data: Entry
   const hasError = data._error || data._shake;
   const isVoice = epKind === 'voice';
   const accent = hasError ? '#f87171' : slugMissing ? '#f59e0b' : isVoice ? C.amber : C.cyan;
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic', gateway: 'hub' };
   const msIcon = EP_MS_ICON[epKind ?? ''] ?? 'bolt';
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
@@ -96,7 +96,7 @@ export function EntryPointNode({ id, data, selected }: { id: string; data: Entry
       </div>
       <div style={{ marginTop: 6, textAlign: 'center' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, transition: 'color 0.18s' }}>
-          {data.label || (epKind === 'sse' ? 'SSE' : epKind === 'voice' ? 'Voice' : epKind === 'webrtc' ? 'WebRTC' : epKind === 'a2a' ? 'A2A' : 'WebSocket')}
+          {data.label || (epKind === 'sse' ? 'SSE' : epKind === 'voice' ? 'Voice' : epKind === 'webrtc' ? 'WebRTC' : epKind === 'a2a' ? 'A2A' : epKind === 'gateway' ? 'Gateway' : 'WebSocket')}
         </div>
         {data.slug ? (
           <div style={{ fontSize: 10, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', opacity: 0.8, marginTop: 1 }}>{data.slug}</div>

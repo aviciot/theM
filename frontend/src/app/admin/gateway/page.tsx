@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type GatewayClient, type GatewayProfile, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest } from '@/lib/api';
+import { themApi, type GatewayClient, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest, type Application } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 
-type Tab = 'clients' | 'profiles' | 'policy' | 'requests';
+type Tab = 'clients' | 'policy' | 'requests';
 
 const ACCENT = '#7c3aed';
 const ACCENT_BG = 'rgba(124,58,237,0.08)';
@@ -29,23 +29,24 @@ function StatusBadge({ status }: { status: string }) {
 
 function ClientsTab() {
   const [clients, setClients]   = useState<GatewayClient[]>([]);
-  const [profiles, setProfiles] = useState<GatewayProfile[]>([]);
+  const [gatewayApps, setGatewayApps] = useState<Application[]>([]);
   const [loading, setLoading]   = useState(true);
   const [newLabel, setNewLabel] = useState('');
   const [creating, setCreating] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
-  const [assigning, setAssigning] = useState<string | null>(null); // client id being patched
+  const [assigning, setAssigning] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, p] = await Promise.all([
+      const [c, apps] = await Promise.all([
         themApi.listGatewayClients(),
-        themApi.listGatewayProfiles(),
+        themApi.applications(),
       ]);
       setClients(c);
-      setProfiles(p);
+      // Only show apps that have at least one gateway entry point.
+      setGatewayApps(apps.filter(a => a.entry_points?.some(ep => ep.entry_point_type === 'gateway')));
     } catch { setError('Failed to load clients'); }
     finally { setLoading(false); }
   }, []);
@@ -65,14 +66,14 @@ function ClientsTab() {
     finally { setCreating(false); }
   }
 
-  async function handleProfileChange(clientId: string, profileId: string) {
+  async function handleAppChange(clientId: string, appId: string) {
     setAssigning(clientId);
     try {
-      await themApi.patchGatewayClient(clientId, { profile_id: profileId || null });
+      await themApi.patchGatewayClient(clientId, { app_id: appId || null });
       setClients(prev => prev.map(c =>
-        c.id === clientId ? { ...c, profile_id: profileId || null } : c
+        c.id === clientId ? { ...c, app_id: appId || null } : c
       ));
-    } catch { setError('Failed to update profile'); }
+    } catch { setError('Failed to update profile app'); }
     finally { setAssigning(null); }
   }
 
@@ -120,7 +121,7 @@ function ClientsTab() {
           <thead>
             <tr style={{ borderBottom: '1px solid #334155', color: '#94a3b8' }}>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Label</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>Profile</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px' }}>Profile app</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Last seen</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Created</th>
               <th />
@@ -138,21 +139,26 @@ function ClientsTab() {
                 </td>
                 <td style={{ padding: '10px 12px' }}>
                   <select
-                    value={c.profile_id ?? ''}
+                    value={c.app_id ?? ''}
                     disabled={assigning === c.id}
-                    onChange={e => handleProfileChange(c.id, e.target.value)}
+                    onChange={e => handleAppChange(c.id, e.target.value)}
                     style={{
                       padding: '5px 8px', borderRadius: 6, border: '1px solid #334155',
                       background: '#0f172a', color: '#f1f5f9', fontSize: 13,
-                      cursor: 'pointer', minWidth: 140,
+                      cursor: 'pointer', minWidth: 160,
                       opacity: assigning === c.id ? 0.5 : 1,
                     }}
                   >
-                    <option value="">— none —</option>
-                    {profiles.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+                    <option value="">— direct LLM (no profile) —</option>
+                    {gatewayApps.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>
+                  {gatewayApps.length === 0 && !c.app_id && (
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                      No gateway apps yet — build one in App Canvas with a <code style={{ fontSize: 10 }}>gateway</code> entry point.
+                    </div>
+                  )}
                 </td>
                 <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</td>
                 <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{new Date(c.created_at).toLocaleDateString()}</td>
@@ -164,23 +170,6 @@ function ClientsTab() {
           </tbody>
         </table>
       )}
-    </div>
-  );
-}
-
-// ── Profiles tab ──────────────────────────────────────────────────────────────
-
-function ProfilesTab() {
-  return (
-    <div style={{ padding: 32, color: '#94a3b8', fontSize: 14, textAlign: 'center' }}>
-      <div style={{ fontSize: 18, fontWeight: 600, color: '#f1f5f9', marginBottom: 12 }}>
-        Profiles are being rebuilt
-      </div>
-      <div style={{ maxWidth: 480, margin: '0 auto', lineHeight: 1.7 }}>
-        Gateway profiles will be App Canvas applications with a <code style={{ background: '#1e293b', padding: '1px 6px', borderRadius: 4 }}>gateway</code> entry point.
-        Build the profile flow in the App Canvas, then assign the app to a client here.
-        This tab will be updated once the gateway entry point type is available.
-      </div>
     </div>
   );
 }
@@ -379,7 +368,6 @@ export default function GatewayPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'clients', label: 'Clients' },
-    { key: 'profiles', label: 'Profiles' },
     { key: 'policy', label: 'Policy' },
     { key: 'requests', label: 'Requests' },
   ];
@@ -414,7 +402,6 @@ export default function GatewayPage() {
           </div>
 
           {tab === 'clients'  && <ClientsTab />}
-          {tab === 'profiles' && <ProfilesTab />}
           {tab === 'policy'   && <PolicyTab />}
           {tab === 'requests' && <RequestsTab />}
         </main>

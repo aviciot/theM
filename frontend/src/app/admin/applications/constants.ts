@@ -41,7 +41,7 @@ export const glass = {
 };
 
 // ── Entry point types ─────────────────────────────────────────────────────────
-export const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
+export const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice', 'gateway'] as const;
 
 // ── Canvas CSS ────────────────────────────────────────────────────────────────
 export const CANVAS_STYLES = `

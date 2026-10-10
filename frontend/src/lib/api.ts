@@ -839,7 +839,7 @@ export const themApi = {
     api.post<GatewayClient & { token: string }>('/admin/gateway/clients', body),
   getGatewayClient: (id: string) =>
     api.get<GatewayClient>(`/admin/gateway/clients/${id}`),
-  patchGatewayClient: (id: string, body: { profile_id: string | null }) =>
+  patchGatewayClient: (id: string, body: { profile_id?: string | null; app_id?: string | null }) =>
     api.patch<GatewayClient>(`/admin/gateway/clients/${id}`, body),
   deleteGatewayClient: (id: string) =>
     api.delete<void>(`/admin/gateway/clients/${id}`),

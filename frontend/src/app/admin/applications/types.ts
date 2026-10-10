@@ -20,7 +20,7 @@ export type {
 
 // ── Local types ──────────────────────────────────────────────────────────────
 
-export const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
+export const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice', 'gateway'] as const;
 export type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 export interface EntryPointData {

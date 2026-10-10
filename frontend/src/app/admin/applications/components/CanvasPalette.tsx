@@ -10,7 +10,7 @@ import { C } from '../constants';
 // presentation + drag-start wiring — all state (componentDefs, palette lists,
 // panel width) is owned by CanvasBuilderView and passed down as props.
 
-const EP_MS_ICON_MAP: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+const EP_MS_ICON_MAP: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic', gateway: 'hub' };
 
 export function CanvasPalette({
   compPanelWidth,
@@ -40,7 +40,7 @@ export function CanvasPalette({
         {/* Entry Points */}
         <div style={{ padding: '0 8px 12px' }}>
           <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600 }}>Entry Points</div>
-          {(['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const).map(protocol => (
+          {(['websocket', 'sse', 'webrtc', 'a2a', 'voice', 'gateway'] as const).map(protocol => (
             <div
               key={protocol}
               draggable

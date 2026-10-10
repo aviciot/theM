@@ -199,7 +199,7 @@ export interface EntryPoint {
   application_id: string;
   slug: string;
   tenant_slug?: string;
-  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice';
+  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice' | 'gateway';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
   max_concurrent_sessions: number | null;
@@ -1227,6 +1227,7 @@ export interface GatewayClient {
   token_hash: string;
   label: string;
   profile_id?: string | null;
+  app_id?: string | null;
   last_seen?: string | null;
   created_at: string;
 }

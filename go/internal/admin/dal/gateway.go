@@ -17,6 +17,7 @@ type GatewayClient struct {
 	TokenHash string  `json:"token_hash"`
 	Label     string  `json:"label"`
 	ProfileID *string `json:"profile_id,omitempty"`
+	AppID     *string `json:"app_id,omitempty"`
 	LastSeen  *string `json:"last_seen,omitempty"`
 	CreatedAt string  `json:"created_at"`
 }
@@ -25,7 +26,7 @@ type GatewayClient struct {
 func (db *DB) ListGatewayClients(ctx context.Context, tenantID string) ([]GatewayClient, error) {
 	const q = `
 		SELECT id::text, tenant_id::text, token_hash, label,
-		       profile_id::text,
+		       profile_id::text, app_id::text,
 		       to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM them.gateway_clients
@@ -42,7 +43,7 @@ func (db *DB) ListGatewayClients(ctx context.Context, tenantID string) ([]Gatewa
 	for rows.Next() {
 		var c GatewayClient
 		if err := rows.Scan(&c.ID, &c.TenantID, &c.TokenHash, &c.Label,
-			&c.ProfileID, &c.LastSeen, &c.CreatedAt); err != nil {
+			&c.ProfileID, &c.AppID, &c.LastSeen, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -59,14 +60,14 @@ func (db *DB) CreateGatewayClient(ctx context.Context, tenantID, tokenHash, labe
 		INSERT INTO them.gateway_clients (tenant_id, token_hash, label)
 		VALUES ($1::uuid, $2, $3)
 		RETURNING id::text, tenant_id::text, token_hash, label,
-		          profile_id::text,
+		          profile_id::text, app_id::text,
 		          to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 	var c GatewayClient
 	err := db.q.QueryRow(ctx, q, tenantID, tokenHash, label).Scan(
 		&c.ID, &c.TenantID, &c.TokenHash, &c.Label,
-		&c.ProfileID, &c.LastSeen, &c.CreatedAt,
+		&c.ProfileID, &c.AppID, &c.LastSeen, &c.CreatedAt,
 	)
 	return c, err
 }
@@ -76,7 +77,7 @@ func (db *DB) CreateGatewayClient(ctx context.Context, tenantID, tokenHash, labe
 func (db *DB) GetGatewayClient(ctx context.Context, tenantID, id string) (GatewayClient, error) {
 	const q = `
 		SELECT id::text, tenant_id::text, token_hash, label,
-		       profile_id::text,
+		       profile_id::text, app_id::text,
 		       to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM them.gateway_clients
@@ -85,7 +86,7 @@ func (db *DB) GetGatewayClient(ctx context.Context, tenantID, id string) (Gatewa
 	var c GatewayClient
 	err := db.q.QueryRow(ctx, q, tenantID, id).Scan(
 		&c.ID, &c.TenantID, &c.TokenHash, &c.Label,
-		&c.ProfileID, &c.LastSeen, &c.CreatedAt,
+		&c.ProfileID, &c.AppID, &c.LastSeen, &c.CreatedAt,
 	)
 	return c, err
 }
@@ -97,6 +98,16 @@ func (db *DB) SetGatewayClientProfile(ctx context.Context, tenantID, clientID st
 		SET profile_id = $3::uuid
 		WHERE tenant_id = $1::uuid AND id = $2::uuid`
 	return db.q.Exec(ctx, q, tenantID, clientID, profileID)
+}
+
+// SetGatewayClientApp links (or clears when appID is nil) the App Canvas application
+// that acts as the profile flow for this client.
+func (db *DB) SetGatewayClientApp(ctx context.Context, tenantID, clientID string, appID *string) error {
+	const q = `
+		UPDATE them.gateway_clients
+		SET app_id = $3::uuid
+		WHERE tenant_id = $1::uuid AND id = $2::uuid`
+	return db.q.Exec(ctx, q, tenantID, clientID, appID)
 }
 
 // DeleteGatewayClient removes a client row.

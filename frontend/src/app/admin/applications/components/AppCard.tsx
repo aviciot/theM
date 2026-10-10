@@ -7,8 +7,8 @@ import { C, APP_CARD_STYLES } from '../constants';
 import { fallbackCopy } from './CanvasHelpers';
 
 // EP metadata (AppCard-local)
-const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
-const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A', voice: 'Voice' };
+const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic', gateway: 'hub' };
+const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A', voice: 'Voice', gateway: 'Gateway' };
 
 function epIconColor(type: string): { color: string; glow: string; border: string } {
   if (type === 'websocket') return { color: '#00d1ff', glow: 'rgba(0,209,255,0.25)', border: 'rgba(0,209,255,0.45)' };
@@ -16,6 +16,7 @@ function epIconColor(type: string): { color: string; glow: string; border: strin
   if (type === 'webrtc')    return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
   if (type === 'a2a')       return { color: '#f59e0b', glow: 'rgba(245,158,11,0.22)', border: 'rgba(245,158,11,0.42)' };
   if (type === 'voice')     return { color: '#4ade80', glow: 'rgba(74,222,128,0.22)', border: 'rgba(74,222,128,0.42)' };
+  if (type === 'gateway')   return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
   return { color: '#94a3b8', glow: 'rgba(148,163,184,0.15)', border: 'rgba(148,163,184,0.3)' };
 }
 
