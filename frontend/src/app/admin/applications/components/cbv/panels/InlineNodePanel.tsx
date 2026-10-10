@@ -94,6 +94,10 @@ export function InlineNodePanel({
           Calls an LLM directly inside the flow — no registered agent required. Runs only on the Temporal backend.
         </div>
 
+        <div style={{ fontSize: 11, color: '#a5b4fc', background: 'rgba(165,180,252,0.08)', border: '1px solid rgba(165,180,252,0.2)', borderRadius: 6, padding: '8px 10px' }}>
+          <strong style={{ fontWeight: 600 }}>Gateway mode:</strong> when this node is connected to a Gateway entry point, the System Prompt and User Prompt fields are bypassed — the full message history from the gateway request is passed directly to the LLM.
+        </div>
+
         {displayNameField}
 
         <InlinePortsSection selectedNode={selectedNode} nodes={nodes} edges={edges} setNodes={setNodes} wirings={wirings} />
