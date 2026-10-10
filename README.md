@@ -2,10 +2,10 @@
   <img src="logo/logo_black.png" alt="the-M" height="120" />
 
   <h1>the-M</h1>
-  <h3>The Operating System for Enterprise AI</h3>
+  <h3>Build, run and govern all of your organization's AI</h3>
 
   <p>
-    <em>One governed door for every model, tool and agent. &nbsp;·&nbsp; Secure it. Control it. See it.</em>
+    <em>Build AI agents. Run them reliably. Govern the AI you already have.</em>
   </p>
 
   <p>
@@ -20,33 +20,59 @@
 
 ---
 
-## Why the-M
+## The Challenge Every Organization Faces Now
 
-Building AI got cheap. **Running hundreds of AIs safely did not.**
+AI is spreading faster than anyone can manage it. Teams build agents, wire LLMs into products, and run scripts that call models nobody approved, each with its own keys, its own data exposure and its own bill.
 
-Every organization now has scripts, services and agents calling LLMs and tools, built by different teams, with provider keys pasted into forty repos. Nobody can answer:
+Leadership is left asking:
 
-- Which AI is running, and who owns it?
-- What does it cost, per team and per use case?
-- Did it send customer data or card numbers to a public model?
-- Which tools can this person or agent actually use?
-- What did AI do yesterday, and can we prove it?
+- **Risk:** Is customer data going to places it shouldn't? Can we prove what AI did?
+- **Cost:** What are we spending on AI, and who is spending it?
+- **Speed:** How do we ship AI products without every team reinventing the plumbing?
+- **Control:** Who is allowed to use which model, tool and data, and who approves risky actions?
 
-**the-M is the operating system that answers those questions.** Applications, agents and tools connect to the-M, and the-M sits in the middle as the governed gateway: it authenticates, applies policy, records everything, and meters every dollar.
+## What the-M Gives You
+
+**the-M is one platform to build, run and govern all of your organization's AI.** Whether the AI is built inside the-M, built elsewhere, or already in production, it goes through one controlled layer.
+
+| | You get | In business terms |
+|---|---|---|
+| **Build** | A visual canvas where teams design AI agents and workflows, then publish them as chat, voice, API or agent-to-agent services | Faster time to market. Business and engineering teams build on one shared, approved foundation |
+| **Run** | A durable execution engine: long, multi-step AI work survives crashes, waits for human approval, retries safely and scales | AI you can trust with real processes such as refunds, onboarding, KYC and support, not just demos |
+| **Govern** | A gateway that sits in front of the AI you *already have*: scripts, apps, vendors' agents. It adds identity, spend limits, data protection and a full audit trail. It can also apply an agentic flow to that traffic, without rewriting the app | Control and compliance without slowing teams down, and without a rebuild |
+| **See** | Every run traced: who, what, which model, which tools, how many tokens, what it cost | Answers for the board, the auditor and the CFO |
+| **Separate** | Multi-tenant by design: business units or customers get isolated data, quotas, identity and billing | One platform for the whole organization, or for your own customers |
 
 ```
-   Closed apps & scripts ──┐                          ┌── LLM providers
-   MCP clients / agents  ──┼──►  the-M  ─────────────►├── MCP servers (tools)
-   Users (web, voice, API)─┘  Gateway · Governance    └── A2A agents
-                              Orchestration · Observability
-                              Multi-tenant · RBAC · Audit
+  Built in the-M ─────┐
+  Your existing AI  ──┼──►   the-M   ──►  Models · Tools · Systems · People
+  Vendor agents    ───┘   Build · Run · Govern · See
 ```
+
+## Why It Matters
+
+- **Adopt AI faster, with less risk.** Teams build on approved models, tools and guardrails from day one.
+- **Keep the AI you have.** Put existing scripts and apps behind the gateway by changing one URL. No rewrites.
+- **Production-grade, not prototype-grade.** Durable execution, human approval steps and per-node tracing are built in.
+- **Know and control the cost.** Budgets, quotas and per-client usage make AI spend predictable.
+- **Stay in control as AI scales.** Roles, SSO and tenant isolation mean access follows your organization's structure.
+- **Vendor-neutral.** Swap models and providers without changing the applications on top.
 
 **Status tags used below:** ✅ **Live** (shipped) · 🔶 **Preview** (works, narrow or still being polished) · 🗺️ **Roadmap** (designed, not built)
 
 ---
 
-## One OS, Three Doors
+## How It Works for Each Kind of AI
+
+| Your situation | What the-M does | Details |
+|---|---|---|
+| **Build a new AI application or agent** | Design it on the App Canvas, publish it as chat (WebSocket/SSE), voice, API or A2A agent. It runs on the durable engine | Door 3 below |
+| **AI already in production that you can't rebuild** | Point it at the-M's gateway. Add auth, budgets, audit and, optionally, a full canvas flow (guards, routing, approvals) on its traffic | Door 1 below |
+| **Agents that need tools and systems** | Connect tool servers once; control which agents and apps can use them | Door 2 below |
+
+---
+
+## Capabilities in Detail — Three Doors
 
 ### 1. LLM Gateway — for "closed" AI you can't rebuild
 Your cron job, Python script or internal service keeps its code. You change one thing: the `base_url`.
