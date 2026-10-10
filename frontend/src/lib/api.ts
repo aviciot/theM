@@ -118,7 +118,6 @@ export type {
   LogVerbosityConfig,
   GatewayClient,
   GatewayProfile,
-  GatewayProfileStep,
   GatewayPolicy,
   GatewayPolicyInput,
   GatewayRequest,
@@ -222,7 +221,6 @@ import type {
   LogVerbosityConfig,
   GatewayClient,
   GatewayProfile,
-  GatewayProfileStep,
   GatewayPolicy,
   GatewayPolicyInput,
   GatewayRequest,
@@ -851,12 +849,6 @@ export const themApi = {
     api.post<GatewayProfile>('/admin/gateway/profiles', body),
   deleteGatewayProfile: (id: string) =>
     api.delete<void>(`/admin/gateway/profiles/${id}`),
-  listGatewayProfileSteps: (profileId: string) =>
-    api.get<GatewayProfileStep[]>(`/admin/gateway/profiles/${profileId}/steps`),
-  addGatewayProfileStep: (profileId: string, body: { def_id: string; position: number; config?: Record<string, unknown> }) =>
-    api.post<GatewayProfileStep>(`/admin/gateway/profiles/${profileId}/steps`, body),
-  deleteGatewayProfileStep: (stepId: string) =>
-    api.delete<void>(`/admin/gateway/profile-steps/${stepId}`),
   getGatewayPolicy: () =>
     api.get<GatewayPolicy>('/admin/gateway/policy'),
   putGatewayPolicy: (body: GatewayPolicyInput) =>

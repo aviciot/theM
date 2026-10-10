@@ -116,17 +116,6 @@ type GatewayProfile struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// GatewayProfileStep is one component in a profile pipeline.
-type GatewayProfileStep struct {
-	ID        string          `json:"id"`
-	ProfileID string          `json:"profile_id"`
-	DefID     string          `json:"def_id"`
-	DefSlug   string          `json:"def_slug,omitempty"`
-	DefName   string          `json:"def_name,omitempty"`
-	Position  int             `json:"position"`
-	Config    json.RawMessage `json:"config"`
-}
-
 // ListGatewayProfiles returns all profiles for a tenant.
 func (db *DB) ListGatewayProfiles(ctx context.Context, tenantID string) ([]GatewayProfile, error) {
 	const q = `
@@ -176,76 +165,6 @@ func (db *DB) CreateGatewayProfile(ctx context.Context, tenantID, name string) (
 func (db *DB) DeleteGatewayProfile(ctx context.Context, tenantID, id string) error {
 	const q = `DELETE FROM them.gateway_profiles WHERE tenant_id = $1::uuid AND id = $2::uuid`
 	return db.q.Exec(ctx, q, tenantID, id)
-}
-
-// ListGatewayProfileSteps returns ordered steps for a profile, joined with def slug and display_name.
-func (db *DB) ListGatewayProfileSteps(ctx context.Context, profileID string) ([]GatewayProfileStep, error) {
-	const q = `
-		SELECT s.id::text, s.profile_id::text, s.def_id::text,
-		       COALESCE(m.slug, ''),
-		       COALESCE(m.display_name, ''),
-		       s.position, s.config
-		FROM them.gateway_profile_steps s
-		LEFT JOIN them.middleware_defs m ON m.id = s.def_id
-		WHERE s.profile_id = $1::uuid
-		ORDER BY s.position`
-
-	rows, err := db.q.Query(ctx, q, profileID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []GatewayProfileStep
-	for rows.Next() {
-		var s GatewayProfileStep
-		var cfg []byte
-		if err := rows.Scan(&s.ID, &s.ProfileID, &s.DefID, &s.DefSlug, &s.DefName, &s.Position, &cfg); err != nil {
-			return nil, err
-		}
-		if len(cfg) > 0 {
-			s.Config = json.RawMessage(cfg)
-		} else {
-			s.Config = json.RawMessage("{}")
-		}
-		out = append(out, s)
-	}
-	if out == nil {
-		out = []GatewayProfileStep{}
-	}
-	return out, nil
-}
-
-// AddGatewayProfileStep inserts a step at the given position.
-func (db *DB) AddGatewayProfileStep(ctx context.Context, profileID, defID string, position int, config json.RawMessage) (GatewayProfileStep, error) {
-	if len(config) == 0 {
-		config = json.RawMessage("{}")
-	}
-	const q = `
-		INSERT INTO them.gateway_profile_steps (profile_id, def_id, position, config)
-		VALUES ($1::uuid, $2::uuid, $3, $4)
-		RETURNING id::text, profile_id::text, def_id::text, position, config`
-
-	var s GatewayProfileStep
-	var cfg []byte
-	err := db.q.QueryRow(ctx, q, profileID, defID, position, config).Scan(
-		&s.ID, &s.ProfileID, &s.DefID, &s.Position, &cfg,
-	)
-	if err != nil {
-		return GatewayProfileStep{}, err
-	}
-	if len(cfg) > 0 {
-		s.Config = json.RawMessage(cfg)
-	} else {
-		s.Config = json.RawMessage("{}")
-	}
-	return s, nil
-}
-
-// DeleteGatewayProfileStep removes a step by ID.
-func (db *DB) DeleteGatewayProfileStep(ctx context.Context, stepID string) error {
-	const q = `DELETE FROM them.gateway_profile_steps WHERE id = $1::uuid`
-	return db.q.Exec(ctx, q, stepID)
 }
 
 // ── Gateway policy ────────────────────────────────────────────────────────────

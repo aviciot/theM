@@ -99,49 +99,6 @@ func (d *DAL) ClientIDForHash(ctx context.Context, tokenHash string) string {
 	return id
 }
 
-// ProfileStep is a resolved pipeline step for the gateway hot path.
-type ProfileStep struct {
-	DefSlug  string          // e.g. "pii_redact", "prompt_inject", "file-guard"
-	Position int             // ascending order
-	Config   json.RawMessage // per-step config blob
-}
-
-// LoadClientProfileSteps resolves a token hash to its client's profile steps in
-// one query. Returns nil (not an error) when the token has no registered client,
-// no profile assigned, or the profile has no steps — all treated as pass-through.
-func (d *DAL) LoadClientProfileSteps(ctx context.Context, tokenHash string) ([]ProfileStep, error) {
-	const q = `
-		SELECT m.slug, s.position, s.config
-		FROM them.gateway_clients c
-		JOIN them.gateway_profiles p  ON p.id = c.profile_id AND p.enabled
-		JOIN them.gateway_profile_steps s ON s.profile_id = p.id
-		JOIN them.middleware_defs m   ON m.id = s.def_id
-		WHERE c.token_hash = $1
-		ORDER BY s.position`
-
-	rows, err := d.pool.Query(ctx, q, tokenHash)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []ProfileStep
-	for rows.Next() {
-		var step ProfileStep
-		var cfg []byte
-		if err := rows.Scan(&step.DefSlug, &step.Position, &cfg); err != nil {
-			return nil, err
-		}
-		if len(cfg) > 0 {
-			step.Config = json.RawMessage(cfg)
-		} else {
-			step.Config = json.RawMessage("{}")
-		}
-		out = append(out, step)
-	}
-	return out, nil
-}
-
 // LoadPolicy reads the gateway_policies row for the tenant.
 // Returns nil, nil when no row exists (allow-all, no budget cap).
 func (d *DAL) LoadPolicy(ctx context.Context, tenantID string) (*Policy, error) {

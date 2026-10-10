@@ -23,9 +23,6 @@ type DALWriter interface {
 	WriteRequest(ctx context.Context, r RequestRecord) error
 	// ClientIDForHash returns the gateway_clients.id for a token hash, or "".
 	ClientIDForHash(ctx context.Context, tokenHash string) string
-	// LoadClientProfileSteps returns the ordered pipeline steps for the client
-	// identified by tokenHash. Returns nil (not an error) when no steps exist.
-	LoadClientProfileSteps(ctx context.Context, tokenHash string) ([]ProfileStep, error)
 }
 
 // Handler implements POST /{tenant_slug}/llm/v1/chat/completions.
@@ -117,13 +114,6 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	clientID := h.dal.ClientIDForHash(r.Context(), tokenHashHex)
 
-	var steps []ProfileStep
-	if clientID != "" {
-		if ss, err := h.dal.LoadClientProfileSteps(r.Context(), tokenHashHex); err == nil {
-			steps = ss
-		}
-	}
-
 	rec := RequestRecord{
 		TenantID:       tenantID,
 		ClientID:       clientID,
@@ -135,13 +125,13 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	_ = tokenInfo
 
 	if req.Stream {
-		h.handleStream(w, r, start, req, steps, &rec)
+		h.handleStream(w, r, start, req, &rec)
 	} else {
-		h.handleSync(w, r, start, req, steps, &rec)
+		h.handleSync(w, r, start, req, &rec)
 	}
 }
 
-func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, steps []ProfileStep, rec *RequestRecord) {
+func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord) {
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
@@ -151,30 +141,11 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 		}
 	}()
 
-	// Pre-LLM pipeline.
-	filteredMsgs, pipeErr := runPreSteps(r.Context(), steps, req.Messages)
-	if pipeErr != nil {
-		rec.Status = "blocked"
-		rec.HTTPStatus = http.StatusForbidden
-		writeGatewayError(w, http.StatusForbidden, "request_blocked", "request blocked by policy")
-		return
-	}
-	req.Messages = filteredMsgs
-
 	text, cr, callErr := h.svc.Call(r.Context(), rec.TenantID, req)
 	if callErr != nil {
 		rec.Status = callStatus(callErr)
 		rec.HTTPStatus = gatewayHTTPStatus(callErr)
 		writeGatewayError(w, rec.HTTPStatus, gatewayErrType(callErr), callErr.Error())
-		return
-	}
-
-	// Post-LLM pipeline.
-	text, pipeErr = runPostSteps(r.Context(), steps, text)
-	if pipeErr != nil {
-		rec.Status = "blocked"
-		rec.HTTPStatus = http.StatusForbidden
-		writeGatewayError(w, http.StatusForbidden, "response_blocked", "response blocked by policy")
 		return
 	}
 
@@ -207,7 +178,7 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, steps []ProfileStep, rec *RequestRecord) {
+func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord) {
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
@@ -216,16 +187,6 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start tim
 			}
 		}
 	}()
-
-	// Pre-LLM pipeline (streaming path).
-	filteredMsgs, pipeErr := runPreSteps(r.Context(), steps, req.Messages)
-	if pipeErr != nil {
-		rec.Status = "blocked"
-		rec.HTTPStatus = http.StatusForbidden
-		writeGatewayError(w, http.StatusForbidden, "request_blocked", "request blocked by policy")
-		return
-	}
-	req.Messages = filteredMsgs
 
 	sr, _, streamErr := h.svc.Stream(r.Context(), rec.TenantID, req)
 	if streamErr != nil {

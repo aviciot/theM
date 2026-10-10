@@ -39,11 +39,6 @@ func (h *GatewayHandler) Routes(r chi.Router) {
 	r.Post("/gateway/profiles", h.CreateProfile)
 	r.Delete("/gateway/profiles/{profile_id}", h.DeleteProfile)
 
-	// Profile steps
-	r.Get("/gateway/profiles/{profile_id}/steps", h.ListProfileSteps)
-	r.Post("/gateway/profiles/{profile_id}/steps", h.AddProfileStep)
-	r.Delete("/gateway/profile-steps/{step_id}", h.DeleteProfileStep)
-
 	// Policy (one row per tenant)
 	r.Get("/gateway/policy", h.GetPolicy)
 	r.Put("/gateway/policy", h.PutPolicy)
@@ -205,53 +200,6 @@ func (h *GatewayHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 	d := dal.NewDB(h.db)
 	if err := d.DeleteGatewayProfile(r.Context(), tenantID, profileID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete gateway profile")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ── Profile steps ─────────────────────────────────────────────────────────────
-
-func (h *GatewayHandler) ListProfileSteps(w http.ResponseWriter, r *http.Request) {
-	profileID := chi.URLParam(r, "profile_id")
-	d := dal.NewDB(h.db)
-	steps, err := d.ListGatewayProfileSteps(r.Context(), profileID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list profile steps")
-		return
-	}
-	writeJSON(w, http.StatusOK, steps)
-}
-
-type addStepRequest struct {
-	DefID    string          `json:"def_id"`
-	Position int             `json:"position"`
-	Config   json.RawMessage `json:"config"`
-}
-
-func (h *GatewayHandler) AddProfileStep(w http.ResponseWriter, r *http.Request) {
-	profileID := chi.URLParam(r, "profile_id")
-
-	var body addStepRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DefID == "" {
-		writeError(w, http.StatusBadRequest, "def_id is required")
-		return
-	}
-
-	d := dal.NewDB(h.db)
-	step, err := d.AddGatewayProfileStep(r.Context(), profileID, body.DefID, body.Position, body.Config)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add profile step")
-		return
-	}
-	writeJSON(w, http.StatusCreated, step)
-}
-
-func (h *GatewayHandler) DeleteProfileStep(w http.ResponseWriter, r *http.Request) {
-	stepID := chi.URLParam(r, "step_id")
-	d := dal.NewDB(h.db)
-	if err := d.DeleteGatewayProfileStep(r.Context(), stepID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete profile step")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -1239,16 +1239,6 @@ export interface GatewayProfile {
   created_at: string;
 }
 
-export interface GatewayProfileStep {
-  id: string;
-  profile_id: string;
-  def_id: string;
-  def_slug?: string;
-  def_name?: string;
-  position: number;
-  config: Record<string, unknown>;
-}
-
 export interface GatewayPolicy {
   tenant_id: string;
   allowed_models: string[];
