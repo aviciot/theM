@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-10-05 — Transform node for App Canvas implemented and live-verified.
+# Last updated: 2026-10-10 — LLM Gateway profiles redesigned as App Canvas gateway-entry-point apps.
 #
 # This session completed multiple back-to-back feature threads (all committed as of 30be9e55):
 # 1) Router node: dynamic label output ports (one handle per label, spread like condition's
@@ -136,15 +136,15 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `00c680ce` — feat(appflow-debug): per-run HTTP node secret overrides in debug panel
+HEAD: `f5a5782f` — feat(gateway): Step 4 — gateway entry point type + profile app selector UI
 Remote: `origin` → `aviciot/theM` on GitHub
 
-Recent:
-- `00c680ce` — feat(appflow-debug): per-run HTTP node secret overrides in debug panel
-- `e821afe8` — feat(appflow): wire HTTP node into app canvas palette + properties panel
-- `a792869c` — feat(appflow): HTTP node API + Runtime screen section
-- `10166ba2` — feat(appflow): add HTTP node to app canvas
-- `a76c41d9` — fix(deploy): copy agents from app_agent_bindings, fix agent_definitions ON CONFLICT
+Recent (this session — LLM Gateway redesign):
+- `f5a5782f` — feat(gateway): Step 4 — gateway entry point type + profile app selector UI
+- `0f1d181c` — feat(llmgateway): Step 3 — AppFlow dispatch for gateway profile apps
+- `5c4b3777` — refactor(gateway): remove inline pipeline — profiles redesigned as gateway-entry App Canvas apps
+- `7e3e5bb3` — feat(schema): migration 120 — gateway entry point type + app_id on gateway_clients
+- `dcaf5548` — feat(gateway-ui): profile step editor — add/remove pipeline steps inline (reverted approach)
 
 **Note:** more than one session may be advancing `main` around the same time. Before pushing,
 `git pull --rebase origin main` — if it conflicts in `go/TEST_INDEX.md` (running test-count totals)
@@ -188,32 +188,59 @@ a78c3ca9  docs: plan AppFlow named data ports (Phase 0 complete)
 
 ---
 
-## START HERE — next session (updated 2026-10-05)
+## START HERE — next session (updated 2026-10-10)
 
-**Two demo apps to try:**
-1. "Smart Refund Handler" — full router→condition→HIL→fork/join→LLM flow.
-2. "GitHub PR Reviewer" — HTTP node showcase: send "Review aviciot/theM PR 42" (or any real PR#),
-   set both LLM nodes to Anthropic key_id 143 in the debug panel's LLM CREDENTIALS section.
-   The app also demonstrates per-run HTTP secret overrides (HTTP CREDENTIALS section in the debug panel).
+### LLM Gateway — what was just built (4 steps, all committed)
 
-**Known gaps from prior sessions:**
+**The-M as LLM middleware for "closed" agents** (cron jobs, Python scripts that call LLMs directly):
+point the agent's `base_url` at `/{tenant_slug}/llm/v1/chat/completions` and it gets RBAC, audit
+logging, token counting, cost tracking, and profile-based governance for free.
 
-1. **HIL rejection path** — no dedicated branch node for a manager rejection in the Smart Refund Handler demo.
-2. **Condition expression in demo is placeholder** — `{{gt (len .input) 100}}` checks length, not amount.
-3. **`loadWiringCfgForDef`'s blank-`node_id` fallback** — still open (go/internal/middleware/gate.go).
-4. **Cycle node smoke test** — end-to-end debug run of the Cycle node not yet done.
+**Profile redesign (this session):** Profiles were originally a bespoke inline pipeline. They are
+now **App Canvas applications with a `gateway` entry point** — the exact same node types (LLM,
+condition, fork/join, router, HTTP, transform, guard…) running as a real Temporal AppFlow DAG.
 
-**No active code thread — pick a new one.**
+What was completed:
+- **Migration 120** (`db/120_gateway_entry_point.sql`): added `'gateway'` to entry_point_type CHECK;
+  added `app_id` FK on `gateway_clients` → `applications`.
+- **Step 3** (`go/internal/llmgateway/handler.go`, `dal.go`): gateway handler checks `LoadClientApp`;
+  if the client has an app linked, starts an `AppFlowWorkflow` via `AdmitDebug + StartAppFlow`
+  instead of calling the LLM directly. Both streaming (event bus drain → OpenAI SSE) and
+  non-streaming (wfRun.Get → chat.completion JSON) paths implemented. `WithAppFlow(lc, bus)`
+  wired in `main.go`.
+- **Step 4** (frontend + Go backend): `gateway` added to App Canvas palette (hub icon, violet);
+  Clients tab now shows an "Profile app" dropdown (apps with a gateway EP only); `app_id`
+  persisted via `PATCH /admin/gateway/clients/{id}`; Profiles tab removed (no longer needed).
 
-Both feature threads that were open when the 2026-09-28 entry below was written are now fully closed:
-- `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md` (app export/import) — all 3 phases DONE.
-- `docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md` (guard results as draggable FlowVars) — all 4
-  phases DONE.
+**To use end-to-end:**
+1. App Canvas → New Application → add a `gateway` entry point + build the policy flow (LLM, guard,
+   condition nodes, etc.) → Publish.
+2. LLM Gateway → Clients → pick that app in the "Profile app" dropdown.
+3. Agent calls `POST /{tenant_slug}/llm/v1/chat/completions` with Bearer token — request routes
+   through the AppFlow DAG.
 
-Known open gap, not yet scheduled: `loadWiringCfgForDef`'s blank-`node_id` fallback
-(`go/internal/middleware/gate.go`) — see "Known gaps / next tasks" item 1 above. Needs a
-product decision (is a blank `node_id` ever a valid "applies to all nodes" wiring?) before
-any code change.
+### Known open gaps
+
+1. **`loadWiringCfgForDef`'s blank-`node_id` fallback** — still open (`go/internal/middleware/gate.go`).
+   Needs a product decision before any code fix.
+2. **Cycle node smoke test** — end-to-end debug run not yet done.
+3. **HIL rejection path** — no dedicated branch in the Smart Refund Handler demo.
+4. **Gateway: no admin endpoint to list apps with gateway EPs** — the Clients tab filter runs
+   client-side (filter all apps by EP type). Fine for now; worth a dedicated route if app count grows.
+5. **Gateway: `patchGatewayClient` `profile_id` legacy field** — still accepted by the backend for
+   compatibility; nothing in the UI sends it anymore. Can be dropped in a future migration once all
+   clients are confirmed migrated to `app_id`.
+
+### Next recommended task
+
+The gateway profiles feature is functionally complete. Good candidates for the next session:
+
+- **Gateway E2E smoke test** — create a real gateway app in the canvas, link a client, send a
+  real OpenAI-format request, confirm it routes through the DAG and returns a response.
+- **Cycle node smoke test** — long-deferred: drop a Cycle node on canvas, add a child, configure
+  a break condition, publish, debug run.
+- **`loadWiringCfgForDef` blank-node_id fix** — product decision needed first.
+- **New feature** — discuss with the user.
 
 Everything below this line, through the rest of this "START HERE" section, is HISTORICAL —
 it documents `docs/APPFLOW_NAMED_PORTS_PLAN.md`'s Phases 1-5, which finished 2026-09-25/26 and
