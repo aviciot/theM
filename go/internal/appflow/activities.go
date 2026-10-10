@@ -174,6 +174,10 @@ type InlineLLMActivityInput struct {
 	// Verbosity is the resolved effective log-verbosity for this run
 	// ("off"|"status"|"full"). See TraceEventInput.Verbosity.
 	Verbosity string `json:"verbosity,omitempty"`
+	// GatewayMessages carries the full OpenAI message history from a gateway
+	// request. When non-empty the activity passes this slice directly to the
+	// provider instead of rendering SystemPrompt/UserPrompt templates.
+	GatewayMessages []GatewayMessage `json:"gateway_messages,omitempty"`
 	// Debug marks this run as a debug session — a non-secret flag, safe in
 	// Temporal history (see AF-WF-14 and docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
 	// When true, the credential resolver checks the debugcred.Store override
@@ -418,6 +422,9 @@ type InlineLLMCaller interface {
 type InlineLLMRequest struct {
 	SystemPrompt  string
 	UserPrompt    string
+	// GatewayMessages, when non-empty, overrides SystemPrompt/UserPrompt — the
+	// full message history is passed directly to the provider as-is.
+	GatewayMessages []GatewayMessage
 	ProviderName  string
 	Model         string
 	MaxTokens     int
@@ -847,17 +854,18 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 	}
 
 	responseText, err := a.InlineLLM.Complete(ctx, InlineLLMRequest{
-		SystemPrompt:  systemPrompt,
-		UserPrompt:    userPrompt,
-		ProviderName:  input.Provider,
-		Model:         input.Model,
-		MaxTokens:     maxTokens,
-		Temperature:   input.Temperature,
-		TenantID:      input.TenantID,
-		ApplicationID: input.ApplicationID,
-		RunID:         input.RunID,
-		NodeID:        input.NodeID,
-		Debug:         input.Debug,
+		SystemPrompt:    systemPrompt,
+		UserPrompt:      userPrompt,
+		GatewayMessages: input.GatewayMessages,
+		ProviderName:    input.Provider,
+		Model:           input.Model,
+		MaxTokens:       maxTokens,
+		Temperature:     input.Temperature,
+		TenantID:        input.TenantID,
+		ApplicationID:   input.ApplicationID,
+		RunID:           input.RunID,
+		NodeID:          input.NodeID,
+		Debug:           input.Debug,
 	})
 	if err != nil {
 		a.emitTrace(ctx, input.RunID, input.NodeID, "llm", "node_error", err.Error(), input.Verbosity)

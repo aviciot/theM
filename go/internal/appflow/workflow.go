@@ -296,6 +296,13 @@ func stepGate(ctx workflow.Context, tick *stepTick, lastSeenGen *int, input AppF
 
 // ── Workflow types ─────────────────────────────────────────────────────────────
 
+// GatewayMessage is one message in an OpenAI-format conversation, carried
+// through the workflow when the gateway proxies a multi-turn request.
+type GatewayMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 // AppFlowWorkflowInput is the input to AppFlowWorkflow.
 type AppFlowWorkflowInput struct {
 	// RunID is the them.runs.id for this execution.
@@ -310,6 +317,12 @@ type AppFlowWorkflowInput struct {
 	Spec *AppFlowSpec `json:"spec"`
 	// UserMessage is the initial input from the caller.
 	UserMessage string `json:"user_message"`
+	// GatewayMessages carries the full OpenAI-format message history when this
+	// workflow is started by the LLM Gateway. When non-empty the first connected
+	// LLM node passes this history directly to the provider instead of using its
+	// own SystemPrompt/UserPrompt templates, so the gateway acts as a transparent
+	// proxy preserving the caller's full conversation context.
+	GatewayMessages []GatewayMessage `json:"gateway_messages,omitempty"`
 	// LLMProviderName is the provider name (e.g. "anthropic") for Router classification.
 	// The activity resolves the API key from the DB at execution time (never stored in history).
 	LLMProviderName string `json:"llm_provider_name,omitempty"`
@@ -825,21 +838,22 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 
 			var llmOut InlineLLMActivityOutput
 			err := workflow.ExecuteActivity(ctx, AppFlowInlineLLMActivityName, InlineLLMActivityInput{
-				RunID:         input.RunID,
-				TenantID:      input.TenantID,
-				ApplicationID: input.ApplicationID,
-				NodeID:        node.ID,
-				SystemPrompt:  cfg.SystemPrompt,
-				UserPrompt:    cfg.UserPrompt,
-				Vars:          vars,
-				Provider:      provider,
-				Model:         model,
-				MaxTokens:     cfg.MaxTokens,
-				Temperature:   cfg.Temperature,
-				OutputVar:     cfg.OutputVar,
-				Stream:        true,
-				Verbosity:     input.LogVerbosity,
-				Debug:         input.Debug,
+				RunID:           input.RunID,
+				TenantID:        input.TenantID,
+				ApplicationID:   input.ApplicationID,
+				NodeID:          node.ID,
+				SystemPrompt:    cfg.SystemPrompt,
+				UserPrompt:      cfg.UserPrompt,
+				GatewayMessages: input.GatewayMessages,
+				Vars:            vars,
+				Provider:        provider,
+				Model:           model,
+				MaxTokens:       cfg.MaxTokens,
+				Temperature:     cfg.Temperature,
+				OutputVar:       cfg.OutputVar,
+				Stream:          true,
+				Verbosity:       input.LogVerbosity,
+				Debug:           input.Debug,
 			}).Get(ctx, &llmOut)
 			if err != nil {
 				out.Status = "failed"

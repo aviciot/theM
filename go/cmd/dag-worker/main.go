@@ -916,11 +916,65 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 		return "", fmt.Errorf("inline llm: create provider: %w", err)
 	}
 
+	// Gateway mode: full message history passed through directly.
+	if len(req.GatewayMessages) > 0 {
+		return completeWithHistory(ctx, providerName, model, maxTokens, apiKey, baseURL, req.GatewayMessages)
+	}
+
 	responseText, err := provider.Complete(ctx, req.SystemPrompt, req.UserPrompt)
 	if err != nil {
 		return "", fmt.Errorf("inline llm: complete: %w", err)
 	}
 	return responseText, nil
+}
+
+// completeWithHistory calls the LLM using the full OpenAI-format message
+// history. System messages become the system prompt; all other messages are
+// passed in order as the conversation history to the llm.Provider.Stream call.
+func completeWithHistory(ctx context.Context, providerName, model string, maxTokens int, apiKey, baseURL string, msgs []appflow.GatewayMessage) (string, error) {
+	var systemPrompt string
+	var domainMsgs []domain.Message
+	for _, m := range msgs {
+		if m.Role == "system" {
+			systemPrompt = m.Content
+			continue
+		}
+		role := domain.RoleUser
+		if m.Role == "assistant" {
+			role = domain.RoleAssistant
+		}
+		domainMsgs = append(domainMsgs, domain.Message{
+			Role:  role,
+			Parts: []domain.ContentPart{{Type: "text", Text: m.Content}},
+		})
+	}
+	if len(domainMsgs) == 0 {
+		return "", fmt.Errorf("inline llm: no user messages in gateway history")
+	}
+
+	var p llm.Provider
+	switch providerName {
+	case "anthropic", "":
+		p = llm.NewAnthropicProvider(apiKey, model, maxTokens)
+	default:
+		p = llm.NewOpenAIProvider(apiKey, model, baseURL, maxTokens)
+	}
+
+	opts := llm.Options{SystemPrompt: systemPrompt}
+	ch, err := p.Stream(ctx, domainMsgs, nil, opts)
+	if err != nil {
+		return "", fmt.Errorf("inline llm: gateway stream start: %w", err)
+	}
+	var sb strings.Builder
+	for ev := range ch {
+		switch ev.Type {
+		case "text_delta":
+			sb.WriteString(ev.Delta)
+		case "error":
+			return "", fmt.Errorf("inline llm: gateway stream error: %w", ev.Error)
+		}
+	}
+	return sb.String(), nil
 }
 
 var _ appflow.RouterLLMCaller = (*dbLLMCaller)(nil)

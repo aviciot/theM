@@ -334,12 +334,19 @@ func (h *Handler) admitAndStartAppFlow(ctx context.Context, tenantID string, ca 
 		Model:    handle.EPConfig.OrchestratorLLMModel,
 	})
 
-	// Extract the last user message as the prompt.
+	// Extract the last user message as the prompt (used for router/agent nodes).
 	userMsg := lastUserMessage(req.Messages)
+
+	// Convert full message history for gateway-aware LLM nodes.
+	gatewayMsgs := make([]appflow.GatewayMessage, len(req.Messages))
+	for i, m := range req.Messages {
+		gatewayMsgs[i] = appflow.GatewayMessage{Role: m.Role, Content: m.Content}
+	}
 
 	input := appflow.AppFlowWorkflowInput{
 		Spec:            &appflow.AppFlowSpec{ExecutionBackend: spec.ExecutionBackend, EntryPoints: []appflow.EPFlow{*epFlow}},
 		UserMessage:     userMsg,
+		GatewayMessages: gatewayMsgs,
 		LLMProviderName: llmCfg.ProviderName,
 		LLMProvider:     llmCfg.ProviderName,
 		LLMModel:        llmCfg.Model,
