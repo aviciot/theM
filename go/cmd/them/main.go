@@ -490,7 +490,8 @@ func run() error {
 	gwQC := &gatewayQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
 	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log).
 		WithPolicyEnforcer(gwDAL)
-	gwHandler := llmgateway.NewHandler(gwSvc, gwDAL, slugResolver, log)
+	gwHandler := llmgateway.NewHandler(gwSvc, gwDAL, slugResolver, log).
+		WithAppFlow(execLifecycle, bus)
 	bearerTenantMW := auth.BearerTenantMiddleware(tokenCache)
 	srv.MountGateway(bearerTenantMW(gwHandler.ChatCompletionsHandler()))
 	log.Info("LLM gateway mounted", "path", "/{tenant_slug}/llm/v1/chat/completions")

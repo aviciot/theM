@@ -12,8 +12,13 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
@@ -23,6 +28,8 @@ type DALWriter interface {
 	WriteRequest(ctx context.Context, r RequestRecord) error
 	// ClientIDForHash returns the gateway_clients.id for a token hash, or "".
 	ClientIDForHash(ctx context.Context, tokenHash string) string
+	// LoadClientApp resolves the app canvas app linked to the client, or nil.
+	LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, error)
 }
 
 // Handler implements POST /{tenant_slug}/llm/v1/chat/completions.
@@ -35,6 +42,10 @@ type Handler struct {
 	dal      DALWriter
 	resolver tenantctx.SlugResolver // may be nil (slug check skipped in tests)
 	log      *slog.Logger
+
+	// Optional — set via WithAppFlow to enable profile-app dispatch.
+	bus event.Bus
+	lc  *execution.Lifecycle
 }
 
 // NewHandler creates a Handler. resolver may be nil (slug validation skipped).
@@ -43,6 +54,15 @@ func NewHandler(svc *Service, dal DALWriter, resolver tenantctx.SlugResolver, lo
 		log = slog.Default()
 	}
 	return &Handler{svc: svc, dal: dal, resolver: resolver, log: log}
+}
+
+// WithAppFlow attaches the dependencies needed for profile-app (AppFlow) dispatch.
+// When set and a client has an app_id, the gateway starts an AppFlowWorkflow
+// instead of calling the LLM directly. The Lifecycle already holds the epLoader.
+func (h *Handler) WithAppFlow(lc *execution.Lifecycle, bus event.Bus) *Handler {
+	h.lc = lc
+	h.bus = bus
+	return h
 }
 
 // Routes returns the chi sub-router for gateway routes. Use for tests that
@@ -102,7 +122,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 4. Resolve gateway client + profile steps by token hash ──────────────────
+	// ── 4. Resolve gateway client by token hash ───────────────────────────────
 	rawBearer := r.Header.Get("Authorization")
 	if len(rawBearer) > 7 {
 		rawBearer = rawBearer[7:] // strip "Bearer "
@@ -124,10 +144,254 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tokenInfo
 
+	// ── 5. If client has a profile app — dispatch via AppFlow ────────────────
+	if h.lc != nil {
+		ca, caErr := h.dal.LoadClientApp(r.Context(), tokenHashHex)
+		if caErr == nil && ca != nil {
+			if req.Stream {
+				h.dispatchAppFlowStream(w, r, start, req, &rec, tenantID, ca)
+			} else {
+				h.dispatchAppFlowSync(w, r, start, req, &rec, tenantID, ca)
+			}
+			return
+		}
+	}
+
 	if req.Stream {
 		h.handleStream(w, r, start, req, &rec)
 	} else {
 		h.handleSync(w, r, start, req, &rec)
+	}
+}
+
+// dispatchAppFlowSync runs the request through an App Canvas AppFlow workflow
+// (non-streaming). Blocks until the workflow completes, then returns the result
+// in OpenAI chat.completion JSON format.
+func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp) {
+	defer func() {
+		rec.LatencyMS = int(time.Since(start).Milliseconds())
+		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
+			h.log.Warn("llmgateway: write_request (appflow sync) failed", "err", werr)
+		}
+	}()
+
+	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
+	if err != nil {
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusBadGateway
+		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
+		return
+	}
+	defer h.lc.Release(handle)
+
+	var output appflow.AppFlowWorkflowOutput
+	if wfErr := wfRun.Get(r.Context(), &output); wfErr != nil {
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusBadGateway
+		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow error")
+		return
+	}
+	if output.Status == "failed" || output.Status == "rejected" {
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusBadGateway
+		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
+		return
+	}
+
+	rec.HTTPStatus = http.StatusOK
+	resp := ChatResponse{
+		ID:      fmt.Sprintf("gw-af-%d", start.Unix()),
+		Object:  "chat.completion",
+		Created: start.Unix(),
+		Model:   req.Model,
+		Choices: []ChatChoice{{
+			Index:        0,
+			Message:      ChatMessage{Role: "assistant", Content: output.FinalText},
+			FinishReason: "stop",
+		}},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// dispatchAppFlowStream runs the request through an App Canvas AppFlow workflow,
+// streaming tokens back in OpenAI SSE format (data: {...}\n\n / data: [DONE]\n\n).
+func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp) {
+	defer func() {
+		rec.LatencyMS = int(time.Since(start).Milliseconds())
+		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
+			h.log.Warn("llmgateway: write_request (appflow stream) failed", "err", werr)
+		}
+	}()
+
+	// Subscribe to event bus BEFORE starting workflow (ordering invariant).
+	runID := uuid.New().String()
+	evCh, termCh, unsub := h.bus.Subscribe(r.Context(), runID, 64)
+	defer unsub()
+
+	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
+	if err != nil {
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusBadGateway
+		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
+		return
+	}
+	defer h.lc.Release(handle)
+	_ = wfRun // streaming reads from event bus, not wfRun.Get
+
+	rec.HTTPStatus = http.StatusOK
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, canFlush := w.(http.Flusher)
+	ttfbSet := false
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-termCh:
+			if !ok {
+				return
+			}
+			if ev.Type == "error" {
+				rec.Status = "error"
+				_, _ = fmt.Fprintf(w, "data: {\"error\":{\"message\":\"workflow error\"}}\n\n")
+			} else {
+				_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+			return
+		case ev, ok := <-evCh:
+			if !ok {
+				return
+			}
+			switch ev.Type {
+			case "done", "error":
+				if ev.Type == "error" {
+					rec.Status = "error"
+					_, _ = fmt.Fprintf(w, "data: {\"error\":{\"message\":\"workflow error\"}}\n\n")
+				} else {
+					_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+				}
+				if canFlush {
+					flusher.Flush()
+				}
+				return
+			case "token":
+				if !ttfbSet {
+					rec.TTFBMs = int(time.Since(start).Milliseconds())
+					ttfbSet = true
+				}
+				// Wrap payload as OpenAI streaming delta.
+				var tokenText string
+				_ = json.Unmarshal(ev.Payload, &tokenText)
+				chunk := openAIStreamChunk(req.Model, tokenText, start)
+				data, _ := json.Marshal(chunk)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+		}
+	}
+}
+
+// admitAndStartAppFlow resolves the EPConfig for the profile app, creates a run
+// handle via AdmitDebug (no gate/session slot — gateway runs are internal),
+// compiles the AppFlowSpec, and starts the Temporal workflow.
+// Subscribe to the event bus BEFORE calling this for streaming paths.
+func (h *Handler) admitAndStartAppFlow(ctx context.Context, tenantID string, ca *ClientApp, req ChatRequest) (*execution.ExecutionHandle, temporalclient.WorkflowRun, error) {
+	handle, admitErr := h.lc.AdmitDebug(ctx, tenantID, ca.AppSlug, ca.EPSlug, 0)
+	if admitErr != nil {
+		return nil, nil, fmt.Errorf("llmgateway: admit debug: %w", admitErr)
+	}
+
+	defJSON := handle.EPConfig.ActiveDefinitionJSON
+	if len(defJSON) == 0 {
+		h.lc.Release(handle)
+		return nil, nil, fmt.Errorf("llmgateway: no active definition on profile app")
+	}
+
+	agentByInstanceID, err := appflow.ResolveAgentByInstanceID(defJSON)
+	if err != nil {
+		h.lc.Release(handle)
+		return nil, nil, fmt.Errorf("llmgateway: resolve agents: %w", err)
+	}
+
+	spec, err := appflow.Compile(defJSON, agentByInstanceID)
+	if err != nil {
+		h.lc.Release(handle)
+		return nil, nil, fmt.Errorf("llmgateway: compile: %w", err)
+	}
+
+	// Find the gateway EPFlow.
+	var epFlow *appflow.EPFlow
+	for i := range spec.EntryPoints {
+		if spec.EntryPoints[i].Slug == ca.EPSlug {
+			epFlow = &spec.EntryPoints[i]
+			break
+		}
+	}
+	if epFlow == nil {
+		h.lc.Release(handle)
+		return nil, nil, fmt.Errorf("llmgateway: no EPFlow for slug %q", ca.EPSlug)
+	}
+
+	llmCfg := appflow.ParseLLMConfig(appflow.LLMOrchConfig{
+		Provider: handle.EPConfig.OrchestratorLLMProvider,
+		Model:    handle.EPConfig.OrchestratorLLMModel,
+	})
+
+	// Extract the last user message as the prompt.
+	userMsg := lastUserMessage(req.Messages)
+
+	input := appflow.AppFlowWorkflowInput{
+		Spec:            &appflow.AppFlowSpec{ExecutionBackend: spec.ExecutionBackend, EntryPoints: []appflow.EPFlow{*epFlow}},
+		UserMessage:     userMsg,
+		LLMProviderName: llmCfg.ProviderName,
+		LLMProvider:     llmCfg.ProviderName,
+		LLMModel:        llmCfg.Model,
+	}
+
+	wfRun, startErr := h.lc.StartAppFlow(ctx, handle, input, false)
+	if startErr != nil {
+		h.lc.Release(handle)
+		return nil, nil, fmt.Errorf("llmgateway: start appflow: %w", startErr)
+	}
+	return handle, wfRun, nil
+}
+
+// lastUserMessage returns the text of the last message with role "user", or
+// the concatenation of all messages if none is found.
+func lastUserMessage(msgs []ChatMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	if len(msgs) > 0 {
+		return msgs[len(msgs)-1].Content
+	}
+	return ""
+}
+
+// openAIStreamChunk wraps a token string in an OpenAI streaming response chunk.
+func openAIStreamChunk(model, token string, start time.Time) map[string]any {
+	return map[string]any{
+		"id":      fmt.Sprintf("gw-af-%d", start.Unix()),
+		"object":  "chat.completion.chunk",
+		"created": start.Unix(),
+		"model":   model,
+		"choices": []map[string]any{{
+			"index": 0,
+			"delta": map[string]any{"role": "assistant", "content": token},
+		}},
 	}
 }
 

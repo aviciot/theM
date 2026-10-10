@@ -99,6 +99,37 @@ func (d *DAL) ClientIDForHash(ctx context.Context, tokenHash string) string {
 	return id
 }
 
+// ClientApp holds the resolved app and entry-point slugs for a gateway client
+// that has been linked to an App Canvas application via app_id.
+type ClientApp struct {
+	ClientID string
+	AppSlug  string
+	EPSlug   string
+}
+
+// LoadClientApp resolves a token hash to the App Canvas application linked to
+// the client via gateway_clients.app_id. Returns nil when the token has no
+// registered client, the client has no app_id set, or the app has no gateway
+// entry point — all treated as "no profile app, use direct LLM path".
+func (d *DAL) LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, error) {
+	const q = `
+		SELECT c.id::text, a.slug, ep.slug
+		FROM them.gateway_clients c
+		JOIN them.applications a ON a.id = c.app_id
+		JOIN them.entry_points ep ON ep.application_id = a.id
+		  AND ep.entry_point_type = 'gateway'
+		  AND ep.enabled
+		WHERE c.token_hash = $1
+		LIMIT 1`
+
+	var ca ClientApp
+	err := d.pool.QueryRow(ctx, q, tokenHash).Scan(&ca.ClientID, &ca.AppSlug, &ca.EPSlug)
+	if err != nil {
+		return nil, nil // no row = no profile app
+	}
+	return &ca, nil
+}
+
 // LoadPolicy reads the gateway_policies row for the tenant.
 // Returns nil, nil when no row exists (allow-all, no budget cap).
 func (d *DAL) LoadPolicy(ctx context.Context, tenantID string) (*Policy, error) {
