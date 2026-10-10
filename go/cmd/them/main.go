@@ -492,8 +492,8 @@ func run() error {
 		WithPolicyEnforcer(gwDAL)
 	gwHandler := llmgateway.NewHandler(gwSvc, gwDAL, slugResolver, log).
 		WithAppFlow(execLifecycle, bus)
-	bearerTenantMW := auth.BearerTenantMiddleware(tokenCache)
-	srv.MountGateway(bearerTenantMW(gwHandler.ChatCompletionsHandler()))
+	gwClientMW := llmgateway.GatewayClientMiddleware(gwDAL)
+	srv.MountGateway(gwClientMW(gwHandler.ChatCompletionsHandler()))
 	log.Info("LLM gateway mounted", "path", "/{tenant_slug}/llm/v1/chat/completions")
 
 	// ── 19b. Mount /{tenant_slug}/apps/* (WS + SSE + voice) ─────────────────

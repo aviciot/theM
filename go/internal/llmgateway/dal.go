@@ -99,6 +99,18 @@ func (d *DAL) ClientIDForHash(ctx context.Context, tokenHash string) string {
 	return id
 }
 
+// LookupClientTenant resolves a token hash to the client ID and tenant ID.
+// Returns ("", "", nil) when no row matches — the caller treats this as
+// an authentication failure.
+func (d *DAL) LookupClientTenant(ctx context.Context, tokenHash string) (clientID, tenantID string, err error) {
+	const q = `SELECT id::text, tenant_id::text FROM them.gateway_clients WHERE token_hash = $1 LIMIT 1`
+	err = d.pool.QueryRow(ctx, q, tokenHash).Scan(&clientID, &tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	return clientID, tenantID, err
+}
+
 // ClientApp holds the resolved app and entry-point slugs for a gateway client
 // that has been linked to an App Canvas application via app_id.
 type ClientApp struct {

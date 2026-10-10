@@ -2,7 +2,6 @@ package llmgateway
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/appflow"
-	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/tenantctx"
@@ -86,9 +84,9 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// ── 1. Extract auth ────────────────────────────────────────────────────────
-	tokenInfo, ok := auth.TokenInfoFromCtx(r.Context())
+	gwClient, ok := GatewayClientFromCtx(r.Context())
 	if !ok {
-		writeGatewayError(w, http.StatusUnauthorized, "unauthorized", "missing token info")
+		writeGatewayError(w, http.StatusUnauthorized, "unauthorized", "missing gateway client info")
 		return
 	}
 	tenantID, err := tenantctx.TenantIDFromCtx(r.Context())
@@ -122,31 +120,19 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 4. Resolve gateway client by token hash ───────────────────────────────
-	rawBearer := r.Header.Get("Authorization")
-	if len(rawBearer) > 7 {
-		rawBearer = rawBearer[7:] // strip "Bearer "
-	} else {
-		rawBearer = ""
-	}
-	sum := sha256.Sum256([]byte(rawBearer))
-	tokenHashHex := fmt.Sprintf("%x", sum)
-
-	clientID := h.dal.ClientIDForHash(r.Context(), tokenHashHex)
-
+	// ── 4. Use token hash and client ID from middleware context ─────────────
 	rec := RequestRecord{
 		TenantID:       tenantID,
-		ClientID:       clientID,
-		TokenHash:      tokenHashHex,
+		ClientID:       gwClient.ClientID,
+		TokenHash:      gwClient.TokenHash,
 		ModelRequested: req.Model,
 		Status:         "ok",
 		Streamed:       req.Stream,
 	}
-	_ = tokenInfo
 
 	// ── 5. If client has a profile app — dispatch via AppFlow ────────────────
 	if h.lc != nil {
-		ca, caErr := h.dal.LoadClientApp(r.Context(), tokenHashHex)
+		ca, caErr := h.dal.LoadClientApp(r.Context(), gwClient.TokenHash)
 		if caErr == nil && ca != nil {
 			if req.Stream {
 				h.dispatchAppFlowStream(w, r, start, req, &rec, tenantID, ca)

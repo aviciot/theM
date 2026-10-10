@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/quota"
@@ -102,11 +101,15 @@ func newHandler(tenantID, slug string, svc *Service, dal *fakeDAL) *Handler {
 	return &Handler{svc: svc, dal: dal, resolver: resolver, log: nil}
 }
 
-func doRequest(h *Handler, method, path, body, tenantID string, tokenID int64) *httptest.ResponseRecorder {
+func doRequest(h *Handler, method, path, body, tenantID string, _ int64) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	ctx := tenantctx.WithTenantID(req.Context(), tenantID)
-	ctx = auth.WithTokenInfo(ctx, &auth.TokenInfo{TokenID: tokenID, TenantID: tenantID})
+	ctx = context.WithValue(ctx, gwClientKey{}, &GatewayClientInfo{
+		ClientID:  "test-client-id",
+		TenantID:  tenantID,
+		TokenHash: "testhash",
+	})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 	h.Routes().ServeHTTP(rr, req)
@@ -334,7 +337,11 @@ func TestHandler_TenantMismatch_403(t *testing.T) {
 		strings.NewReader(chatBody("claude-sonnet-4-6", false)))
 	req.Header.Set("Content-Type", "application/json")
 	ctx := tenantctx.WithTenantID(req.Context(), otherTenant) // token tenant ≠ slug tenant
-	ctx = auth.WithTokenInfo(ctx, &auth.TokenInfo{TokenID: 1, TenantID: otherTenant})
+	ctx = context.WithValue(ctx, gwClientKey{}, &GatewayClientInfo{
+		ClientID:  "test-client-id",
+		TenantID:  otherTenant,
+		TokenHash: "testhash",
+	})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 	h.Routes().ServeHTTP(rr, req)
