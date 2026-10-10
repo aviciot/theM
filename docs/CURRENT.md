@@ -48,7 +48,7 @@ Key implementation details:
 
 **Test client** (for manual E2E testing):
 - Label: `gw-test-profile`, linked to app `GW Profile Basic LLM`
-- Bearer token: `9a2ac279782c95c8e628af549b8112cc449201b6acff749910be1f45aeae1afb`
+- Bearer token: not stored in docs — create/view it in Admin → LLM Gateway → Clients (rotate the old one)
 - Endpoint: `POST http://localhost:8088/default/llm/v1/chat/completions`
 
 **To use end-to-end:**

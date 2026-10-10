@@ -1,6 +1,8 @@
 # LLM Gateway — Design
-# Status: DESIGN — not yet implemented
-# Last updated: 2026-09-17
+# Status: PARTIALLY IMPLEMENTED (as of 2026-10-10) — gateway endpoint, client tokens, policy
+# (model allow-list, budget, RPM), request log and AppFlow "gateway profile" apps are live.
+# Not built: request-body capture, caching, tools/embeddings, model_pricing table. See docs/CURRENT.md.
+# Last updated: 2026-10-10 (status line only; body below is the original design)
 
 ---
 
