@@ -61,6 +61,7 @@ var validEPTypes = map[string]struct{}{
 	"voice":     {},
 	"webrtc":    {},
 	"a2a":       {},
+	"gateway":   {},
 }
 
 // IsValidEPType reports whether t is an allowed entry point type.
@@ -164,7 +165,7 @@ func (s *AppService) CreateEntryPoint(ctx context.Context, appID, slug, epType s
 		return "", validation("slug and entry_point_type are required")
 	}
 	if !IsValidEPType(epType) {
-		return "", unprocessable("invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
+		return "", unprocessable("invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a, gateway")
 	}
 	return s.dal.CreateEntryPoint(ctx, appID, slug, epType, enabledOrDefault(enabled))
 }
@@ -176,7 +177,7 @@ func (s *AppService) CreateEntryPoint(ctx context.Context, appID, slug, epType s
 // the old EP lookup returns an empty TenantID (e.g. EP deleted between read and update).
 func (s *AppService) UpdateEntryPoint(ctx context.Context, tenantID, epID, appID, slug, epType string, enabled *bool) error {
 	if epType != "" && !IsValidEPType(epType) {
-		return unprocessable("invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
+		return unprocessable("invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a, gateway")
 	}
 
 	// Fetch old (tenantID, slug) before the update for cache invalidation on rename.
