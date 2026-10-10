@@ -36,6 +36,9 @@ export interface Scenario {
   ep_slug: string;
   ep_type?: string;
   auth_mode: 'token' | 'public' | 'user_jwt' | 'external_jwt';
+  // Gateway fields — only present when ep_type == 'gateway'
+  gateway_token?: string;
+  stream?: boolean;
   // Keycloak fields — only used when auth_mode == 'external_jwt'
   keycloak_url?: string;
   keycloak_realm?: string;

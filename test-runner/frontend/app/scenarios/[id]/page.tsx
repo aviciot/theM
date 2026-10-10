@@ -32,6 +32,10 @@ export default function ScenarioEditorPage() {
   const [kcClientID, setKcClientID] = useState('');
   const [kcClientSecret, setKcClientSecret] = useState('');
   const [kcUsers, setKcUsers] = useState<{ username: string; password: string }[]>([{ username: '', password: '' }]);
+  // Gateway fields
+  const [gatewayToken, setGatewayToken] = useState('');
+  const [stream, setStream] = useState(false);
+  const [scenarioType, setScenarioType] = useState<'agentic' | 'gateway'>('agentic');
 
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [apps, setApps] = useState<App[]>([]);
@@ -67,6 +71,11 @@ export default function ScenarioEditorPage() {
       if (sc.keycloak_client_id) setKcClientID(sc.keycloak_client_id);
       if (sc.keycloak_client_secret) setKcClientSecret(sc.keycloak_client_secret);
       if (sc.keycloak_users?.length) setKcUsers(sc.keycloak_users);
+      if (sc.ep_type === 'gateway') {
+        setScenarioType('gateway');
+        setGatewayToken(sc.gateway_token ?? '');
+        setStream(sc.stream ?? false);
+      }
     });
   }, [id, isNew]);
 
@@ -83,6 +92,9 @@ export default function ScenarioEditorPage() {
   }, [appID]);
 
   const buildSc = () => {
+    if (scenarioType === 'gateway') {
+      return { name, tenant_slug: tenantSlug, ep_type: 'gateway', gateway_token: gatewayToken, stream, n_users: nUsers, messages, app_id: '', app_slug: '', ep_slug: 'gateway', auth_mode: 'token' as const };
+    }
     const base = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
     if (authMode !== 'external_jwt') return base;
     return { ...base, keycloak_url: kcURL, keycloak_realm: kcRealm, keycloak_client_id: kcClientID, keycloak_client_secret: kcClientSecret, keycloak_users: kcUsers.filter(u => u.username) };
@@ -147,88 +159,125 @@ export default function ScenarioEditorPage() {
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. payops debator smoke" />
         </Field>
 
-        <div className="grid grid-cols-3 gap-4">
-          <Field label="Tenant">
-            <select className="input" value={tenantSlug} onChange={(e) => {
-              const t = tenants.find(t => t.slug === e.target.value);
-              setTenantSlug(e.target.value);
-              setTenantID(t?.id ?? '');
-            }}>
-              <option value="">Select…</option>
-              {tenants.map((t) => <option key={t.id} value={t.slug}>{t.display_name}</option>)}
-            </select>
-          </Field>
-
-          <Field label="Application">
-            <select className="input" value={appID} onChange={(e) => {
-              const app = apps.find(a => a.id === e.target.value);
-              setAppID(e.target.value);
-              setAppSlug(app?.slug ?? '');
-            }} disabled={!tenantSlug}>
-              <option value="">Select…</option>
-              {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </Field>
-
-          <Field label="Entry Point">
-            <select className="input" value={epSlug} onChange={(e) => {
-              const ep = eps.find(ep => ep.slug === e.target.value);
-              setEPSlug(e.target.value);
-              setEPType(ep?.entry_point_type ?? '');
-            }} disabled={!appID}>
-              <option value="">Select…</option>
-              {eps.map((ep) => <option key={ep.id} value={ep.slug}>{ep.slug} ({ep.entry_point_type})</option>)}
-            </select>
-          </Field>
-        </div>
-
-        <Field label="Auth Mode">
-          <div className="grid grid-cols-2 gap-2">
-            {AUTH_MODES.map((m) => (
-              <label key={m.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${authMode === m.value ? 'border-indigo-500 bg-indigo-900/20' : 'border-gray-700 hover:border-gray-600'}`}>
-                <input type="radio" name="auth_mode" value={m.value} checked={authMode === m.value} onChange={() => setAuthMode(m.value as Scenario['auth_mode'])} className="mt-0.5" />
-                <div>
-                  <div className="text-sm font-medium">{m.label}</div>
-                  <div className="text-xs text-gray-400">{m.desc}</div>
-                </div>
+        {/* Scenario Type selector */}
+        <Field label="Scenario Type">
+          <div className="flex gap-3">
+            {(['agentic', 'gateway'] as const).map((t) => (
+              <label key={t} className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-colors ${scenarioType === t ? (t === 'gateway' ? 'border-purple-500 bg-purple-900/20 text-purple-300' : 'border-indigo-500 bg-indigo-900/20 text-indigo-300') : 'border-gray-700 hover:border-gray-600 text-gray-400'}`}>
+                <input type="radio" name="scenario_type" value={t} checked={scenarioType === t} onChange={() => setScenarioType(t)} className="hidden" />
+                <span className="text-sm font-medium">{t === 'gateway' ? 'Gateway Profile' : 'Agentic App'}</span>
               </label>
             ))}
           </div>
         </Field>
 
-        {authMode === 'external_jwt' && (
-          <div className="rounded-lg border border-indigo-800/50 bg-indigo-950/20 p-4 space-y-4">
-            <p className="text-sm font-medium text-indigo-300">Keycloak Configuration</p>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Keycloak URL" hint="Base URL, e.g. http://localhost:8088/auth/keycloak">
-                <input className="input" value={kcURL} onChange={(e) => setKcURL(e.target.value)} placeholder="http://localhost:8088/auth/keycloak" />
-              </Field>
-              <Field label="Realm">
-                <input className="input" value={kcRealm} onChange={(e) => setKcRealm(e.target.value)} placeholder="payops_ai" />
-              </Field>
-              <Field label="Client ID">
-                <input className="input" value={kcClientID} onChange={(e) => setKcClientID(e.target.value)} placeholder="them-m" />
-              </Field>
-              <Field label="Client Secret">
-                <input className="input" type="password" value={kcClientSecret} onChange={(e) => setKcClientSecret(e.target.value)} placeholder="them-m-secret" />
-              </Field>
-            </div>
-            <Field label="Virtual Users (Keycloak credentials)" hint="Each virtual user cycles through this list. Add one entry per distinct user.">
-              <div className="space-y-2">
-                {kcUsers.map((u, i) => (
-                  <div key={i} className="flex gap-2">
-                    <input className="input flex-1" value={u.username} onChange={(e) => setKcUsers(ku => ku.map((x, j) => j === i ? { ...x, username: e.target.value } : x))} placeholder="username" />
-                    <input className="input flex-1" type="password" value={u.password} onChange={(e) => setKcUsers(ku => ku.map((x, j) => j === i ? { ...x, password: e.target.value } : x))} placeholder="password" />
-                    <button onClick={() => setKcUsers(ku => ku.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 px-2" disabled={kcUsers.length === 1}>×</button>
-                  </div>
-                ))}
-                <button onClick={() => setKcUsers(ku => [...ku, { username: '', password: '' }])} className="text-indigo-400 text-sm hover:text-indigo-300">+ Add user</button>
-              </div>
+        {/* Gateway-specific fields */}
+        {scenarioType === 'gateway' && (
+          <div className="rounded-lg border border-purple-800/50 bg-purple-950/20 p-4 space-y-4">
+            <p className="text-sm font-medium text-purple-300">Gateway Configuration</p>
+            <Field label="Tenant">
+              <select className="input" value={tenantSlug} onChange={(e) => setTenantSlug(e.target.value)}>
+                <option value="">Select…</option>
+                {tenants.map((t) => <option key={t.id} value={t.slug}>{t.display_name}</option>)}
+              </select>
             </Field>
+            <Field label="Gateway Token" hint="Raw hex token from gateway_clients table">
+              <input className="input font-mono" value={gatewayToken} onChange={(e) => setGatewayToken(e.target.value)} placeholder="64-char hex token" />
+            </Field>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={stream} onChange={(e) => setStream(e.target.checked)} className="accent-purple-500" />
+              <span className="text-sm text-gray-300">Streaming (SSE) — uncheck for single JSON response</span>
+            </label>
           </div>
         )}
 
-        <Field label="Virtual Users" hint="Each user gets their own bearer token and WS connection">
+        {/* Agentic-specific fields */}
+        {scenarioType === 'agentic' && (
+          <>
+            <div className="grid grid-cols-3 gap-4">
+              <Field label="Tenant">
+                <select className="input" value={tenantSlug} onChange={(e) => {
+                  const t = tenants.find(t => t.slug === e.target.value);
+                  setTenantSlug(e.target.value);
+                  setTenantID(t?.id ?? '');
+                }}>
+                  <option value="">Select…</option>
+                  {tenants.map((t) => <option key={t.id} value={t.slug}>{t.display_name}</option>)}
+                </select>
+              </Field>
+
+              <Field label="Application">
+                <select className="input" value={appID} onChange={(e) => {
+                  const app = apps.find(a => a.id === e.target.value);
+                  setAppID(e.target.value);
+                  setAppSlug(app?.slug ?? '');
+                }} disabled={!tenantSlug}>
+                  <option value="">Select…</option>
+                  {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </Field>
+
+              <Field label="Entry Point">
+                <select className="input" value={epSlug} onChange={(e) => {
+                  const ep = eps.find(ep => ep.slug === e.target.value);
+                  setEPSlug(e.target.value);
+                  setEPType(ep?.entry_point_type ?? '');
+                }} disabled={!appID}>
+                  <option value="">Select…</option>
+                  {eps.map((ep) => <option key={ep.id} value={ep.slug}>{ep.slug} ({ep.entry_point_type})</option>)}
+                </select>
+              </Field>
+            </div>
+
+            <Field label="Auth Mode">
+              <div className="grid grid-cols-2 gap-2">
+                {AUTH_MODES.map((m) => (
+                  <label key={m.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${authMode === m.value ? 'border-indigo-500 bg-indigo-900/20' : 'border-gray-700 hover:border-gray-600'}`}>
+                    <input type="radio" name="auth_mode" value={m.value} checked={authMode === m.value} onChange={() => setAuthMode(m.value as Scenario['auth_mode'])} className="mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium">{m.label}</div>
+                      <div className="text-xs text-gray-400">{m.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </Field>
+
+            {authMode === 'external_jwt' && (
+              <div className="rounded-lg border border-indigo-800/50 bg-indigo-950/20 p-4 space-y-4">
+                <p className="text-sm font-medium text-indigo-300">Keycloak Configuration</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Keycloak URL" hint="Base URL, e.g. http://localhost:8088/auth/keycloak">
+                    <input className="input" value={kcURL} onChange={(e) => setKcURL(e.target.value)} placeholder="http://localhost:8088/auth/keycloak" />
+                  </Field>
+                  <Field label="Realm">
+                    <input className="input" value={kcRealm} onChange={(e) => setKcRealm(e.target.value)} placeholder="payops_ai" />
+                  </Field>
+                  <Field label="Client ID">
+                    <input className="input" value={kcClientID} onChange={(e) => setKcClientID(e.target.value)} placeholder="them-m" />
+                  </Field>
+                  <Field label="Client Secret">
+                    <input className="input" type="password" value={kcClientSecret} onChange={(e) => setKcClientSecret(e.target.value)} placeholder="them-m-secret" />
+                  </Field>
+                </div>
+                <Field label="Virtual Users (Keycloak credentials)" hint="Each virtual user cycles through this list. Add one entry per distinct user.">
+                  <div className="space-y-2">
+                    {kcUsers.map((u, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input className="input flex-1" value={u.username} onChange={(e) => setKcUsers(ku => ku.map((x, j) => j === i ? { ...x, username: e.target.value } : x))} placeholder="username" />
+                        <input className="input flex-1" type="password" value={u.password} onChange={(e) => setKcUsers(ku => ku.map((x, j) => j === i ? { ...x, password: e.target.value } : x))} placeholder="password" />
+                        <button onClick={() => setKcUsers(ku => ku.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 px-2" disabled={kcUsers.length === 1}>×</button>
+                      </div>
+                    ))}
+                    <button onClick={() => setKcUsers(ku => [...ku, { username: '', password: '' }])} className="text-indigo-400 text-sm hover:text-indigo-300">+ Add user</button>
+                  </div>
+                </Field>
+              </div>
+            )}
+          </>
+        )}
+
+        <Field label="Virtual Users" hint={scenarioType === 'gateway' ? 'Concurrent gateway requests' : 'Each user gets their own bearer token and WS connection'}>
           <div className="flex items-center gap-3">
             <input
               type="range" min={1} max={50} value={nUsers}
@@ -239,7 +288,7 @@ export default function ScenarioEditorPage() {
           </div>
         </Field>
 
-        <Field label="Message Script" hint="Messages sent in order by each virtual user">
+        <Field label="Message Script" hint={scenarioType === 'gateway' ? 'Turns sent in order — each builds on previous (multi-turn history)' : 'Messages sent in order by each virtual user'}>
           <div className="space-y-2">
             {messages.map((m, i) => (
               <div key={i} className="flex gap-2">
@@ -253,12 +302,21 @@ export default function ScenarioEditorPage() {
         </Field>
 
         <div className="flex gap-3 pt-2">
-          <button className="btn-primary" onClick={save} disabled={saving || !name || !epSlug}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          <button className="btn-run" onClick={run} disabled={saving || running || !name || !epSlug}>
-            {running ? 'Starting…' : '▶ Save & Run'}
-          </button>
+          {(() => {
+            const canSaveGateway = scenarioType === 'gateway' && !!name && !!tenantSlug && !!gatewayToken;
+            const canSaveAgentic = scenarioType === 'agentic' && !!name && !!epSlug;
+            const canSave = canSaveGateway || canSaveAgentic;
+            return (
+              <>
+                <button className="btn-primary" onClick={save} disabled={saving || !canSave}>
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button className="btn-run" onClick={run} disabled={saving || running || !canSave}>
+                  {running ? 'Starting…' : '▶ Save & Run'}
+                </button>
+              </>
+            );
+          })()}
           <button className="btn-secondary" onClick={() => router.push('/scenarios')}>Cancel</button>
         </div>
       </div>

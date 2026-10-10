@@ -1,0 +1,20 @@
+{
+  "id": "gw-profile-basic-multiturn",
+  "name": "GW Profile — Basic LLM — multi-turn (non-streaming)",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "REPLACE_WITH_RAW_HEX_TOKEN_FROM_GATEWAY_CLIENTS",
+  "stream": false,
+  "n_users": 1,
+  "messages": [
+    "What is 2 + 2?",
+    "What did I just ask you?",
+    "Give me a one-sentence summary of our conversation."
+  ],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-10T00:00:00Z",
+  "updated_at": "2026-10-10T00:00:00Z"
+}

@@ -38,8 +38,13 @@ type Scenario struct {
 	KeycloakClientID     string         `json:"keycloak_client_id,omitempty"`     // e.g. them-m
 	KeycloakClientSecret string         `json:"keycloak_client_secret,omitempty"` // e.g. them-m-secret
 	KeycloakUsers        []KeycloakUser `json:"keycloak_users,omitempty"`         // virtual user credentials
-	NUsers               int            `json:"n_users"`
-	Messages             []string       `json:"messages"`
+	// Gateway fields — only used when ep_type == "gateway".
+	// GatewayToken is the raw hex bearer token from them.gateway_clients.
+	// Stream controls whether to use SSE streaming (true) or a single JSON response (false).
+	GatewayToken string   `json:"gateway_token,omitempty"`
+	Stream       bool     `json:"stream,omitempty"`
+	NUsers       int      `json:"n_users"`
+	Messages     []string `json:"messages"`
 	CreatedAt            string         `json:"created_at"`
 	UpdatedAt            string         `json:"updated_at"`
 }

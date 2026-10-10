@@ -74,9 +74,13 @@ func clientForScenario(sc Scenario) (*them.Client, error) {
 
 // Start launches a parallel scenario run, returns the run ID immediately.
 func (m *Manager) Start(sc Scenario) (string, error) {
-	client, err := clientForScenario(sc)
-	if err != nil {
-		return "", fmt.Errorf("login to the-M: %w", err)
+	var client *them.Client
+	if sc.EPType != "gateway" {
+		var err error
+		client, err = clientForScenario(sc)
+		if err != nil {
+			return "", fmt.Errorf("login to the-M: %w", err)
+		}
 	}
 	runID := uuid.New().String()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -147,8 +151,14 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 				bearerToken = jwt
 			}
 
-			themURL := client.BaseURL()
-			if sc.EPType == "a2a" {
+			cfg := config.Get()
+			themURL := cfg.ThemURL
+			if client != nil {
+				themURL = client.BaseURL()
+			}
+			if sc.EPType == "gateway" {
+				them.RunUserGateway(ctx, themURL, sc.TenantSlug, sc.GatewayToken, sc.Stream, idx, sc.Messages, updates)
+			} else if sc.EPType == "a2a" {
 				them.RunUserA2A(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
 			} else {
 				them.RunUser(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
