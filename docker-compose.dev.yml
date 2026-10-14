@@ -42,6 +42,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.dev
     command: ["npm", "run", "dev"]
+    mem_limit: 3g
+    memswap_limit: 3g
     volumes:
       - ./frontend:/app
       - /app/node_modules
