@@ -42,7 +42,7 @@ type gwResponse struct {
 // All virtual users share the same gateway token (it's a service credential).
 // If stream=true, uses SSE streaming and accumulates chunks.
 // messages are sent as a full conversation array (multi-turn history passthrough).
-func RunUserGateway(ctx context.Context, baseURL, tenantSlug, gatewayToken string, stream bool, userIndex int, messages []string, out chan<- UserResult) {
+func RunUserGateway(ctx context.Context, baseURL, tenantSlug, gatewayToken, model string, stream bool, userIndex int, messages []string, out chan<- UserResult) {
 	start := time.Now()
 	result := UserResult{
 		UserIndex: userIndex,
@@ -78,8 +78,12 @@ func RunUserGateway(ctx context.Context, baseURL, tenantSlug, gatewayToken strin
 
 		history = append(history, gwMessage{Role: "user", Content: msg})
 
+		effectiveModel := model
+		if effectiveModel == "" {
+			effectiveModel = "claude-sonnet-4-6"
+		}
 		reqBody := gwRequest{
-			Model:     "claude-3-5-haiku-20241022",
+			Model:     effectiveModel,
 			Messages:  history,
 			MaxTokens: 256,
 			Stream:    stream,

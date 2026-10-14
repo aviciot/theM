@@ -102,11 +102,15 @@ func (r *Resolver) ResolveProvider(ctx context.Context, applicationID, tenantID,
 
 	tenantRow := r.TenantProviderRow(ctx, tenantID, provider)
 
-	// Key precedence: app-level → tenant-level. Platform key is NEVER used
-	// as a fallback — tenants pay for their own LLM usage.
+	// Key precedence: app-level → tenant-level (llm_providers) → tenant-level
+	// (llm_provider_keys — the newer per-tenant key store). Platform key is
+	// NEVER used as a fallback — tenants pay for their own LLM usage.
 	key := appKey
 	if key == "" {
 		key = tenantRow.Key
+	}
+	if key == "" && tenantID != "" {
+		key = r.tenantProviderKeyRow(ctx, tenantID, provider)
 	}
 
 	// For base_url and pricing, fall back to platform metadata (not the key)
@@ -179,6 +183,38 @@ func (r *Resolver) lookupProviderRow(ctx context.Context, provider string, tenan
 	}
 	out.Key = plain
 	return out
+}
+
+// tenantProviderKeyRow looks up the most-recently-created key for provider
+// from them.llm_provider_keys (the newer per-tenant key store). Returns "" when
+// no key exists or decryption fails.
+func (r *Resolver) tenantProviderKeyRow(ctx context.Context, tenantID, provider string) string {
+	const q = `
+		SELECT pk.api_key_encrypted
+		FROM them.llm_provider_keys pk
+		JOIN them.llm_providers p ON p.id = pk.llm_provider_id
+		WHERE pk.tenant_id = $1::uuid AND p.name = $2
+		ORDER BY pk.is_default DESC, pk.created_at DESC
+		LIMIT 1`
+	var encPtr *string
+	err := r.pool.QueryRow(ctx, q, tenantID, provider).Scan(&encPtr)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			r.logger.Warn("llmresolve: llm_provider_keys lookup error",
+				"provider", provider, "tenant_id", tenantID, "error", err)
+		}
+		return ""
+	}
+	if encPtr == nil || *encPtr == "" {
+		return ""
+	}
+	plain, decErr := r.DecryptValue(*encPtr)
+	if decErr != nil {
+		r.logger.Warn("llmresolve: llm_provider_keys key decrypt failed",
+			"provider", provider, "tenant_id", tenantID, "error", decErr)
+		return ""
+	}
+	return plain
 }
 
 // parseModelPricing converts the raw model_pricing JSONB

@@ -126,29 +126,31 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 			defer wg.Done()
 
 			var bearerToken, tokenID string
-			switch sc.AuthMode {
-			case "token":
-				tok, err := client.CreateToken(sc.AppID, sc.TenantID, fmt.Sprintf("tr-%s-u%d", runID[:8], idx))
-				if err != nil {
-					updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("create token: %v", err)}
-					return
-				}
-				bearerToken = tok.Token
-				tokenID = tok.ID
-				defer client.DeleteToken(tokenID)
+			if sc.EPType != "gateway" {
+				switch sc.AuthMode {
+				case "token":
+					tok, err := client.CreateToken(sc.AppID, sc.TenantID, fmt.Sprintf("tr-%s-u%d", runID[:8], idx))
+					if err != nil {
+						updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("create token: %v", err)}
+						return
+					}
+					bearerToken = tok.Token
+					tokenID = tok.ID
+					defer client.DeleteToken(tokenID)
 
-			case "external_jwt":
-				if len(sc.KeycloakUsers) == 0 {
-					updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: "external_jwt: no keycloak_users configured"}
-					return
+				case "external_jwt":
+					if len(sc.KeycloakUsers) == 0 {
+						updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: "external_jwt: no keycloak_users configured"}
+						return
+					}
+					ku := sc.KeycloakUsers[idx%len(sc.KeycloakUsers)]
+					jwt, err := fetchKeycloakJWT(sc.KeycloakURL, sc.KeycloakRealm, sc.KeycloakClientID, sc.KeycloakClientSecret, ku.Username, ku.Password)
+					if err != nil {
+						updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("keycloak login (%s): %v", ku.Username, err)}
+						return
+					}
+					bearerToken = jwt
 				}
-				ku := sc.KeycloakUsers[idx%len(sc.KeycloakUsers)]
-				jwt, err := fetchKeycloakJWT(sc.KeycloakURL, sc.KeycloakRealm, sc.KeycloakClientID, sc.KeycloakClientSecret, ku.Username, ku.Password)
-				if err != nil {
-					updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("keycloak login (%s): %v", ku.Username, err)}
-					return
-				}
-				bearerToken = jwt
 			}
 
 			cfg := config.Get()
@@ -157,7 +159,7 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 				themURL = client.BaseURL()
 			}
 			if sc.EPType == "gateway" {
-				them.RunUserGateway(ctx, themURL, sc.TenantSlug, sc.GatewayToken, sc.Stream, idx, sc.Messages, updates)
+				them.RunUserGateway(ctx, themURL, sc.TenantSlug, sc.GatewayToken, sc.Model, sc.Stream, idx, sc.Messages, updates)
 			} else if sc.EPType == "a2a" {
 				them.RunUserA2A(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
 			} else {

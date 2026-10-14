@@ -3,9 +3,10 @@
   "name": "GW Profile — Basic LLM — multi-turn (non-streaming)",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
-  "gateway_token": "REPLACE_WITH_RAW_HEX_TOKEN_FROM_GATEWAY_CLIENTS",
+  "gateway_token": "0556f47164aba4aa0ef77b29067e034b4ea57ade6050ce5e3c49f8fd65f3ad50",
   "stream": false,
   "n_users": 1,
+  "model": "claude-sonnet-4-6",
   "messages": [
     "What is 2 + 2?",
     "What did I just ask you?",
@@ -15,6 +16,6 @@
   "app_slug": "",
   "ep_slug": "gateway",
   "auth_mode": "token",
-  "created_at": "2026-10-10T00:00:00Z",
-  "updated_at": "2026-10-10T00:00:00Z"
+  "created_at": "2026-10-14T00:00:00Z",
+  "updated_at": "2026-10-14T00:00:00Z"
 }

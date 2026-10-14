@@ -41,8 +41,10 @@ type Scenario struct {
 	// Gateway fields — only used when ep_type == "gateway".
 	// GatewayToken is the raw hex bearer token from them.gateway_clients.
 	// Stream controls whether to use SSE streaming (true) or a single JSON response (false).
+	// Model overrides the default model sent to the gateway (default: claude-sonnet-4-6).
 	GatewayToken string   `json:"gateway_token,omitempty"`
 	Stream       bool     `json:"stream,omitempty"`
+	Model        string   `json:"model,omitempty"`
 	NUsers       int      `json:"n_users"`
 	Messages     []string `json:"messages"`
 	CreatedAt            string         `json:"created_at"`

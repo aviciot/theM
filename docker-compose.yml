@@ -835,6 +835,10 @@ services:
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
+      - "traefik.http.routers.them-go-llm.rule=PathRegexp(`^/[^/]+/llm(/|$)`)"
+      - "traefik.http.routers.them-go-llm.entrypoints=web"
+      - "traefik.http.routers.them-go-llm.priority=120"
+      - "traefik.http.routers.them-go-llm.service=them-go-bridge-svc"
     restart: unless-stopped
     logging:
       driver: "json-file"
