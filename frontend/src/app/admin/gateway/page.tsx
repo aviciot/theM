@@ -25,6 +25,116 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// ── Connect Info Panel ────────────────────────────────────────────────────────
+
+function ConnectInfoPanel({ token, onDismiss }: { token: string; onDismiss: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const host = typeof window !== 'undefined' ? window.location.hostname : 'your-host';
+  const port = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
+  const baseURL = `http://${host}${port}`;
+  const endpoint = `${baseURL}/{tenant_slug}/llm/v1/chat/completions`;
+
+  const curl = `curl -X POST "${endpoint}" \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${token}" \\
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 256
+  }'`;
+
+  const python = `import requests
+
+response = requests.post(
+    "${endpoint}",
+    headers={
+        "Authorization": "Bearer ${token}",
+        "Content-Type": "application/json",
+    },
+    json={
+        "model": "claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": "Hello!"}],
+        "max_tokens": 256,
+    },
+)
+print(response.json())`;
+
+  const copy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const codeStyle: React.CSSProperties = {
+    background: '#0f172a', borderRadius: 6, padding: '12px 14px',
+    fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all', color: '#a5f3fc', overflowX: 'auto',
+    margin: 0, flex: 1,
+  };
+
+  const [tab, setTab] = useState<'curl' | 'python'>('curl');
+
+  return (
+    <div style={{ background: '#022c22', border: '1px solid #34d399', borderRadius: 10, padding: 20, marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontWeight: 700, color: '#34d399', fontSize: 15, marginBottom: 4 }}>
+            Client created — save your bearer token now
+          </div>
+          <div style={{ color: '#6ee7b7', fontSize: 12 }}>This token will not be shown again.</div>
+        </div>
+        <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: '#6ee7b7', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>✕</button>
+      </div>
+
+      {/* Token */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ color: '#6ee7b7', fontSize: 12, marginBottom: 6 }}>Bearer token</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <code style={{ ...codeStyle, color: '#fde68a', padding: '8px 12px', flex: 1 }}>{token}</code>
+          <button onClick={() => copy(token, 'token')} style={{ padding: '6px 12px', borderRadius: 6, background: '#065f46', border: '1px solid #34d399', color: '#34d399', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+            {copied === 'token' ? '✓ Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
+      {/* Endpoint */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ color: '#6ee7b7', fontSize: 12, marginBottom: 6 }}>Endpoint (replace {'{tenant_slug}'} with your tenant)</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <code style={{ ...codeStyle, color: '#c4b5fd', padding: '8px 12px', flex: 1 }}>{endpoint}</code>
+          <button onClick={() => copy(endpoint, 'endpoint')} style={{ padding: '6px 12px', borderRadius: 6, background: '#065f46', border: '1px solid #34d399', color: '#34d399', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+            {copied === 'endpoint' ? '✓ Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
+      {/* Code examples */}
+      <div style={{ color: '#6ee7b7', fontSize: 12, marginBottom: 8 }}>Example request</div>
+      <div style={{ display: 'flex', gap: 0, marginBottom: 8, borderBottom: '1px solid #064e3b' }}>
+        {(['curl', 'python'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            padding: '5px 14px', background: 'none', border: 'none', cursor: 'pointer',
+            color: tab === t ? '#34d399' : '#6ee7b7', fontWeight: tab === t ? 700 : 400,
+            borderBottom: tab === t ? '2px solid #34d399' : '2px solid transparent', fontSize: 12,
+          }}>{t}</button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        <pre style={codeStyle}>{tab === 'curl' ? curl : python}</pre>
+        <button onClick={() => copy(tab === 'curl' ? curl : python, 'code')} style={{ padding: '6px 12px', borderRadius: 6, background: '#065f46', border: '1px solid #34d399', color: '#34d399', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap', marginTop: 0 }}>
+          {copied === 'code' ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 14, padding: '10px 14px', background: '#013220', borderRadius: 6, fontSize: 12, color: '#6ee7b7' }}>
+        <strong style={{ color: '#34d399' }}>Note:</strong> If no Profile App is attached to this client, the-M proxies directly to the LLM.
+        Attach a Gateway-type App Canvas app in the Profile App column to run a full workflow instead.
+      </div>
+    </div>
+  );
+}
+
 // ── Clients tab ───────────────────────────────────────────────────────────────
 
 function ClientsTab() {
@@ -88,13 +198,7 @@ function ClientsTab() {
   return (
     <div>
       {newToken && (
-        <div style={{ background: '#d1fae5', border: '1px solid #34d399', borderRadius: 8, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8, color: '#065f46' }}>
-            Bearer token — copy now, it will not be shown again.
-          </div>
-          <code style={{ wordBreak: 'break-all', fontSize: 13, color: '#064e3b' }}>{newToken}</code>
-          <button onClick={() => setNewToken(null)} style={{ marginLeft: 16, color: '#065f46', cursor: 'pointer', background: 'none', border: 'none', fontSize: 13 }}>✕ dismiss</button>
-        </div>
+        <ConnectInfoPanel token={newToken} onDismiss={() => setNewToken(null)} />
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
