@@ -86,7 +86,7 @@ function ScenarioCard({ sc, onDelete, onEdit }: { sc: Scenario; onDelete: (id: s
         </div>
         <div className="text-xs text-gray-400 mt-0.5">
           {isGateway ? (
-            <>{sc.tenant_slug} &nbsp;·&nbsp; <span className="text-purple-400">gateway</span> &nbsp;·&nbsp; {sc.n_users} user{sc.n_users !== 1 ? 's' : ''} &nbsp;·&nbsp; {sc.messages.length} turn{sc.messages.length !== 1 ? 's' : ''}</>
+            <>{sc.tenant_slug} &nbsp;·&nbsp; <span className="text-purple-400">gateway</span> &nbsp;·&nbsp; <span className="font-mono text-purple-300">{sc.model ?? 'claude-sonnet-4-6'}</span> &nbsp;·&nbsp; {sc.n_users} user{sc.n_users !== 1 ? 's' : ''} &nbsp;·&nbsp; {sc.messages.length} turn{sc.messages.length !== 1 ? 's' : ''}</>
           ) : (
             <>{sc.tenant_slug} / {sc.app_slug} / {sc.ep_slug} &nbsp;·&nbsp; <span className="text-indigo-400">{sc.auth_mode}</span> &nbsp;·&nbsp; {sc.n_users} user{sc.n_users !== 1 ? 's' : ''} &nbsp;·&nbsp; {sc.messages.length} message{sc.messages.length !== 1 ? 's' : ''}</>
           )}

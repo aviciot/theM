@@ -35,6 +35,7 @@ export default function ScenarioEditorPage() {
   // Gateway fields
   const [gatewayToken, setGatewayToken] = useState('');
   const [stream, setStream] = useState(false);
+  const [model, setModel] = useState('claude-sonnet-4-6');
   const [scenarioType, setScenarioType] = useState<'agentic' | 'gateway'>('agentic');
 
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -75,6 +76,7 @@ export default function ScenarioEditorPage() {
         setScenarioType('gateway');
         setGatewayToken(sc.gateway_token ?? '');
         setStream(sc.stream ?? false);
+        setModel(sc.model ?? 'claude-sonnet-4-6');
       }
     });
   }, [id, isNew]);
@@ -93,7 +95,7 @@ export default function ScenarioEditorPage() {
 
   const buildSc = () => {
     if (scenarioType === 'gateway') {
-      return { name, tenant_slug: tenantSlug, ep_type: 'gateway', gateway_token: gatewayToken, stream, n_users: nUsers, messages, app_id: '', app_slug: '', ep_slug: 'gateway', auth_mode: 'token' as const };
+      return { name, tenant_slug: tenantSlug, ep_type: 'gateway', gateway_token: gatewayToken, stream, model, n_users: nUsers, messages, app_id: '', app_slug: '', ep_slug: 'gateway', auth_mode: 'token' as const };
     }
     const base = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
     if (authMode !== 'external_jwt') return base;
@@ -183,6 +185,22 @@ export default function ScenarioEditorPage() {
             </Field>
             <Field label="Gateway Token" hint="Raw hex token from gateway_clients table">
               <input className="input font-mono" value={gatewayToken} onChange={(e) => setGatewayToken(e.target.value)} placeholder="64-char hex token" />
+            </Field>
+            <Field label="Model">
+              <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
+                <optgroup label="Anthropic">
+                  <option value="claude-sonnet-4-6">claude-sonnet-4-6 (latest)</option>
+                  <option value="claude-opus-4-5">claude-opus-4-5</option>
+                  <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+                  <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+                  <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
+                </optgroup>
+                <optgroup label="OpenAI">
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="gpt-4o-mini">gpt-4o-mini</option>
+                  <option value="gpt-4-turbo">gpt-4-turbo</option>
+                </optgroup>
+              </select>
             </Field>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={stream} onChange={(e) => setStream(e.target.checked)} className="accent-purple-500" />
