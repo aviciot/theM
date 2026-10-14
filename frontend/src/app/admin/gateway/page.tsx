@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Fragment } from 'react';
 import { themApi, type GatewayClient, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest, type Application } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
@@ -27,12 +27,13 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Connect Info Panel ────────────────────────────────────────────────────────
 
-function ConnectInfoPanel({ token, onDismiss }: { token: string; onDismiss: () => void }) {
+function ConnectInfoPanel({ token, onDismiss }: { token: string; onDismiss?: () => void }) {
   const [copied, setCopied] = useState<string | null>(null);
 
   const host = typeof window !== 'undefined' ? window.location.hostname : 'your-host';
   const port = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
-  const baseURL = `http://${host}${port}`;
+  const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+  const baseURL = `${protocol}//${host}${port}`;
   const endpoint = `${baseURL}/{tenant_slug}/llm/v1/chat/completions`;
 
   const curl = `curl -X POST "${endpoint}" \\
@@ -84,7 +85,7 @@ print(response.json())`;
           </div>
           <div style={{ color: '#6ee7b7', fontSize: 12 }}>This token will not be shown again.</div>
         </div>
-        <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: '#6ee7b7', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>✕</button>
+        {onDismiss && <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: '#6ee7b7', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>✕</button>}
       </div>
 
       {/* Token */}
@@ -145,6 +146,7 @@ function ClientsTab() {
   const [creating, setCreating] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [expandedConnect, setExpandedConnect] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -236,40 +238,56 @@ function ClientsTab() {
               <tr><td colSpan={5} style={{ padding: 20, color: '#64748b', textAlign: 'center' }}>No clients yet</td></tr>
             )}
             {clients.map(c => (
-              <tr key={c.id} style={{ borderBottom: '1px solid #1e293b' }}>
-                <td style={{ padding: '10px 12px' }}>
-                  <div style={{ fontWeight: 600 }}>{c.label}</div>
-                  <div style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>{c.id.slice(0, 8)}…</div>
-                </td>
-                <td style={{ padding: '10px 12px' }}>
-                  <select
-                    value={c.app_id ?? ''}
-                    disabled={assigning === c.id}
-                    onChange={e => handleAppChange(c.id, e.target.value)}
-                    style={{
-                      padding: '5px 8px', borderRadius: 6, border: '1px solid #334155',
-                      background: '#0f172a', color: '#f1f5f9', fontSize: 13,
-                      cursor: 'pointer', minWidth: 160,
-                      opacity: assigning === c.id ? 0.5 : 1,
-                    }}
-                  >
-                    <option value="">— direct LLM (no profile) —</option>
-                    {gatewayApps.map(a => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
-                  {gatewayApps.length === 0 && !c.app_id && (
-                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                      No gateway apps yet — build one in App Canvas with a <code style={{ fontSize: 10 }}>gateway</code> entry point.
-                    </div>
-                  )}
-                </td>
-                <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</td>
-                <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{new Date(c.created_at).toLocaleDateString()}</td>
-                <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                  <button onClick={() => handleDelete(c.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>Delete</button>
-                </td>
-              </tr>
+              <Fragment key={c.id}>
+                <tr style={{ borderBottom: expandedConnect === c.id ? 'none' : '1px solid #1e293b' }}>
+                  <td style={{ padding: '10px 12px' }}>
+                    <div style={{ fontWeight: 600 }}>{c.label}</div>
+                    <div style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>{c.id.slice(0, 8)}…</div>
+                  </td>
+                  <td style={{ padding: '10px 12px' }}>
+                    <select
+                      value={c.app_id ?? ''}
+                      disabled={assigning === c.id}
+                      onChange={e => handleAppChange(c.id, e.target.value)}
+                      style={{
+                        padding: '5px 8px', borderRadius: 6, border: '1px solid #334155',
+                        background: '#0f172a', color: '#f1f5f9', fontSize: 13,
+                        cursor: 'pointer', minWidth: 160,
+                        opacity: assigning === c.id ? 0.5 : 1,
+                      }}
+                    >
+                      <option value="">— direct LLM (no profile) —</option>
+                      {gatewayApps.map(a => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                    {gatewayApps.length === 0 && !c.app_id && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                        No gateway apps yet — build one in App Canvas with a <code style={{ fontSize: 10 }}>gateway</code> entry point.
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</td>
+                  <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{new Date(c.created_at).toLocaleDateString()}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <button
+                      onClick={() => setExpandedConnect(expandedConnect === c.id ? null : c.id)}
+                      style={{ color: '#7c3aed', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, marginRight: 10 }}
+                    >{expandedConnect === c.id ? 'Hide' : 'Connect'}</button>
+                    <button onClick={() => handleDelete(c.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>Delete</button>
+                  </td>
+                </tr>
+                {expandedConnect === c.id && (
+                  <tr style={{ borderBottom: '1px solid #1e293b' }}>
+                    <td colSpan={5} style={{ padding: '0 12px 16px' }}>
+                      <ConnectInfoPanel token="<YOUR_BEARER_TOKEN>" />
+                      <div style={{ marginTop: -10, padding: '8px 14px', background: '#1e1a2e', borderRadius: 6, fontSize: 12, color: '#94a3b8', border: '1px solid #334155' }}>
+                        Token not shown — it was only visible when this client was created. If lost, delete and recreate the client.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
