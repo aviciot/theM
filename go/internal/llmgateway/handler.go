@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/appflow"
@@ -201,8 +200,13 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// dispatchAppFlowStream runs the request through an App Canvas AppFlow workflow,
-// streaming tokens back in OpenAI SSE format (data: {...}\n\n / data: [DONE]\n\n).
+// dispatchAppFlowStream runs the request through an App Canvas AppFlow workflow
+// and returns the result in OpenAI SSE format. AppFlow workflows run inside
+// Temporal and only produce a complete response — true token streaming is not
+// possible without significant architecture changes (Temporal signals per token).
+// We therefore run the workflow synchronously, wait for the full result, and
+// emit it as a single SSE chunk followed by [DONE]. OpenAI-compatible clients
+// accept this format correctly.
 func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp) {
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
@@ -210,11 +214,6 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 			h.log.Warn("llmgateway: write_request (appflow stream) failed", "err", werr)
 		}
 	}()
-
-	// Subscribe to event bus BEFORE starting workflow (ordering invariant).
-	runID := uuid.New().String()
-	evCh, termCh, unsub := h.bus.Subscribe(r.Context(), runID, 64)
-	defer unsub()
 
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
 	if err != nil {
@@ -224,67 +223,37 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer h.lc.Release(handle)
-	_ = wfRun // streaming reads from event bus, not wfRun.Get
+
+	var output appflow.AppFlowWorkflowOutput
+	if wfErr := wfRun.Get(r.Context(), &output); wfErr != nil {
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusBadGateway
+		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow error")
+		return
+	}
+	if output.Status == "failed" || output.Status == "rejected" {
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusBadGateway
+		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
+		return
+	}
 
 	rec.HTTPStatus = http.StatusOK
+	rec.TTFBMs = int(time.Since(start).Milliseconds())
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
 	flusher, canFlush := w.(http.Flusher)
-	ttfbSet := false
 
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case ev, ok := <-termCh:
-			if !ok {
-				return
-			}
-			if ev.Type == "error" {
-				rec.Status = "error"
-				_, _ = fmt.Fprintf(w, "data: {\"error\":{\"message\":\"workflow error\"}}\n\n")
-			} else {
-				_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-			return
-		case ev, ok := <-evCh:
-			if !ok {
-				return
-			}
-			switch ev.Type {
-			case "done", "error":
-				if ev.Type == "error" {
-					rec.Status = "error"
-					_, _ = fmt.Fprintf(w, "data: {\"error\":{\"message\":\"workflow error\"}}\n\n")
-				} else {
-					_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
-				}
-				if canFlush {
-					flusher.Flush()
-				}
-				return
-			case "token":
-				if !ttfbSet {
-					rec.TTFBMs = int(time.Since(start).Milliseconds())
-					ttfbSet = true
-				}
-				// Wrap payload as OpenAI streaming delta.
-				var tokenText string
-				_ = json.Unmarshal(ev.Payload, &tokenText)
-				chunk := openAIStreamChunk(req.Model, tokenText, start)
-				data, _ := json.Marshal(chunk)
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-				if canFlush {
-					flusher.Flush()
-				}
-			}
-		}
+	chunk := openAIStreamChunk(req.Model, output.FinalText, start)
+	data, _ := json.Marshal(chunk)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+	_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+	if canFlush {
+		flusher.Flush()
 	}
 }
 
