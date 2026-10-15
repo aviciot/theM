@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState, useCallback, Fragment } from 'react';
-import { themApi, type GatewayClient, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest, type Application } from '@/lib/api';
+import { themApi, type GatewayClient, type GatewayPolicy, type GatewayPolicyInput, type GatewayRequest, type Application, type GatewayPolicyProfile } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
+import { PolicyProfilesTab } from './PolicyProfilesTab';
 
 type Tab = 'clients' | 'policy' | 'requests';
 
@@ -141,6 +142,7 @@ print(response.json())`;
 function ClientsTab() {
   const [clients, setClients]   = useState<GatewayClient[]>([]);
   const [gatewayApps, setGatewayApps] = useState<Application[]>([]);
+  const [policyProfiles, setPolicyProfiles] = useState<GatewayPolicyProfile[]>([]);
   const [loading, setLoading]   = useState(true);
   const [newLabel, setNewLabel] = useState('');
   const [creating, setCreating] = useState(false);
@@ -152,13 +154,15 @@ function ClientsTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, apps] = await Promise.all([
+      const [c, apps, profiles] = await Promise.all([
         themApi.listGatewayClients(),
         themApi.applications(),
+        themApi.listGatewayPolicyProfiles(),
       ]);
       setClients(c);
       // Only show apps that have at least one gateway entry point.
       setGatewayApps(apps.filter(a => a.entry_points?.some(ep => ep.entry_point_type === 'gateway')));
+      setPolicyProfiles(profiles);
     } catch { setError('Failed to load clients'); }
     finally { setLoading(false); }
   }, []);
@@ -186,6 +190,17 @@ function ClientsTab() {
         c.id === clientId ? { ...c, app_id: appId || null } : c
       ));
     } catch { setError('Failed to update profile app'); }
+    finally { setAssigning(null); }
+  }
+
+  async function handlePolicyProfileChange(clientId: string, profileId: string) {
+    setAssigning(clientId);
+    try {
+      await themApi.patchGatewayClient(clientId, { policy_profile_id: profileId || null });
+      setClients(prev => prev.map(c =>
+        c.id === clientId ? { ...c, policy_profile_id: profileId || null } : c
+      ));
+    } catch { setError('Failed to update policy profile'); }
     finally { setAssigning(null); }
   }
 
@@ -228,6 +243,7 @@ function ClientsTab() {
             <tr style={{ borderBottom: '1px solid #334155', color: '#94a3b8' }}>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Label</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Profile app</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px' }}>Policy Profile</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Last seen</th>
               <th style={{ textAlign: 'left', padding: '8px 12px' }}>Created</th>
               <th />
@@ -235,7 +251,7 @@ function ClientsTab() {
           </thead>
           <tbody>
             {clients.length === 0 && (
-              <tr><td colSpan={5} style={{ padding: 20, color: '#64748b', textAlign: 'center' }}>No clients yet</td></tr>
+              <tr><td colSpan={6} style={{ padding: 20, color: '#64748b', textAlign: 'center' }}>No clients yet</td></tr>
             )}
             {clients.map(c => (
               <Fragment key={c.id}>
@@ -267,6 +283,24 @@ function ClientsTab() {
                       </div>
                     )}
                   </td>
+                  <td style={{ padding: '10px 12px' }}>
+                    <select
+                      value={c.policy_profile_id ?? ''}
+                      disabled={assigning === c.id}
+                      onChange={e => handlePolicyProfileChange(c.id, e.target.value)}
+                      style={{
+                        padding: '5px 8px', borderRadius: 6, border: '1px solid #334155',
+                        background: '#0f172a', color: '#f1f5f9', fontSize: 13,
+                        cursor: 'pointer', minWidth: 140,
+                        opacity: assigning === c.id ? 0.5 : 1,
+                      }}
+                    >
+                      <option value="">— no policy —</option>
+                      {policyProfiles.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</td>
                   <td style={{ padding: '10px 12px', color: '#94a3b8' }}>{new Date(c.created_at).toLocaleDateString()}</td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -279,7 +313,7 @@ function ClientsTab() {
                 </tr>
                 {expandedConnect === c.id && (
                   <tr style={{ borderBottom: '1px solid #1e293b' }}>
-                    <td colSpan={5} style={{ padding: '0 12px 16px' }}>
+                    <td colSpan={6} style={{ padding: '0 12px 16px' }}>
                       <ConnectInfoPanel token="<YOUR_BEARER_TOKEN>" />
                       <div style={{ marginTop: -10, padding: '8px 14px', background: '#1e1a2e', borderRadius: 6, fontSize: 12, color: '#94a3b8', border: '1px solid #334155' }}>
                         Token not shown — it was only visible when this client was created. If lost, delete and recreate the client.
@@ -569,7 +603,7 @@ export default function GatewayPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'clients', label: 'Clients' },
-    { key: 'policy', label: 'Policy' },
+    { key: 'policy', label: 'Policy Profiles' },
     { key: 'requests', label: 'Requests' },
   ];
 
@@ -603,7 +637,7 @@ export default function GatewayPage() {
           </div>
 
           {tab === 'clients'  && <ClientsTab />}
-          {tab === 'policy'   && <PolicyTab />}
+          {tab === 'policy'   && <PolicyProfilesTab />}
           {tab === 'requests' && <RequestsTab />}
         </main>
       </div>

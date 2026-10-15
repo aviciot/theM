@@ -120,6 +120,8 @@ export type {
   GatewayProfile,
   GatewayPolicy,
   GatewayPolicyInput,
+  GatewayPolicyProfile,
+  GatewayPolicyProfileInput,
   GatewayRequest,
   LLMProviderOut,
   LLMProviderUpsertInput,
@@ -223,6 +225,8 @@ import type {
   GatewayProfile,
   GatewayPolicy,
   GatewayPolicyInput,
+  GatewayPolicyProfile,
+  GatewayPolicyProfileInput,
   GatewayRequest,
   LLMProviderOut,
   LLMProviderUpsertInput,
@@ -853,6 +857,19 @@ export const themApi = {
     api.get<GatewayPolicy>('/admin/gateway/policy'),
   putGatewayPolicy: (body: GatewayPolicyInput) =>
     api.put<GatewayPolicy>('/admin/gateway/policy', body),
+
+  // Policy Profiles (named, reusable, per-client)
+  listGatewayPolicyProfiles: () =>
+    api.get<GatewayPolicyProfile[]>('/admin/gateway/policy-profiles'),
+  createGatewayPolicyProfile: (body: GatewayPolicyProfileInput) =>
+    api.post<GatewayPolicyProfile>('/admin/gateway/policy-profiles', body),
+  getGatewayPolicyProfile: (id: string) =>
+    api.get<GatewayPolicyProfile>(`/admin/gateway/policy-profiles/${id}`),
+  updateGatewayPolicyProfile: (id: string, body: GatewayPolicyProfileInput) =>
+    api.patch<GatewayPolicyProfile>(`/admin/gateway/policy-profiles/${id}`, body),
+  deleteGatewayPolicyProfile: (id: string) =>
+    api.delete<void>(`/admin/gateway/policy-profiles/${id}`),
+
   listGatewayRequests: (limit = 100) =>
     api.get<GatewayRequest[]>(`/admin/gateway/requests?limit=${limit}`),
 

@@ -1228,6 +1228,7 @@ export interface GatewayClient {
   label: string;
   profile_id?: string | null;
   app_id?: string | null;
+  policy_profile_id?: string | null;
   last_seen?: string | null;
   created_at: string;
 }
@@ -1250,6 +1251,26 @@ export interface GatewayPolicy {
 }
 
 export interface GatewayPolicyInput {
+  allowed_models: string[];
+  model_aliases: Record<string, string>;
+  max_tokens_per_request?: number | null;
+  monthly_budget_usd?: number | null;
+}
+
+export interface GatewayPolicyProfile {
+  id: string;
+  tenant_id: string;
+  name: string;
+  allowed_models: string[];
+  model_aliases: Record<string, string>;
+  max_tokens_per_request?: number | null;
+  monthly_budget_usd?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GatewayPolicyProfileInput {
+  name: string;
   allowed_models: string[];
   model_aliases: Record<string, string>;
   max_tokens_per_request?: number | null;
