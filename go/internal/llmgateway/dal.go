@@ -142,13 +142,14 @@ func (d *DAL) LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, 
 	return &ca, nil
 }
 
-// LoadPolicy reads the gateway_policies row for the tenant.
-// Returns nil, nil when no row exists (allow-all, no budget cap).
-func (d *DAL) LoadPolicy(ctx context.Context, tenantID string) (*Policy, error) {
+// LoadPolicy reads the client's assigned policy profile.
+// Returns nil, nil when the client has no policy profile assigned (no enforcement).
+func (d *DAL) LoadPolicy(ctx context.Context, tenantID, clientID string) (*Policy, error) {
 	const q = `
-		SELECT allowed_models, model_aliases, max_tokens_per_request, monthly_budget_usd
-		FROM them.gateway_policies
-		WHERE tenant_id = $1::uuid`
+		SELECT pp.allowed_models, pp.model_aliases, pp.max_tokens_per_request, pp.monthly_budget_usd
+		FROM them.gateway_clients gc
+		JOIN them.gateway_policy_profiles pp ON pp.id = gc.policy_profile_id
+		WHERE gc.tenant_id = $1::uuid AND gc.id = $2::uuid`
 
 	var (
 		allowedModels       []string
@@ -156,13 +157,14 @@ func (d *DAL) LoadPolicy(ctx context.Context, tenantID string) (*Policy, error) 
 		maxTokensPerRequest *int
 		monthlyBudgetUSD    *float64
 	)
-	err := d.pool.QueryRow(ctx, q, tenantID).Scan(
+	err := d.pool.QueryRow(ctx, q, tenantID, clientID).Scan(
 		&allowedModels,
 		&modelAliasesRaw,
 		&maxTokensPerRequest,
 		&monthlyBudgetUSD,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// No policy profile assigned → no enforcement.
 		return nil, nil
 	}
 	if err != nil {

@@ -451,7 +451,7 @@ type fakePolicyEnforcer struct {
 	spendErr error
 }
 
-func (f *fakePolicyEnforcer) LoadPolicy(_ context.Context, _ string) (*Policy, error) {
+func (f *fakePolicyEnforcer) LoadPolicy(_ context.Context, _ string, _ string) (*Policy, error) {
 	return f.pol, f.loadErr
 }
 func (f *fakePolicyEnforcer) SumMonthlySpend(_ context.Context, _ string) (float64, error) {
@@ -478,7 +478,7 @@ func TestPolicy_AllowedModel_Passes(t *testing.T) {
 	svc := newService(factory, nil)
 	svc = svc.WithPolicyEnforcer(pe)
 
-	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+	_, _, err := svc.Call(context.Background(), testTenantID, "", ChatRequest{
 		Model:    "claude-sonnet-4-6",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	})
@@ -519,7 +519,7 @@ func TestPolicy_AliasResolvesBeforeCheck(t *testing.T) {
 	svc := newService(factory, nil)
 	svc = svc.WithPolicyEnforcer(pe)
 
-	_, cr, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+	_, cr, err := svc.Call(context.Background(), testTenantID, "", ChatRequest{
 		Model:    "fast",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	})
@@ -543,7 +543,7 @@ func TestPolicy_MaxTokensCeiling_Applied(t *testing.T) {
 	svc := newService(cap, nil)
 	svc = svc.WithPolicyEnforcer(pe)
 
-	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+	_, _, err := svc.Call(context.Background(), testTenantID, "", ChatRequest{
 		Model:     "claude-sonnet-4-6",
 		Messages:  []ChatMessage{{Role: "user", Content: "hi"}},
 		MaxTokens: 8000,
@@ -563,7 +563,7 @@ func TestPolicy_NilPolicy_AllowsAll(t *testing.T) {
 	svc := newService(factory, nil)
 	svc = svc.WithPolicyEnforcer(pe)
 
-	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+	_, _, err := svc.Call(context.Background(), testTenantID, "", ChatRequest{
 		Model:    "any-model-xyz",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	})
@@ -605,7 +605,7 @@ func TestPolicy_BudgetOK_Passes(t *testing.T) {
 	svc := newService(factory, nil)
 	svc = svc.WithPolicyEnforcer(pe)
 
-	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+	_, _, err := svc.Call(context.Background(), testTenantID, "", ChatRequest{
 		Model:    "claude-sonnet-4-6",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	})
@@ -624,7 +624,7 @@ func TestPolicy_SpendDBError_FailOpen(t *testing.T) {
 	svc := newService(factory, nil)
 	svc = svc.WithPolicyEnforcer(pe)
 
-	_, _, err := svc.Call(context.Background(), testTenantID, ChatRequest{
+	_, _, err := svc.Call(context.Background(), testTenantID, "", ChatRequest{
 		Model:    "claude-sonnet-4-6",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	})

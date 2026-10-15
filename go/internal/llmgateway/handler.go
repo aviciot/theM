@@ -367,7 +367,7 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 		}
 	}()
 
-	text, cr, callErr := h.svc.Call(r.Context(), rec.TenantID, req)
+	text, cr, callErr := h.svc.Call(r.Context(), rec.TenantID, rec.ClientID, req)
 	if callErr != nil {
 		rec.Status = callStatus(callErr)
 		rec.HTTPStatus = gatewayHTTPStatus(callErr)
@@ -414,7 +414,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start tim
 		}
 	}()
 
-	sr, _, streamErr := h.svc.Stream(r.Context(), rec.TenantID, req)
+	sr, _, streamErr := h.svc.Stream(r.Context(), rec.TenantID, rec.ClientID, req)
 	if streamErr != nil {
 		rec.Status = callStatus(streamErr)
 		rec.HTTPStatus = gatewayHTTPStatus(streamErr)

@@ -97,7 +97,7 @@ type ProviderFactory interface {
 // PolicyEnforcer loads gateway_policies for a tenant and sums monthly spend.
 // Nil interface = no policy enforcement (tests and when not wired).
 type PolicyEnforcer interface {
-	LoadPolicy(ctx context.Context, tenantID string) (*Policy, error)
+	LoadPolicy(ctx context.Context, tenantID, clientID string) (*Policy, error)
 	SumMonthlySpend(ctx context.Context, tenantID string) (float64, error)
 }
 
@@ -158,8 +158,8 @@ var ErrBudgetExceeded = errors.New("llmgateway: monthly budget exceeded")
 // Call resolves the provider, checks policy and quota, calls the LLM
 // (non-streaming), and returns the assembled text response along with
 // usage/cost. The CallResult.ModelServed is the resolved (post-alias) model.
-func (s *Service) Call(ctx context.Context, tenantID string, req ChatRequest) (string, CallResult, error) {
-	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, req.Model)
+func (s *Service) Call(ctx context.Context, tenantID, clientID string, req ChatRequest) (string, CallResult, error) {
+	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, clientID, req.Model)
 	if perr != nil {
 		return "", CallResult{}, perr
 	}
@@ -237,8 +237,8 @@ type GatewayEvent struct {
 
 // Stream resolves the provider, checks policy and quota, and returns a
 // StreamResult whose Events channel the handler reads and re-emits as SSE.
-func (s *Service) Stream(ctx context.Context, tenantID string, req ChatRequest) (StreamResult, CallResult, error) {
-	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, req.Model)
+func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req ChatRequest) (StreamResult, CallResult, error) {
+	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, clientID, req.Model)
 	if perr != nil {
 		return StreamResult{}, CallResult{}, perr
 	}
@@ -342,20 +342,20 @@ func (s *Service) Stream(ctx context.Context, tenantID string, req ChatRequest) 
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-// checkPolicy enforces gateway_policies for the tenant:
+// checkPolicy enforces the client's assigned policy profile:
 //  1. Applies model aliases (alias → concrete model).
 //  2. Checks the resolved model against allowed_models (if non-empty).
 //  3. Checks monthly spend against monthly_budget_usd (if > 0, fail-open on error).
 //
 // Returns the resolved model string (possibly aliased), the per-request token
 // ceiling (0 = no cap), and any blocking error.
-// Returns the original model unchanged when no policy is configured.
-func (s *Service) checkPolicy(ctx context.Context, tenantID, requestedModel string) (resolvedModel string, tokenCap int, err error) {
+// Returns the original model unchanged when no policy profile is assigned.
+func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requestedModel string) (resolvedModel string, tokenCap int, err error) {
 	if s.policy == nil {
 		return requestedModel, 0, nil
 	}
 
-	pol, lerr := s.policy.LoadPolicy(ctx, tenantID)
+	pol, lerr := s.policy.LoadPolicy(ctx, tenantID, clientID)
 	if lerr != nil {
 		// Fail-open on DB error — same principle as quota (§16.2).
 		if s.log != nil {

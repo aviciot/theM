@@ -43,6 +43,13 @@ func (h *GatewayHandler) Routes(r chi.Router) {
 	r.Get("/gateway/policy", h.GetPolicy)
 	r.Put("/gateway/policy", h.PutPolicy)
 
+	// Policy Profiles (named, reusable, per-client)
+	r.Get("/gateway/policy-profiles", h.ListPolicyProfiles)
+	r.Post("/gateway/policy-profiles", h.CreatePolicyProfile)
+	r.Get("/gateway/policy-profiles/{profile_id}", h.GetPolicyProfile)
+	r.Patch("/gateway/policy-profiles/{profile_id}", h.UpdatePolicyProfile)
+	r.Delete("/gateway/policy-profiles/{profile_id}", h.DeletePolicyProfile)
+
 	// Requests log (read-only)
 	r.Get("/gateway/requests", h.ListRequests)
 }
@@ -147,6 +154,18 @@ func (h *GatewayHandler) PatchClient(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := d.SetGatewayClientProfile(r.Context(), tenantID, clientID, profID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update gateway client")
+			return
+		}
+	}
+
+	if policyProfileIDRaw, ok := raw["policy_profile_id"]; ok {
+		var policyProfileID *string
+		if err := json.Unmarshal(policyProfileIDRaw, &policyProfileID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid policy_profile_id value")
+			return
+		}
+		if err := d.SetGatewayClientPolicyProfile(r.Context(), tenantID, clientID, policyProfileID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update gateway client policy profile")
 			return
 		}
 	}
@@ -284,4 +303,104 @@ func (h *GatewayHandler) ListRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, reqs)
+}
+
+// ── Policy Profiles ───────────────────────────────────────────────────────────
+
+func (h *GatewayHandler) ListPolicyProfiles(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	d := dal.NewDB(h.db)
+	profiles, err := d.ListGatewayPolicyProfiles(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list policy profiles")
+		return
+	}
+	writeJSON(w, http.StatusOK, profiles)
+}
+
+type createPolicyProfileRequest struct {
+	Name                string          `json:"name"`
+	AllowedModels       []string        `json:"allowed_models"`
+	ModelAliases        json.RawMessage `json:"model_aliases"`
+	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
+	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
+}
+
+func (h *GatewayHandler) CreatePolicyProfile(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+
+	var body createPolicyProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	d := dal.NewDB(h.db)
+	profile, err := d.CreateGatewayPolicyProfile(r.Context(), tenantID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create policy profile")
+		return
+	}
+	writeJSON(w, http.StatusCreated, profile)
+}
+
+func (h *GatewayHandler) GetPolicyProfile(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	profileID := chi.URLParam(r, "profile_id")
+
+	d := dal.NewDB(h.db)
+	profile, err := d.GetGatewayPolicyProfile(r.Context(), tenantID, profileID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			writeError(w, http.StatusNotFound, "policy profile not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get policy profile")
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+type updatePolicyProfileRequest struct {
+	Name                string          `json:"name"`
+	AllowedModels       []string        `json:"allowed_models"`
+	ModelAliases        json.RawMessage `json:"model_aliases"`
+	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
+	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
+}
+
+func (h *GatewayHandler) UpdatePolicyProfile(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	profileID := chi.URLParam(r, "profile_id")
+
+	var body updatePolicyProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	d := dal.NewDB(h.db)
+	if err := d.UpdateGatewayPolicyProfile(r.Context(), tenantID, profileID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update policy profile")
+		return
+	}
+
+	profile, err := d.GetGatewayPolicyProfile(r.Context(), tenantID, profileID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get updated policy profile")
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (h *GatewayHandler) DeletePolicyProfile(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	profileID := chi.URLParam(r, "profile_id")
+
+	d := dal.NewDB(h.db)
+	if err := d.DeleteGatewayPolicyProfile(r.Context(), tenantID, profileID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete policy profile")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
