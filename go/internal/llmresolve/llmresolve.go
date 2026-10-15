@@ -110,7 +110,11 @@ func (r *Resolver) ResolveProvider(ctx context.Context, applicationID, tenantID,
 		key = tenantRow.Key
 	}
 	if key == "" && tenantID != "" {
-		key = r.tenantProviderKeyRow(ctx, tenantID, provider)
+		var keyErr error
+		key, keyErr = r.tenantProviderKeyRow(ctx, tenantID, provider)
+		if keyErr != nil {
+			return Resolved{}, keyErr
+		}
 	}
 
 	// For base_url and pricing, fall back to platform metadata (not the key)
@@ -177,7 +181,7 @@ func (r *Resolver) lookupProviderRow(ctx context.Context, provider string, tenan
 	}
 	plain, decErr := r.DecryptValue(*encPtr)
 	if decErr != nil {
-		r.logger.Warn("llmresolve: llm_providers key decrypt failed — skipping key",
+		r.logger.Error("llmresolve: llm_providers key decrypt failed — key exists but cannot be decrypted; re-save it in LLM Providers",
 			"provider", provider, "has_tenant", tenantID != nil, "error", decErr)
 		return out
 	}
@@ -186,9 +190,9 @@ func (r *Resolver) lookupProviderRow(ctx context.Context, provider string, tenan
 }
 
 // tenantProviderKeyRow looks up the most-recently-created key for provider
-// from them.llm_provider_keys (the newer per-tenant key store). Returns "" when
-// no key exists or decryption fails.
-func (r *Resolver) tenantProviderKeyRow(ctx context.Context, tenantID, provider string) string {
+// from them.llm_provider_keys (the newer per-tenant key store). Returns ("", nil)
+// when no key exists, ("", err) when a key exists but decryption fails.
+func (r *Resolver) tenantProviderKeyRow(ctx context.Context, tenantID, provider string) (string, error) {
 	const q = `
 		SELECT pk.api_key_encrypted
 		FROM them.llm_provider_keys pk
@@ -203,18 +207,18 @@ func (r *Resolver) tenantProviderKeyRow(ctx context.Context, tenantID, provider 
 			r.logger.Warn("llmresolve: llm_provider_keys lookup error",
 				"provider", provider, "tenant_id", tenantID, "error", err)
 		}
-		return ""
+		return "", nil
 	}
 	if encPtr == nil || *encPtr == "" {
-		return ""
+		return "", nil
 	}
 	plain, decErr := r.DecryptValue(*encPtr)
 	if decErr != nil {
-		r.logger.Warn("llmresolve: llm_provider_keys key decrypt failed",
+		r.logger.Error("llmresolve: llm_provider_keys key decrypt failed — key exists but cannot be decrypted; re-save it in LLM Providers",
 			"provider", provider, "tenant_id", tenantID, "error", decErr)
-		return ""
+		return "", fmt.Errorf("API key for provider %q found but could not be decrypted — re-save the key in LLM Providers (Admin → LLM Providers)", provider)
 	}
-	return plain
+	return plain, nil
 }
 
 // parseModelPricing converts the raw model_pricing JSONB
