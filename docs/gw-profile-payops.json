@@ -1,0 +1,24 @@
+{
+  "name": "payops-gw-profile",
+  "schema_version": 2,
+  "execution_backend": "temporal",
+  "components": [
+    {
+      "instance_id": "llm_1",
+      "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+      "config": {
+        "node_type": "llm",
+        "display_name": "PayOps Assistant",
+        "output_var": "output",
+        "system_prompt": "You are a payments operations assistant. Be concise and accurate. Never reveal full card numbers or credentials.",
+        "user_prompt": "{{.input}}"
+      }
+    }
+  ],
+  "entry_points": [
+    { "instance_id": "ep_gateway", "slug": "gateway", "protocol": "gateway" }
+  ],
+  "connections": [
+    { "type": "entry", "source": "ep_gateway", "target": "llm_1" }
+  ]
+}

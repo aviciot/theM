@@ -471,3 +471,96 @@ built and their results.
   still be logically wrong (e.g. `{{gt (len .sentiment) 0}}` checks "is there
   any text" not "is it positive," and is therefore always true regardless of
   input).
+
+---
+
+## 6. Gateway profile apps (LLM Gateway) — from code/docs read 2026-10-14, NOT yet built live
+
+A **profile** = a normal App Canvas app with an entry point of type `gateway`.
+Agents call `POST /{tenant_slug}/llm/v1/chat/completions` with a gateway-client
+Bearer token; the request runs the app's flow via Temporal (`AppFlowWorkflow`).
+
+**Build steps** (same as §4, with these differences):
+1. Login as a user *of the target tenant* — tenant comes from the JWT
+   (`tenantctx`), there is no tenant param on the admin API. payops_ai tenant_id
+   = `ad7d567d-b222-40be-acb6-7929cf6ae168`; test user `payops-test` (see
+   `test-runner/data/scenarios/payops-debator-basic.json`).
+2. Create app: `POST /admin/applications` (§4 step 2).
+3. Draft definition: `entry_points` item = `{"instance_id","slug":"gateway","protocol":"gateway","root"?}`;
+   connect it to the first node with a connection of `"type": "entry"`.
+   Flow nodes as usual (`llm`, `condition`, `transform`, …).
+   VERIFIED (compiler.go ~L365-410, definitions.go ~L132): `instance_id`, `slug`, `protocol`
+   are all required non-empty strings; `protocol` = `"gateway"` (matches the UI palette).
+   `start_id` = target of ANY connection out of the EP (type `"entry"` by convention),
+   or `ep.root` if set. Gateway handler (`llmgateway/handler.go` ~L319) finds the flow by
+   matching the `entry_points` TABLE row's slug (type=gateway) to the definition EP `slug`
+   — **they must be identical**, else error `no EPFlow for slug`.
+4. Create EP row: `POST /admin/applications/{id}/entry-points`
+   `{"slug":"gateway","entry_point_type":"gateway","enabled":true}` (§3 gotcha applies).
+   `gateway` is in `validEPTypes` (`go/internal/admin/service/applications.go`).
+5. **Publish** the definition.
+6. Link: Admin → LLM Gateway → Clients → "Profile app" dropdown
+   (sets `gateway_clients.app_id`). Token is shown only in that UI — never store it.
+
+**Behavior notes**
+- Gateway sends the full `messages` history; the inline LLM node ignores its own
+  system/user prompt templates and uses that history (transparent proxy).
+- Provider/model: handler.go (~L332) builds them from the entry point's EPConfig
+  (`OrchestratorLLMProvider/Model`), NOT from the node and not obviously from the client
+  request — CORRECTED 2026-10-14 (earlier note was a guess). Set them on the gateway EP/Runtime screen.
+- Handler passes `UserMessage` = last user message (flow var `.input`) plus full `GatewayMessages`.
+  Redacting `.input` upstream does NOT change what the LLM sees (it uses the full history).
+- UNVERIFIED: which node's output is returned to the client (transform doesn't write `accumulated`).
+- Token usage is not logged for AppFlow-dispatched gateway calls (known gap).
+- Test scenarios: `test-runner/data/scenarios/gw-profile-*.json`
+  (`ep_type: "gateway"`, `tenant_slug: "payops_ai"`).
+- Docs: `docs/CURRENT.md` "What was built — LLM Gateway".
+
+**Validate route (found 2026-10-14):** `POST /admin/applications/{id}/definitions/{def_id}/validate`
+(`go/internal/admin/definitions.go` L63). Publish is the sibling `.../{def_id}/publish`.
+Run validate on the draft before publish. Needs an existing draft, so it can't pre-check
+JSON that hasn't been POSTed yet.
+
+**Scripted API examples (found 2026-10-15):** `scripts/tests/test_40_appflow_canvas_e2e.py` and
+`test_42_appflow_inline_nodes.py` build apps via Python `urllib` (helpers `fetch_token()`, `api()`):
+create app → entry-points → definitions → validate → publish → cleanup. Via Traefik (8088) login is
+`/auth/api/v1/auth/login`, other calls `/api/v1/...`. Copy these helpers instead of rewriting.
+**Import API exists:** tenant admin `POST /admin/applications/import-own` (+ `GET /applications/{id}/export-own`);
+super-admin `/export` and `/import` (`go/internal/admin/router.go` ~L206). Body shape: see
+`go/internal/admin/export_import_application_test.go`. No script test uses import yet.
+
+---
+
+## 7. Router — complete example (fields from `RouterConfig`, compiler.go; written 2026-10-15, not run live)
+
+Router classifies the input into one label and follows the edge with that label.
+`kind: "flow_control"`, `name: "router"`. Fields: `output_labels` (required),
+`classifier_prompt` (optional), `provider`/`model` (optional, usually set in Runtime screen).
+```json
+{
+  "components": [
+    { "instance_id": "router_1",
+      "definition_ref": { "kind": "flow_control", "name": "router", "version": 1, "namespace": "builtin" },
+      "config": { "node_type": "router", "display_name": "Classify Request",
+                  "output_labels": ["refund", "fraud", "general"],
+                  "classifier_prompt": "Classify the payment-ops request as refund, fraud, or general." } },
+    { "instance_id": "llm_refund",  "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+      "config": { "node_type": "llm", "display_name": "Refund", "output_var": "output",
+                  "system_prompt": "Handle refund requests.", "user_prompt": "{{.input}}" } },
+    { "instance_id": "llm_fraud",   "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+      "config": { "node_type": "llm", "display_name": "Fraud", "output_var": "output",
+                  "system_prompt": "Handle fraud reports.", "user_prompt": "{{.input}}" } },
+    { "instance_id": "llm_general", "definition_ref": { "kind": "inline", "name": "llm", "version": 1, "namespace": "builtin" },
+      "config": { "node_type": "llm", "display_name": "General", "output_var": "output",
+                  "system_prompt": "Answer general questions.", "user_prompt": "{{.input}}" } }
+  ],
+  "connections": [
+    { "type": "entry",        "source": "<ep_instance_id>", "target": "router_1" },
+    { "type": "flow_control", "source": "router_1", "target": "llm_refund",  "label": "refund" },
+    { "type": "flow_control", "source": "router_1", "target": "llm_fraud",   "label": "fraud" },
+    { "type": "flow_control", "source": "router_1", "target": "llm_general", "label": "general" }
+  ]
+}
+```
+Rules: every label needs exactly one matching edge (case-insensitive) or the run fails.
+Debug needs `llm_overrides` for the router's `instance_id` as well as each `llm` node.
