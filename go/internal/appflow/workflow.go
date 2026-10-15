@@ -1094,12 +1094,20 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			continue
 
 		case "transform":
+			// Expose current accumulated text as vars["input"] so transform
+			// steps can reference it without knowing the upstream output_var name.
+			vars["input"] = accumulated
 			var transformErr error
 			vars, transformErr = execTransformNode(ctx, node, input, vars, shortAO)
 			if transformErr != nil {
 				out.Status = "failed"
 				retErr = transformErr
 				return
+			}
+			// If the transform wrote to vars["output"], promote it to accumulated
+			// so downstream nodes (and FinalText) see the transformed text.
+			if v, ok := vars["output"]; ok && v != "" {
+				accumulated = v
 			}
 			currentID = firstEdgeTarget(outEdgesBySource[node.ID])
 			continue

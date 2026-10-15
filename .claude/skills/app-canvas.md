@@ -121,7 +121,7 @@ endpoint + `go/internal/appflow/workflow.go` cross-check, 2026-09-26):
   **Execution**: runs in-process inside the Temporal activity — pure string manipulation, no I/O, typically microseconds. Steps run in order; each step's `output_var` is available to subsequent steps as an `input_var`.
   **Validation**: `transform.Validate` checks all `fn` names at publish time — unknown function names fail with `transform_unknown_function`. Empty `functions` array fails with `transform_no_functions`.
   **Debug**: the `node_done` detail field contains a JSON TraceResult — the debug inspector renders a per-step card showing fn name, input value, output value, duration in ms, and error (if any). No pre-run params needed.
-  **No credentials, no runtime screen config** — pure computation. Does NOT write `accumulated`; only writes the explicitly named `output_var` of each step into flow vars.
+  **No credentials, no runtime screen config** — pure computation. Writes the explicitly named `output_var` of each step into flow vars. **As of 2026-10-15**: before the transform runs, `vars["input"]` is set to the current `accumulated` text — so steps can always use `input_var: "input"` to read the latest accumulated text without knowing the upstream node's output_var. After the transform runs, if `vars["output"]` is non-empty, it is promoted to `accumulated` — so a post-LLM transform with `output_var: "output"` will replace the LLM response as `FinalText`. Use `output_var: "output"` on the last step when you want the transform to modify what gets returned to the caller; use any other var name for side transformations that should not affect `accumulated`.
   Common pattern — strip LLM fences then extract a field:
   ```json
   {

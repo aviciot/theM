@@ -248,10 +248,14 @@ func walkCycleBody(
 			}
 
 		case "transform":
+			vars["input"] = accumulated
 			var transformErr error
 			vars, transformErr = execTransformNode(ctx, node, input, vars, shortAO)
 			if transformErr != nil {
 				return accumulated, vars, fmt.Errorf("cycle body transform %q: %w", node.ID, transformErr)
+			}
+			if v, ok := vars["output"]; ok && v != "" {
+				accumulated = v
 			}
 			curID = exitBody(firstEdgeTarget(outEdges[node.ID]))
 
