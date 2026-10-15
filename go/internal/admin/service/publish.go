@@ -216,6 +216,7 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 		"voice":     {},
 		"webrtc":    {},
 		"a2a":       {},
+		"gateway":   {},
 	}
 	for _, ep := range doc.EntryPoints {
 		if _, dup := instanceIDs[ep.InstanceID]; dup {

@@ -160,7 +160,7 @@ Quick version of the rule (see the plan doc for the full reasoning):
 - **Never** use DB name `odin` or schema `odin` — everything is `them`
 - New agent transport → new file in `app/adapters/` + register in `factory.py` + doc in `docs/ADAPTERS.md`
 - **A2A work** (canvas agent builder, agentgen, agent cards, typed parts, wire format) → invoke `/a2a` skill first — it loads the Go A2A ground truth (wire format, AgentSpec, interpreter, security invariants, Phase D checklist)
-- **App Canvas work** (building/debugging an application: entry points, appflow nodes — llm/condition/fork/join/router/hil — connections, Debug Mode API sequence) → invoke `/app-canvas` skill first — node-type rules are live-queryable via `GET /admin/node-types`, but the app-JSON envelope, entry-point creation gotcha, and the full build+debug API sequence are NOT exposed by any endpoint and only documented in that skill
+- **App Canvas work** (building/debugging an application: entry points, appflow nodes — llm/condition/fork/join/router/hil — connections, Debug Mode API sequence) → invoke `/app-canvas` skill first — node-type rules are live-queryable via `GET /admin/node-types`, but the app-JSON envelope, entry-point creation gotcha, and the full build+debug API sequence are NOT exposed by any endpoint and only documented in that skill. **If the Skill tool returns "Unknown skill", fall back immediately to `Read /opt/docker/them/.claude/skills/app-canvas.md`** — the file is the skill; reading it directly is equivalent.
 - Work under `go/` must also follow `go/CLAUDE.md`
 
 ---

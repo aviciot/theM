@@ -495,6 +495,9 @@ Bearer token; the request runs the app's flow via Temporal (`AppFlowWorkflow`).
    or `ep.root` if set. Gateway handler (`llmgateway/handler.go` ~L319) finds the flow by
    matching the `entry_points` TABLE row's slug (type=gateway) to the definition EP `slug`
    — **they must be identical**, else error `no EPFlow for slug`.
+   NOTE (2026-10-15): `"gateway"` was missing from `validProtocols` in
+   `go/internal/admin/service/publish.go` — fixed, now included. If validate returns
+   `invalid_protocol "gateway"`, check that map.
 4. Create EP row: `POST /admin/applications/{id}/entry-points`
    `{"slug":"gateway","entry_point_type":"gateway","enabled":true}` (§3 gotcha applies).
    `gateway` is in `validEPTypes` (`go/internal/admin/service/applications.go`).

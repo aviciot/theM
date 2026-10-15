@@ -3,6 +3,15 @@
 
 ---
 
+## 2026-10-15 — `"gateway"` missing from `validProtocols` in publish.go
+
+**Symptom:** Creating a gateway profile app via the API — validate returns `invalid_protocol "gateway"` even though gateway apps exist in the DB and the UI creates them fine.
+**Root cause:** `go/internal/admin/service/publish.go`'s `validProtocols` map listed `websocket`, `sse`, `voice`, `webrtc`, `a2a` but not `"gateway"`. Existing apps were inserted via older path before this validation was added.
+**Fix:** Added `"gateway": {}` to `validProtocols`. Rebuild + `docker compose up -d --force-recreate them-go-bridge`.
+**Watch for:** Any new EP protocol (e.g. `voice` expansion) — add it to this map or validate/publish will silently reject it.
+
+---
+
 ## 2026-10-05 — `docker restart` does NOT switch to a freshly built image
 
 **Symptom:** rebuilt all 3 dag-worker images (`docker compose build them-dag-worker them-dag-worker-2 them-dag-worker-debug`), then ran `docker compose restart` — containers still ran the old image. New code was not active, same errors persisted.
