@@ -1,0 +1,21 @@
+{
+  "id": "gw-profile-response-sanitizer",
+  "name": "GW Profile — Response Sanitizer — 2-way PII + compliance footer",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "sanitizer-demo-token-payops-response-2026",
+  "stream": false,
+  "n_users": 1,
+  "model": "claude-sonnet-4-6",
+  "messages": [
+    "My card is 4111 1111 1111 1111 and SSN 123-45-6789. Call me at 555-867-5309. Can you help with my refund?",
+    "My email is john.doe@example.com. Please confirm receipt.",
+    "What sensitive details do you have about me from this conversation?"
+  ],
+  "app_id": "1b096328-d661-4d31-808b-35936281b0bb",
+  "app_slug": "payops-response-sanitizer",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-15T00:00:00Z",
+  "updated_at": "2026-10-15T00:00:00Z"
+}

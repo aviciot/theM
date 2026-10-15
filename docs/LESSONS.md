@@ -3,6 +3,15 @@
 
 ---
 
+## 2026-10-15 — App created via admin JWT goes under platform tenant, not target tenant
+
+**Symptom:** Created an app via `POST /api/v1/admin/applications` with `tenant_id: <payops_ai>` in the body, but the app and its entry_points ended up under the platform (`default`) tenant. Gateway calls returned 502 "profile workflow failed to start".
+**Root cause:** The handler uses `tenantctx.MustTenantIDFromCtx` (from the JWT) to set the tenant, ignoring the `tenant_id` field in the request body. Admin JWT = platform tenant. The `entry_points.tenant_id` is also set from the JWT context, not the body.
+**Fix:** To create an app under a specific tenant via API: after creating via admin JWT, run SQL to update both `them.applications.tenant_id` AND `them.entry_points.tenant_id` to the target tenant UUID. Or log in as a tenant-scoped user to create the app correctly.
+**Watch for:** Any app creation via admin JWT will land under `default` tenant. The `epconfig` loader queries `WHERE ep.tenant_id = $1` — if tenant mismatches, `AdmitDebug` returns `ErrNotFound` and gateway returns 502.
+
+---
+
 ## 2026-10-15 — `"gateway"` missing from `validProtocols` in publish.go
 
 **Symptom:** Creating a gateway profile app via the API — validate returns `invalid_protocol "gateway"` even though gateway apps exist in the DB and the UI creates them fine.
