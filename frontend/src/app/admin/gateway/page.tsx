@@ -305,32 +305,45 @@ function PolicyTab() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
+  // Tenant providers (for showing inherited allowed models)
+  const [tenantProviders, setTenantProviders] = useState<any[]>([]);
+  const [provLoading, setProvLoading] = useState(true);
+
   // Form state
-  const [modelsText, setModelsText] = useState('');
-  const [aliasesText, setAliasesText] = useState('{}');
+  const [enabled, setEnabled] = useState(false);
+  const [aliases, setAliases] = useState<Array<{ key: string; value: string }>>([]);
   const [maxTokens, setMaxTokens] = useState('');
   const [monthlyBudget, setMonthlyBudget] = useState('');
+  const [monthlySpend, setMonthlySpend] = useState<number | null>(null);
 
   useEffect(() => {
-    themApi.getGatewayPolicy().then(p => {
+    Promise.all([
+      themApi.getGatewayPolicy(),
+      themApi.listMyLLMProviders(),
+    ]).then(([p, providers]) => {
       setPolicy(p);
-      setModelsText((p.allowed_models ?? []).join('\n'));
-      setAliasesText(JSON.stringify(p.model_aliases ?? {}, null, 2));
+      setTenantProviders(providers);
+      setEnabled((p.allowed_models?.length ?? 0) > 0 || Object.keys(p.model_aliases ?? {}).length > 0 || (p.max_tokens_per_request ?? 0) > 0 || (p.monthly_budget_usd ?? 0) > 0);
+      const aliasObj = p.model_aliases ?? {};
+      setAliases(Object.entries(aliasObj).map(([k, v]) => ({ key: k, value: v })));
       setMaxTokens(p.max_tokens_per_request != null ? String(p.max_tokens_per_request) : '');
       setMonthlyBudget(p.monthly_budget_usd != null ? String(p.monthly_budget_usd) : '');
-    }).catch(() => setError('Failed to load policy')).finally(() => setLoading(false));
+    }).catch(() => setError('Failed to load policy')).finally(() => { setLoading(false); setProvLoading(false); });
+
+    // Load current month spend (simplified — real endpoint would be on themApi)
+    // For now we'll just set null; you can add themApi.getGatewayMonthlySpend() later
+    setMonthlySpend(null);
   }, []);
 
   async function handleSave() {
     setSaving(true);
     setError('');
     setSaved(false);
-    let aliases: Record<string, string> = {};
-    try { aliases = JSON.parse(aliasesText || '{}'); } catch { setError('model_aliases must be valid JSON'); setSaving(false); return; }
-    const models = modelsText.split('\n').map(s => s.trim()).filter(Boolean);
+    const aliasObj: Record<string, string> = {};
+    aliases.forEach(a => { if (a.key.trim() && a.value.trim()) aliasObj[a.key.trim()] = a.value.trim(); });
     const body: GatewayPolicyInput = {
-      allowed_models: models,
-      model_aliases: aliases,
+      allowed_models: [], // Inherit from LLM Providers
+      model_aliases: aliasObj,
       max_tokens_per_request: maxTokens ? parseInt(maxTokens) : null,
       monthly_budget_usd: monthlyBudget ? parseFloat(monthlyBudget) : null,
     };
@@ -338,73 +351,139 @@ function PolicyTab() {
       const updated = await themApi.putGatewayPolicy(body);
       setPolicy(updated);
       setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
     } catch { setError('Failed to save policy'); }
     finally { setSaving(false); }
   }
 
   if (loading) return <div style={{ color: '#94a3b8' }}>Loading…</div>;
 
+  const inheritedModels = tenantProviders
+    .filter(p => p.enabled)
+    .flatMap(p => p.allowed_models ?? [])
+    .filter((v, i, a) => a.indexOf(v) === i); // unique
+
   return (
-    <div style={{ maxWidth: 600 }}>
-      <div style={{ marginBottom: 12, color: '#94a3b8', fontSize: 14 }}>
-        Leave <strong>Allowed models</strong> empty to permit all models (fail-open / allow-all).
-        Aliases resolve before the allowlist check.
+    <div style={{ maxWidth: 700 }}>
+      {/* Enable/Disable toggle */}
+      <div style={{ marginBottom: 24, padding: 16, background: '#1e293b', borderRadius: 10, border: '1px solid #334155' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Gateway Policy Enforcement</div>
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>
+              {enabled ? 'Active — aliases, budgets, and token limits are enforced' : 'Disabled — all requests pass through unrestricted'}
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ width: 18, height: 18, cursor: 'pointer', accentColor: ACCENT }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: enabled ? '#22c55e' : '#94a3b8' }}>{enabled ? 'Enabled' : 'Disabled'}</span>
+          </label>
+        </div>
       </div>
 
-      {error && <div style={{ color: '#ef4444', marginBottom: 12 }}>{error}</div>}
-      {saved && <div style={{ color: '#22c55e', marginBottom: 12 }}>Policy saved.</div>}
+      {error && <div style={{ color: '#ef4444', marginBottom: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 6 }}>{error}</div>}
+      {saved && <div style={{ color: '#22c55e', marginBottom: 12, padding: 10, background: 'rgba(34,197,94,0.1)', borderRadius: 6 }}>✓ Policy saved</div>}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <label>
-          <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>Allowed models (one per line, empty = allow all)</div>
-          <textarea
-            rows={5}
-            value={modelsText}
-            onChange={e => setModelsText(e.target.value)}
-            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 13, fontFamily: 'monospace', resize: 'vertical', boxSizing: 'border-box' }}
-            placeholder={'claude-sonnet-5\ngpt-4o'}
-          />
-        </label>
+      {/* Inherited allowed models (read-only) */}
+      <div style={{ marginBottom: 20, padding: 16, background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+          Allowed Models (inherited from LLM Providers)
+        </div>
+        {provLoading ? (
+          <div style={{ fontSize: 12, color: '#64748b' }}>Loading…</div>
+        ) : inheritedModels.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#64748b' }}>
+            No models configured. <a href="/admin/settings?tab=llm_providers" style={{ color: ACCENT }}>→ Configure in System Settings</a>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {inheritedModels.map(m => (
+              <span key={m} style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(124,58,237,0.15)', color: '#c4b5fd', borderRadius: 6, fontFamily: 'monospace' }}>{m}</span>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
+          Gateway requests are restricted to these models. <a href="/admin/settings?tab=llm_providers" style={{ color: ACCENT, textDecoration: 'none' }}>Manage in Settings →</a>
+        </div>
+      </div>
 
-        <label>
-          <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>Model aliases (JSON object)</div>
-          <textarea
-            rows={5}
-            value={aliasesText}
-            onChange={e => setAliasesText(e.target.value)}
-            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 13, fontFamily: 'monospace', resize: 'vertical', boxSizing: 'border-box' }}
-            placeholder={'{\n  "fast": "claude-haiku-4-5-20251001"\n}'}
-          />
-        </label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}>
+        {/* Model aliases */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>
+            Model Aliases
+            <span style={{ fontSize: 11, fontWeight: 400, color: '#64748b', marginLeft: 8 }}>
+              (clients send alias → gateway resolves to real model)
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 1.4 }}>
+            Let API clients use friendly names like <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: 4 }}>"fast"</code> instead of full model IDs.
+            Example: client sends <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: 4 }}>"model": "fast"</code> → resolves to <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: 4 }}>claude-haiku-4-5</code>.
+          </div>
+          {aliases.map((a, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <input
+                type="text"
+                placeholder="Alias (e.g. fast)"
+                value={a.key}
+                onChange={e => setAliases(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                style={{ flex: '0 0 140px', padding: '7px 10px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 13 }}
+              />
+              <span style={{ alignSelf: 'center', color: '#64748b' }}>→</span>
+              <input
+                type="text"
+                placeholder="Target model (e.g. claude-haiku-4-5)"
+                value={a.value}
+                onChange={e => setAliases(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 13, fontFamily: 'monospace' }}
+              />
+              <button
+                onClick={() => setAliases(prev => prev.filter((_, j) => j !== i))}
+                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}
+              >Remove</button>
+            </div>
+          ))}
+          <button
+            onClick={() => setAliases(prev => [...prev, { key: '', value: '' }])}
+            style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+          >+ Add alias</button>
+        </div>
 
+        {/* Token & budget limits */}
         <div style={{ display: 'flex', gap: 16 }}>
           <label style={{ flex: 1 }}>
-            <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>Max tokens per request (empty = no cap)</div>
+            <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>Max tokens per request</div>
             <input
               type="number"
               value={maxTokens}
               onChange={e => setMaxTokens(e.target.value)}
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box' }}
-              placeholder="e.g. 4096"
+              placeholder="e.g. 4096 (empty = no cap)"
             />
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Clamps client's max_tokens parameter</div>
           </label>
           <label style={{ flex: 1 }}>
-            <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>Monthly budget USD (empty = no cap)</div>
+            <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>Monthly budget (USD)</div>
             <input
               type="number"
               step="0.01"
               value={monthlyBudget}
               onChange={e => setMonthlyBudget(e.target.value)}
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box' }}
-              placeholder="e.g. 50.00"
+              placeholder="e.g. 50.00 (empty = no cap)"
             />
+            {monthlySpend !== null && monthlyBudget && (
+              <div style={{ marginTop: 6, fontSize: 11, color: '#94a3b8' }}>
+                Spent this month: ${monthlySpend.toFixed(2)} / ${parseFloat(monthlyBudget).toFixed(2)}
+              </div>
+            )}
           </label>
         </div>
 
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ alignSelf: 'flex-start', padding: '9px 20px', borderRadius: 6, background: ACCENT, color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}
+          style={{ alignSelf: 'flex-start', padding: '10px 24px', borderRadius: 6, background: ACCENT, color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14, opacity: saving ? 0.6 : 1 }}
         >
           {saving ? 'Saving…' : 'Save policy'}
         </button>
