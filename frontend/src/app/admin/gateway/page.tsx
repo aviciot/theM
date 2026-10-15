@@ -163,7 +163,10 @@ function ClientsTab() {
       // Only show apps that have at least one gateway entry point.
       setGatewayApps(apps.filter(a => a.entry_points?.some(ep => ep.entry_point_type === 'gateway')));
       setPolicyProfiles(profiles);
-    } catch { setError('Failed to load clients'); }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Failed to load gateway data: ${msg}`);
+    }
     finally { setLoading(false); }
   }, []);
 
