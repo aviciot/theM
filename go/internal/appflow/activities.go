@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -886,7 +887,10 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		// activity to fix a Redis hiccup would re-call (and re-bill) the LLM.
 		// This differs from FinalizeRunActivity, which does return XAdd errors
 		// — that activity IS idempotent (safe to retry), this one is not.
-		_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
+		if err := a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)}); err != nil {
+			slog.Warn("appflow: stream-publish failed — client will not see live tokens but run result is unaffected",
+				"run_id", input.RunID, "node_id", input.NodeID, "error", err)
+		}
 	}
 
 	return InlineLLMActivityOutput{
@@ -1148,7 +1152,10 @@ func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, 
 		payload["detail"] = detail
 	}
 	raw, _ := json.Marshal(payload)
-	_ = a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)})
+	if err := a.StreamPub.XAdd(ctx, key, map[string]interface{}{"data": string(raw)}); err != nil {
+		slog.Warn("appflow: trace-publish failed — live node progress unavailable but run is unaffected",
+			"run_id", runID, "node_id", nodeID, "error", err)
+	}
 }
 
 // persistTrace upserts a them.run_steps row for one AppFlow DAG node
