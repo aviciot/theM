@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { themApi, type GatewayPolicyProfile, type GatewayPolicyProfileInput } from '@/lib/api';
+import { themApi, type GatewayPolicyProfile, type GatewayPolicyProfileInput, type LLMProviderOut } from '@/lib/api';
 
 const ACCENT = '#7c3aed';
 
@@ -57,7 +57,8 @@ export function PolicyProfilesTab() {
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>{p.name}</div>
                     <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                      {Object.keys(p.model_aliases).length} alias{Object.keys(p.model_aliases).length !== 1 && 'es'}
+                      {p.allowed_models?.length ? `${p.allowed_models.length} model${p.allowed_models.length !== 1 ? 's' : ''} allowed` : 'all models allowed'}
+                      {Object.keys(p.model_aliases).length > 0 && ` • ${Object.keys(p.model_aliases).length} alias${Object.keys(p.model_aliases).length !== 1 ? 'es' : ''}`}
                       {p.max_tokens_per_request && ` • ${p.max_tokens_per_request} token cap`}
                       {p.monthly_budget_usd && ` • $${p.monthly_budget_usd}/mo budget`}
                     </div>
@@ -99,6 +100,38 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Provider models for the allowed-models picker
+  const [providers, setProviders] = useState<LLMProviderOut[]>([]);
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(
+    new Set(profile?.allowed_models ?? [])
+  );
+
+  useEffect(() => {
+    themApi.listMyLLMProviders().then(setProviders).catch(() => {});
+  }, []);
+
+  // All models from enabled providers, grouped by provider
+  const providerGroups = providers
+    .filter(p => p.enabled && p.allowed_models?.length)
+    .map(p => ({ name: p.display_name || p.name, models: p.allowed_models }));
+  const allModels = providerGroups.flatMap(g => g.models);
+
+  function toggleModel(model: string) {
+    setSelectedModels(prev => {
+      const next = new Set(prev);
+      if (next.has(model)) next.delete(model); else next.add(model);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (selectedModels.size === allModels.length) {
+      setSelectedModels(new Set());
+    } else {
+      setSelectedModels(new Set(allModels));
+    }
+  }
+
   async function handleSave() {
     if (!name.trim()) { setError('Name is required'); return; }
     setSaving(true);
@@ -107,7 +140,7 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
     aliases.forEach(a => { if (a.key.trim() && a.value.trim()) aliasObj[a.key.trim()] = a.value.trim(); });
     const body: GatewayPolicyProfileInput = {
       name: name.trim(),
-      allowed_models: [], // Inherit from LLM Providers
+      allowed_models: selectedModels.size > 0 ? Array.from(selectedModels) : [],
       model_aliases: aliasObj,
       max_tokens_per_request: maxTokens ? parseInt(maxTokens) : null,
       monthly_budget_usd: monthlyBudget ? parseFloat(monthlyBudget) : null,
@@ -126,7 +159,7 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
 
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={onClose}>
-      <div style={{ background: '#1e293b', borderRadius: 10, padding: 24, maxWidth: 600, width: '90%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: '#1e293b', borderRadius: 10, padding: 24, maxWidth: 620, width: '90%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <h2 style={{ margin: '0 0 16px', fontSize: 18 }}>{profile ? 'Edit' : 'New'} Policy Profile</h2>
 
         {error && <div style={{ color: '#ef4444', marginBottom: 12, padding: 8, background: 'rgba(239,68,68,0.1)', borderRadius: 6, fontSize: 13 }}>{error}</div>}
@@ -142,6 +175,48 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box' }}
             />
           </label>
+
+          {/* Allowed models — from tenant LLM providers */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ fontSize: 13, color: '#94a3b8' }}>
+                Allowed Models
+                <span style={{ fontSize: 11, color: '#64748b', marginLeft: 6 }}>
+                  {selectedModels.size === 0 ? '(empty = all models allowed)' : `${selectedModels.size} selected`}
+                </span>
+              </div>
+              {allModels.length > 0 && (
+                <button onClick={toggleAll} style={{ fontSize: 11, color: ACCENT, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  {selectedModels.size === allModels.length ? 'Deselect all' : 'Select all'}
+                </button>
+              )}
+            </div>
+            {providerGroups.length === 0 ? (
+              <div style={{ padding: '10px 12px', background: '#0f172a', borderRadius: 6, fontSize: 12, color: '#64748b', border: '1px solid #1e293b' }}>
+                No enabled LLM providers with models configured.{' '}
+                <a href="/admin/settings?tab=llm_providers" style={{ color: ACCENT }}>Configure in Settings →</a>
+              </div>
+            ) : (
+              <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 6, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {providerGroups.map(g => (
+                  <div key={g.name}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{g.name}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {g.models.map(m => {
+                        const checked = selectedModels.has(m);
+                        return (
+                          <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', padding: '4px 8px', borderRadius: 5, border: `1px solid ${checked ? ACCENT : '#334155'}`, background: checked ? 'rgba(124,58,237,0.12)' : 'transparent' }}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleModel(m)} style={{ accentColor: ACCENT, cursor: 'pointer' }} />
+                            <span style={{ fontSize: 12, fontFamily: 'monospace', color: checked ? '#c4b5fd' : '#94a3b8' }}>{m}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div>
             <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 6 }}>Model Aliases</div>
@@ -176,12 +251,12 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
 
           <div style={{ display: 'flex', gap: 12 }}>
             <label style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 4 }}>Max tokens</div>
+              <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 4 }}>Max tokens per request</div>
               <input
                 type="number"
                 value={maxTokens}
                 onChange={e => setMaxTokens(e.target.value)}
-                placeholder="e.g. 4096"
+                placeholder="e.g. 4096 (empty = no cap)"
                 style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box' }}
               />
             </label>
@@ -192,7 +267,7 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
                 step="0.01"
                 value={monthlyBudget}
                 onChange={e => setMonthlyBudget(e.target.value)}
-                placeholder="e.g. 50.00"
+                placeholder="e.g. 50.00 (empty = no cap)"
                 style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box' }}
               />
             </label>
