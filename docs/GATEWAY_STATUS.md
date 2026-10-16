@@ -41,10 +41,15 @@
 ## 🔄 In Progress
 
 ### Current Task
-**Infrastructure Implementation**
-- Next: Request tracing (3 hours) + Cache Phase 1 (2 hours)
-- Purpose: Eliminate production blockers before Test #3
-- Tests #1-2 complete, ready for infrastructure work
+**Request Tracing Implementation - Phase 1/5 Complete**
+- Status: 30 min done, 2.5 hours remaining
+- Phase 1 ✅: Handler foundation (request_id extraction, error responses)
+- Phase 2-5: Complete handler, update service layer, register middleware, test
+- Detailed plan: `docs/GATEWAY_REQUEST_TRACING_IMPLEMENTATION.md`
+
+**Next After Tracing**:
+- Cache implementation (2 hours) - with Redis fallback for resilience
+- Test #3 (200 users) - stress test with full infrastructure
 
 ---
 
