@@ -35,6 +35,7 @@ function ProviderCard({
   const [modelsMsg, setModelsMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const [keys, setKeys] = useState<LLMProviderKeyOut[]>([]);
   const [keysLoaded, setKeysLoaded] = useState(false);
@@ -97,14 +98,31 @@ function ProviderCard({
     }
   }
 
-  const showKeysBody = prov.enabled;
+  const showKeysBody = prov.enabled && expanded;
 
   return (
     <div style={{ background: 'var(--tm-card-bg)', border: '1px solid var(--tm-card-border)', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
-        <div>
+        <button
+          type="button"
+          onClick={() => prov.enabled && setExpanded((v) => !v)}
+          aria-expanded={showKeysBody}
+          disabled={!prov.enabled}
+          style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: prov.enabled ? 'pointer' : 'default' }}
+        >
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: '20px', color: 'var(--tm-text-muted)', opacity: prov.enabled ? 1 : 0.35, transform: showKeysBody ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
+          >
+            chevron_right
+          </span>
           <span style={{ fontWeight: 700, fontSize: '15px', color: '#fff' }}>{prov.display_name || prov.name}</span>
-        </div>
+          {prov.enabled && (
+            <span style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)' }}>
+              {allowedModels.length} model{allowedModels.length === 1 ? '' : 's'}{keysLoaded ? ` · ${keys.length} key${keys.length === 1 ? '' : 's'}` : ''}
+            </span>
+          )}
+        </button>
         <Toggle value={prov.enabled} onChange={onToggleEnabled} />
       </div>
 
