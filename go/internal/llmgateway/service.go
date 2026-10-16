@@ -359,12 +359,15 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 	if lerr != nil {
 		// Fail-open on DB error — same principle as quota (§16.2).
 		if s.log != nil {
-			s.log.Warn("llmgateway: policy load error — fail-open", "err", lerr)
+			s.log.Warn("llmgateway: policy load error — fail-open", "err", lerr, "client_id", clientID)
 		}
 		return requestedModel, 0, nil
 	}
 	if pol == nil {
 		// No policy row → allow everything.
+		if s.log != nil {
+			s.log.Info("llmgateway: no policy profile assigned — allow all", "client_id", clientID, "model", requestedModel)
+		}
 		return requestedModel, 0, nil
 	}
 
@@ -372,6 +375,9 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 	resolved := requestedModel
 	if alias, ok := pol.ModelAliases[requestedModel]; ok && alias != "" {
 		resolved = alias
+		if s.log != nil {
+			s.log.Info("llmgateway: model alias resolved", "client_id", clientID, "requested", requestedModel, "resolved", resolved)
+		}
 	}
 
 	// Step 2: allowlist check.
@@ -384,7 +390,13 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 			}
 		}
 		if !allowed {
+			if s.log != nil {
+				s.log.Warn("llmgateway: model blocked by policy", "client_id", clientID, "requested", requestedModel, "resolved", resolved, "allowed_models", pol.AllowedModels)
+			}
 			return "", 0, ErrModelBlocked
+		}
+		if s.log != nil {
+			s.log.Info("llmgateway: model allowed by policy", "client_id", clientID, "model", resolved)
 		}
 	}
 
@@ -393,13 +405,21 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 		spent, serr := s.policy.SumMonthlySpend(ctx, tenantID)
 		if serr != nil {
 			if s.log != nil {
-				s.log.Warn("llmgateway: monthly spend check error — fail-open", "err", serr)
+				s.log.Warn("llmgateway: monthly spend check error — fail-open", "err", serr, "client_id", clientID)
 			}
 		} else if spent >= pol.MonthlyBudgetUSD {
+			if s.log != nil {
+				s.log.Warn("llmgateway: monthly budget exceeded", "client_id", clientID, "spent", spent, "budget", pol.MonthlyBudgetUSD)
+			}
 			return "", 0, ErrBudgetExceeded
+		} else if s.log != nil {
+			s.log.Info("llmgateway: budget check passed", "client_id", clientID, "spent", spent, "budget", pol.MonthlyBudgetUSD)
 		}
 	}
 
+	if s.log != nil {
+		s.log.Info("llmgateway: policy check complete", "client_id", clientID, "resolved_model", resolved, "token_cap", pol.MaxTokensPerRequest)
+	}
 	return resolved, pol.MaxTokensPerRequest, nil
 }
 
