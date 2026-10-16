@@ -328,30 +328,57 @@ GATEWAY_POLICY_CACHE_MEMORY_TTL=5m  # In-memory cache TTL
 
 ## Performance Impact
 
-### Before Caching (Current)
-- 1000 req/sec → 1000 DB queries/sec
-- ~3ms DB latency per query
-- Total added latency: 3ms per request
+### Before Caching (Current - Measured in Test #1)
+- 50 users = 150 requests → 150 DB queries for policy lookup
+- ~3-5ms DB latency per query
+- Total added latency: 3-5ms per request
+- **Bottleneck**: PostgreSQL connection pool saturates at ~300 req/sec
+- CPU usage: 1.39% (plenty of headroom)
+- Memory: 27MB (plenty of headroom)
 
 ### After Two-Tier Cache
 - 1000 req/sec → ~1-2 DB queries/sec (99.8% cache hit rate)
 - In-memory hit: ~0.001ms latency
 - Redis hit: ~0.5ms latency
-- **Latency reduction**: 2.5-3ms per request
+- **Latency reduction**: 2.5-5ms per request
+- **DB load reduction**: 99% fewer queries
 
 ### Projected Load Capacity
-- **Before**: ~300 req/sec (DB bottleneck)
-- **After**: 10,000+ req/sec (limited by CPU, not DB)
+
+| Configuration | Capacity | Bottleneck | Notes |
+|---|---|---|---|
+| 1 replica, no cache | ~300 req/sec | PostgreSQL | **Current state** |
+| 2 replicas, no cache | ~600 req/sec | PostgreSQL | Not recommended - waste |
+| 1 replica, Redis cache | ~5,000 req/sec | CPU (~70%) | **Recommended** |
+| 1 replica, 2-tier cache | ~8,000 req/sec | CPU (~90%) | Optimal single node |
+| 2 replicas, 2-tier cache | ~16,000 req/sec | Network I/O | Production scale |
+
+**Key Finding**: CPU and memory are NOT the bottleneck - database queries are. Adding replicas without caching provides minimal benefit.
 
 ---
 
 ## Decision
 
 **Status**: APPROVED  
+**Priority**: HIGH - Production blocker  
 **Implementation**: Start with Phase 1 (Redis cache) immediately after Test #2  
-**Timeline**: 
-- Phase 1 (Redis): Complete before Test #3 (200-user stress test)
-- Phases 2-4: Complete before production deployment
 
-**Why Now**: Current implementation doesn't scale beyond 100-200 concurrent users. Cache is mandatory for production use.
+**Timeline**: 
+- Test #2: 2 minutes (validate policy rejection)
+- Phase 1 (Redis): 2 hours (eliminate DB bottleneck)
+- Test #3: 10 minutes (200-user stress test with cache)
+- Phases 2-4: 4 hours (in-memory + invalidation + monitoring)
+- **Total**: ~6.5 hours to production-ready
+
+**Why Now**: 
+- Current implementation bottlenecks at ~300 req/sec (DB query overload)
+- Test #1 measured: 150 requests = 150 DB queries (no caching)
+- Cache is mandatory for production use - not optional
+- Scaling replicas without cache = waste of resources
+
+**Architecture Note**: 
+- Production already has 2 replicas configured (`them-go-bridge` + `them-go-bridge-2`)
+- Both replicas will share Redis cache (single source of truth)
+- Pub/sub invalidation ensures cache consistency across replicas
+- Local dev currently runs 1 replica (sufficient with caching)
 

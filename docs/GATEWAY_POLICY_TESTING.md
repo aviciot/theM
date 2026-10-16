@@ -75,6 +75,71 @@ Policy profile enforcement works correctly under concurrent load. Core functiona
 
 ---
 
+## Architecture & Scaling Analysis
+
+### Current Request Flow
+
+```
+Client (Test Runner)
+  ↓
+them-traefik (port 8088) — Traefik v3.6 load balancer with sticky sessions
+  ↓
+them-go-bridge (port 8002) — Single Go service instance
+  ↓
+them-postgres + them-redis
+```
+
+**Services Involved**:
+- `them-traefik`: Reverse proxy with load balancing capability
+- `them-go-bridge`: API gateway (single replica currently running)
+- `them-postgres`: Policy profiles, client auth, usage tracking
+- `them-redis`: Available but NOT used for policy caching yet
+
+**Bottleneck Identified**: Policy lookups hit PostgreSQL on EVERY request (no caching)
+
+### Scaling Capability
+
+**Production Config**: Replica already exists in `docker-compose.hetzner.yml`
+- `them-go-bridge` (instance-id: `go-bridge-1`) on port 8002
+- `them-go-bridge-2` (instance-id: `go-bridge-2`) on port 8003
+- Traefik configured to load balance between replicas
+- Both share same Postgres + Redis
+
+**Scaling Capacity**:
+
+| Configuration | Capacity (req/sec) | Notes |
+|---|---|---|
+| 1 replica, no cache | ~300 | **Current state** - DB bottleneck |
+| 2 replicas, no cache | ~600 | Horizontal scale, still DB-bound |
+| 1 replica, with cache | ~5,000 | **Recommended first step** |
+| 2 replicas, with cache | ~10,000+ | For future high load |
+
+**Key Insight**: **Cache > Replication** for this workload
+- DB policy lookup: 3-5ms per request (bottleneck)
+- Cache hit: 0.001ms (in-memory) or 0.5ms (Redis)
+- Adding replicas without caching = minimal improvement
+- **Recommendation**: Implement cache first, then scale replicas only if CPU/memory saturates
+
+### Scaling Strategy
+
+**Phase 1** (CURRENT NEED):
+1. Implement Redis cache for policy profiles → 99% cache hit rate
+2. Test with 200 users on single replica
+3. Measure CPU/memory usage
+
+**Phase 2** (IF NEEDED):
+1. Enable `them-go-bridge-2` replica (already configured in production)
+2. Traefik automatically load balances
+3. Both replicas share Redis cache (pub/sub for invalidation)
+
+**Phase 3** (FUTURE):
+1. Horizontal scale to 3-5 replicas if load exceeds 10,000 req/sec
+2. Consider read replicas for PostgreSQL if write load grows
+
+**Decision**: Implement caching before adding replicas. Current bottleneck is database queries (99% of request time), not CPU/memory.
+
+---
+
 ## Test #2: Policy Rejection (Blocked Model) - PLANNED
 
 ### Setup
@@ -205,13 +270,23 @@ s.log.Warn("llmgateway: model blocked by policy", ...)
 **Rationale**: 
 - Quick validation (2 minutes)
 - Confirms "unhappy path" works before stress testing
-- If allowlist enforcement is broken, we need to know before scaling up
+- If allowlist enforcement is broken, we need to know before implementing 9 hours of infrastructure work
+- Tests different code path not covered by Test #1
 
 **After Test #2**: 
-1. If passed → Implement request tracing (2 hours)
-2. Investigate + enable policy cache (3 hours)  
-3. Run Test #3 (stress test with 200 users)
-4. Production ready after cache + tracing implemented
+1. ✅ If passed → Implement request tracing (3 hours) - enables debugging
+2. ✅ Implement policy cache Phase 1 (2 hours) - Redis cache eliminates DB bottleneck
+3. ✅ Run Test #3 (200-user stress test) - validate scaling with cache
+4. Cache Phases 2-4 (4 hours) - in-memory cache + invalidation + monitoring
+5. Production ready after all improvements complete
+
+**Timeline**:
+- Test #2: 2 minutes (NOW)
+- Infrastructure: 9 hours total (request tracing + full cache implementation)
+- Test #3-5: 30 minutes total
+- **Total to production-ready**: ~10 hours
+
+**Status**: Ready to execute Test #2
 
 ---
 
