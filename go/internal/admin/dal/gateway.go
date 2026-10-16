@@ -374,7 +374,7 @@ func (db *DB) GetGatewayPolicyProfile(ctx context.Context, tenantID, id string) 
 		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM them.gateway_policy_profiles
-		WHERE tenant_id = $1::uuid AND id = $2::uuid`
+		WHERE tenant_id = $1::uuid AND id = $2::bigint`
 
 	var p GatewayPolicyProfile
 	var aliases []byte
