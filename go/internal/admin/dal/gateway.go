@@ -444,14 +444,14 @@ func (db *DB) UpdateGatewayPolicyProfile(ctx context.Context, tenantID, id, name
 		    max_tokens_per_request = $6,
 		    monthly_budget_usd = $7,
 		    updated_at = now()
-		WHERE tenant_id = $1::uuid AND id = $2::uuid`
+		WHERE tenant_id = $1::uuid AND id = $2::bigint`
 	return db.q.Exec(ctx, q, tenantID, id, name, allowedModels, modelAliases, maxTokens, monthlyBudget)
 }
 
 // DeleteGatewayPolicyProfile removes a policy profile.
 // Clients referencing this profile will have their policy_profile_id set to NULL (ON DELETE SET NULL).
 func (db *DB) DeleteGatewayPolicyProfile(ctx context.Context, tenantID, id string) error {
-	const q = `DELETE FROM them.gateway_policy_profiles WHERE tenant_id = $1::uuid AND id = $2::uuid`
+	const q = `DELETE FROM them.gateway_policy_profiles WHERE tenant_id = $1::uuid AND id = $2::bigint`
 	return db.q.Exec(ctx, q, tenantID, id)
 }
 
