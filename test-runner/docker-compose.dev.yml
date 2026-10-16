@@ -1,0 +1,16 @@
+version: "3.9"
+
+# Test Runner — Dev overlay
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Hot reload enabled for frontend changes
+
+services:
+  tr-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    command: ["npm", "run", "dev"]
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
