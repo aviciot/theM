@@ -11,7 +11,16 @@ export default function ScenariosPage() {
   const router = useRouter();
 
   useEffect(() => {
-    api.listScenarios().then((s) => { setScenarios(s); setLoading(false); });
+    api.listScenarios()
+      .then((s) => {
+        console.log('Scenarios loaded:', s.length);
+        setScenarios(s);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load scenarios:', err);
+        setLoading(false);
+      });
   }, []);
 
   const del = async (id: string) => {

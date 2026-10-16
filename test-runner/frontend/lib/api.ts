@@ -3,17 +3,22 @@ import type { App, ConfigState, EP, RunSummary, Scenario, Tenant } from './types
 const BASE = '/api/backend';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  console.log(`API ${method} ${BASE + path}`);
   const res = await fetch(BASE + path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  console.log(`API ${method} ${BASE + path} → ${res.status}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
+    console.error(`API error:`, err);
     throw new Error(err.error ?? res.statusText);
   }
   if (res.status === 204) return undefined as T;
-  return res.json();
+  const data = await res.json();
+  console.log(`API ${method} ${BASE + path} → data:`, data);
+  return data;
 }
 
 export const api = {

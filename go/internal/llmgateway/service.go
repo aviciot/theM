@@ -503,6 +503,8 @@ func modelToProvider(model string) string {
 		return "groq"
 	case strings.HasPrefix(model, "ollama/") || isOllamaModel(model):
 		return "ollama"
+	case strings.HasPrefix(model, "mock-"):
+		return "mock"
 	default:
 		return ""
 	}
@@ -540,7 +542,7 @@ func (f *ResolverFactory) Build(ctx context.Context, tenantID, model string, max
 	if err != nil {
 		return "", nil, fmt.Errorf("llmgateway: resolve provider %q: %w", providerName, err)
 	}
-	if resolved.Key == "" && providerName != "ollama" {
+	if resolved.Key == "" && providerName != "ollama" && providerName != "mock" {
 		return "", nil, fmt.Errorf("%w: no key configured for %q in tenant %s", ErrNoProvider, providerName, tenantID)
 	}
 
@@ -552,6 +554,8 @@ func (f *ResolverFactory) Build(ctx context.Context, tenantID, model string, max
 	switch providerName {
 	case "anthropic":
 		prov = llm.NewAnthropicProvider(resolved.Key, model, maxTokens)
+	case "mock":
+		prov = llm.NewMockProvider(nil) // nil = use default mock response
 	default:
 		prov = llm.NewOpenAIProvider(resolved.Key, model, resolved.BaseURL, maxTokens)
 	}

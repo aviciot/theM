@@ -2,6 +2,8 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // Allow external IP access in dev mode (hot reload)
+  allowedDevOrigins: ['10.55.125.43'],
   async rewrites() {
     return [
       {
