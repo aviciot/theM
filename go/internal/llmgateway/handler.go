@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/appflow"
@@ -82,17 +83,32 @@ func (h *Handler) ChatCompletionsHandler() http.HandlerFunc {
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
+	// ── 0. Request ID ─────────────────────────────────────────────────────────
+	// Extract or generate request ID for tracing
+	requestID := middleware.GetReqID(r.Context())
+	if requestID == "" {
+		requestID = middleware.NextRequestID()
+	}
+	ctx := context.WithValue(r.Context(), middleware.RequestIDKey, requestID)
+	r = r.WithContext(ctx)
+
+	// Create logger with request_id for all logs in this request
+	logger := h.log.With("request_id", requestID)
+
 	// ── 1. Extract auth ────────────────────────────────────────────────────────
 	gwClient, ok := GatewayClientFromCtx(r.Context())
 	if !ok {
-		writeGatewayError(w, http.StatusUnauthorized, "unauthorized", "missing gateway client info")
+		writeGatewayErrorWithID(w, requestID, http.StatusUnauthorized, "unauthorized", "missing gateway client info")
 		return
 	}
 	tenantID, err := tenantctx.TenantIDFromCtx(r.Context())
 	if err != nil {
-		writeGatewayError(w, http.StatusForbidden, "forbidden", "token has no tenant")
+		writeGatewayErrorWithID(w, requestID, http.StatusForbidden, "forbidden", "token has no tenant")
 		return
 	}
+
+	// Add tenant_id to logger for multi-tenant tracing
+	logger = logger.With("tenant_id", tenantID, "client_id", gwClient.ClientID)
 
 	// ── 2. Validate path slug matches token tenant ──────────────────────────────
 	slug := chi.URLParam(r, "tenant_slug")
@@ -471,14 +487,24 @@ type gatewayError struct {
 }
 
 type gatewayErrorBody struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
+	Type      string `json:"type"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"` // Included for tracing
 }
 
 func writeGatewayError(w http.ResponseWriter, status int, errType, msg string) {
 	safeMsg := sanitizeErrorMsg(msg)
 	body := gatewayError{Error: gatewayErrorBody{Type: errType, Message: safeMsg}}
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func writeGatewayErrorWithID(w http.ResponseWriter, requestID string, status int, errType, msg string) {
+	safeMsg := sanitizeErrorMsg(msg)
+	body := gatewayError{Error: gatewayErrorBody{Type: errType, Message: safeMsg, RequestID: requestID}}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-ID", requestID) // Include in header for client correlation
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
