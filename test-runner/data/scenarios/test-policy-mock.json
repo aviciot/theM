@@ -2,20 +2,19 @@
   "id": "test-policy-mock",
   "name": "Test-Policy-Mock",
   "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
   "ep_type": "gateway",
+  "auth_mode": "token",
   "gateway_token": "172d93d74fa98d757593321dc45973f92f691e6d5a68a9f785cf1070eae2ea2b",
   "model": "fast",
-  "stream": false,
-  "n_users": 1,
+  "n_users": 50,
   "messages": [
     "Hello! Test the mock provider.",
     "What is 2+2?",
     "Thank you!"
   ],
-  "app_id": "",
-  "app_slug": "",
-  "ep_slug": "gateway",
-  "auth_mode": "token",
-  "created_at": "2026-10-16T00:00:00Z",
-  "updated_at": "2026-10-16T00:00:00Z"
+  "created_at": "",
+  "updated_at": "2026-10-16T16:28:28Z"
 }

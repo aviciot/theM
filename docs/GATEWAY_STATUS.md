@@ -18,11 +18,16 @@
 - [x] Test runner dev mode (hot reload)
 
 ### Testing
-- [x] **Test #1**: 50 concurrent users - PASSED ✅
+- [x] **Test #1**: 50 concurrent users (alias resolution) - PASSED ✅
   - Alias resolution: fast → mock-model-v1 ✅
   - Policy enforcement: token cap 500 ✅
   - Performance: 825ms avg, 1.39% CPU, 27MB RAM ✅
   - Zero errors, zero policy violations ✅
+- [x] **Test #2**: 5 users (policy rejection) - PASSED ✅
+  - Model blocked: gpt-4 not in allowed_models ✅
+  - HTTP 403, error type: model_not_permitted ✅
+  - Response time: ~10ms (fast rejection) ✅
+  - No provider called (stopped at policy layer) ✅
 
 ### Documentation
 - [x] Testing report (`docs/GATEWAY_POLICY_TESTING.md`)
@@ -36,11 +41,10 @@
 ## 🔄 In Progress
 
 ### Current Task
-**Test #2: Policy Rejection (Blocked Model)**
-- Status: Ready to execute (2 minutes)
-- Purpose: Validate allowlist enforcement blocks unauthorized models
-- Setup: Change model to "gpt-4" (not in allowed_models)
-- Expected: 403 error, no LLM provider called
+**Infrastructure Implementation**
+- Next: Request tracing (3 hours) + Cache Phase 1 (2 hours)
+- Purpose: Eliminate production blockers before Test #3
+- Tests #1-2 complete, ready for infrastructure work
 
 ---
 
@@ -135,12 +139,12 @@ Client → them-traefik:8088 → [them-go-bridge:8002, them-go-bridge-2:8003] �
 
 ### Functional Requirements
 - [x] Policy profiles CRUD working
-- [x] Alias resolution working
-- [x] Allowlist enforcement working
-- [x] Token cap working
+- [x] Alias resolution working (Test #1)
+- [x] Allowlist enforcement working (Test #2)
+- [x] Token cap working (Test #1)
+- [x] Policy rejection working (Test #2)
 - [ ] Budget enforcement working (Test #4)
 - [ ] Multi-profile isolation working (Test #5)
-- [ ] Policy rejection working (Test #2 - in progress)
 
 ### Performance Requirements
 - [x] 50 concurrent users: PASSED

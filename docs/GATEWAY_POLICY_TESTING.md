@@ -140,19 +140,46 @@ them-postgres + them-redis
 
 ---
 
-## Test #2: Policy Rejection (Blocked Model) - PLANNED
+## Test #2: Policy Rejection (Blocked Model) ✅ PASSED
 
 ### Setup
 - **Virtual Users**: 5
-- **Model Requested**: `"gpt-4"` (NOT in allowed_models)
+- **Model Requested**: `"gpt-4"` (NOT in allowed_models: ["mock-model-v1"])
 - **Expected**: All requests fail with 403 "model not permitted by policy"
 
-### Goals
-- Confirm allowlist enforcement blocks unauthorized models
-- Verify error response format is correct
-- Check that blocked requests don't hit the LLM provider
+### Results ✅ PASSED
 
-**Status**: READY TO RUN
+**Policy Enforcement**:
+- ✅ All 5 users blocked at policy check (before provider lookup)
+- ✅ HTTP 403 Forbidden returned
+- ✅ Error type: `"model_not_permitted"`
+- ✅ Error message: `"llmgateway: model not permitted by policy"`
+- ✅ Response time: ~10ms (very fast - stopped at policy check)
+- ✅ No LLM provider called (stopped before provider lookup)
+
+**Logs**:
+```
+WARN llmgateway: model blocked by policy client_id=... requested=gpt-4 resolved=gpt-4 allowed_models=["mock-model-v1"]
+```
+
+### Analysis
+
+**✅ Working Correctly**:
+- Allowlist enforcement works as designed
+- Blocked requests are very fast (~10ms) - no wasted API calls
+- Clear error messages for debugging
+- Stops at policy layer (doesn't waste time looking up providers)
+
+**Bug Found & Fixed**:
+- Initially `allowed_models` was empty `[]` due to earlier DB update error
+- Empty allowlist = "allow all" (by design - documented behavior)
+- This caused `gpt-4` to pass policy check but fail at provider lookup
+- Fixed by restoring `allowed_models = ["mock-model-v1"]`
+- **Lesson**: Empty allowlist is intentional "allow all" behavior, not a bug
+
+### Conclusion
+
+Allowlist enforcement works correctly. Unauthorized models are blocked fast and cleanly with clear error messages.
 
 ---
 
