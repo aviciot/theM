@@ -230,13 +230,26 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
                   style={{ flex: '0 0 120px', padding: '6px 10px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 12 }}
                 />
                 <span style={{ alignSelf: 'center', color: '#64748b', fontSize: 12 }}>→</span>
-                <input
-                  type="text"
-                  placeholder="Target model (e.g. claude-haiku-4-5)"
-                  value={a.value}
-                  onChange={e => setAliases(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
-                  style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 12, fontFamily: 'monospace' }}
-                />
+                {selectedModels.size > 0 ? (
+                  <select
+                    value={a.value}
+                    onChange={e => setAliases(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                    style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: a.value ? '#f1f5f9' : '#64748b', fontSize: 12, fontFamily: 'monospace' }}
+                  >
+                    <option value="">— pick a model —</option>
+                    {Array.from(selectedModels).sort().map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="Target model (e.g. claude-haiku-4-5)"
+                    value={a.value}
+                    onChange={e => setAliases(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                    style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 12, fontFamily: 'monospace' }}
+                  />
+                )}
                 <button
                   onClick={() => setAliases(prev => prev.filter((_, j) => j !== i))}
                   style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: 11 }}
