@@ -186,21 +186,24 @@ export default function ScenarioEditorPage() {
             <Field label="Gateway Token" hint="Raw hex token from gateway_clients table">
               <input className="input font-mono" value={gatewayToken} onChange={(e) => setGatewayToken(e.target.value)} placeholder="64-char hex token" />
             </Field>
-            <Field label="Model">
-              <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
-                <optgroup label="Anthropic">
-                  <option value="claude-sonnet-4-6">claude-sonnet-4-6 (latest)</option>
-                  <option value="claude-opus-4-5">claude-opus-4-5</option>
-                  <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
-                  <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
-                  <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
-                </optgroup>
-                <optgroup label="OpenAI">
-                  <option value="gpt-4o">gpt-4o</option>
-                  <option value="gpt-4o-mini">gpt-4o-mini</option>
-                  <option value="gpt-4-turbo">gpt-4-turbo</option>
-                </optgroup>
-              </select>
+            <Field label="Model" hint="Model name or alias (e.g. 'fast', 'test', or full model name)">
+              <input
+                className="input font-mono"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. claude-sonnet-4-6, fast, mock-model-v1"
+                list="model-suggestions"
+              />
+              <datalist id="model-suggestions">
+                <option value="fast" />
+                <option value="test" />
+                <option value="mock-model-v1" />
+                <option value="claude-sonnet-4-6" />
+                <option value="claude-opus-4-5" />
+                <option value="claude-haiku-4-5-20251001" />
+                <option value="gpt-4o" />
+                <option value="gpt-4o-mini" />
+              </datalist>
             </Field>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={stream} onChange={(e) => setStream(e.target.checked)} className="accent-purple-500" />
