@@ -486,7 +486,7 @@ func run() error {
 	// §16.2: fail-open on quota (Redis), fail-closed on auth (§16.2 decision).
 	gwResolver := llmresolve.New(rlsPools.Admin, adminFernetKey, log)
 	gwFactory := llmgateway.NewResolverFactory(gwResolver)
-	gwDAL := llmgateway.NewDAL(rlsPools.Admin)
+	gwDAL := llmgateway.NewDAL(rlsPools.Admin).WithRedis(redisCache.Client())
 	gwQC := &gatewayQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
 	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log).
 		WithPolicyEnforcer(gwDAL)

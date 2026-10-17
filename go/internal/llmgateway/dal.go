@@ -14,9 +14,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/rueidis"
 )
 
 // Policy holds the tenant-level governance rules loaded from gateway_policies.
@@ -55,11 +57,18 @@ type RequestRecord struct {
 // (BYPASSRLS) because they are internal system records — tenant_id enforces
 // isolation in the table itself.
 type DAL struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	redis rueidis.Client // Redis for policy cache (optional - nil = no cache)
 }
 
 // NewDAL creates a DAL backed by the given pool.
 func NewDAL(pool *pgxpool.Pool) *DAL { return &DAL{pool: pool} }
+
+// WithRedis attaches a Redis client for policy caching.
+func (d *DAL) WithRedis(r rueidis.Client) *DAL {
+	d.redis = r
+	return d
+}
 
 // WriteRequest inserts one gateway_requests row. Called in a defer so usage
 // is captured even when the client disconnects mid-stream.
@@ -145,6 +154,40 @@ func (d *DAL) LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, 
 // LoadPolicy reads the client's assigned policy profile.
 // Returns nil, nil when the client has no policy profile assigned (no enforcement).
 func (d *DAL) LoadPolicy(ctx context.Context, tenantID, clientID string) (*Policy, error) {
+	// Try Redis cache first (if available)
+	if d.redis != nil {
+		cacheKey := "them:gateway:policy:" + clientID
+		cmd := d.redis.B().Get().Key(cacheKey).Build()
+		resp := d.redis.Do(ctx, cmd)
+		if data, err := resp.AsBytes(); err == nil {
+			// Cache hit - deserialize
+			var p Policy
+			if json.Unmarshal(data, &p) == nil {
+				return &p, nil
+			}
+		}
+	}
+
+	// Cache miss (or no Redis) - load from DB
+	p, err := d.loadPolicyFromDB(ctx, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in Redis for 15 minutes (best-effort, ignore errors)
+	if d.redis != nil && p != nil {
+		if data, jerr := json.Marshal(p); jerr == nil {
+			setCmd := d.redis.B().Set().Key("them:gateway:policy:"+clientID).Value(string(data)).Ex(15*time.Minute).Build()
+			_ = d.redis.Do(ctx, setCmd)
+		}
+	}
+
+	return p, nil
+}
+
+// loadPolicyFromDB queries PostgreSQL for the policy profile.
+// Extracted from LoadPolicy to enable caching layer above.
+func (d *DAL) loadPolicyFromDB(ctx context.Context, tenantID, clientID string) (*Policy, error) {
 	const q = `
 		SELECT pp.allowed_models, pp.model_aliases, pp.max_tokens_per_request, pp.monthly_budget_usd
 		FROM them.gateway_clients gc
