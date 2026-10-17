@@ -52,10 +52,17 @@
 
 **Live Test Results**:
 - Custom X-Request-ID headers preserved ✅
+- Auto-generated format: `hostname/random-counter` (chi middleware) ✅
 - Request ID in all logs (handler → service → policy) ✅
 - Request ID in error responses ✅
 - Full request lifecycle traceable via grep ✅
-- Commit: `a9b4664c` (Phase 4), `1e4b6def` (Phase 3), `2d0d6948` (Phase 2), `1cc971aa` (Phase 1)
+
+**Commits**: 
+- Phases 1-5: `1cc971aa`, `2d0d6948`, `1e4b6def`, `a9b4664c`, `48e9d696`
+- Request ID fix: `2306cd29`
+- Documentation: `043caeb3`
+
+**Documentation**: `docs/REQUEST_ID_FORMAT.md`
 
 **Next Task**:
 - Cache implementation (2 hours) - with Redis fallback for resilience
