@@ -113,27 +113,32 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// ── 2. Validate path slug matches token tenant ──────────────────────────────
 	slug := chi.URLParam(r, "tenant_slug")
 	if slug != "" && h.resolver != nil {
-		resolvedTenant, rerr := h.resolver.ResolveSlug(r.Context(), slug)
+		resolvedTenant, rerr := h.resolver.ResolveSlug(ctx, slug)
 		if rerr != nil || resolvedTenant == "" {
-			writeGatewayError(w, http.StatusNotFound, "not_found", "unknown tenant")
+			writeGatewayErrorWithID(w, requestID, http.StatusNotFound, "not_found", "unknown tenant")
 			return
 		}
 		if resolvedTenant != tenantID {
-			writeGatewayError(w, http.StatusForbidden, "forbidden", "tenant mismatch")
+			writeGatewayErrorWithID(w, requestID, http.StatusForbidden, "forbidden", "tenant mismatch")
 			return
 		}
 	}
 
 	// ── 3. Decode request ──────────────────────────────────────────────────────
+	logger.Info("llmgateway: request started", "path", r.URL.Path)
+
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGatewayError(w, http.StatusBadRequest, "invalid_request", "cannot decode body")
+		writeGatewayErrorWithID(w, requestID, http.StatusBadRequest, "invalid_request", "cannot decode body")
 		return
 	}
 	if req.Model == "" {
-		writeGatewayError(w, http.StatusBadRequest, "invalid_request", "model is required")
+		writeGatewayErrorWithID(w, requestID, http.StatusBadRequest, "invalid_request", "model is required")
 		return
 	}
+
+	// Update logger with model and stream info
+	logger = logger.With("model", req.Model, "stream", req.Stream)
 
 	// ── 4. Use token hash and client ID from middleware context ─────────────
 	rec := RequestRecord{
@@ -168,19 +173,22 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 // dispatchAppFlowSync runs the request through an App Canvas AppFlow workflow
 // (non-streaming). Blocks until the workflow completes, then returns the result
 // in OpenAI chat.completion JSON format.
-func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp) {
+func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp, logger *slog.Logger) {
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
-			h.log.Warn("llmgateway: write_request (appflow sync) failed", "err", werr)
+			logger.Warn("llmgateway: write_request (appflow sync) failed", "err", werr)
 		}
+		logger.Info("llmgateway: request complete (appflow sync)", "status", rec.HTTPStatus, "latency_ms", rec.LatencyMS)
 	}()
 
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
 	if err != nil {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
+		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
 		return
 	}
 	defer h.lc.Release(handle)
@@ -189,13 +197,13 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 	if wfErr := wfRun.Get(r.Context(), &output); wfErr != nil {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow error")
+		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow error")
 		return
 	}
 	if output.Status == "failed" || output.Status == "rejected" {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
+		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
 		return
 	}
 
