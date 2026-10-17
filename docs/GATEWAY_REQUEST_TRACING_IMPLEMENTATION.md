@@ -37,9 +37,33 @@
 
 ---
 
+## ✅ Phase 4: Middleware Already Registered
+
+**Status**: COMPLETE (no changes needed)
+
+The chi `middleware.RequestID` is already registered globally in `internal/server/server.go:80`:
+```go
+func buildRouter(h *health.Handler, auth AuthMiddlewares) *chi.Mux {
+    r := chi.NewRouter()
+    
+    // Standard middleware — applies to all routes.
+    r.Use(middleware.RequestID)  // ✅ Already present
+    r.Use(middleware.RealIP)
+    r.Use(middleware.Recoverer)
+    r.Use(middleware.Logger)
+```
+
+This middleware:
+- Extracts `X-Request-ID` header from incoming requests
+- Generates new ID if header missing (format: `hostname-pid/random`)
+- Stores in context under `middleware.RequestIDKey`
+- Applies to ALL routes including gateway
+
+---
+
 ## 🚧 TODO (Remaining Work)
 
-### Phase 4: Register Middleware (15 minutes)
+### Phase 5: Testing (15 minutes)
 
 **File**: `go/internal/llmgateway/handler.go`
 
