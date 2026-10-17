@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Completed (Phases 1-2 - 1.5 hours)
+## ✅ Completed (Phases 1-3 - 2.5 hours)
 
 ### Files Modified
 1. **`go/internal/llmgateway/handler.go`**:
@@ -22,12 +22,24 @@
    - ✅ Phase 2: All `writeGatewayError` calls replaced with `writeGatewayErrorWithID`
    - ✅ Phase 2: All `h.log` calls replaced with `logger`
    - ✅ Phase 2: Added request complete logs in defer blocks
+   - ✅ Phase 2: Fixed NextRequestID() uint64→string cast
+   - ✅ Phase 2: Added nil logger guard
+
+2. **`go/internal/llmgateway/service.go`**:
+   - ✅ Phase 3: Added `middleware` import
+   - ✅ Phase 3: Updated `Call` function to extract request_id and create logger
+   - ✅ Phase 3: Updated `Stream` function to extract request_id and create logger
+   - ✅ Phase 3: Updated `checkPolicy` function to extract request_id and create logger
+   - ✅ Phase 3: All `s.log` calls replaced with `logger` parameter
+   - ✅ Phase 3: Added provider call started/complete logs
+   - ✅ Phase 3: Added getLogger() helper for nil-safety
+   - ✅ Phase 3: Removed duplicate policy check complete log
 
 ---
 
 ## 🚧 TODO (Remaining Work)
 
-### Phase 3: Update Service Layer (1 hour)
+### Phase 4: Register Middleware (15 minutes)
 
 **File**: `go/internal/llmgateway/handler.go`
 

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/llmresolve"
@@ -131,6 +133,14 @@ func (s *Service) WithPolicyEnforcer(pe PolicyEnforcer) *Service {
 	return s
 }
 
+// getLogger returns the service logger or a default if nil.
+func (s *Service) getLogger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
+}
+
 // CallResult carries the usage and cost from a completed (or cancelled) call.
 type CallResult struct {
 	Provider    string
@@ -159,6 +169,9 @@ var ErrBudgetExceeded = errors.New("llmgateway: monthly budget exceeded")
 // (non-streaming), and returns the assembled text response along with
 // usage/cost. The CallResult.ModelServed is the resolved (post-alias) model.
 func (s *Service) Call(ctx context.Context, tenantID, clientID string, req ChatRequest) (string, CallResult, error) {
+	requestID, _ := ctx.Value(middleware.RequestIDKey).(string)
+	logger := s.getLogger().With("request_id", requestID, "client_id", clientID)
+
 	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, clientID, req.Model)
 	if perr != nil {
 		return "", CallResult{}, perr
@@ -180,6 +193,8 @@ func (s *Service) Call(ctx context.Context, tenantID, clientID string, req ChatR
 	if req.Temperature != nil {
 		opts.Temperature = *req.Temperature
 	}
+
+	logger.Info("llmgateway: provider call started", "provider", provName, "model", resolvedModel, "max_tokens", effectiveMaxTokens)
 
 	ch, err := prov.Stream(ctx, domainMsgs, nil, opts)
 	if err != nil {
@@ -208,6 +223,13 @@ func (s *Service) Call(ctx context.Context, tenantID, clientID string, req ChatR
 		TokensOut:   usage.OutputTokens,
 		CostUSD:     estimateCost(provName, resolvedModel, usage.InputTokens, usage.OutputTokens),
 	}
+
+	logger.Info("llmgateway: provider call complete",
+		"provider", provName,
+		"tokens_in", usage.InputTokens,
+		"tokens_out", usage.OutputTokens,
+		"cost_usd", cr.CostUSD)
+
 	return sb.String(), cr, nil
 }
 
@@ -238,6 +260,9 @@ type GatewayEvent struct {
 // Stream resolves the provider, checks policy and quota, and returns a
 // StreamResult whose Events channel the handler reads and re-emits as SSE.
 func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req ChatRequest) (StreamResult, CallResult, error) {
+	requestID, _ := ctx.Value(middleware.RequestIDKey).(string)
+	logger := s.getLogger().With("request_id", requestID, "client_id", clientID)
+
 	resolvedModel, tokenCap, perr := s.checkPolicy(ctx, tenantID, clientID, req.Model)
 	if perr != nil {
 		return StreamResult{}, CallResult{}, perr
@@ -259,6 +284,8 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 	if req.Temperature != nil {
 		opts.Temperature = *req.Temperature
 	}
+
+	logger.Info("llmgateway: provider stream started", "provider", provName, "model", resolvedModel, "max_tokens", effectiveMaxTokens)
 
 	provCh, err := prov.Stream(ctx, domainMsgs, nil, opts)
 	if err != nil {
@@ -335,6 +362,12 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 			}
 		}
 		out <- GatewayEvent{Done: true}
+		logger.Info("llmgateway: provider stream complete",
+			"provider", provName,
+			"tokens_in", callRes.TokensIn,
+			"tokens_out", callRes.TokensOut,
+			"cost_usd", callRes.CostUSD,
+			"ttfb_ms", callRes.TTFBMs)
 	}()
 
 	return StreamResult{Provider: provName, ModelServed: resolvedModel, Events: out}, callRes, nil
@@ -351,6 +384,9 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 // ceiling (0 = no cap), and any blocking error.
 // Returns the original model unchanged when no policy profile is assigned.
 func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requestedModel string) (resolvedModel string, tokenCap int, err error) {
+	requestID, _ := ctx.Value(middleware.RequestIDKey).(string)
+	logger := s.getLogger().With("request_id", requestID, "client_id", clientID)
+
 	if s.policy == nil {
 		return requestedModel, 0, nil
 	}
@@ -358,16 +394,12 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 	pol, lerr := s.policy.LoadPolicy(ctx, tenantID, clientID)
 	if lerr != nil {
 		// Fail-open on DB error — same principle as quota (§16.2).
-		if s.log != nil {
-			s.log.Warn("llmgateway: policy load error — fail-open", "err", lerr, "client_id", clientID)
-		}
+		logger.Warn("llmgateway: policy load error — fail-open", "err", lerr)
 		return requestedModel, 0, nil
 	}
 	if pol == nil {
 		// No policy row → allow everything.
-		if s.log != nil {
-			s.log.Info("llmgateway: no policy profile assigned — allow all", "client_id", clientID, "model", requestedModel)
-		}
+		logger.Info("llmgateway: no policy profile assigned — allow all", "model", requestedModel)
 		return requestedModel, 0, nil
 	}
 
@@ -375,9 +407,7 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 	resolved := requestedModel
 	if alias, ok := pol.ModelAliases[requestedModel]; ok && alias != "" {
 		resolved = alias
-		if s.log != nil {
-			s.log.Info("llmgateway: model alias resolved", "client_id", clientID, "requested", requestedModel, "resolved", resolved)
-		}
+		logger.Info("llmgateway: model alias resolved", "requested", requestedModel, "resolved", resolved)
 	}
 
 	// Step 2: allowlist check.
@@ -390,36 +420,25 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 			}
 		}
 		if !allowed {
-			if s.log != nil {
-				s.log.Warn("llmgateway: model blocked by policy", "client_id", clientID, "requested", requestedModel, "resolved", resolved, "allowed_models", pol.AllowedModels)
-			}
+			logger.Warn("llmgateway: model blocked by policy", "requested", requestedModel, "resolved", resolved, "allowed_models", pol.AllowedModels)
 			return "", 0, ErrModelBlocked
 		}
-		if s.log != nil {
-			s.log.Info("llmgateway: model allowed by policy", "client_id", clientID, "model", resolved)
-		}
+		logger.Info("llmgateway: policy check complete", "resolved_model", resolved, "token_cap", pol.MaxTokensPerRequest)
 	}
 
 	// Step 3: monthly budget check (fail-open on DB error).
 	if pol.MonthlyBudgetUSD > 0 {
 		spent, serr := s.policy.SumMonthlySpend(ctx, tenantID)
 		if serr != nil {
-			if s.log != nil {
-				s.log.Warn("llmgateway: monthly spend check error — fail-open", "err", serr, "client_id", clientID)
-			}
+			logger.Warn("llmgateway: monthly spend check error — fail-open", "err", serr)
 		} else if spent >= pol.MonthlyBudgetUSD {
-			if s.log != nil {
-				s.log.Warn("llmgateway: monthly budget exceeded", "client_id", clientID, "spent", spent, "budget", pol.MonthlyBudgetUSD)
-			}
+			logger.Warn("llmgateway: monthly budget exceeded", "spent", spent, "budget", pol.MonthlyBudgetUSD)
 			return "", 0, ErrBudgetExceeded
-		} else if s.log != nil {
-			s.log.Info("llmgateway: budget check passed", "client_id", clientID, "spent", spent, "budget", pol.MonthlyBudgetUSD)
+		} else {
+			logger.Info("llmgateway: budget check passed", "spent", spent, "budget", pol.MonthlyBudgetUSD)
 		}
 	}
 
-	if s.log != nil {
-		s.log.Info("llmgateway: policy check complete", "client_id", clientID, "resolved_model", resolved, "token_cap", pol.MaxTokensPerRequest)
-	}
 	return resolved, pol.MaxTokensPerRequest, nil
 }
 
