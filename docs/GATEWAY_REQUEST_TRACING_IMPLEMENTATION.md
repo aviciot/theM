@@ -6,21 +6,28 @@
 
 ---
 
-## ✅ Completed (Phase 1 - 30 minutes)
+## ✅ Completed (Phases 1-2 - 1.5 hours)
 
 ### Files Modified
 1. **`go/internal/llmgateway/handler.go`**:
-   - ✅ Added `middleware` import
-   - ✅ Added request ID extraction/generation at handler entry
-   - ✅ Created `writeGatewayErrorWithID()` function
-   - ✅ Added `RequestID` field to `gatewayErrorBody` struct
-   - ✅ Started using `logger` with request_id + tenant_id + client_id
+   - ✅ Phase 1: Added `middleware` import
+   - ✅ Phase 1: Added request ID extraction/generation at handler entry
+   - ✅ Phase 1: Created `writeGatewayErrorWithID()` function
+   - ✅ Phase 1: Added `RequestID` field to `gatewayErrorBody` struct
+   - ✅ Phase 1: Started using `logger` with request_id + tenant_id + client_id
+   - ✅ Phase 2: Updated `dispatchAppFlowSync` signature to accept logger
+   - ✅ Phase 2: Updated `dispatchAppFlowStream` signature to accept logger
+   - ✅ Phase 2: Updated `handleSync` signature to accept logger
+   - ✅ Phase 2: Updated `handleStream` signature to accept logger
+   - ✅ Phase 2: All `writeGatewayError` calls replaced with `writeGatewayErrorWithID`
+   - ✅ Phase 2: All `h.log` calls replaced with `logger`
+   - ✅ Phase 2: Added request complete logs in defer blocks
 
 ---
 
 ## 🚧 TODO (Remaining Work)
 
-### Phase 2: Complete Handler Updates (1 hour)
+### Phase 3: Update Service Layer (1 hour)
 
 **File**: `go/internal/llmgateway/handler.go`
 

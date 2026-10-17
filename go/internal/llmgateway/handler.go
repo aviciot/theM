@@ -87,13 +87,18 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Extract or generate request ID for tracing
 	requestID := middleware.GetReqID(r.Context())
 	if requestID == "" {
-		requestID = middleware.NextRequestID()
+		requestID = fmt.Sprintf("%d", middleware.NextRequestID())
 	}
 	ctx := context.WithValue(r.Context(), middleware.RequestIDKey, requestID)
 	r = r.WithContext(ctx)
 
 	// Create logger with request_id for all logs in this request
-	logger := h.log.With("request_id", requestID)
+	var logger *slog.Logger
+	if h.log != nil {
+		logger = h.log.With("request_id", requestID)
+	} else {
+		logger = slog.Default().With("request_id", requestID)
+	}
 
 	// ── 1. Extract auth ────────────────────────────────────────────────────────
 	gwClient, ok := GatewayClientFromCtx(r.Context())
@@ -155,18 +160,18 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		ca, caErr := h.dal.LoadClientApp(r.Context(), gwClient.TokenHash)
 		if caErr == nil && ca != nil {
 			if req.Stream {
-				h.dispatchAppFlowStream(w, r, start, req, &rec, tenantID, ca)
+				h.dispatchAppFlowStream(w, r, start, req, &rec, tenantID, ca, logger)
 			} else {
-				h.dispatchAppFlowSync(w, r, start, req, &rec, tenantID, ca)
+				h.dispatchAppFlowSync(w, r, start, req, &rec, tenantID, ca, logger)
 			}
 			return
 		}
 	}
 
 	if req.Stream {
-		h.handleStream(w, r, start, req, &rec)
+		h.handleStream(w, r, start, req, &rec, logger)
 	} else {
-		h.handleSync(w, r, start, req, &rec)
+		h.handleSync(w, r, start, req, &rec, logger)
 	}
 }
 
@@ -231,19 +236,22 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 // We therefore run the workflow synchronously, wait for the full result, and
 // emit it as a single SSE chunk followed by [DONE]. OpenAI-compatible clients
 // accept this format correctly.
-func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp) {
+func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp, logger *slog.Logger) {
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
-			h.log.Warn("llmgateway: write_request (appflow stream) failed", "err", werr)
+			logger.Warn("llmgateway: write_request (appflow stream) failed", "err", werr)
 		}
+		logger.Info("llmgateway: request complete (appflow stream)", "status", rec.HTTPStatus, "latency_ms", rec.LatencyMS, "ttfb_ms", rec.TTFBMs)
 	}()
 
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
 	if err != nil {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
+		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
 		return
 	}
 	defer h.lc.Release(handle)
@@ -252,13 +260,13 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 	if wfErr := wfRun.Get(r.Context(), &output); wfErr != nil {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow error")
+		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow error")
 		return
 	}
 	if output.Status == "failed" || output.Status == "rejected" {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
+		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
 		return
 	}
 
@@ -381,21 +389,28 @@ func openAIStreamChunk(model, token string, start time.Time) map[string]any {
 	}
 }
 
-func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord) {
+func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, logger *slog.Logger) {
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
-			if h.log != nil {
-				h.log.Warn("llmgateway: write_request failed", "err", werr)
-			}
+			logger.Warn("llmgateway: write_request failed", "err", werr)
 		}
+		logger.Info("llmgateway: request complete",
+			"status", rec.HTTPStatus,
+			"latency_ms", rec.LatencyMS,
+			"provider", rec.Provider,
+			"tokens_in", rec.TokensIn,
+			"tokens_out", rec.TokensOut,
+			"cost_usd", rec.CostUSD)
 	}()
 
 	text, cr, callErr := h.svc.Call(r.Context(), rec.TenantID, rec.ClientID, req)
 	if callErr != nil {
 		rec.Status = callStatus(callErr)
 		rec.HTTPStatus = gatewayHTTPStatus(callErr)
-		writeGatewayError(w, rec.HTTPStatus, gatewayErrType(callErr), callErr.Error())
+		writeGatewayErrorWithID(w, requestID, rec.HTTPStatus, gatewayErrType(callErr), callErr.Error())
 		return
 	}
 
@@ -428,21 +443,29 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord) {
+func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, logger *slog.Logger) {
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
-			if h.log != nil {
-				h.log.Warn("llmgateway: write_request (stream) failed", "err", werr)
-			}
+			logger.Warn("llmgateway: write_request (stream) failed", "err", werr)
 		}
+		logger.Info("llmgateway: request complete (stream)",
+			"status", rec.HTTPStatus,
+			"latency_ms", rec.LatencyMS,
+			"ttfb_ms", rec.TTFBMs,
+			"provider", rec.Provider,
+			"tokens_in", rec.TokensIn,
+			"tokens_out", rec.TokensOut,
+			"cost_usd", rec.CostUSD)
 	}()
 
 	sr, _, streamErr := h.svc.Stream(r.Context(), rec.TenantID, rec.ClientID, req)
 	if streamErr != nil {
 		rec.Status = callStatus(streamErr)
 		rec.HTTPStatus = gatewayHTTPStatus(streamErr)
-		writeGatewayError(w, rec.HTTPStatus, gatewayErrType(streamErr), streamErr.Error())
+		writeGatewayErrorWithID(w, requestID, rec.HTTPStatus, gatewayErrType(streamErr), streamErr.Error())
 		return
 	}
 
