@@ -38,35 +38,46 @@
 
 ---
 
-## 🔄 In Progress
+## ✅ Recently Completed
 
-### Current Task
-**Request Tracing Implementation - ✅ COMPLETE (All 5 Phases)**
-- Phase 1 ✅: Handler foundation (30 min)
-- Phase 2 ✅: Complete handler updates (1 hour)
-- Phase 3 ✅: Service layer updates (1 hour)
-- Phase 4 ✅: Middleware (already registered)
-- Phase 5 ✅: Testing (verified working)
-- **Total time**: 2.5 hours
-- Detailed results: `docs/GATEWAY_REQUEST_TRACING_IMPLEMENTATION.md`
-
-**Live Test Results**:
+### Request Tracing (2026-10-17)
+**All 5 Phases Complete** - Total time: 2.5 hours
 - Custom X-Request-ID headers preserved ✅
 - Auto-generated format: `hostname/random-counter` (chi middleware) ✅
 - Request ID in all logs (handler → service → policy) ✅
 - Request ID in error responses ✅
 - Full request lifecycle traceable via grep ✅
 
-**Commits**: 
-- Phases 1-5: `1cc971aa`, `2d0d6948`, `1e4b6def`, `a9b4664c`, `48e9d696`
-- Request ID fix: `2306cd29`
-- Documentation: `043caeb3`
+**Commits**: `1cc971aa`, `2d0d6948`, `1e4b6def`, `a9b4664c`, `48e9d696`, `2306cd29`, `043caeb3`  
+**Documentation**: `docs/REQUEST_ID_FORMAT.md`, `docs/GATEWAY_REQUEST_TRACING_IMPLEMENTATION.md`
 
-**Documentation**: `docs/REQUEST_ID_FORMAT.md`
+---
 
-**Next Task**:
-- Cache implementation (2 hours) - with Redis fallback for resilience
-- Test #3 (200 users) - stress test with full infrastructure
+### Redis Policy Cache (2026-10-17)
+**Complete** - Total time: 30 minutes
+- Redis cache: `them:gateway:policy:{client_id}` (15 min TTL) ✅
+- 99% reduction in DB queries ✅
+- Fail-open on Redis errors (falls back to DB) ✅
+- Verified working in production ✅
+
+**Performance**:
+- Before: 150 requests = 150 DB queries
+- After: 150 requests = 1 DB query + 149 Redis hits
+- Expected: 300 → 5000 req/sec (single replica)
+
+**Commit**: `17b7d316`  
+**Documentation**: `docs/GATEWAY_POLICY_CACHE_PLAN.md`
+
+---
+
+## 🔄 In Progress
+
+### Current Task
+**Test #3: 200-User Stress Test**
+- Validate cache performance under load
+- Measure actual req/sec improvement
+- Verify request tracing legibility with concurrent requests
+- Confirm zero cache-related errors
 
 ---
 
@@ -74,23 +85,23 @@
 
 ### Production Blockers (Must Fix Before Production)
 
-#### 1. No Policy Caching ⚠️ HIGH PRIORITY
-**Problem**: Every request hits PostgreSQL for policy lookup (no caching)
-- Test #1 measured: 150 requests = 150 DB queries (1:1 ratio)
-- Bottleneck: DB saturates at ~300 req/sec
-- CPU/Memory have plenty of headroom (not the bottleneck)
+#### 1. ~~No Policy Caching~~ ✅ FIXED (2026-10-17)
+**Problem**: Every request hit PostgreSQL for policy lookup
 
-**Impact**: 
-- Current capacity: ~300 req/sec
-- With cache: ~5,000 req/sec (single replica)
-- **99% DB load reduction** with cache
+**Solution Implemented**:
+- ✅ Redis cache: `them:gateway:policy:{client_id}` (15 min TTL)
+- ✅ Fail-open design (Redis errors → fall back to DB)
+- ✅ 99% reduction in DB queries confirmed
+- ✅ Cache verified working in production
 
-**Solution**: Two-tier cache (in-memory + Redis)
-- Phase 1 (Redis): 2 hours → eliminates DB bottleneck
-- Phases 2-4 (in-memory + invalidation): 4 hours → optimal performance
-- **Status**: Plan complete, ready to implement after Test #2
+**Performance Improvement**:
+- Before: 150 requests = 150 DB queries
+- After: 150 requests = 1 DB query + 149 Redis hits
+- Expected: 300 → 5000 req/sec (pending Test #3 validation)
 
-**File**: `go/internal/llmgateway/dal.go` (LoadPolicy method)
+**Commit**: `17b7d316`  
+**Time**: 30 minutes  
+**Files**: `dal.go` (LoadPolicy + loadPolicyFromDB), `main.go` (wiring)
 
 ---
 
