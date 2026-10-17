@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/appflow"
@@ -84,13 +85,17 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// ── 0. Request ID ─────────────────────────────────────────────────────────
-	// Extract or generate request ID for tracing
-	requestID := middleware.GetReqID(r.Context())
+	// Extract request ID from context (already set by chi middleware.RequestID).
+	// The middleware accepts X-Request-ID header or auto-generates format:
+	// "hostname/random-base62-counter" (e.g., "go-bridge-1/WHGjJ9IU1x-000019")
+	ctx := r.Context()
+	requestID := middleware.GetReqID(ctx)
 	if requestID == "" {
-		requestID = fmt.Sprintf("%d", middleware.NextRequestID())
+		// Fallback only if middleware somehow didn't run (shouldn't happen)
+		requestID = uuid.New().String()
+		ctx = context.WithValue(ctx, middleware.RequestIDKey, requestID)
+		r = r.WithContext(ctx)
 	}
-	ctx := context.WithValue(r.Context(), middleware.RequestIDKey, requestID)
-	r = r.WithContext(ctx)
 
 	// Create logger with request_id for all logs in this request
 	var logger *slog.Logger
