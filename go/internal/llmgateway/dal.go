@@ -123,7 +123,8 @@ func (d *DAL) LookupClientTenant(ctx context.Context, tokenHash string) (clientI
 		WHERE token_hash = $1
 		LIMIT 1`
 
-	var configStatus, configStatusReason string
+	var configStatus string
+	var configStatusReason *string
 	err = d.pool.QueryRow(ctx, q, tokenHash).Scan(&clientID, &tenantID, &configStatus, &configStatusReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", nil
@@ -134,7 +135,10 @@ func (d *DAL) LookupClientTenant(ctx context.Context, tokenHash string) (clientI
 
 	// Enforce: client must be in 'valid' state to use gateway
 	if configStatus != "valid" {
-		reason := configStatusReason
+		reason := ""
+		if configStatusReason != nil {
+			reason = *configStatusReason
+		}
 		if reason == "" {
 			reason = fmt.Sprintf("client configuration status: %s", configStatus)
 		}

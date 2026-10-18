@@ -188,8 +188,6 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp, logger *slog.Logger) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 
-	logger.Info("DEBUG: dispatchAppFlowSync called", "client_id", ca.ClientID, "app_slug", ca.AppSlug)
-
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
@@ -208,7 +206,6 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 
-	// DEBUG: Log policy load result
 	if policy == nil {
 		logger.Warn("llmgateway: policy is nil (no policy assigned)", "client_id", ca.ClientID)
 	} else {
@@ -245,7 +242,6 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 	rec.TokensIn = output.TokensIn
 	rec.TokensOut = output.TokensOut
 
-	// DEBUG: Log workflow output
 	logger.Info("llmgateway: workflow output received",
 		"status", output.Status,
 		"tokens_in", output.TokensIn,
@@ -264,7 +260,6 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		rec.ModelServed = resolved
 		rec.Provider = modelToProvider(resolved)
 
-		// DEBUG: Log what we recorded
 		logger.Info("llmgateway: recorded model/provider",
 			"requested", req.Model,
 			"resolved", resolved,
@@ -345,7 +340,6 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 	rec.TokensIn = output.TokensIn
 	rec.TokensOut = output.TokensOut
 
-	// DEBUG: Log workflow output
 	logger.Info("llmgateway: workflow output received",
 		"status", output.Status,
 		"tokens_in", output.TokensIn,
@@ -364,7 +358,6 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		rec.ModelServed = resolved
 		rec.Provider = modelToProvider(resolved)
 
-		// DEBUG: Log what we recorded
 		logger.Info("llmgateway: recorded model/provider",
 			"requested", req.Model,
 			"resolved", resolved,
