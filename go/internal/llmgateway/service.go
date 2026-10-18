@@ -497,6 +497,7 @@ func estimateCost(provider, model string, in, out int) float64 {
 		"claude-opus-5":             {15.0 / 1e6, 75.0 / 1e6},
 		"gpt-4o":                    {5.0 / 1e6, 15.0 / 1e6},
 		"gpt-4o-mini":               {0.15 / 1e6, 0.6 / 1e6},
+		"mock-model-v1":             {0.1 / 1e6, 0.2 / 1e6}, // Mock pricing for testing
 	}
 	if r, ok := rates[model]; ok {
 		return r.in*float64(in) + r.out*float64(out)

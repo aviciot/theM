@@ -277,11 +277,13 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		}
 		rec.ModelServed = resolved
 		rec.Provider = modelToProvider(resolved)
+		rec.CostUSD = estimateCost(rec.Provider, resolved, output.TokensIn, output.TokensOut)
 
 		logger.Info("llmgateway: recorded model/provider",
 			"requested", req.Model,
 			"resolved", resolved,
-			"provider", rec.Provider)
+			"provider", rec.Provider,
+			"cost_usd", rec.CostUSD)
 	} else {
 		logger.Warn("llmgateway: policy is nil, cannot record model/provider")
 	}
@@ -389,11 +391,13 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		}
 		rec.ModelServed = resolved
 		rec.Provider = modelToProvider(resolved)
+		rec.CostUSD = estimateCost(rec.Provider, resolved, output.TokensIn, output.TokensOut)
 
 		logger.Info("llmgateway: recorded model/provider",
 			"requested", req.Model,
 			"resolved", resolved,
-			"provider", rec.Provider)
+			"provider", rec.Provider,
+			"cost_usd", rec.CostUSD)
 	} else {
 		logger.Warn("llmgateway: policy is nil, cannot record model/provider")
 	}
