@@ -1,5 +1,5 @@
 # Observability Storage Design — logs, activity, chat, tool calls
-# Status: PROPOSAL (not started) — 2026-10-18
+# Status: IN PROGRESS — Stage A step A1 done and tested live (2026-10-18); next A2 (see docs/CURRENT.md)
 # Related: LLM_GATEWAY_DESIGN.md (§12 bodies), adr-003-redis-streams-event-delivery.md, SCHEMA.md
 
 ---
