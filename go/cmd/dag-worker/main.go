@@ -967,6 +967,12 @@ func completeWithHistory(ctx context.Context, providerName, model string, maxTok
 
 	var p llm.Provider
 	switch providerName {
+	case "mock":
+		mockEvents := []llm.StreamEvent{
+			{Type: "text_delta", Delta: "Mock response for gateway mode. Tokens tracked."},
+			{Type: "stop", Usage: &llm.Usage{InputTokens: 10, OutputTokens: 25}},
+		}
+		p = llm.NewMockProvider(mockEvents)
 	case "anthropic", "":
 		p = llm.NewAnthropicProvider(apiKey, model, maxTokens)
 	default:
