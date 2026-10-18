@@ -243,6 +243,8 @@ docker logs them-go-worker --tail 5   # confirm polling
 | `them-traefik` | Reverse proxy — single entry point, path-based routing, sticky LB | **8088** (host), 127.0.0.1:**8089** (dashboard) | `traefik/` |
 | `them-postgres` | PG16 — DB: `them` | 5432 (internal) | bind mount `./data/them-postgres/pgdata` |
 | `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
+| `them-clickhouse` | Event store for logs/chat/tool-call/activity (`profiles: [events]`, `docker-compose.events.yml`, not started by default) | 8123/9000 (internal) | `db/clickhouse/`, bind mount `./data/them-clickhouse` |
+| `them-redis-events` | Event queue — separate Redis, AOF, `noeviction` (`profiles: [events]`) | 6379 (internal) | `redis/config/redis-events.conf`, bind mount `./data/them-redis-events` |
 | `them-auth-go` | Go auth service — UI-facing login/me/refresh/logout + verify/validate (replaces them-auth-service for the UI contract) | 8703 (internal) | `go/cmd/auth-server/`, `go/internal/authserver/` |
 | `them-auth-service` | Python Auth/IAM microservice — users/roles/teams/permissions admin CRUD only (UI auth moved to them-auth-go) | 8701 (internal) | `auth_service/` |
 | `them-go-bridge` | Go API gateway — all routes | 8002 (internal) | `go/` |

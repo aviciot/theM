@@ -20,6 +20,8 @@ coverage.xml
 logs/
 data/them-postgres/pgdata/
 data/them-redis/
+data/them-redis-events/
+data/them-clickhouse/
 data/them-logs/
 data/tenants/
 # Old volume paths (pre-rename)

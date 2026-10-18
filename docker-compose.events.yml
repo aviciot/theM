@@ -1,0 +1,101 @@
+# the-M — observability events stack (profile: events)
+# Design: docs/OBSERVABILITY_STORAGE_DESIGN.md (Stage A)
+#
+# Purely additive. Nothing in docker-compose.yml depends on these services, and no
+# existing container is changed by this file.
+#
+# This is an OVERLAY: it relies on the `them-network` network declared in docker-compose.yml,
+# so it must always be combined with the base file.
+#
+# ALWAYS name the services explicitly. A bare `up -d` would also reconcile every base
+# service and could recreate running containers.
+#
+#   docker compose --project-name them_gateway \
+#     -f docker-compose.yml -f docker-compose.events.yml \
+#     --profile events up -d them-clickhouse them-redis-events
+#
+# Secrets: run scripts/events-env.sh once (appends THE_M_EVENTS_* to .env, never
+# rewrites existing values). Required — there are no insecure defaults.
+
+services:
+
+  # ClickHouse — event store (append-only, analytics). Internal only: no host port,
+  # no Traefik labels. Reachable as them-clickhouse:8123 (HTTP) / :9000 (native).
+  them-clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: them-clickhouse
+    profiles: [events]
+    environment:
+      - CLICKHOUSE_DB=them_events
+      - CLICKHOUSE_USER=events_admin
+      - CLICKHOUSE_PASSWORD=${THE_M_EVENTS_CH_ADMIN_PASSWORD:?run scripts/events-env.sh}
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      # Consumed by db/clickhouse/002_users.sh on first start
+      - EVENTS_WRITER_PASSWORD=${THE_M_EVENTS_CH_WRITER_PASSWORD:?run scripts/events-env.sh}
+      - EVENTS_READER_PASSWORD=${THE_M_EVENTS_CH_READER_PASSWORD:?run scripts/events-env.sh}
+    volumes:
+      - ./data/them-clickhouse:/var/lib/clickhouse
+      - ./db/clickhouse:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Dedicated Redis for the event queue (Redis Streams). Separate from them-redis:
+  # noeviction + AOF, own memory budget, can be restarted without touching sessions
+  # or rate limits. Config: redis/config/redis-events.conf
+  them-redis-events:
+    image: redis:7-alpine
+    container_name: them-redis-events
+    profiles: [events]
+    command: >
+      redis-server /etc/redis/redis.conf
+      --requirepass ${THE_M_EVENTS_REDIS_PASSWORD:?run scripts/events-env.sh}
+    volumes:
+      - ./data/them-redis-events:/data
+      - ./redis/config/redis-events.conf:/etc/redis/redis.conf:ro
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDISCLI_AUTH\" ping 2>/dev/null | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      - REDISCLI_AUTH=${THE_M_EVENTS_REDIS_PASSWORD:?run scripts/events-env.sh}
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 640M
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # them-event-writer is added in the next Stage A step, once go/cmd/event-writer exists.

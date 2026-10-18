@@ -683,3 +683,63 @@ docker compose --project-name them_gateway \
 | `.env` variable | Container env var | Service(s) | Purpose |
 |---|---|---|---|
 | `THE_M_IDP_ENCRYPTION_KEY` | `IDP_ENCRYPTION_KEY` | `them-auth-go`, `them-go-bridge` | AES-256-GCM key for encrypting IdP `client_secret` at rest. Derived by `generate-env.sh`. Missing = startup failure. |
+
+---
+
+## 10. Observability Events Stack (profile: events)
+
+Additive stack for logs / chat / tool-call / activity storage. Design:
+`docs/OBSERVABILITY_STORAGE_DESIGN.md`. **Not part of the normal stack** — nothing in
+`docker-compose.yml` depends on it, and a normal `up` does not start it.
+
+| Container | Role | Port | Data |
+|---|---|---|---|
+| `them-clickhouse` | Event store (db `them_events`) | 8123 / 9000 (internal only) | `./data/them-clickhouse` |
+| `them-redis-events` | Event queue (Redis Streams, AOF, `noeviction`) | 6379 (internal only) | `./data/them-redis-events` |
+
+`them-redis-events` is deliberately separate from `them-redis`: the main instance runs
+`allkeys-lru`, which would silently evict queued events.
+
+### First-time setup
+
+```bash
+scripts/events-env.sh        # appends THE_M_EVENTS_* to .env; never rewrites existing lines
+```
+
+### Start / stop — ALWAYS name the services
+
+A bare `up -d` also reconciles every base service and can recreate running containers.
+
+```bash
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.events.yml \
+  --profile events up -d them-clickhouse them-redis-events
+
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.events.yml \
+  --profile events stop them-clickhouse them-redis-events
+```
+
+### Verify
+
+```bash
+docker ps --filter "name=them-clickhouse" --filter "name=them-redis-events" --format "table {{.Names}}\t{{.Status}}"
+docker exec them-clickhouse clickhouse-client --user events_admin --password "$THE_M_EVENTS_CH_ADMIN_PASSWORD" \
+  -q "SHOW TABLES FROM them_events"          # expect 5 events_* tables
+docker exec them-redis-events sh -c 'redis-cli -a "$REDISCLI_AUTH" ping'   # PONG
+```
+
+Schema and users are created on **first start of an empty data dir** from `db/clickhouse/`
+(`001_events.sql`, `002_users.sh`). To re-run them, stop the container and remove
+`./data/them-clickhouse` (destroys all stored events).
+
+| `.env` variable | Used by |
+|---|---|
+| `THE_M_EVENTS_CH_ADMIN_PASSWORD` | ClickHouse admin (DDL, init scripts) |
+| `THE_M_EVENTS_CH_WRITER_PASSWORD` | `events_writer` — INSERT only (event-writer) |
+| `THE_M_EVENTS_CH_READER_PASSWORD` | `events_reader` — SELECT only (Go query layer) |
+| `THE_M_EVENTS_REDIS_PASSWORD` | `them-redis-events` `requirepass` |
+
+Status: containers and scripts exist; **not yet started or tested live** (Stage A, step A1).
+`them-event-writer` is added in a later step.
+

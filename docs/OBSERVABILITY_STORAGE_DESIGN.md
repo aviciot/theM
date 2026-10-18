@@ -268,8 +268,9 @@ changes behavior. Phases 0–1 of the table below are Stage A.
 
 1. **New containers in a separate compose file** (`docker-compose.events.yml`, profile
    `events`) so a normal `up` does not start them: `them-clickhouse`, `them-redis-events`
-   (dedicated Redis, AOF on — not the sessions/rate-limit instance), `them-event-writer`
-   (new `go/cmd/event-writer`). `them-minio` is **not** part of Stage A (optional, §3).
+   (dedicated Redis, AOF on, `noeviction` — the main `them-redis` runs `allkeys-lru` with 256 MB,
+   which would silently evict queued events), `them-event-writer`
+   (new `go/cmd/event-writer`). `them-minio` **already exists** in the stack (FileGate quarantine + artifacts), so the optional S3 `BodyStore` backend (§3) needs no new container — only new buckets; it is not wired in Stage A.
 2. **Scripts:** ClickHouse DDL under `db/clickhouse/` (tables from §10, TTL, `events_writer`
    INSERT-only and `events_reader` SELECT-only users), an init script like the existing
    `docker cp ... psql` flow, `generate-env.sh` / `.ps1` additions that derive the new
@@ -283,6 +284,8 @@ changes behavior. Phases 0–1 of the table below are Stage A.
    suite runs against `postgres` and `clickhouse`; tenant-isolation tests; load test; then
    kill each component (Redis, ClickHouse, writer) and confirm the §6 behavior.
 5. **Docs:** `REDIS.md` (new keys), CLAUDE.md container map, `go/TEST_INDEX.md`, INDEX.
+
+**Stage A progress:** A1 (compose overlay, Redis conf, ClickHouse DDL + users, secrets script, runbook) written 2026-10-18, validated by `docker compose config` only — not yet started live. A2 (`internal/events` package), A3 (`event-writer` + its container), A4 (synthetic data, contract and failure tests) pending.
 
 **Stage A exit gate:** stack with the `events` profile healthy; synthetic events flow end to
 end; contract + isolation + failure tests green; `go test ./...` and the existing compose
