@@ -42,6 +42,9 @@ func (f *fakeDAL) LoadClientApp(_ context.Context, _ string) (*ClientApp, error)
 func (f *fakeDAL) LoadPolicy(_ context.Context, _, _ string) (*Policy, error) {
 	return nil, nil // No policy in tests = allow all (old behavior)
 }
+func (f *fakeDAL) SumMonthlySpend(_ context.Context, _ string) (float64, error) {
+	return 0, nil // No spend in tests
+}
 
 // fakeSlugResolver maps slugs to tenant IDs; satisfies tenantctx.SlugResolver.
 type fakeSlugResolver struct{ m map[string]string }

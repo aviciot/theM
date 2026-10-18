@@ -31,6 +31,8 @@ type DALWriter interface {
 	LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, error)
 	// LoadPolicy reads the client's assigned policy profile.
 	LoadPolicy(ctx context.Context, tenantID, clientID string) (*Policy, error)
+	// SumMonthlySpend returns total spend for current month in USD.
+	SumMonthlySpend(ctx context.Context, tenantID string) (float64, error)
 }
 
 // Handler implements POST /{tenant_slug}/llm/v1/chat/completions.
@@ -215,6 +217,22 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 			"max_tokens", policy.MaxTokensPerRequest)
 	}
 
+	// Check monthly budget before starting workflow
+	if policy != nil && policy.MonthlyBudgetUSD > 0 {
+		spent, spendErr := h.dal.SumMonthlySpend(r.Context(), tenantID)
+		if spendErr != nil {
+			logger.Warn("llmgateway: monthly spend check failed — fail-open", "err", spendErr)
+		} else if spent >= policy.MonthlyBudgetUSD {
+			logger.Warn("llmgateway: monthly budget exceeded", "spent", spent, "budget", policy.MonthlyBudgetUSD)
+			rec.Status = "rate_limited"
+			rec.HTTPStatus = http.StatusTooManyRequests
+			writeGatewayErrorWithID(w, requestID, http.StatusTooManyRequests, "budget_exceeded", "monthly budget exceeded")
+			return
+		} else {
+			logger.Info("llmgateway: budget check passed", "spent", spent, "budget", policy.MonthlyBudgetUSD)
+		}
+	}
+
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req, policy)
 	if err != nil {
 		rec.Status = "error"
@@ -311,6 +329,20 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		rec.HTTPStatus = http.StatusInternalServerError
 		writeGatewayErrorWithID(w, requestID, http.StatusInternalServerError, "policy_error", "failed to load policy")
 		return
+	}
+
+	// Check monthly budget before starting workflow
+	if policy != nil && policy.MonthlyBudgetUSD > 0 {
+		spent, spendErr := h.dal.SumMonthlySpend(r.Context(), tenantID)
+		if spendErr != nil {
+			logger.Warn("llmgateway: monthly spend check failed — fail-open", "err", spendErr)
+		} else if spent >= policy.MonthlyBudgetUSD {
+			logger.Warn("llmgateway: monthly budget exceeded (stream)", "spent", spent, "budget", policy.MonthlyBudgetUSD)
+			rec.Status = "rate_limited"
+			rec.HTTPStatus = http.StatusTooManyRequests
+			writeGatewayErrorWithID(w, requestID, http.StatusTooManyRequests, "budget_exceeded", "monthly budget exceeded")
+			return
+		}
 	}
 
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req, policy)
