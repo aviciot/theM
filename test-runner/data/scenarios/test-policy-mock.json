@@ -9,7 +9,7 @@
   "auth_mode": "token",
   "gateway_token": "172d93d74fa98d757593321dc45973f92f691e6d5a68a9f785cf1070eae2ea2b",
   "model": "fast",
-  "n_users": 50,
+  "n_users": 200,
   "messages": [
     "Hello! Test the mock provider.",
     "What is 2+2?",
