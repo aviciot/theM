@@ -45,7 +45,7 @@ func TestDBLLMCaller_Complete_Debug_UsesOverride(t *testing.T) {
 	})
 	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: store}
 
-	resp, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	resp, _, _, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_1",
 		Debug: true,
@@ -65,7 +65,7 @@ func TestDBLLMCaller_Complete_Debug_MissingOverride_FailsClearly(t *testing.T) {
 	store := &fakeDebugStore{overrides: map[string]debugcred.Override{}} // nothing stored
 	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: store}
 
-	_, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	_, _, _, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_1",
 		Debug: true,
@@ -80,7 +80,7 @@ func TestDBLLMCaller_Complete_Debug_StoreErrorFailsClearly(t *testing.T) {
 	store := &fakeDebugStore{err: errors.New("redis unavailable")}
 	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: store}
 
-	_, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	_, _, _, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_1",
 		Debug: true,
@@ -97,7 +97,7 @@ func TestDBLLMCaller_Complete_Debug_StoreErrorFailsClearly(t *testing.T) {
 func TestDBLLMCaller_Complete_Debug_NilStore_FailsClearly(t *testing.T) {
 	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: nil}
 
-	_, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	_, _, _, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_1",
 		Debug: true,
@@ -114,7 +114,7 @@ func TestDBLLMCaller_Complete_Debug_DifferentNode_DoesNotLeakOverride(t *testing
 	})
 	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: store}
 
-	_, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	_, _, _, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_2", // different node
 		Debug: true,
@@ -156,12 +156,12 @@ func TestDBLLMCaller_Complete_Debug_UsesOverrideBaseURL(t *testing.T) {
 	}}
 	caller := &dbLLMCaller{factory: &multiLLMFactory{}, debugStore: store}
 
-	_, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	_, _, _, err := caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_a", Debug: true,
 	})
 	require.NoError(t, err)
-	_, err = caller.Complete(context.Background(), appflow.InlineLLMRequest{
+	_, _, _, err = caller.Complete(context.Background(), appflow.InlineLLMRequest{
 		SystemPrompt: "sys", UserPrompt: "hi",
 		TenantID: "tenant-1", RunID: "run-1", NodeID: "llm_b", Debug: true,
 	})

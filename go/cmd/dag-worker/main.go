@@ -619,7 +619,7 @@ type anthropicAdapter struct {
 	p *llm.AnthropicProvider
 }
 
-func (a *anthropicAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (a *anthropicAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, int, int, error) {
 	msgs := []domain.Message{
 		{
 			Role:  domain.RoleUser,
@@ -629,18 +629,24 @@ func (a *anthropicAdapter) Complete(ctx context.Context, systemPrompt, userPromp
 	opts := llm.Options{SystemPrompt: systemPrompt}
 	ch, err := a.p.Stream(ctx, msgs, nil, opts)
 	if err != nil {
-		return "", fmt.Errorf("LLM stream start: %w", err)
+		return "", 0, 0, fmt.Errorf("LLM stream start: %w", err)
 	}
 	var sb strings.Builder
+	var tokensIn, tokensOut int
 	for ev := range ch {
 		switch ev.Type {
 		case "text_delta":
 			sb.WriteString(ev.Delta)
+		case "stop":
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.InputTokens
+				tokensOut = ev.Usage.OutputTokens
+			}
 		case "error":
-			return "", fmt.Errorf("LLM stream error: %w", ev.Error)
+			return "", 0, 0, fmt.Errorf("LLM stream error: %w", ev.Error)
 		}
 	}
-	return sb.String(), nil
+	return sb.String(), tokensIn, tokensOut, nil
 }
 
 // openAIAdapter adapts llm.OpenAIProvider to agentgen.LLMProvider.
@@ -648,7 +654,7 @@ type openAIAdapter struct {
 	p *llm.OpenAIProvider
 }
 
-func (a *openAIAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (a *openAIAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, int, int, error) {
 	msgs := []domain.Message{
 		{
 			Role:  domain.RoleUser,
@@ -658,18 +664,24 @@ func (a *openAIAdapter) Complete(ctx context.Context, systemPrompt, userPrompt s
 	opts := llm.Options{SystemPrompt: systemPrompt}
 	ch, err := a.p.Stream(ctx, msgs, nil, opts)
 	if err != nil {
-		return "", fmt.Errorf("LLM stream start: %w", err)
+		return "", 0, 0, fmt.Errorf("LLM stream start: %w", err)
 	}
 	var sb strings.Builder
+	var tokensIn, tokensOut int
 	for ev := range ch {
 		switch ev.Type {
 		case "text_delta":
 			sb.WriteString(ev.Delta)
+		case "stop":
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.InputTokens
+				tokensOut = ev.Usage.OutputTokens
+			}
 		case "error":
-			return "", fmt.Errorf("LLM stream error: %w", ev.Error)
+			return "", 0, 0, fmt.Errorf("LLM stream error: %w", ev.Error)
 		}
 	}
-	return sb.String(), nil
+	return sb.String(), tokensIn, tokensOut, nil
 }
 
 // mockAdapter is a zero-cost LLM stub for testing. Returns a canned response
@@ -684,14 +696,15 @@ var mockReplies = []string{
 	"Hello! I am the mock LLM. This response was generated locally at zero cost.",
 }
 
-func (m *mockAdapter) Complete(ctx context.Context, _, _ string) (string, error) {
+func (m *mockAdapter) Complete(ctx context.Context, _, _ string) (string, int, int, error) {
 	delay := time.Duration(50+rand.Intn(450)) * time.Millisecond
 	select {
 	case <-time.After(delay):
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", 0, 0, ctx.Err()
 	}
-	return mockReplies[rand.Intn(len(mockReplies))], nil
+	// Mock provider: return fake token counts for testing
+	return mockReplies[rand.Intn(len(mockReplies))], 10, 25, nil
 }
 
 var _ agentgen.LLMProvider = (*anthropicAdapter)(nil)
@@ -798,7 +811,7 @@ func (c *dbLLMCaller) ClassifyIntent(ctx context.Context, req appflow.RouterLLMR
 	}
 
 	userPrompt := fmt.Sprintf("User message: %s\n\nChoose one label from: %v", req.UserMessage, req.Labels)
-	raw, err := provider.Complete(ctx, req.SystemPrompt, userPrompt)
+	raw, _, _, err := provider.Complete(ctx, req.SystemPrompt, userPrompt)
 	if err != nil {
 		return "", 0, err
 	}
@@ -857,7 +870,7 @@ func (c *dbLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, ap
 // shared LLMProvider interface (used by the agent builder's interpreter and
 // its whole test suite). That's out of scope for this slice — see plan
 // docs/INLINE_NODES_PLAN.md §11 item 3 for the Phase 2 deferral.
-func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest) (string, error) {
+func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest) (string, int, int, error) {
 	providerName := req.ProviderName
 	if providerName == "" {
 		providerName = "anthropic"
@@ -872,7 +885,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 			// is a server misconfiguration, not "no override was requested,"
 			// so it must fail the same way a missing override does, never
 			// fall through to normal (tenant/platform) key resolution.
-			return "", fmt.Errorf("inline llm %q: debug run but no debug credential store configured on this worker", req.NodeID)
+			return "", 0, 0, fmt.Errorf("inline llm %q: debug run but no debug credential store configured on this worker", req.NodeID)
 		}
 		ov, found, err := c.debugStore.Get(ctx, req.TenantID, req.RunID, req.NodeID)
 		if err != nil {
@@ -880,7 +893,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 			// Redis error here is exactly the kind of "credential became
 			// unavailable" case that must not silently fall through to
 			// normal (tenant/platform) key resolution.
-			return "", fmt.Errorf("inline llm %q: debug credential lookup failed: %w", req.NodeID, err)
+			return "", 0, 0, fmt.Errorf("inline llm %q: debug credential lookup failed: %w", req.NodeID, err)
 		}
 		if !found {
 			// Absence-means-missing for a debug run (see debugcred package
@@ -890,7 +903,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 			// credential is genuinely unavailable, never "no override was
 			// ever requested." Fail clearly rather than resolve a different
 			// key the user never selected for this run.
-			return "", fmt.Errorf("inline llm %q: debug credential unavailable for this run (expired or evicted) — retry the debug run", req.NodeID)
+			return "", 0, 0, fmt.Errorf("inline llm %q: debug credential unavailable for this run (expired or evicted) — retry the debug run", req.NodeID)
 		}
 		providerName = ov.Provider
 		if ov.Model != "" {
@@ -913,7 +926,7 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 
 	provider, err := c.factory.NewProviderWithBaseURL(providerName, model, maxTokens, apiKey, baseURL)
 	if err != nil {
-		return "", fmt.Errorf("inline llm: create provider: %w", err)
+		return "", 0, 0, fmt.Errorf("inline llm: create provider: %w", err)
 	}
 
 	// Gateway mode: full message history passed through directly.
@@ -921,17 +934,17 @@ func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest
 		return completeWithHistory(ctx, providerName, model, maxTokens, apiKey, baseURL, req.GatewayMessages)
 	}
 
-	responseText, err := provider.Complete(ctx, req.SystemPrompt, req.UserPrompt)
+	responseText, tokensIn, tokensOut, err := provider.Complete(ctx, req.SystemPrompt, req.UserPrompt)
 	if err != nil {
-		return "", fmt.Errorf("inline llm: complete: %w", err)
+		return "", 0, 0, fmt.Errorf("inline llm: complete: %w", err)
 	}
-	return responseText, nil
+	return responseText, tokensIn, tokensOut, nil
 }
 
 // completeWithHistory calls the LLM using the full OpenAI-format message
 // history. System messages become the system prompt; all other messages are
 // passed in order as the conversation history to the llm.Provider.Stream call.
-func completeWithHistory(ctx context.Context, providerName, model string, maxTokens int, apiKey, baseURL string, msgs []appflow.GatewayMessage) (string, error) {
+func completeWithHistory(ctx context.Context, providerName, model string, maxTokens int, apiKey, baseURL string, msgs []appflow.GatewayMessage) (string, int, int, error) {
 	var systemPrompt string
 	var domainMsgs []domain.Message
 	for _, m := range msgs {
@@ -949,7 +962,7 @@ func completeWithHistory(ctx context.Context, providerName, model string, maxTok
 		})
 	}
 	if len(domainMsgs) == 0 {
-		return "", fmt.Errorf("inline llm: no user messages in gateway history")
+		return "", 0, 0, fmt.Errorf("inline llm: no user messages in gateway history")
 	}
 
 	var p llm.Provider
@@ -963,18 +976,24 @@ func completeWithHistory(ctx context.Context, providerName, model string, maxTok
 	opts := llm.Options{SystemPrompt: systemPrompt}
 	ch, err := p.Stream(ctx, domainMsgs, nil, opts)
 	if err != nil {
-		return "", fmt.Errorf("inline llm: gateway stream start: %w", err)
+		return "", 0, 0, fmt.Errorf("inline llm: gateway stream start: %w", err)
 	}
 	var sb strings.Builder
+	var tokensIn, tokensOut int
 	for ev := range ch {
 		switch ev.Type {
 		case "text_delta":
 			sb.WriteString(ev.Delta)
+		case "stop":
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.InputTokens
+				tokensOut = ev.Usage.OutputTokens
+			}
 		case "error":
-			return "", fmt.Errorf("inline llm: gateway stream error: %w", ev.Error)
+			return "", 0, 0, fmt.Errorf("inline llm: gateway stream error: %w", ev.Error)
 		}
 	}
-	return sb.String(), nil
+	return sb.String(), tokensIn, tokensOut, nil
 }
 
 var _ appflow.RouterLLMCaller = (*dbLLMCaller)(nil)

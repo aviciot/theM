@@ -358,6 +358,19 @@ type AppFlowWorkflowInput struct {
 	// in which case stepGate is never called and behavior is identical to
 	// today. Not persisted on the run row — purely an execution-time control.
 	StepMode bool `json:"step_mode,omitempty"`
+	// PolicyOverrideLLM when non-nil forces ALL LLM nodes in this workflow to use
+	// the specified provider and model, ignoring their own configured values. Used
+	// by the LLM Gateway to enforce gateway_policy_profiles.model/provider on
+	// profile app requests (Mode A: policy always wins).
+	PolicyOverrideLLM *PolicyLLMOverride `json:"policy_override_llm,omitempty"`
+}
+
+// PolicyLLMOverride carries gateway policy enforcement values that override
+// individual LLM node configurations when set.
+type PolicyLLMOverride struct {
+	Provider   string `json:"provider"`    // e.g. "anthropic", "mock"
+	Model      string `json:"model"`       // e.g. "claude-sonnet-4.5", "mock-model-v1"
+	MaxTokens  int    `json:"max_tokens"`  // per-request token cap from policy
 }
 
 // TemporalExecCfg carries Temporal execution controls resolved at workflow submit time.
@@ -376,6 +389,10 @@ type TemporalExecCfg struct {
 type AppFlowWorkflowOutput struct {
 	FinalText string `json:"final_text"`
 	Status    string `json:"status"` // "completed" | "failed" | "rejected"
+	// TokensIn is the total input tokens consumed by all LLM nodes in this workflow.
+	TokensIn int `json:"tokens_in"`
+	// TokensOut is the total output tokens consumed by all LLM nodes in this workflow.
+	TokensOut int `json:"tokens_out"`
 }
 
 // HILApprovalPayload is the signal payload for HIL approval/rejection.
@@ -522,6 +539,9 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 	// write named values, not just the single accumulated string. Not
 	// persisted outside this workflow execution.
 	vars := FlowVars{}
+
+	// Token tracking: accumulate tokens from all LLM nodes for gateway budget enforcement
+	var totalTokensIn, totalTokensOut int
 
 	for currentID != "" {
 		node, ok := nodeByID[currentID]
@@ -791,6 +811,20 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				model = input.LLMModel
 			}
 
+			// Mode A: Policy Override (LLM Gateway enforcement)
+			// When PolicyOverrideLLM is set, it overrides ALL LLM node config.
+			// This enforces gateway_policy_profiles.model/provider on profile app
+			// requests, ensuring budget and model compliance regardless of what the
+			// app builder configured.
+			maxTokens := cfg.MaxTokens
+			if input.PolicyOverrideLLM != nil {
+				provider = input.PolicyOverrideLLM.Provider
+				model = input.PolicyOverrideLLM.Model
+				if input.PolicyOverrideLLM.MaxTokens > 0 {
+					maxTokens = input.PolicyOverrideLLM.MaxTokens
+				}
+			}
+
 			// guardNotes collects non-blocking Text Guard flags from BOTH
 			// phases — see the agent case's identical comment for why.
 			var guardNotes []string
@@ -848,7 +882,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				Vars:            vars,
 				Provider:        provider,
 				Model:           model,
-				MaxTokens:       cfg.MaxTokens,
+				MaxTokens:       maxTokens,
 				Temperature:     cfg.Temperature,
 				OutputVar:       cfg.OutputVar,
 				Stream:          true,
@@ -901,6 +935,10 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done",
 					fmt.Sprintf("%s — Text Guard: %s", llmOut.ResponseText, strings.Join(guardNotes, ", ")), input.LogVerbosity)
 			}
+			// Accumulate tokens for gateway budget tracking
+			totalTokensIn += llmOut.TokensIn
+			totalTokensOut += llmOut.TokensOut
+
 			outVar := llmOut.OutputVar
 			if outVar == "" {
 				outVar = "output"
@@ -1122,6 +1160,11 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 		}
 	}
 
-	out = AppFlowWorkflowOutput{Status: "completed", FinalText: accumulated}
+	out = AppFlowWorkflowOutput{
+		Status:    "completed",
+		FinalText: accumulated,
+		TokensIn:  totalTokensIn,
+		TokensOut: totalTokensOut,
+	}
 	return
 }

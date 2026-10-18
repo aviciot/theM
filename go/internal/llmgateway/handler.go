@@ -29,6 +29,8 @@ type DALWriter interface {
 	ClientIDForHash(ctx context.Context, tokenHash string) string
 	// LoadClientApp resolves the app canvas app linked to the client, or nil.
 	LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, error)
+	// LoadPolicy reads the client's assigned policy profile.
+	LoadPolicy(ctx context.Context, tenantID, clientID string) (*Policy, error)
 }
 
 // Handler implements POST /{tenant_slug}/llm/v1/chat/completions.
@@ -186,6 +188,8 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp, logger *slog.Logger) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 
+	logger.Info("DEBUG: dispatchAppFlowSync called", "client_id", ca.ClientID, "app_slug", ca.AppSlug)
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
 		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
@@ -194,7 +198,27 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		logger.Info("llmgateway: request complete (appflow sync)", "status", rec.HTTPStatus, "latency_ms", rec.LatencyMS)
 	}()
 
-	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
+	// Load policy for Mode A enforcement (policy overrides app LLM config)
+	policy, polErr := h.dal.LoadPolicy(r.Context(), tenantID, ca.ClientID)
+	if polErr != nil {
+		logger.Warn("llmgateway: load policy failed (profile app)", "err", polErr)
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusInternalServerError
+		writeGatewayErrorWithID(w, requestID, http.StatusInternalServerError, "policy_error", "failed to load policy")
+		return
+	}
+
+	// DEBUG: Log policy load result
+	if policy == nil {
+		logger.Warn("llmgateway: policy is nil (no policy assigned)", "client_id", ca.ClientID)
+	} else {
+		logger.Info("llmgateway: policy loaded", "client_id", ca.ClientID,
+			"allowed_models", policy.AllowedModels,
+			"has_aliases", policy.ModelAliases != nil,
+			"max_tokens", policy.MaxTokensPerRequest)
+	}
+
+	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req, policy)
 	if err != nil {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
@@ -215,6 +239,38 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		rec.HTTPStatus = http.StatusBadGateway
 		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
 		return
+	}
+
+	// Extract tokens from workflow output for budget tracking
+	rec.TokensIn = output.TokensIn
+	rec.TokensOut = output.TokensOut
+
+	// DEBUG: Log workflow output
+	logger.Info("llmgateway: workflow output received",
+		"status", output.Status,
+		"tokens_in", output.TokensIn,
+		"tokens_out", output.TokensOut,
+		"response_length", len(output.FinalText))
+
+	// Record which model/provider was actually used (from policy override)
+	if policy != nil {
+		// Resolve alias to actual model
+		resolved := req.Model
+		if policy.ModelAliases != nil {
+			if aliasModel, ok := policy.ModelAliases[req.Model]; ok {
+				resolved = aliasModel
+			}
+		}
+		rec.ModelServed = resolved
+		rec.Provider = modelToProvider(resolved)
+
+		// DEBUG: Log what we recorded
+		logger.Info("llmgateway: recorded model/provider",
+			"requested", req.Model,
+			"resolved", resolved,
+			"provider", rec.Provider)
+	} else {
+		logger.Warn("llmgateway: policy is nil, cannot record model/provider")
 	}
 
 	rec.HTTPStatus = http.StatusOK
@@ -252,7 +308,17 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		logger.Info("llmgateway: request complete (appflow stream)", "status", rec.HTTPStatus, "latency_ms", rec.LatencyMS, "ttfb_ms", rec.TTFBMs)
 	}()
 
-	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req)
+	// Load policy for Mode A enforcement (policy overrides app LLM config)
+	policy, polErr := h.dal.LoadPolicy(r.Context(), tenantID, ca.ClientID)
+	if polErr != nil {
+		logger.Warn("llmgateway: load policy failed (profile app stream)", "err", polErr)
+		rec.Status = "error"
+		rec.HTTPStatus = http.StatusInternalServerError
+		writeGatewayErrorWithID(w, requestID, http.StatusInternalServerError, "policy_error", "failed to load policy")
+		return
+	}
+
+	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req, policy)
 	if err != nil {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
@@ -273,6 +339,38 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		rec.HTTPStatus = http.StatusBadGateway
 		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow returned "+output.Status)
 		return
+	}
+
+	// Extract tokens from workflow output for budget tracking
+	rec.TokensIn = output.TokensIn
+	rec.TokensOut = output.TokensOut
+
+	// DEBUG: Log workflow output
+	logger.Info("llmgateway: workflow output received",
+		"status", output.Status,
+		"tokens_in", output.TokensIn,
+		"tokens_out", output.TokensOut,
+		"response_length", len(output.FinalText))
+
+	// Record which model/provider was actually used (from policy override)
+	if policy != nil {
+		// Resolve alias to actual model
+		resolved := req.Model
+		if policy.ModelAliases != nil {
+			if aliasModel, ok := policy.ModelAliases[req.Model]; ok {
+				resolved = aliasModel
+			}
+		}
+		rec.ModelServed = resolved
+		rec.Provider = modelToProvider(resolved)
+
+		// DEBUG: Log what we recorded
+		logger.Info("llmgateway: recorded model/provider",
+			"requested", req.Model,
+			"resolved", resolved,
+			"provider", rec.Provider)
+	} else {
+		logger.Warn("llmgateway: policy is nil, cannot record model/provider")
 	}
 
 	rec.HTTPStatus = http.StatusOK
@@ -298,7 +396,8 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 // handle via AdmitDebug (no gate/session slot — gateway runs are internal),
 // compiles the AppFlowSpec, and starts the Temporal workflow.
 // Subscribe to the event bus BEFORE calling this for streaming paths.
-func (h *Handler) admitAndStartAppFlow(ctx context.Context, tenantID string, ca *ClientApp, req ChatRequest) (*execution.ExecutionHandle, temporalclient.WorkflowRun, error) {
+// When policy is non-nil, its model/provider override ALL LLM nodes in the workflow.
+func (h *Handler) admitAndStartAppFlow(ctx context.Context, tenantID string, ca *ClientApp, req ChatRequest, policy *Policy) (*execution.ExecutionHandle, temporalclient.WorkflowRun, error) {
 	handle, admitErr := h.lc.AdmitDebug(ctx, tenantID, ca.AppSlug, ca.EPSlug, 0)
 	if admitErr != nil {
 		return nil, nil, fmt.Errorf("llmgateway: admit debug: %w", admitErr)
@@ -356,6 +455,21 @@ func (h *Handler) admitAndStartAppFlow(ctx context.Context, tenantID string, ca 
 		LLMProviderName: llmCfg.ProviderName,
 		LLMProvider:     llmCfg.ProviderName,
 		LLMModel:        llmCfg.Model,
+	}
+
+	// Apply policy override if policy exists (Mode A: policy always wins)
+	if policy != nil {
+		// Resolve model from policy (handle aliases)
+		model := req.Model
+		if alias, ok := policy.ModelAliases[model]; ok {
+			model = alias
+		}
+
+		input.PolicyOverrideLLM = &appflow.PolicyLLMOverride{
+			Provider:  modelToProvider(model),
+			Model:     model,
+			MaxTokens: policy.MaxTokensPerRequest,
+		}
 	}
 
 	wfRun, startErr := h.lc.StartAppFlow(ctx, handle, input, false)

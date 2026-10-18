@@ -39,6 +39,9 @@ func (f *fakeDAL) ClientIDForHash(_ context.Context, _ string) string { return "
 func (f *fakeDAL) LoadClientApp(_ context.Context, _ string) (*ClientApp, error) {
 	return nil, nil
 }
+func (f *fakeDAL) LoadPolicy(_ context.Context, _, _ string) (*Policy, error) {
+	return nil, nil // No policy in tests = allow all (old behavior)
+}
 
 // fakeSlugResolver maps slugs to tenant IDs; satisfies tenantctx.SlugResolver.
 type fakeSlugResolver struct{ m map[string]string }

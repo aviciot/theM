@@ -23,7 +23,9 @@ type HTTPDoer interface {
 
 // LLMProvider is the interface for calling an LLM from a pipeline step.
 type LLMProvider interface {
-	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+	// Complete calls the LLM and returns (responseText, tokensIn, tokensOut, error).
+	// tokensIn/tokensOut are 0 when the provider doesn't report usage.
+	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, int, int, error)
 }
 
 // LLMFactory creates a provider for a given model and apiKey.
@@ -281,10 +283,14 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		}
 	}
 
-	out, err := provider.Complete(ctx, systemPrompt, userPrompt)
+	out, tokensIn, tokensOut, err := provider.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return fmt.Errorf("LLM complete: %w", err)
 	}
+
+	// Store tokens for potential usage tracking (currently unused in agentgen)
+	_ = tokensIn
+	_ = tokensOut
 
 	if cfg.OutputVar != "" {
 		vars[cfg.OutputVar] = out

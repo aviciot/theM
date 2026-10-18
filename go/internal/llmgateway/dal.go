@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -33,6 +34,9 @@ type Policy struct {
 	// MonthlyBudgetUSD is the rolling-month spend cap in USD. 0 = no cap.
 	MonthlyBudgetUSD float64
 }
+
+// ErrInvalidClientConfig is returned when a client's configuration violates gateway rules.
+var ErrInvalidClientConfig = errors.New("invalid gateway client configuration")
 
 // RequestRecord is the data written to them.gateway_requests after each call.
 type RequestRecord struct {
@@ -110,14 +114,34 @@ func (d *DAL) ClientIDForHash(ctx context.Context, tokenHash string) string {
 
 // LookupClientTenant resolves a token hash to the client ID and tenant ID.
 // Returns ("", "", nil) when no row matches — the caller treats this as
-// an authentication failure.
+// an authentication failure. Returns ErrInvalidClientConfig when the client
+// configuration violates gateway rules (e.g., missing required policy profile).
 func (d *DAL) LookupClientTenant(ctx context.Context, tokenHash string) (clientID, tenantID string, err error) {
-	const q = `SELECT id::text, tenant_id::text FROM them.gateway_clients WHERE token_hash = $1 LIMIT 1`
-	err = d.pool.QueryRow(ctx, q, tokenHash).Scan(&clientID, &tenantID)
+	const q = `
+		SELECT id::text, tenant_id::text, config_status, config_status_reason
+		FROM them.gateway_clients
+		WHERE token_hash = $1
+		LIMIT 1`
+
+	var configStatus, configStatusReason string
+	err = d.pool.QueryRow(ctx, q, tokenHash).Scan(&clientID, &tenantID, &configStatus, &configStatusReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", nil
 	}
-	return clientID, tenantID, err
+	if err != nil {
+		return "", "", err
+	}
+
+	// Enforce: client must be in 'valid' state to use gateway
+	if configStatus != "valid" {
+		reason := configStatusReason
+		if reason == "" {
+			reason = fmt.Sprintf("client configuration status: %s", configStatus)
+		}
+		return "", "", fmt.Errorf("%w: %s", ErrInvalidClientConfig, reason)
+	}
+
+	return clientID, tenantID, nil
 }
 
 // ClientApp holds the resolved app and entry-point slugs for a gateway client

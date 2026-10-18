@@ -198,6 +198,10 @@ type InlineLLMActivityOutput struct {
 	// OutputVar is echoed back so the workflow knows which var to set without
 	// re-parsing node config.
 	OutputVar string `json:"output_var"`
+	// TokensIn is the input token count reported by the provider (0 if unavailable).
+	TokensIn int `json:"tokens_in"`
+	// TokensOut is the output token count reported by the provider (0 if unavailable).
+	TokensOut int `json:"tokens_out"`
 }
 
 // HTTPActivityInput is the input to AppFlowHTTPActivity.
@@ -416,7 +420,9 @@ type RouterLLMCaller interface {
 // classification. The implementation resolves the API key from the DB using
 // ProviderName + TenantID + ApplicationID, so keys never reach workflow history.
 type InlineLLMCaller interface {
-	Complete(ctx context.Context, req InlineLLMRequest) (string, error)
+	// Complete calls the LLM and returns (responseText, tokensIn, tokensOut, error).
+	// tokensIn/tokensOut are 0 when the provider doesn't report usage.
+	Complete(ctx context.Context, req InlineLLMRequest) (string, int, int, error)
 }
 
 // InlineLLMRequest is the request passed to InlineLLMCaller.Complete.
@@ -854,7 +860,7 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 		maxTokens = 1024
 	}
 
-	responseText, err := a.InlineLLM.Complete(ctx, InlineLLMRequest{
+	responseText, tokensIn, tokensOut, err := a.InlineLLM.Complete(ctx, InlineLLMRequest{
 		SystemPrompt:    systemPrompt,
 		UserPrompt:      userPrompt,
 		GatewayMessages: input.GatewayMessages,
@@ -896,6 +902,8 @@ func (a *AppFlowActivities) InlineLLMActivity(ctx context.Context, input InlineL
 	return InlineLLMActivityOutput{
 		ResponseText: responseText,
 		OutputVar:    input.OutputVar,
+		TokensIn:     tokensIn,
+		TokensOut:    tokensOut,
 	}, nil
 }
 

@@ -641,10 +641,10 @@ type fakeInlineLLMCaller struct {
 	called   bool
 }
 
-func (f *fakeInlineLLMCaller) Complete(_ context.Context, req InlineLLMRequest) (string, error) {
+func (f *fakeInlineLLMCaller) Complete(_ context.Context, req InlineLLMRequest) (string, int, int, error) {
 	f.called = true
 	f.gotReq = req
-	return f.response, f.err
+	return f.response, 0, 0, f.err
 }
 
 // AF-WF-10: InlineLLMActivity renders prompts, calls the caller, and returns

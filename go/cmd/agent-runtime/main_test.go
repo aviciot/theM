@@ -327,8 +327,8 @@ func (f *stubLLMFactory) NewProvider(_, _ string, _ int, _ string) (agentgen.LLM
 // stubLLMProvider is a test double for agentgen.LLMProvider.
 type stubLLMProvider struct{ reply string }
 
-func (p *stubLLMProvider) Complete(_ context.Context, _, _ string) (string, error) {
-	return p.reply, nil
+func (p *stubLLMProvider) Complete(_ context.Context, _, _ string) (string, int, int, error) {
+	return p.reply, 0, 0, nil
 }
 
 // TestExecuteSkill_SkillSelectionByID verifies that when Message.Metadata contains

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -55,7 +56,17 @@ func GatewayClientMiddleware(db ClientTenantLookup) func(http.Handler) http.Hand
 			hashHex := fmt.Sprintf("%x", sum)
 
 			clientID, tenantID, err := db.LookupClientTenant(r.Context(), hashHex)
-			if err != nil || tenantID == "" {
+			if err != nil {
+				// Check if this is a configuration error (invalid client state)
+				if errors.Is(err, ErrInvalidClientConfig) {
+					writeGatewayMWError(w, http.StatusForbidden, err.Error())
+					return
+				}
+				// Other errors = authentication failure
+				writeGatewayMWError(w, http.StatusUnauthorized, "invalid or unknown gateway token")
+				return
+			}
+			if tenantID == "" {
 				writeGatewayMWError(w, http.StatusUnauthorized, "invalid or unknown gateway token")
 				return
 			}

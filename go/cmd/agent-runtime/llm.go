@@ -103,7 +103,7 @@ type anthropicProviderAdapter struct {
 	p *llm.AnthropicProvider
 }
 
-func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, int, int, error) {
 	msgs := []domain.Message{
 		{
 			Role:  domain.RoleUser,
@@ -113,18 +113,24 @@ func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, u
 	opts := llm.Options{SystemPrompt: systemPrompt}
 	ch, err := a.p.Stream(ctx, msgs, nil, opts)
 	if err != nil {
-		return "", fmt.Errorf("LLM stream start: %w", err)
+		return "", 0, 0, fmt.Errorf("LLM stream start: %w", err)
 	}
 	var sb strings.Builder
+	var tokensIn, tokensOut int
 	for ev := range ch {
 		switch ev.Type {
 		case "text_delta":
 			sb.WriteString(ev.Delta)
+		case "stop":
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.InputTokens
+				tokensOut = ev.Usage.OutputTokens
+			}
 		case "error":
-			return "", fmt.Errorf("LLM stream error: %w", ev.Error)
+			return "", 0, 0, fmt.Errorf("LLM stream error: %w", ev.Error)
 		}
 	}
-	return sb.String(), nil
+	return sb.String(), tokensIn, tokensOut, nil
 }
 
 // openAIProviderAdapter adapts llm.OpenAIProvider to agentgen.LLMProvider.
@@ -132,7 +138,7 @@ type openAIProviderAdapter struct {
 	p *llm.OpenAIProvider
 }
 
-func (a *openAIProviderAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (a *openAIProviderAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, int, int, error) {
 	msgs := []domain.Message{
 		{
 			Role:  domain.RoleUser,
@@ -142,18 +148,24 @@ func (a *openAIProviderAdapter) Complete(ctx context.Context, systemPrompt, user
 	opts := llm.Options{SystemPrompt: systemPrompt}
 	ch, err := a.p.Stream(ctx, msgs, nil, opts)
 	if err != nil {
-		return "", fmt.Errorf("LLM stream start: %w", err)
+		return "", 0, 0, fmt.Errorf("LLM stream start: %w", err)
 	}
 	var sb strings.Builder
+	var tokensIn, tokensOut int
 	for ev := range ch {
 		switch ev.Type {
 		case "text_delta":
 			sb.WriteString(ev.Delta)
+		case "stop":
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.InputTokens
+				tokensOut = ev.Usage.OutputTokens
+			}
 		case "error":
-			return "", fmt.Errorf("LLM stream error: %w", ev.Error)
+			return "", 0, 0, fmt.Errorf("LLM stream error: %w", ev.Error)
 		}
 	}
-	return sb.String(), nil
+	return sb.String(), tokensIn, tokensOut, nil
 }
 
 // mockProviderAdapter is a zero-cost LLM stub for testing. It waits a short
@@ -169,14 +181,14 @@ var mockReplies = []string{
 	"Hello! I am the mock LLM. This response was generated locally at zero cost.",
 }
 
-func (m *mockProviderAdapter) Complete(ctx context.Context, _, userPrompt string) (string, error) {
+func (m *mockProviderAdapter) Complete(ctx context.Context, _, userPrompt string) (string, int, int, error) {
 	delay := time.Duration(50+rand.Intn(450)) * time.Millisecond
 	select {
 	case <-time.After(delay):
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", 0, 0, ctx.Err()
 	}
-	return mockReplies[rand.Intn(len(mockReplies))], nil
+	return mockReplies[rand.Intn(len(mockReplies))], 10, 25, nil
 }
 
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)

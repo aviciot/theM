@@ -316,10 +316,10 @@ type fakeLLM struct {
 	reply          string
 }
 
-func (f *fakeLLM) Complete(_ context.Context, system, user string) (string, error) {
+func (f *fakeLLM) Complete(_ context.Context, system, user string) (string, int, int, error) {
 	f.capturedSystem = system
 	f.capturedUser = user
-	return f.reply, nil
+	return f.reply, 0, 0, nil
 }
 
 type fakeLLMFactory struct{ llm *fakeLLM }
