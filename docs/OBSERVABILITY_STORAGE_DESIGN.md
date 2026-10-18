@@ -13,13 +13,32 @@ is a poor fit for the operational Postgres.
 
 ## 2. Today
 
-| Data | Where | Notes |
-|---|---|---|
-| Gateway LLM calls | `gateway_requests` (Postgres) | metering + Requests screen + budget totals |
-| Gateway bodies (opt-in) | `gateway_request_bodies` (Postgres, Fernet) | designed in LLM_GATEWAY_DESIGN §12, not built |
-| Per-call usage | `run_usage` | tokens/cost per run |
-| Admin actions | `audit_logs` | INSERT-only for `them_app`, RLS |
-| Run events | Redis Streams (ADR-003) | delivery transport, not storage |
+Verified against the code on 2026-10-18 (not just docs). Everything below is Postgres; there is
+**no** ClickHouse, object store, Loki, or OTel in the stack. Operational logs are `slog` JSON
+(`internal/telemetry`) plus Prometheus metrics (`internal/metrics`).
+
+| Data | Table | Written by (sync, in the request path) | Tenant isolation | Gaps |
+|---|---|---|---|---|
+| Gateway LLM calls | `gateway_requests` (`db/100`) | `llmgateway.DAL.WriteRequest` (`llmgateway/dal.go:79`), called from a `defer` at 3 sites in `llmgateway/handler.go` (appflow sync ~193, appflow stream ~264, plain ~446) via the `DALWriter` interface | `tenant_id` + FORCE RLS (`app.tenant_id`) | metadata only; no bodies; no retention; write uses `r.Context()` (verify a client disconnect can't cancel the metering insert) |
+| Gateway bodies | `gateway_request_bodies` (`db/100`) | **nothing writes it yet** — table exists, Phase 4 of LLM_GATEWAY_DESIGN | `tenant_id` + FORCE RLS | not built |
+| Per-LLM-call usage (runs) | `run_usage` | `runrecorder.RecordUsage` (`runrecorder/recorder.go:170`) | RLS via `EXISTS` on `runs` (no own `tenant_id`) | no retention; `user_id` is an int, no app id |
+| Agent steps / tool calls (runs) | `run_steps` | `runrecorder.RecordAgentStep` (`:191`), `appflow/activities.go:1195` | RLS via `runs` | holds `tool_call_id`, `input`, `output`; **no dedicated MCP/tool-call log** found |
+| Conversation | `task_messages` (JSONB `parts`) | `history/pgx.go:160,229` | RLS via parent task | unbounded growth, no retention |
+| Middleware / guard decisions | `middleware_audit` | `middleware/job.go:356` | has `application_id`, **no `tenant_id`**; RLS via parent | cannot be filtered by tenant without a join |
+| Admin actions | `audit_logs` | `admin/dal/audit_logs.go:67` — admin CRUD only | `tenant_id` (added in `db/026`), `them_app` is INSERT-only | not tamper-evident; not transactional with the action |
+| User activity (login, logout, SSO, access) | **none** | `authserver` only emits `slog` lines; `user_sessions`; last SSO outcome in Redis (24 h TTL) | — | **no durable user-activity record at all** |
+| Run events | Redis Streams (ADR-003) | `runstream` | per-run key | delivery transport, not storage |
+
+Retention: no retention/cleanup job exists for any of these (only tenant-delete cascades in
+`admin/dal/tenants.go`). Every table above grows forever today.
+
+Existing seams that make this cheap to add:
+- `llmgateway.DALWriter` is already an interface, injected in tests — the first producer to
+  switch to an `EventSink`.
+- `runrecorder.Recorder` already wraps a `DBQuerier` and is the single choke point for
+  usage / steps / tasks.
+- `history/pgx.go` is the single writer of `task_messages`.
+- Redis Streams are already operated (ADR-003) — the queue tech is not new to the team.
 
 ## 3. Decision (summary)
 
@@ -105,6 +124,37 @@ Queue length and consumer lag are alerting signals: alarm on lag > N minutes and
   (single stream per event class; per-tenant streams only if a noisy tenant needs
   isolation). Document in `REDIS.md` when built.
 
+### 7.1 Mapping from today's Postgres tenancy
+
+How tenant separation works now, and what it means for the event store:
+
+- **Today:** roles `them_app` (RLS enforced), `them_admin` (BYPASSRLS, cross-tenant reads
+  such as slug resolution), `them_owner`. Tenant-scoped tables are `FORCE ROW LEVEL SECURITY`
+  keyed on `app.tenant_id`, which Go sets per transaction via `db.Pools.BeginTenantTx`
+  (`internal/db/db.go:137`). A plain pool query without the GUC fails silently (returns no
+  rows). Tenant comes from the verified token / `epconfig`, never from request input.
+- **Event-store rule:** the tenant id on an event must come from the same trusted source
+  (token → `tenantctx` / `epconfig`), set by the **producer's Go code**, never from payload
+  or headers. `EventSink.Emit` takes a typed `TenantID` that is required — an empty value is
+  rejected (same pattern as `runrecorder.ErrMissingTenantID`).
+- **Denormalize `tenant_id` onto every event.** Today `run_usage`, `run_steps`,
+  `task_messages` and `middleware_audit` have no own `tenant_id` and rely on parent-table RLS
+  or a join. That does not work in ClickHouse (no RLS, no cheap joins) — the writer or the
+  producer must resolve and stamp `tenant_id` (and `application_id`) at emit time.
+- **Read path = the only isolation boundary.** One Go package (`internal/events/query`)
+  builds all ClickHouse SQL and always appends `tenant_id = ?` from the request's tenant
+  context; no handler builds ClickHouse SQL itself, and ClickHouse is not reachable from the
+  frontend or from tenants. Cross-tenant ("platform") reports use a separate, explicitly
+  named code path and permission, mirroring `them_admin`.
+- **ClickHouse credentials:** two users — `events_writer` (INSERT only) and `events_reader`
+  (SELECT only, row policy `tenant_id = {tenant}` optional second layer). Neither can DDL.
+- **Test (mirrors `internal/db/rls_integration_test.go`):** emit events for tenant A and B,
+  assert every query function returns zero rows of the other tenant, and that an
+  `Emit` with empty tenant is rejected.
+- **Tenant deletion:** `admin/dal/tenants.go` already cascades deletes across tables; add the
+  ClickHouse delete (`ALTER ... DELETE WHERE tenant_id`) and body-store prefix delete to that
+  flow, or tenant offboarding will leave data behind.
+
 ## 8. Retention, privacy, compliance
 
 - Retention is **per tenant, per event class**: e.g. operational 90 d, audit 1–7 y,
@@ -146,6 +196,23 @@ events_audit         (… action, before_ref, after_ref, prev_hash, hash)
 existing Requests screen and budget totals.
 
 ## 11. Phases
+
+### Where to start (concrete)
+
+Start with **gateway requests**: highest volume, already behind an interface, already tenant-keyed.
+
+1. New package `go/internal/events/` with `Event` types, `EventSink` interface, an in-memory
+   bounded sink, and metrics. Tenant id required.
+2. In `llmgateway`, replace the three `h.dal.WriteRequest(...)` defers with a small helper
+   that (a) still writes Postgres (dual-write) and (b) calls `sink.Emit`. Use a context that
+   is not cancelled by client disconnect (`context.WithoutCancel`) for both.
+3. Do the same later for `runrecorder` (usage, steps), `history` (messages), `middleware`
+   (audit), and add the missing producers: login/logout/SSO in `authserver`, and a tool-call
+   event at the MCP / agent tool-execution point.
+
+Heads-up: `go/internal/llmgateway/dal.go` and `middleware.go` currently have uncommitted
+changes in the working tree — land or stash those before starting Phase 0 so the refactor
+does not collide with them.
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
