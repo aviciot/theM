@@ -55,8 +55,11 @@ Existing seams that make this cheap to add:
 4. **A queue sits between producers and ClickHouse**, behind a Go interface. Start with
    Redis Streams; swap to NATS JetStream or Kafka for very large deployments without
    touching producers.
-5. **One architecture for all sizes.** No "small mode in Postgres" — two backends means
-   double the code and double the tests. Small installs just run the same containers.
+5. **One architecture for all sizes, backend behind an interface.** Writes go through
+   `EventSink`, reads through a narrow `EventStore` (§4.1). Postgres (today's queries, moved
+   behind the interface) and ClickHouse are the two implementations. The Postgres one is
+   not a second product: it is the existing code, kept as the migration/rollback path and
+   not extended with new features. Small installs run the same containers as large ones.
 
 ## 4. Architecture
 
@@ -82,6 +85,47 @@ gateway / agent-runtime / admin API / dag-worker
   impractical.
 - Redis for the queue is a **separate instance** from sessions / rate limits
   (`them:session:*`, `rl:them:*`) so log load and maintenance cannot affect auth.
+
+### 4.1 Storage abstraction (switch backends without touching callers)
+
+No handler, activity, or screen writes or reads event tables directly. Two interfaces in
+`go/internal/events/`:
+
+```go
+// Write side — fire and forget, tenant required.
+type EventSink interface {
+    Emit(ctx context.Context, e Event) error
+}
+
+// Read side — one method per product use case, tenant always an explicit argument.
+type EventStore interface {
+    ListGatewayRequests(ctx context.Context, tenant TenantID, f RequestFilter) ([]GatewayRequest, error)
+    UsageByDay(ctx context.Context, tenant TenantID, r TimeRange, by GroupBy) ([]UsagePoint, error)
+    ToolCallsForRun(ctx context.Context, tenant TenantID, runID string) ([]ToolCall, error)
+    UserActivity(ctx context.Context, tenant TenantID, f ActivityFilter) ([]Activity, error)
+}
+```
+
+Implementations, chosen by config (`THE_M_EVENTS_BACKEND=postgres|clickhouse|dual`):
+
+| Backend | What it is | Role |
+|---|---|---|
+| `postgres` | Today's `INSERT`/`SELECT` code moved behind the interfaces (tenant GUC via `BeginTenantTx` unchanged) | Default until Phase 2; rollback path afterwards. Frozen — no new features |
+| `clickhouse` | Queue → writer → ClickHouse; reads via the tenant-injecting query package (§7.1) | Target backend |
+| `dual` | Writes to both, reads from a configured primary; a comparison job counts mismatches | Used during migration only |
+
+Rules that keep this cheap:
+- **Shape the interface by product use cases, not by SQL.** If a screen needs a new query, add
+  a method; never expose a generic `Query(sql)`.
+- **Narrow on purpose.** Only what the product uses today. Free-text search or ad-hoc
+  analytics over content is *not* promised on the Postgres backend — those methods return
+  `ErrNotSupported` there, and the UI hides the feature.
+- **One contract test suite** runs against every backend (same fixtures, same expected
+  results, plus tenant-isolation cases), so backends cannot drift.
+- **Metering/budget stays out of this interface.** Enforcement counters stay in
+  Postgres/Redis as today (§5).
+- Event types are plain Go structs with stable field names; the ClickHouse schema and the
+  Postgres tables are both mappings of those structs.
 
 ## 5. Event classes — durability differs
 
@@ -216,9 +260,9 @@ does not collide with them.
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| 0 | `EventSink` Go interface + in-memory implementation + event schema + metrics (`emitted`, `dropped`, `lag`) | Producers compile against interface; no behavior change |
+| 0 | `EventSink` + `EventStore` interfaces (§4.1), **`postgres` backend = today's gateway-request queries moved behind them**, backend config switch, event schema, metrics (`emitted`, `dropped`, `lag`), shared contract test suite | Gateway handler and Requests screen use the interfaces; behavior identical; contract + tenant-isolation tests green on `postgres` |
 | 1 | Redis Streams sink (dedicated instance) + `event-writer` service + ClickHouse container + `events_gateway_request` | Dual-write: gateway writes Postgres **and** emits events; counts match over 7 days |
-| 2 | Read API in Go (tenant-injected) + Requests screen reads from ClickHouse; Postgres `gateway_requests` becomes metering-only with short retention | UI parity; tenant-isolation tests |
+| 2 | Flip reads to the `clickhouse` backend by config (tenant-injected query package); Postgres `gateway_requests` becomes metering-only with short retention. Rollback = flip config back to `postgres`/`dual` | UI parity; same contract suite green on `clickhouse`; tenant-isolation tests |
 | 3 | Tool calls, user activity, run steps as events | Activity feed + per-user history screens |
 | 4 | Content capture via `BodyStore` — default ClickHouse bodies table, **S3/MinIO optional** backend (replaces Postgres `gateway_request_bodies` plan); retention job ships in the same phase | Encryption + permission + retention tests on the default backend; S3 backend added only when files/large payloads or customer requirements need it |
 | 5 | Audit outbox + hash chain; per-tenant retention settings in app JSON | Compliance export works |
