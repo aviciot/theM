@@ -1,26 +1,74 @@
 # Current Session State — the-M
-# Last updated: 2026-10-10
+# Last updated: 2026-10-18
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `fbb5bb40` — feat(ui): add GW Profile badge on app card when gateway entry point exists
-Remote: `origin` → `aviciot/theM` on GitHub (pushed)
+HEAD: `cf443612` — fix(gateway): support mock provider in gateway history mode (2026-10-18; not pushed)
+Remote: `origin` → `aviciot/theM` on GitHub
 
-Recent commits (this session):
+Recent commits relevant to the observability-events work (this session):
 ```
-fbb5bb40  feat(ui): add GW Profile badge on app card when gateway entry point exists
-4baf3358  feat(canvas): add gateway mode note to LLM node properties panel
-cc9723b2  feat(gateway): Step 6 — full messages array passthrough to inline LLM node
-a913d8e1  feat(gateway): Step 5 — GatewayClientMiddleware + AppFlow E2E working
-e16c56d3  fix(admin): add 'gateway' to validEPTypes allowlist
-f5a5782f  feat(gateway): Step 4 — gateway entry point type + profile app selector UI
-0f1d181c  feat(llmgateway): Step 3 — AppFlow dispatch for gateway profile apps
-5c4b3777  refactor(gateway): remove inline pipeline — profiles redesigned as gateway-entry App Canvas apps
-7e3e5bb3  feat(schema): migration 120 — gateway entry point type + app_id on gateway_clients
+2c52eafe  docs(events): record Stage A1 live test results
+6272d932  feat(events): add events compose overlay, ClickHouse schema, event Redis and secrets script
+f6d2aaaf  docs(observability): two-stage rollout plan and event-writer failure cases
+1474e266  docs(observability): add EventSink/EventStore backend abstraction (postgres|clickhouse|dual)
+521beaae  docs(observability): ground design in current code — log writers, tenancy mapping, start point
 ```
+(Interleaved gateway commits `893144a2`, `ceb137e8`, `cf443612` are separate work — policy override /
+token tracking — not part of this track.)
+
+---
+
+## Observability Events — Stage A, step A1 COMPLETE (2026-10-18)
+
+**Goal:** scalable storage for logs, user activity, chat, tool calls (ClickHouse + queue) without
+touching the running app. **Design (read first): `docs/OBSERVABILITY_STORAGE_DESIGN.md`** — two stages:
+Stage A = build/deploy new pieces wired to nothing; Stage B = integrate one area at a time behind
+`THE_M_EVENTS_<AREA>=off|dual|clickhouse` flags (default off).
+
+**Done and tested live in A1:**
+- `docker-compose.events.yml` (profile `events`): `them-clickhouse` (db `them_events`), `them-redis-events`
+  (separate Redis: AOF, `noeviction`, password). Internal only, no host ports.
+- `db/clickhouse/001_events.sql` (5 tables: gateway_request, tool_call, user_activity, audit, bodies, with TTLs),
+  `002_users.sh` (`events_writer` INSERT-only, `events_reader` SELECT-only).
+- `scripts/events-env.sh` appends `THE_M_EVENTS_*` secrets to `.env` (done on this host); `generate-env.sh` and
+  `.env.example` updated. `generate-env.ps1` NOT updated (already behind: no MinIO/RLS vars).
+- Runbook §10 + CLAUDE.md container map updated. Live results are recorded in runbook §10.
+
+**Deployment state:** `them-clickhouse` and `them-redis-events` are RUNNING and healthy on this host;
+nothing else uses them. Existing containers were not touched. One harmless test row remains in
+`events_user_activity` (tenant `00000000-0000-0000-0000-0000000000a1`, expires by TTL).
+
+**Start/stop — ALWAYS name the services** (a bare `up -d` can recreate running containers):
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.events.yml \
+  --profile events up -d them-clickhouse them-redis-events
+```
+
+**Next (one step per session, per CLAUDE.md):**
+1. **A2 — `go/internal/events/` package:** `Event` types (tenant required), `EventSink` / `EventStore`
+   interfaces (design §4.1), in-memory sink, Redis Streams sink, ClickHouse backend, a COPY of today's
+   gateway-request queries as the `postgres` backend, tenant-injecting query package, metrics, contract
+   test suite. No live service imports it. Update `go/TEST_INDEX.md`, `go/CLAUDE.md` package map,
+   `docs/implementation-status.md`, `docs/REDIS.md` (new `them:events:*` keys).
+2. **A3 — `go/cmd/event-writer` + `them-event-writer` container** (consumer group, batching, DLQ,
+   XAUTOCLAIM reaper, last-insert gauge — design §6.1).
+3. **A4 — synthetic multi-tenant load + failure tests** (kill Redis / ClickHouse / writer; every §6.1 row).
+4. Then Stage B, one area at a time, gateway requests first.
+
+**Known blockers / cautions:**
+- Working tree has uncommitted changes in `go/` (appflow, agent-runtime, dag-worker, agentgen, llmgateway)
+  that are not from this track. Do not mix them into events commits — stage files explicitly.
+- `go/internal/llmgateway/` is under active parallel change; Stage B area 1 must wait until it is committed.
+- Verify (not yet tested): the gateway metering insert uses `r.Context()` — a client disconnect may cancel it.
+
+**New hard constraints:**
+- Event `tenant_id` must come from trusted server-side context (token / epconfig), never from payload.
+- Metering/budget enforcement stays in Postgres/Redis; the events store is for reporting only.
+- Never point events at `them-redis` (it is `allkeys-lru` and would evict events).
 
 ---
 
