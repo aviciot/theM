@@ -154,6 +154,21 @@ dedupes (ReplacingMergeTree on `event_id`) or queries tolerate duplicates.
 Queue length and consumer lag are alerting signals: alarm on lag > N minutes and on any
 `dropped_events` > 0.
 
+### 6.1 Event-writer failure cases
+
+| Case | What goes wrong | Design answer |
+|---|---|---|
+| **Writer down for a long time** | Queue grows until `them-redis-events` hits `maxmemory` | Per-stream `MAXLEN ~` cap and `maxmemory` with `noeviction` (Redis rejects writes rather than silently evicting). Producers see the rejection and apply the §5 rules: operational events are dropped and counted; audit events go to the Postgres outbox and are relayed later. Alert at 70 % of the cap, well before it fills. Audit events live in their own stream so operational traffic cannot push them out |
+| **Poison event** | One malformed or oversized event fails every retry and blocks its batch | On batch failure, retry with bisection to isolate the bad row; after N attempts move it to a dead-letter stream (`them:events:dlq`) with the error, ack it, and continue. DLQ count > 0 alerts; a small admin tool can inspect and replay |
+| **Crash mid-batch** | Rows may be inserted but not yet acked, so the batch is delivered again | Ack only after a successful ClickHouse insert. Duplicates are expected and harmless: `event_id` dedupe (ReplacingMergeTree) plus idempotent insert tokens where ClickHouse supports them |
+| **Catching up after an outage** | Backlog is large; naive replay overloads ClickHouse or never catches up | Writer drains in large batches with bounded concurrency and a rate limit; drain rate must exceed peak ingest rate (checked in the load test); metric `backlog_eta_seconds` |
+| **Several writers** | Double processing, or events stuck with a dead consumer | One consumer group, N replicas; each event goes to one consumer. A reaper uses `XAUTOCLAIM` to take over events idle longer than a timeout |
+| **Writer up but ClickHouse rejecting** (schema drift, disk full, auth) | Looks healthy but nothing lands | Separate "last successful insert" gauge; alert when it is older than N minutes even if the writer process is up |
+| **Silent failure** | Nobody notices any of the above | Required alerts: queue length, consumer lag, DLQ count, `dropped_events`, last successful insert age, writer restarts. Wire into the existing Prometheus metrics (`internal/metrics`) |
+| **Version skew** | Producer emits a new event field the writer doesn't know (rolling deploys) | Events carry `schema_version`; the writer ignores unknown fields and sends events with an unknown version to the DLQ rather than guessing |
+
+Stage A's kill tests (§11) must cover each row above, not only "ClickHouse down".
+
 ## 7. Tenancy (hard rule)
 
 - Every event carries `tenant_id`, `application_id` (and `entry_point_id` when applicable),
@@ -241,28 +256,70 @@ existing Requests screen and budget totals.
 
 ## 11. Phases
 
-### Where to start (concrete)
+### Where to start (concrete) — two stages
 
-Start with **gateway requests**: highest volume, already behind an interface, already tenant-keyed.
+The work is split so that **nothing running is touched until everything new is built and
+proven**. Stage A is purely additive; Stage B integrates one area at a time.
 
-1. New package `go/internal/events/` with `Event` types, `EventSink` interface, an in-memory
-   bounded sink, and metrics. Tenant id required.
-2. In `llmgateway`, replace the three `h.dal.WriteRequest(...)` defers with a small helper
-   that (a) still writes Postgres (dual-write) and (b) calls `sink.Emit`. Use a context that
-   is not cancelled by client disconnect (`context.WithoutCancel`) for both.
-3. Do the same later for `runrecorder` (usage, steps), `history` (messages), `middleware`
-   (audit), and add the missing producers: login/logout/SSO in `authserver`, and a tool-call
-   event at the MCP / agent tool-execution point.
+#### Stage A — build and deploy the new pieces, wired to nothing (no impact on the live app)
+
+Rule: no existing service imports the new code, and no existing container or compose file
+changes behavior. Phases 0–1 of the table below are Stage A.
+
+1. **New containers in a separate compose file** (`docker-compose.events.yml`, profile
+   `events`) so a normal `up` does not start them: `them-clickhouse`, `them-redis-events`
+   (dedicated Redis, AOF on — not the sessions/rate-limit instance), `them-event-writer`
+   (new `go/cmd/event-writer`). `them-minio` is **not** part of Stage A (optional, §3).
+2. **Scripts:** ClickHouse DDL under `db/clickhouse/` (tables from §10, TTL, `events_writer`
+   INSERT-only and `events_reader` SELECT-only users), an init script like the existing
+   `docker cp ... psql` flow, `generate-env.sh` / `.ps1` additions that derive the new
+   secrets from `secrets.local` (never committed), healthchecks, and a runbook section in
+   `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md`.
+3. **New Go code, unused by live services:** `go/internal/events/` — `Event` types,
+   `EventSink` / `EventStore` (§4.1), in-memory sink, Redis Streams sink, ClickHouse backend,
+   a **copy** of today's gateway-request queries as the `postgres` backend (copied, not moved —
+   the live handler keeps using its own code), tenant-injecting query package, metrics.
+4. **Prove it with synthetic data:** a test tool emits fake multi-tenant events; the contract
+   suite runs against `postgres` and `clickhouse`; tenant-isolation tests; load test; then
+   kill each component (Redis, ClickHouse, writer) and confirm the §6 behavior.
+5. **Docs:** `REDIS.md` (new keys), CLAUDE.md container map, `go/TEST_INDEX.md`, INDEX.
+
+**Stage A exit gate:** stack with the `events` profile healthy; synthetic events flow end to
+end; contract + isolation + failure tests green; `go test ./...` and the existing compose
+health smoke show **zero change** for the live stack.
+
+#### Stage B — integrate one area at a time
+
+Each area gets its own flag, `THE_M_EVENTS_<AREA>=off|dual|clickhouse`, **default `off`**, so
+deploying the code is a no-op until the flag is flipped, and rollback is a flag flip.
+Per area: (1) swap the producer to the sink/interface behind the flag, (2) flip to `dual`,
+verify counts and contents match over ~7 days, (3) flip reads to `clickhouse`, (4) freeze or
+trim the Postgres table and add retention. Finish one area before starting the next.
+
+Suggested order (lowest risk first):
+
+| # | Area | Producer(s) to change | Why this position |
+|---|---|---|---|
+| 1 | Gateway requests | 3 `WriteRequest` defers in `llmgateway/handler.go` → helper that calls the sink; use `context.WithoutCancel` for the write | Highest volume, already behind `DALWriter`, tenant-keyed |
+| 2 | User activity | new producers in `authserver` (login/logout/SSO) | Greenfield — nothing to migrate or compare |
+| 3 | Tool calls | new event at the MCP / agent tool-execution point | Greenfield |
+| 4 | Run usage + steps | `runrecorder.RecordUsage` / `RecordAgentStep`, `appflow/activities.go` | Touches the run path; dag-worker restart needed (trigger map) |
+| 5 | Conversation messages | `history/pgx.go` | Large, sensitive; needs content rules (§8) |
+| 6 | Middleware audit | `middleware/job.go` | Stamp `tenant_id` at emit time (§7.1) |
+| 7 | Admin audit | `admin/dal/audit_logs.go` + outbox | Strictest durability — last |
+| 8 | Bodies | new `BodyStore` writer | Needs retention shipped with it |
 
 Heads-up: `go/internal/llmgateway/dal.go` and `middleware.go` currently have uncommitted
-changes in the working tree — land or stash those before starting Phase 0 so the refactor
-does not collide with them.
+changes in the working tree — land or stash those before starting Stage B area 1.
+
+Phases 0–1 below are **Stage A** (additive, wired to nothing); phase 2 onward is **Stage B**,
+applied per area behind its flag.
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| 0 | `EventSink` + `EventStore` interfaces (§4.1), **`postgres` backend = today's gateway-request queries moved behind them**, backend config switch, event schema, metrics (`emitted`, `dropped`, `lag`), shared contract test suite | Gateway handler and Requests screen use the interfaces; behavior identical; contract + tenant-isolation tests green on `postgres` |
-| 1 | Redis Streams sink (dedicated instance) + `event-writer` service + ClickHouse container + `events_gateway_request` | Dual-write: gateway writes Postgres **and** emits events; counts match over 7 days |
-| 2 | Flip reads to the `clickhouse` backend by config (tenant-injected query package); Postgres `gateway_requests` becomes metering-only with short retention. Rollback = flip config back to `postgres`/`dual` | UI parity; same contract suite green on `clickhouse`; tenant-isolation tests |
+| 0 | `EventSink` + `EventStore` interfaces (§4.1), event schema, a **copy** of today's gateway-request queries as the `postgres` backend, in-memory sink, metrics (`emitted`, `dropped`, `lag`), shared contract test suite — **no live service imports it** | Contract + tenant-isolation tests green on `postgres`; live stack unchanged |
+| 1 | `events` compose profile: Redis Streams sink (dedicated instance), `event-writer`, ClickHouse container, DDL + users + env scripts, `clickhouse` backend, synthetic-data load and failure tests | Stage A exit gate; contract suite green on `clickhouse` |
+| 2 | Per area (gateway requests first): swap producer behind `THE_M_EVENTS_<AREA>` → `dual` (counts match ~7 days) → flip reads to `clickhouse` → trim Postgres + retention. Rollback = flip flag back | UI parity; contract suite green on `clickhouse`; tenant-isolation tests |
 | 3 | Tool calls, user activity, run steps as events | Activity feed + per-user history screens |
 | 4 | Content capture via `BodyStore` — default ClickHouse bodies table, **S3/MinIO optional** backend (replaces Postgres `gateway_request_bodies` plan); retention job ships in the same phase | Encryption + permission + retention tests on the default backend; S3 backend added only when files/large payloads or customer requirements need it |
 | 5 | Audit outbox + hash chain; per-tenant retention settings in app JSON | Compliance export works |
