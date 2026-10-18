@@ -285,7 +285,7 @@ changes behavior. Phases 0–1 of the table below are Stage A.
    kill each component (Redis, ClickHouse, writer) and confirm the §6 behavior.
 5. **Docs:** `REDIS.md` (new keys), CLAUDE.md container map, `go/TEST_INDEX.md`, INDEX.
 
-**Stage A progress:** A1 (compose overlay, Redis conf, ClickHouse DDL + users, secrets script, runbook) written 2026-10-18, validated by `docker compose config` only — not yet started live. A2 (`internal/events` package), A3 (`event-writer` + its container), A4 (synthetic data, contract and failure tests) pending.
+**Stage A progress:** A1 (compose overlay, Redis conf, ClickHouse DDL + users, secrets script, runbook) written 2026-10-18, started and tested live the same day (tables, TTLs, user privileges, Redis auth/AOF/noeviction; see runbook §10). A2 (`internal/events` package), A3 (`event-writer` + its container), A4 (synthetic data, contract and failure tests) pending.
 
 **Stage A exit gate:** stack with the `events` profile healthy; synthetic events flow end to
 end; contract + isolation + failure tests green; `go test ./...` and the existing compose

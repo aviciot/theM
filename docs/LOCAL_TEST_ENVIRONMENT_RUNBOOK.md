@@ -740,6 +740,15 @@ Schema and users are created on **first start of an empty data dir** from `db/cl
 | `THE_M_EVENTS_CH_READER_PASSWORD` | `events_reader` — SELECT only (Go query layer) |
 | `THE_M_EVENTS_REDIS_PASSWORD` | `them-redis-events` `requirepass` |
 
-Status: containers and scripts exist; **not yet started or tested live** (Stage A, step A1).
-`them-event-writer` is added in a later step.
+Status (2026-10-18, Stage A step A1): started and tested live. `them-event-writer` is added in a later step.
+
+Live test results:
+- Both containers healthy; no host ports exposed; existing containers not restarted.
+- ClickHouse: all 5 `events_*` tables created with TTLs (90 d / 90 d / 180 d / 7 y / 30 d).
+- Privileges: `events_writer` can INSERT only; `events_reader` can SELECT only; neither can run DDL.
+- Redis: password required (NOAUTH / WRONGPASS verified), `noeviction` + AOF on, stream write/read OK,
+  a stream entry survived a container restart. Main `them-redis` unchanged (`allkeys-lru`).
+- Known leftover: one test row (tenant `00000000-0000-0000-0000-0000000000a1`) in
+  `events_user_activity`; harmless, expires by TTL.
+- Not tested yet: event-writer, sink/store code, load and failure scenarios (Stage A steps A2–A4).
 
