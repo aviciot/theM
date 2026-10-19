@@ -1,7 +1,7 @@
 {
   "id": "01-gateway-basic-mock",
   "name": "01 — Gateway Basic (Mock Provider)",
-  "description": "Tests basic gateway functionality using mock LLM provider. Single user, 3 messages, no streaming. Uses 'mock' governance profile with no rate limits or guardrails. This is the simplest test — verifies gateway routing, authentication, and request/response flow.",
+  "description": "Tests basic gateway functionality using mock LLM provider. Single user, 3 messages, no streaming.\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path (bypasses Temporal)\n• Governance Profile: 'mock'\n  - No rate limits\n  - No PII guardrails\n  - No model restrictions\n  - Logging: minimal\n\n✅ Purpose: Simplest test — verifies gateway routing, authentication, and request/response flow.",
   "test_result_ai_analysis": "✅ Grade: A+\n\n📊 Result: 1/1 users passed (100%)\n⏱️ Latency: 245ms average\n🔧 Config: Mock provider, 'mock' governance profile, no rate limits\n\n🔍 Findings:\n• All 3 messages processed successfully\n• Authentication working correctly (token hash validated)\n• Response flow clean, no errors\n• Mock provider responding instantly\n\n💡 Recommendation: Run Test 02 (Streaming) to verify SSE functionality.",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
