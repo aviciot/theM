@@ -83,10 +83,12 @@ export default function ScenariosPage() {
 function ScenarioCard({ sc, onDelete, onEdit }: { sc: Scenario; onDelete: (id: string) => void; onEdit: (id: string) => void }) {
   const isGateway = sc.ep_type === 'gateway';
   const hasAnalysis = sc.test_result_ai_analysis && sc.test_result_ai_analysis.trim().length > 0;
+  const [showDescription, setShowDescription] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(false);
 
   return (
     <div className="card">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-base">{sc.name}</span>
@@ -112,23 +114,44 @@ function ScenarioCard({ sc, onDelete, onEdit }: { sc: Scenario; onDelete: (id: s
       </div>
 
       {sc.description && (
-        <div className="mb-3 p-3 rounded-lg bg-slate-900/30 border border-slate-800">
-          <div className="text-xs font-semibold text-blue-400 mb-1.5 uppercase tracking-wide">📝 What This Tests</div>
-          <div className="text-sm text-gray-300 leading-relaxed">
-            {sc.description}
-          </div>
+        <div className="mb-2">
+          <button
+            onClick={() => setShowDescription(!showDescription)}
+            className="flex items-center gap-2 text-xs font-semibold text-blue-400 hover:text-blue-300 transition-colors w-full text-left py-1"
+          >
+            <span className="transform transition-transform" style={{ display: 'inline-block', transform: showDescription ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+            <span className="uppercase tracking-wide">📝 What This Tests</span>
+          </button>
+          {showDescription && (
+            <div className="mt-2 p-3 rounded-lg bg-slate-900/30 border border-slate-800">
+              <div className="text-sm text-gray-300 leading-relaxed">
+                {sc.description}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      <div className="mt-3 pt-3 border-t border-gray-800">
-        <div className="text-xs font-semibold text-amber-400 mb-1.5 uppercase tracking-wide">📊 Test Result Analysis</div>
-        {hasAnalysis ? (
-          <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-line bg-slate-900/30 p-3 rounded-lg border border-slate-800">
-            {sc.test_result_ai_analysis}
-          </div>
-        ) : (
-          <div className="text-xs text-gray-500 italic p-3 bg-slate-900/20 rounded border border-dashed border-gray-700">
-            No analysis yet — run this test and the results will appear here
+      <div className="mt-2 pt-2 border-t border-gray-800">
+        <button
+          onClick={() => setShowAnalysis(!showAnalysis)}
+          className="flex items-center gap-2 text-xs font-semibold text-amber-400 hover:text-amber-300 transition-colors w-full text-left py-1"
+        >
+          <span className="transform transition-transform" style={{ display: 'inline-block', transform: showAnalysis ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+          <span className="uppercase tracking-wide">📊 Test Result Analysis</span>
+          {hasAnalysis && <span className="text-xs text-green-400 ml-2">✓ Has Results</span>}
+        </button>
+        {showAnalysis && (
+          <div className="mt-2">
+            {hasAnalysis ? (
+              <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-line bg-slate-900/30 p-3 rounded-lg border border-slate-800">
+                {sc.test_result_ai_analysis}
+              </div>
+            ) : (
+              <div className="text-xs text-gray-500 italic p-3 bg-slate-900/20 rounded border border-dashed border-gray-700">
+                No analysis yet — run this test and the results will appear here
+              </div>
+            )}
           </div>
         )}
       </div>
