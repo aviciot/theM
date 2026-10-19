@@ -6,7 +6,7 @@
 ## HEAD
 
 Branch: `main`
-HEAD: `3db5f91c` — feat(gateway): calculate and record cost_usd for AppFlow requests (2026-10-19; not pushed)
+HEAD: see `git log -1` (governance slice 1a + handover, 2026-10-19)
 Remote: `origin` → `aviciot/theM` on GitHub
 
 Recent commits relevant to the observability-events work (this session):
@@ -19,6 +19,17 @@ f6d2aaaf  docs(observability): two-stage rollout plan and event-writer failure c
 ```
 (Interleaved gateway commits `893144a2`, `ceb137e8`, `cf443612` are separate work — policy override /
 token tracking — not part of this track.)
+
+---
+
+## Governance Policy — Slice 1a done, 1b next (2026-10-19)
+
+Decision: Option A (policy first). Design: `docs/GOVERNANCE_POLICY_DESIGN.md`.
+- Done (`0a9980b2`): `go/internal/governance/` (Policy, Validate, Resolve; 8 tests) + `db/122_governance_policies.sql` (single table, scopes tenant/application/client/user/profile; copies legacy gateway policy rows). Migration dry-run verified in a rolled-back txn; **NOT applied live**.
+- Next (slice 1b): apply 122; switch `llmgateway/dal.go` `loadPolicyFromDB` + admin policy/profile endpoints to `governance_policies`; then wire `logging.level` into `runrecorder`/gateway writes; then Redis meters (replace per-request `SUM(cost_usd)`); then 200-user load test.
+- After stable, ASAP: drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (tracked in `docs/STATUS.md`).
+- Constraints: user identity for the `user` scope = existing runtime identity (`internal:<UserID>` / `external:<ExternalUserID>`); `on_exceed` default `block`, actions via registry; metering is never sampled.
+- Go is not installed on the host: run tests with `docker run --rm -v "$PWD":/src -w /src golang:1.25.0 go test ./...` from `go/`.
 
 ---
 
