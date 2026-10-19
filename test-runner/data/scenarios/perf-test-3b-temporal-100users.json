@@ -1,0 +1,21 @@
+{
+  "id": "perf-test-3b-temporal-100users",
+  "name": "Perf Test 3b - Temporal Workflow (100 Users)",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-temporal-workflow-token-99",
+  "model": "fast",
+  "n_users": 100,
+  "messages": [
+    "Hello! Test with Temporal workflow.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "test_results": "Test 3b: 100 users WITH Temporal (300 requests). Should hit 100 worker slot limit. Expected: Some failures or queueing.",
+  "created_at": "",
+  "updated_at": ""
+}

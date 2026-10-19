@@ -1,0 +1,21 @@
+{
+  "id": "perf-test-3a-temporal-50users",
+  "name": "Perf Test 3a - Temporal Workflow (50 Users)",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-temporal-workflow-token-99",
+  "model": "fast",
+  "n_users": 50,
+  "messages": [
+    "Hello! Test with Temporal workflow.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "test_results": "Test 3a: 50 users WITH Temporal AppFlow workflows (150 requests). Tests worker capacity with real workflow execution. Client linked to payops-response-sanitizer app. Run manually via UI - script defaults to test-policy-mock.",
+  "created_at": "",
+  "updated_at": ""
+}
