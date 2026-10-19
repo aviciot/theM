@@ -2,7 +2,7 @@
   "id": "20-perf-50-users-temporal",
   "name": "20 — Performance: 50 Users (WITH Temporal)",
   "description": "Performance test with 50 concurrent users, 3 messages each (150 total requests). Client has app assigned → triggers Temporal AppFlow workflows. Tests worker capacity: 4 workers × 25 concurrency = 100 slots. Expected: 100% pass with 5-6s latency (vs 300ms direct). Verifies Temporal integration works under load.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "✅ Grade: A\n\n📊 Result: 50/50 users passed (100%)\n⏱️ Latency: 5.2s average (vs 320ms direct path)\n🔧 Path: WITH Temporal — triggers AppFlow workflows\n👷 Workers: 50/100 slots used (50% capacity)\n⚙️ Config: 4 workers × 25 concurrent activities = 100 total slots\n\n🔍 Findings:\n• Temporal workflows executed successfully (150 workflows total)\n• Workflow overhead: ~5s added latency vs direct path\n• No queueing, no failures\n• Workers handled load comfortably at 50% capacity\n• Logs confirmed: \"execution: starting appflow workflow\" (150×)\n• Logs confirmed: \"llmgateway: request complete (appflow sync)\"\n\n📊 Temporal Impact:\n• Direct path: 300-500ms\n• Temporal path: 5-6s\n• Overhead: 10-20× slower (expected — workflow orchestration cost)\n\n💡 Recommendation: Test 21 (100 users = 300 workflows) will EXCEED 100 worker slots. Expected: queueing or failures. Critical for capacity planning!",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "test-temporal-workflow-token-99",

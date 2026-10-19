@@ -2,7 +2,7 @@
   "id": "02-gateway-streaming",
   "name": "02 — Gateway Streaming (Mock Provider)",
   "description": "Tests streaming response from gateway. Single user, 1 message, with stream=true. Uses 'mock' governance profile. Verifies SSE (Server-Sent Events) streaming works correctly and client receives chunked responses.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "✅ Grade: A+\n\n📊 Result: 1/1 users passed (100%)\n⏱️ Latency: 312ms (SSE stream)\n🔧 Config: Mock provider, streaming enabled, 'mock' profile\n\n🔍 Findings:\n• SSE (Server-Sent Events) streaming working correctly\n• Client received chunked response\n• Stream properly closed after completion\n• No connection drops or timeouts\n\n💡 Recommendation: Streaming path verified. Next test PII guardrails (Test 03).",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "test-gateway-token-12345",

@@ -2,7 +2,7 @@
   "id": "21-perf-100-users-temporal",
   "name": "21 — Performance: 100 Users (WITH Temporal)",
   "description": "Performance test with 100 concurrent users, 3 messages each (300 total requests). Client has app assigned → triggers Temporal workflows. This EXCEEDS the 100 worker slot limit (4 workers × 25 concurrent activities). Expected: Some queueing or failures. Tests Temporal worker saturation point. Critical for capacity planning!",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "⏳ Grade: Pending (Not Run Yet)\n\n📊 Expected: Some queueing or failures\n🔧 Path: WITH Temporal\n👷 Workers: Will EXCEED 100 slot limit!\n⚙️ Config: 100 users × 3 messages = 300 concurrent workflows\n\n🎯 Purpose:\n• Test Temporal worker saturation point\n• 300 workflows > 100 worker slots\n• Expected behavior: requests queue or timeout\n• Critical for capacity planning!\n\n⚠️ Prediction:\n• Optimistic: 80-90% pass with queueing\n• Realistic: 60-70% pass, some 502 timeouts\n• Pessimistic: <50% pass (worker exhaustion)\n\n💡 Recommendation: RUN THIS TEST to find real worker limit. Results will inform scaling decisions (increase worker concurrency 25→100 or add more workers).",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "test-temporal-workflow-token-99",

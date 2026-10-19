@@ -2,7 +2,7 @@
   "id": "03-gateway-pii-guardrail",
   "name": "03 — Gateway PII Guardrail (Non-Streaming)",
   "description": "Tests PII detection and redaction middleware. Single user, 1 message containing SSN and credit card. Uses governance profile with PII guardrails enabled. Expected: Request blocked or sensitive data redacted before reaching LLM.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "⚠️ Grade: B (Test needs PII profile setup)\n\n📊 Result: Test configuration incomplete\n🔧 Config: Requires governance profile with PII guardrails enabled\n\n🔍 Findings:\n• Token 'gw-pii-test-token-67890' needs to be created\n• Client needs PII governance profile assigned\n• Middleware should detect SSN (123-45-6789) and CC (4532-1111-2222-3333)\n• Expected behavior: Request blocked OR sensitive data redacted\n\n💡 Action Required: Create test client with PII profile before running this test.",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "gw-pii-test-token-67890",

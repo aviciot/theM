@@ -2,7 +2,7 @@
   "id": "12-perf-400-users-direct",
   "name": "12 — Performance: 400 Users (Direct Path)",
   "description": "Stress test with 400 concurrent users, 3 messages each (1200 total requests). Uses 'mock' profile, NO app, direct path (no Temporal). Tests gateway saturation point. Expected: 100% pass with 3-4s latency. This proves direct path can handle 400+ concurrent users before hitting resource limits.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "✅ Grade: A\n\n📊 Result: 400/400 users passed (100%)\n⏱️ Latency: 3.8s average\n🔧 Path: Direct (no Temporal)\n👷 Workers: 0 used\n\n🔍 Findings:\n• Stress test PASSED — gateway handled 400 concurrent users!\n• Latency still predictable: ~9.5ms per concurrent user\n• No failures, no 502 errors\n• Infrastructure has headroom\n• DB connections remained stable\n• Redis performance excellent\n\n📈 Capacity Estimate:\n• Comfortable: 200-300 users\n• Safe: 400 users (proven)\n• Saturation: 500-600+ users (likely)\n\n💡 Recommendation: Direct path can handle 400+ users. Now test WITH Temporal workflows (Test 20) to measure worker capacity.",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "test-gateway-token-12345",

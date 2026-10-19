@@ -2,7 +2,7 @@
   "id": "04-gateway-pii-stream",
   "name": "04 — Gateway PII Guardrail (Streaming)",
   "description": "Tests PII detection with streaming responses. Single user, 1 message with SSN. Uses governance profile with PII guardrails enabled + streaming. Verifies middleware works correctly with SSE streams.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "⚠️ Grade: B (Test needs PII profile setup)\n\n📊 Result: Test configuration incomplete\n🔧 Config: Requires PII governance profile + streaming\n\n🔍 Findings:\n• Similar to Test 03 but with SSE streaming\n• Tests PII middleware with chunked responses\n• Token setup required\n\n💡 Action Required: Configure PII profile before running.",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "gw-pii-test-token-67890",

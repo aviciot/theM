@@ -86,43 +86,52 @@ function ScenarioCard({ sc, onDelete, onEdit }: { sc: Scenario; onDelete: (id: s
 
   return (
     <div className="card">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-medium">{sc.name}</span>
+            <span className="font-semibold text-base">{sc.name}</span>
             {isGateway && (
               <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-300 border border-purple-700/50">
                 {sc.stream ? 'streaming' : 'non-streaming'}
               </span>
             )}
           </div>
-          <div className="text-xs text-gray-400 mt-0.5">
+          <div className="text-xs text-gray-400 mt-1">
             {isGateway ? (
               <>{sc.tenant_slug} &nbsp;·&nbsp; <span className="text-purple-400">gateway</span> &nbsp;·&nbsp; <span className="font-mono text-purple-300">{sc.model ?? 'claude-sonnet-4-6'}</span> &nbsp;·&nbsp; {sc.n_users} user{sc.n_users !== 1 ? 's' : ''} &nbsp;·&nbsp; {sc.messages.length} turn{sc.messages.length !== 1 ? 's' : ''}</>
             ) : (
               <>{sc.tenant_slug} / {sc.app_slug} / {sc.ep_slug} &nbsp;·&nbsp; <span className="text-indigo-400">{sc.auth_mode}</span> &nbsp;·&nbsp; {sc.n_users} user{sc.n_users !== 1 ? 's' : ''} &nbsp;·&nbsp; {sc.messages.length} message{sc.messages.length !== 1 ? 's' : ''}</>
             )}
           </div>
-          {sc.description && (
-            <div className="text-xs text-gray-500 mt-2 max-w-3xl leading-relaxed">
-              {sc.description}
-            </div>
-          )}
         </div>
-        <div className="flex gap-2 ml-4">
+        <div className="flex gap-2 ml-4 shrink-0">
           <button className="btn-secondary text-sm" onClick={() => onEdit(sc.id)}>Edit</button>
           <RunButton scenarioId={sc.id} nUsers={sc.n_users} />
           <button className="btn-danger text-sm" onClick={() => onDelete(sc.id)}>Delete</button>
         </div>
       </div>
-      {hasAnalysis && (
-        <div className="mt-3 pt-3 border-t border-gray-800">
-          <div className="text-xs font-semibold text-amber-400 mb-1.5">📊 Test Result Analysis</div>
-          <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">
-            {sc.test_result_ai_analysis}
+
+      {sc.description && (
+        <div className="mb-3 p-3 rounded-lg bg-slate-900/30 border border-slate-800">
+          <div className="text-xs font-semibold text-blue-400 mb-1.5 uppercase tracking-wide">📝 What This Tests</div>
+          <div className="text-sm text-gray-300 leading-relaxed">
+            {sc.description}
           </div>
         </div>
       )}
+
+      <div className="mt-3 pt-3 border-t border-gray-800">
+        <div className="text-xs font-semibold text-amber-400 mb-1.5 uppercase tracking-wide">📊 Test Result Analysis</div>
+        {hasAnalysis ? (
+          <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-line bg-slate-900/30 p-3 rounded-lg border border-slate-800">
+            {sc.test_result_ai_analysis}
+          </div>
+        ) : (
+          <div className="text-xs text-gray-500 italic p-3 bg-slate-900/20 rounded border border-dashed border-gray-700">
+            No analysis yet — run this test and the results will appear here
+          </div>
+        )}
+      </div>
     </div>
   );
 }
