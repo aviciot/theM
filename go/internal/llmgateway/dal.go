@@ -84,7 +84,8 @@ func (d *DAL) WithRedis(r rueidis.Client) *DAL {
 
 // WriteRequest inserts one gateway_requests row. Called in a defer so usage
 // is captured even when the client disconnects mid-stream.
-func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) error {
+// Returns the inserted request ID for potential body capture.
+func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error) {
 	const q = `
 		INSERT INTO them.gateway_requests
 			(tenant_id, client_id, token_hash, provider, model_requested, model_served,
@@ -97,9 +98,11 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) error {
 			 NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
 			 $7, NULLIF($8,0), NULLIF($9,''),
 			 $10, $11, $12,
-			 NULLIF($13,0), NULLIF($14,0), $15)`
+			 NULLIF($13,0), NULLIF($14,0), $15)
+		RETURNING id::text`
 
-	_, err := d.pool.Exec(ctx, q,
+	var requestID string
+	err := d.pool.QueryRow(ctx, q,
 		r.TenantID,
 		r.ClientID,
 		r.TokenHash,
@@ -107,7 +110,20 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) error {
 		r.Status, r.HTTPStatus, r.ErrorCode,
 		r.TokensIn, r.TokensOut, r.CostUSD,
 		r.LatencyMS, r.TTFBMs, r.Streamed,
-	)
+	).Scan(&requestID)
+	return requestID, err
+}
+
+// WriteRequestBodies inserts request/response bodies for DEBUG and AUDIT logging levels.
+// Called only when loggingLevel == "debug" || loggingLevel == "audit".
+func (d *DAL) WriteRequestBodies(ctx context.Context, requestID, tenantID, reqText, respText string) error {
+	const q = `
+		INSERT INTO them.gateway_request_bodies
+			(request_id, tenant_id, request_text, response_text)
+		VALUES
+			($1::uuid, $2::uuid, NULLIF($3,''), NULLIF($4,''))`
+
+	_, err := d.pool.Exec(ctx, q, requestID, tenantID, reqText, respText)
 	return err
 }
 

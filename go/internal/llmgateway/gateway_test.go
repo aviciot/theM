@@ -31,8 +31,11 @@ type fakeDAL struct {
 	written []RequestRecord
 }
 
-func (f *fakeDAL) WriteRequest(_ context.Context, r RequestRecord) error {
+func (f *fakeDAL) WriteRequest(_ context.Context, r RequestRecord) (string, error) {
 	f.written = append(f.written, r)
+	return "test-request-id", nil
+}
+func (f *fakeDAL) WriteRequestBodies(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
 func (f *fakeDAL) ClientIDForHash(_ context.Context, _ string) string { return "" }

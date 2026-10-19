@@ -24,7 +24,8 @@ import (
 // DALWriter abstracts the WriteRequest and client-lookup operations so tests
 // can inject a fake without a live database pool.
 type DALWriter interface {
-	WriteRequest(ctx context.Context, r RequestRecord) error
+	WriteRequest(ctx context.Context, r RequestRecord) (string, error)
+	WriteRequestBodies(ctx context.Context, requestID, tenantID, reqText, respText string) error
 	// ClientIDForHash returns the gateway_clients.id for a token hash, or "".
 	ClientIDForHash(ctx context.Context, tokenHash string) string
 	// LoadClientApp resolves the app canvas app linked to the client, or nil.
@@ -190,10 +191,21 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp, logger *slog.Logger) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 
+	// Capture request JSON for potential body logging
+	reqJSON, _ := json.Marshal(req)
+	var respJSON []byte
+	var loggingLevel string
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
-		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
+		dbReqID, werr := h.dal.WriteRequest(r.Context(), *rec)
+		if werr != nil {
 			logger.Warn("llmgateway: write_request (appflow sync) failed", "err", werr)
+		} else if (loggingLevel == "debug" || loggingLevel == "audit") && len(respJSON) > 0 {
+			// Conditionally write bodies for DEBUG/AUDIT levels
+			if bodyErr := h.dal.WriteRequestBodies(r.Context(), dbReqID, tenantID, string(reqJSON), string(respJSON)); bodyErr != nil {
+				logger.Warn("llmgateway: write_request_bodies failed", "err", bodyErr)
+			}
 		}
 		logger.Info("llmgateway: request complete (appflow sync)", "status", rec.HTTPStatus, "latency_ms", rec.LatencyMS)
 	}()
@@ -210,11 +222,17 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 
 	if policy == nil {
 		logger.Warn("llmgateway: policy is nil (no policy assigned)", "client_id", ca.ClientID)
+		loggingLevel = "minimal" // default
 	} else {
+		loggingLevel = policy.LoggingLevel
+		if loggingLevel == "" {
+			loggingLevel = "minimal"
+		}
 		logger.Info("llmgateway: policy loaded", "client_id", ca.ClientID,
 			"allow_lists", policy.AllowLists,
 			"has_aliases", policy.ModelAliases != nil,
-			"max_tokens", policy.MaxTokensPerRequest)
+			"max_tokens", policy.MaxTokensPerRequest,
+			"logging_level", loggingLevel)
 	}
 
 	// Check monthly budget before starting workflow
@@ -303,6 +321,7 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 			FinishReason: "stop",
 		}},
 	}
+	respJSON, _ = json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
@@ -318,10 +337,21 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, tenantID string, ca *ClientApp, logger *slog.Logger) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 
+	// Capture request JSON for potential body logging
+	reqJSON, _ := json.Marshal(req)
+	var respText string
+	var loggingLevel string
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
-		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
+		dbReqID, werr := h.dal.WriteRequest(r.Context(), *rec)
+		if werr != nil {
 			logger.Warn("llmgateway: write_request (appflow stream) failed", "err", werr)
+		} else if (loggingLevel == "debug" || loggingLevel == "audit") && respText != "" {
+			// Conditionally write bodies for DEBUG/AUDIT levels
+			if bodyErr := h.dal.WriteRequestBodies(r.Context(), dbReqID, tenantID, string(reqJSON), respText); bodyErr != nil {
+				logger.Warn("llmgateway: write_request_bodies failed", "err", bodyErr)
+			}
 		}
 		logger.Info("llmgateway: request complete (appflow stream)", "status", rec.HTTPStatus, "latency_ms", rec.LatencyMS, "ttfb_ms", rec.TTFBMs)
 	}()
@@ -334,6 +364,15 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		rec.HTTPStatus = http.StatusInternalServerError
 		writeGatewayErrorWithID(w, requestID, http.StatusInternalServerError, "policy_error", "failed to load policy")
 		return
+	}
+
+	if policy == nil {
+		loggingLevel = "minimal" // default
+	} else {
+		loggingLevel = policy.LoggingLevel
+		if loggingLevel == "" {
+			loggingLevel = "minimal"
+		}
 	}
 
 	// Check monthly budget before starting workflow
@@ -410,6 +449,7 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 
 	rec.HTTPStatus = http.StatusOK
 	rec.TTFBMs = int(time.Since(start).Milliseconds())
+	respText = output.FinalText
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -546,10 +586,32 @@ func openAIStreamChunk(model, token string, start time.Time) map[string]any {
 func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, logger *slog.Logger) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 
+	// Capture request JSON for potential body logging
+	reqJSON, _ := json.Marshal(req)
+	var respJSON []byte
+	var loggingLevel string
+
+	// Load policy to get logging level
+	policy, _ := h.dal.LoadPolicy(r.Context(), rec.TenantID, rec.ClientID)
+	if policy == nil {
+		loggingLevel = "minimal"
+	} else {
+		loggingLevel = policy.LoggingLevel
+		if loggingLevel == "" {
+			loggingLevel = "minimal"
+		}
+	}
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
-		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
+		dbReqID, werr := h.dal.WriteRequest(r.Context(), *rec)
+		if werr != nil {
 			logger.Warn("llmgateway: write_request failed", "err", werr)
+		} else if (loggingLevel == "debug" || loggingLevel == "audit") && len(respJSON) > 0 {
+			// Conditionally write bodies for DEBUG/AUDIT levels
+			if bodyErr := h.dal.WriteRequestBodies(r.Context(), dbReqID, rec.TenantID, string(reqJSON), string(respJSON)); bodyErr != nil {
+				logger.Warn("llmgateway: write_request_bodies failed", "err", bodyErr)
+			}
 		}
 		logger.Info("llmgateway: request complete",
 			"status", rec.HTTPStatus,
@@ -591,6 +653,7 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 			TotalTokens:      cr.TokensIn + cr.TokensOut,
 		},
 	}
+	respJSON, _ = json.Marshal(resp)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -600,10 +663,32 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start time.Time, req ChatRequest, rec *RequestRecord, logger *slog.Logger) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 
+	// Capture request JSON for potential body logging
+	reqJSON, _ := json.Marshal(req)
+	var respText strings.Builder
+	var loggingLevel string
+
+	// Load policy to get logging level
+	policy, _ := h.dal.LoadPolicy(r.Context(), rec.TenantID, rec.ClientID)
+	if policy == nil {
+		loggingLevel = "minimal"
+	} else {
+		loggingLevel = policy.LoggingLevel
+		if loggingLevel == "" {
+			loggingLevel = "minimal"
+		}
+	}
+
 	defer func() {
 		rec.LatencyMS = int(time.Since(start).Milliseconds())
-		if werr := h.dal.WriteRequest(r.Context(), *rec); werr != nil {
+		dbReqID, werr := h.dal.WriteRequest(r.Context(), *rec)
+		if werr != nil {
 			logger.Warn("llmgateway: write_request (stream) failed", "err", werr)
+		} else if (loggingLevel == "debug" || loggingLevel == "audit") && respText.Len() > 0 {
+			// Conditionally write bodies for DEBUG/AUDIT levels
+			if bodyErr := h.dal.WriteRequestBodies(r.Context(), dbReqID, rec.TenantID, string(reqJSON), respText.String()); bodyErr != nil {
+				logger.Warn("llmgateway: write_request_bodies failed", "err", bodyErr)
+			}
 		}
 		logger.Info("llmgateway: request complete (stream)",
 			"status", rec.HTTPStatus,
@@ -658,6 +743,24 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, start tim
 		if ev.TTFB > 0 && rec.TTFBMs == 0 {
 			rec.TTFBMs = ev.TTFB
 		}
+
+		// Capture streamed content for body logging
+		if loggingLevel == "debug" || loggingLevel == "audit" {
+			// Parse JSON to extract content delta
+			var chunk map[string]any
+			if json.Unmarshal([]byte(ev.JSON), &chunk) == nil {
+				if choices, ok := chunk["choices"].([]any); ok && len(choices) > 0 {
+					if choice, ok := choices[0].(map[string]any); ok {
+						if delta, ok := choice["delta"].(map[string]any); ok {
+							if content, ok := delta["content"].(string); ok {
+								respText.WriteString(content)
+							}
+						}
+					}
+				}
+			}
+		}
+
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", ev.JSON)
 		if canFlush {
 			flusher.Flush()
