@@ -124,7 +124,7 @@ function ScenarioCard({ sc, onDelete, onEdit }: { sc: Scenario; onDelete: (id: s
           </button>
           {showDescription && (
             <div className="mt-2 p-3 rounded-lg bg-slate-900/30 border border-slate-800">
-              <div className="text-sm text-gray-300 leading-relaxed">
+              <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-line">
                 {sc.description}
               </div>
             </div>
