@@ -178,7 +178,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/llm/` (any file) | `go test ./internal/llm/...` |
 | `internal/llmresolve/` (any file) | `go test ./internal/llmresolve/...` + `go test -tags=integration ./internal/llmresolve/...` (app→tenant→platform precedence needs a live DB) |
 | `internal/llmgateway/` (any file), `cmd/them/main.go` (gateway wiring) | `go test ./internal/llmgateway/...` |
-| `internal/governance/` (any file), `internal/admin/dal/gateway_policy*.go` | `go test ./internal/governance/... ./internal/llmgateway/... ./internal/admin/...` |
+| `internal/governance/` (any file), `internal/admin/dal/gateway_policy*.go`, `internal/admin/policy_cache.go` | `go test ./internal/governance/... ./internal/llmgateway/... ./internal/admin/...` |
 | `internal/agentregistry/registry.go` | `go test ./internal/agentregistry/...` |
 | `internal/orchestrator/orchestrator.go` or `internal/orchestrator/pricing.go` | `go test ./internal/orchestrator/...` |
 | `internal/ws/handler.go` | `go test ./internal/ws/... ./internal/execution/...` |

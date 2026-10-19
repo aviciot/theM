@@ -253,6 +253,8 @@ func BuildRouter(
 				rolesH.Routes(tenantScoped)
 
 				gatewayAdmin := NewGatewayHandler(dbq)
+				policyCacheInv := NewPolicyCacheInvalidator(redis, dbq)
+				gatewayAdmin.WithCacheInvalidator(policyCacheInv)
 				gatewayAdmin.Routes(tenantScoped)
 
 				// Tenant-admin self-service LLM provider key management.

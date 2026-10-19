@@ -18,12 +18,19 @@ import (
 // GatewayHandler exposes admin CRUD for the LLM Gateway:
 // clients, profiles, profile steps, policy settings, and the requests log.
 type GatewayHandler struct {
-	db DBQuerier
+	db              DBQuerier
+	cacheInvalidator *PolicyCacheInvalidator
 }
 
 // NewGatewayHandler creates a GatewayHandler.
 func NewGatewayHandler(db DBQuerier) *GatewayHandler {
 	return &GatewayHandler{db: db}
+}
+
+// WithCacheInvalidator attaches a cache invalidator (optional).
+func (h *GatewayHandler) WithCacheInvalidator(inv *PolicyCacheInvalidator) *GatewayHandler {
+	h.cacheInvalidator = inv
+	return h
 }
 
 // Routes mounts all gateway admin endpoints onto r.
@@ -291,6 +298,11 @@ func (h *GatewayHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate cache for all clients in this tenant
+	if h.cacheInvalidator != nil {
+		_ = h.cacheInvalidator.InvalidateTenant(r.Context(), tenantID)
+	}
+
 	policy, err := d.GetGatewayPolicy(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get gateway policy")
@@ -356,6 +368,12 @@ func (h *GatewayHandler) CreatePolicyProfile(w http.ResponseWriter, r *http.Requ
 		writePolicyError(w, err, "failed to create policy profile")
 		return
 	}
+
+	// Invalidate cache for clients using this profile (none yet, but future-proof)
+	if h.cacheInvalidator != nil {
+		_ = h.cacheInvalidator.InvalidateProfile(r.Context(), profile.ID)
+	}
+
 	writeJSON(w, http.StatusCreated, profile)
 }
 
@@ -400,6 +418,11 @@ func (h *GatewayHandler) UpdatePolicyProfile(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Invalidate cache for all clients using this profile
+	if h.cacheInvalidator != nil {
+		_ = h.cacheInvalidator.InvalidateProfile(r.Context(), profileID)
+	}
+
 	profile, err := d.GetGatewayPolicyProfile(r.Context(), tenantID, profileID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get updated policy profile")
@@ -411,6 +434,11 @@ func (h *GatewayHandler) UpdatePolicyProfile(w http.ResponseWriter, r *http.Requ
 func (h *GatewayHandler) DeletePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	profileID := chi.URLParam(r, "profile_id")
+
+	// Invalidate cache BEFORE deleting (need to query clients while row exists)
+	if h.cacheInvalidator != nil {
+		_ = h.cacheInvalidator.InvalidateProfile(r.Context(), profileID)
+	}
 
 	d := dal.NewDB(h.db)
 	if err := d.DeleteGatewayPolicyProfile(r.Context(), tenantID, profileID); err != nil {
