@@ -53,6 +53,7 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/llm/` | Provider interface, AnthropicProvider, MockProvider | `provider.go`, `anthropic.go`, `mock.go` |
 | `internal/llmresolve/` | Shared LLM provider key/base_url/pricing resolution (app → tenant → platform precedence); used by `workerconfig`, `cmd/dag-worker`, and `internal/llmgateway` | `llmresolve.go` |
 | `internal/llmgateway/` | LLM Gateway Phase 1 — OpenAI-compatible proxy for closed agents; observe + meter. POST /{tenant_slug}/llm/v1/chat/completions | `handler.go`, `service.go`, `dal.go` |
+| `internal/governance/` | Multi-scope governance policy (limits + logging): `Policy` doc, `Validate`, `Resolve` across tenant/app/client/user. Pure logic; design in `docs/GOVERNANCE_POLICY_DESIGN.md` | `policy.go`, `resolve.go` |
 | `internal/orchestrator/` | Agentic loop, DB-level history LIMIT, cost estimation (default rate card + optional DB-sourced `CostEstimator`) | `orchestrator.go`, `pricing.go` |
 | `internal/temporal/` | Workflow, activity, HITL signal, client | `workflow.go`, `activities.go`, `client.go`, `signaler.go` |
 | `internal/ws/` | WebSocket handler | `handler.go` |

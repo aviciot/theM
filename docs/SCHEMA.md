@@ -948,3 +948,21 @@ All `them.*` tables are protected by Postgres RLS. Three DB roles are in use:
 | `hil_approvals` | ✅ | Direct `tenant_id` | Written by AppFlow HIL activity; pending rows read by approval API |
 | `config` | ❌ | No RLS — global config, not tenant-scoped | |
 | `schema_migrations` | ❌ | No RLS — DDL tracking table | |
+
+
+## `them.governance_policies` (db/122_governance_policies.sql)
+
+One row per (tenant, scope). Holds the governance policy document (limits + logging) — see `docs/GOVERNANCE_POLICY_DESIGN.md`.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | |
+| tenant_id | UUID NOT NULL | FK `tenants`, RLS boundary |
+| scope_type | TEXT | `tenant` \| `application` \| `client` \| `user` \| `profile` |
+| scope_id | TEXT | tenant/app/client uuid; user = `internal:<id>`/`external:<id>`; profile = opaque key |
+| name | TEXT | profile display name (profile scope only; unique per tenant) |
+| doc | JSONB | `governance.Policy` (schema_version 1) |
+| version, updated_at, updated_by | | |
+
+UNIQUE `(tenant_id, scope_type, scope_id)`. `gateway_clients.governance_profile_id` (UUID FK, ON DELETE SET NULL) points a client at a `profile` row.
+Data copied from `gateway_policies` (-> `tenant`) and `gateway_policy_profiles` (-> `profile`). Those two tables are legacy: **to be dropped once stable** (see docs/STATUS.md).

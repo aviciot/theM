@@ -137,3 +137,12 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 | Hetzner prod | `docker-compose.yml` + `docker-compose.hetzner.yml` | `https://them.avico78.com` |
 
 Secrets: derived via HMAC-SHA256 from `secrets.local`. Run `./generate-env.sh` to regenerate `.env`.
+
+
+---
+
+## Pending: governance policy migration (added 2026-10-19)
+
+- **Slice 1a done:** `internal/governance/` package + `db/122_governance_policies.sql` (dry-run verified, NOT yet applied live).
+- **Slice 1b next:** apply 122; switch gateway runtime (`llmgateway/dal.go loadPolicyFromDB`) and admin policy-profile/policy endpoints to `governance_policies`.
+- **Then, as early as possible once stable:** drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (requested by user 2026-10-19). Do not let this linger.
