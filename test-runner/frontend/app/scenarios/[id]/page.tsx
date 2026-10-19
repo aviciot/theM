@@ -17,6 +17,8 @@ export default function ScenarioEditorPage() {
   const router = useRouter();
 
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [testResultAIAnalysis, setTestResultAIAnalysis] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
   const [tenantID, setTenantID] = useState('');
   const [appID, setAppID] = useState('');
@@ -58,6 +60,8 @@ export default function ScenarioEditorPage() {
       const sc = list.find((s) => s.id === id);
       if (!sc) return;
       setName(sc.name);
+      setDescription(sc.description ?? '');
+      setTestResultAIAnalysis(sc.test_result_ai_analysis ?? '');
       setTenantSlug(sc.tenant_slug);
       setTenantID(sc.tenant_id ?? '');
       setAppID(sc.app_id);
@@ -95,9 +99,9 @@ export default function ScenarioEditorPage() {
 
   const buildSc = () => {
     if (scenarioType === 'gateway') {
-      return { name, tenant_slug: tenantSlug, ep_type: 'gateway', gateway_token: gatewayToken, stream, model, n_users: nUsers, messages, app_id: '', app_slug: '', ep_slug: 'gateway', auth_mode: 'token' as const };
+      return { name, description, test_result_ai_analysis: testResultAIAnalysis, tenant_slug: tenantSlug, ep_type: 'gateway', gateway_token: gatewayToken, stream, model, n_users: nUsers, messages, app_id: '', app_slug: '', ep_slug: 'gateway', auth_mode: 'token' as const };
     }
-    const base = { name, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
+    const base = { name, description, test_result_ai_analysis: testResultAIAnalysis, tenant_slug: tenantSlug, tenant_id: tenantID, app_id: appID, app_slug: appSlug, ep_slug: epSlug, ep_type: epType, auth_mode: authMode, n_users: nUsers, messages };
     if (authMode !== 'external_jwt') return base;
     return { ...base, keycloak_url: kcURL, keycloak_realm: kcRealm, keycloak_client_id: kcClientID, keycloak_client_secret: kcClientSecret, keycloak_users: kcUsers.filter(u => u.username) };
   };
@@ -159,6 +163,24 @@ export default function ScenarioEditorPage() {
       <div className="space-y-6">
         <Field label="Scenario Name">
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. payops debator smoke" />
+        </Field>
+
+        <Field label="Description" hint="What this test covers (profile, policy, expected behavior)">
+          <textarea
+            className="input min-h-[100px] font-sans"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="e.g. Tests basic gateway functionality using mock LLM provider. Single user, 3 messages, no streaming. Uses 'mock' governance profile with no rate limits or guardrails."
+          />
+        </Field>
+
+        <Field label="Test Result Analysis" hint="LLM-generated analysis after test runs (grade, findings, recommendations)">
+          <textarea
+            className="input min-h-[150px] font-sans"
+            value={testResultAIAnalysis}
+            onChange={(e) => setTestResultAIAnalysis(e.target.value)}
+            placeholder="✅ Grade: A+&#10;&#10;📊 Result: 50/50 users passed (100%)&#10;⏱️ Latency: 320ms average&#10;🔧 Config: Mock provider, 'mock' profile&#10;&#10;🔍 Findings:&#10;• All tests passed&#10;• No errors detected&#10;&#10;💡 Recommendation: Run next test"
+          />
         </Field>
 
         {/* Scenario Type selector */}
