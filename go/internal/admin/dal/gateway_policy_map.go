@@ -17,6 +17,7 @@ type legacyFields struct {
 	ModelAliases        json.RawMessage
 	MaxTokensPerRequest *int
 	MonthlyBudgetUSD    *float64
+	LoggingLevel        string // minimal | metrics | debug | audit
 }
 
 // applyLegacy overlays the legacy flat fields onto doc, leaving everything the legacy
@@ -58,6 +59,13 @@ func applyLegacy(doc governance.Policy, lf legacyFields) (governance.Policy, err
 	}
 	doc.Limits.Budgets = kept
 
+	// Wire logging level from flat field into doc.Logging.Level
+	if lf.LoggingLevel != "" {
+		doc.Logging.Level = lf.LoggingLevel
+	} else if doc.Logging.Level == "" {
+		doc.Logging.Level = "minimal" // default
+	}
+
 	doc.Normalize()
 	if err := doc.Validate(); err != nil {
 		return doc, fmt.Errorf("%w: %v", ErrInvalidPolicy, err)
@@ -86,6 +94,11 @@ func toLegacy(doc governance.Policy) legacyFields {
 			lf.MonthlyBudgetUSD = &limit
 			break
 		}
+	}
+	// Project logging level from doc to flat field
+	lf.LoggingLevel = doc.Logging.Level
+	if lf.LoggingLevel == "" {
+		lf.LoggingLevel = "minimal" // default
 	}
 	return lf
 }

@@ -22,6 +22,7 @@ type GatewayPolicyRow struct {
 	ModelAliases        json.RawMessage `json:"model_aliases"`
 	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
 	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
+	LoggingLevel        string          `json:"logging_level,omitempty"` // minimal | metrics | debug | audit
 	UpdatedAt           string          `json:"updated_at"`
 }
 
@@ -34,6 +35,7 @@ type GatewayPolicyProfile struct {
 	ModelAliases        json.RawMessage `json:"model_aliases"`
 	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
 	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
+	LoggingLevel        string          `json:"logging_level,omitempty"` // minimal | metrics | debug | audit
 	UpdatedAt           string          `json:"updated_at"`
 }
 
@@ -45,6 +47,7 @@ func (p *GatewayPolicyProfile) fill(doc []byte) error {
 	lf := toLegacy(d)
 	p.AllowedModels, p.ModelAliases = lf.AllowedModels, lf.ModelAliases
 	p.MaxTokensPerRequest, p.MonthlyBudgetUSD = lf.MaxTokensPerRequest, lf.MonthlyBudgetUSD
+	p.LoggingLevel = lf.LoggingLevel
 	return nil
 }
 
@@ -72,12 +75,13 @@ func (db *DB) GetGatewayPolicy(ctx context.Context, tenantID string) (GatewayPol
 	lf := toLegacy(d)
 	p.AllowedModels, p.ModelAliases = lf.AllowedModels, lf.ModelAliases
 	p.MaxTokensPerRequest, p.MonthlyBudgetUSD = lf.MaxTokensPerRequest, lf.MonthlyBudgetUSD
+	p.LoggingLevel = lf.LoggingLevel
 	return p, nil
 }
 
 // UpsertGatewayPolicy writes the legacy fields into the tenant-scope doc, preserving
 // anything else already in it (logging, extra budgets). Returns ErrInvalidPolicy on bad input.
-func (db *DB) UpsertGatewayPolicy(ctx context.Context, tenantID string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64) error {
+func (db *DB) UpsertGatewayPolicy(ctx context.Context, tenantID string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64, loggingLevel string) error {
 	var existing []byte
 	err := db.q.QueryRow(ctx, `
 		SELECT doc FROM them.governance_policies
@@ -85,7 +89,7 @@ func (db *DB) UpsertGatewayPolicy(ctx context.Context, tenantID string, allowedM
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	doc, err := mergeLegacy(existing, allowedModels, modelAliases, maxTokens, monthlyBudget)
+	doc, err := mergeLegacy(existing, allowedModels, modelAliases, maxTokens, monthlyBudget, loggingLevel)
 	if err != nil {
 		return err
 	}
@@ -97,12 +101,12 @@ func (db *DB) UpsertGatewayPolicy(ctx context.Context, tenantID string, allowedM
 	return db.q.Exec(ctx, q, tenantID, string(doc))
 }
 
-func mergeLegacy(existing []byte, allowed []string, aliases json.RawMessage, maxTokens *int, budget *float64) ([]byte, error) {
+func mergeLegacy(existing []byte, allowed []string, aliases json.RawMessage, maxTokens *int, budget *float64, loggingLevel string) ([]byte, error) {
 	base, err := parseDoc(existing)
 	if err != nil {
 		return nil, err
 	}
-	merged, err := applyLegacy(base, legacyFields{allowed, aliases, maxTokens, budget})
+	merged, err := applyLegacy(base, legacyFields{allowed, aliases, maxTokens, budget, loggingLevel})
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +165,8 @@ func (db *DB) GetGatewayPolicyProfile(ctx context.Context, tenantID, id string) 
 
 // CreateGatewayPolicyProfile inserts a new profile. Returns ErrInvalidPolicy on bad input;
 // a duplicate name is a unique violation (see IsUniqueViolation).
-func (db *DB) CreateGatewayPolicyProfile(ctx context.Context, tenantID, name string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64) (GatewayPolicyProfile, error) {
-	doc, err := mergeLegacy(nil, allowedModels, modelAliases, maxTokens, monthlyBudget)
+func (db *DB) CreateGatewayPolicyProfile(ctx context.Context, tenantID, name string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64, loggingLevel string) (GatewayPolicyProfile, error) {
+	doc, err := mergeLegacy(nil, allowedModels, modelAliases, maxTokens, monthlyBudget, loggingLevel)
 	if err != nil {
 		return GatewayPolicyProfile{}, err
 	}
@@ -182,12 +186,12 @@ func (db *DB) CreateGatewayPolicyProfile(ctx context.Context, tenantID, name str
 
 // UpdateGatewayPolicyProfile updates a profile, preserving doc content the legacy
 // fields cannot express. Returns pgx.ErrNoRows when the profile does not exist.
-func (db *DB) UpdateGatewayPolicyProfile(ctx context.Context, tenantID, id, name string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64) error {
+func (db *DB) UpdateGatewayPolicyProfile(ctx context.Context, tenantID, id, name string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64, loggingLevel string) error {
 	existing, err := db.GetGatewayPolicyProfileDoc(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
-	doc, err := mergeLegacy(existing, allowedModels, modelAliases, maxTokens, monthlyBudget)
+	doc, err := mergeLegacy(existing, allowedModels, modelAliases, maxTokens, monthlyBudget, loggingLevel)
 	if err != nil {
 		return err
 	}

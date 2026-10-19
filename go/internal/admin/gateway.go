@@ -281,6 +281,7 @@ type putPolicyRequest struct {
 	ModelAliases        json.RawMessage `json:"model_aliases"`
 	MaxTokensPerRequest *int            `json:"max_tokens_per_request"`
 	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd"`
+	LoggingLevel        string          `json:"logging_level,omitempty"`
 }
 
 func (h *GatewayHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +294,7 @@ func (h *GatewayHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d := dal.NewDB(h.db)
-	if err := d.UpsertGatewayPolicy(r.Context(), tenantID, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD); err != nil {
+	if err := d.UpsertGatewayPolicy(r.Context(), tenantID, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD, body.LoggingLevel); err != nil {
 		writePolicyError(w, err, "failed to save gateway policy")
 		return
 	}
@@ -351,6 +352,7 @@ type createPolicyProfileRequest struct {
 	ModelAliases        json.RawMessage `json:"model_aliases"`
 	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
 	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
+	LoggingLevel        string          `json:"logging_level,omitempty"`
 }
 
 func (h *GatewayHandler) CreatePolicyProfile(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +365,7 @@ func (h *GatewayHandler) CreatePolicyProfile(w http.ResponseWriter, r *http.Requ
 	}
 
 	d := dal.NewDB(h.db)
-	profile, err := d.CreateGatewayPolicyProfile(r.Context(), tenantID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD)
+	profile, err := d.CreateGatewayPolicyProfile(r.Context(), tenantID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD, body.LoggingLevel)
 	if err != nil {
 		writePolicyError(w, err, "failed to create policy profile")
 		return
@@ -400,6 +402,7 @@ type updatePolicyProfileRequest struct {
 	ModelAliases        json.RawMessage `json:"model_aliases"`
 	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
 	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
+	LoggingLevel        string          `json:"logging_level,omitempty"`
 }
 
 func (h *GatewayHandler) UpdatePolicyProfile(w http.ResponseWriter, r *http.Request) {
@@ -413,7 +416,7 @@ func (h *GatewayHandler) UpdatePolicyProfile(w http.ResponseWriter, r *http.Requ
 	}
 
 	d := dal.NewDB(h.db)
-	if err := d.UpdateGatewayPolicyProfile(r.Context(), tenantID, profileID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD); err != nil {
+	if err := d.UpdateGatewayPolicyProfile(r.Context(), tenantID, profileID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD, body.LoggingLevel); err != nil {
 		writePolicyError(w, err, "failed to update policy profile")
 		return
 	}

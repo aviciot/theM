@@ -97,6 +97,7 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
   );
   const [maxTokens, setMaxTokens] = useState(profile?.max_tokens_per_request != null ? String(profile.max_tokens_per_request) : '');
   const [monthlyBudget, setMonthlyBudget] = useState(profile?.monthly_budget_usd != null ? String(profile.monthly_budget_usd) : '');
+  const [loggingLevel, setLoggingLevel] = useState(profile?.logging_level || 'minimal');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -144,6 +145,7 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
       model_aliases: aliasObj,
       max_tokens_per_request: maxTokens ? parseInt(maxTokens) : null,
       monthly_budget_usd: monthlyBudget ? parseFloat(monthlyBudget) : null,
+      logging_level: loggingLevel,
     };
     try {
       if (profile) {
@@ -284,6 +286,28 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
                 style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box' }}
               />
             </label>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 4 }}>
+              Logging Level
+              <span style={{ fontSize: 11, color: '#64748b', marginLeft: 6 }}>
+                (controls what data is captured)
+              </span>
+            </div>
+            <select
+              value={loggingLevel}
+              onChange={e => setLoggingLevel(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box', cursor: 'pointer' }}
+            >
+              <option value="minimal">Minimal — Basic metrics only (tokens, cost, latency)</option>
+              <option value="metrics">Metrics — Adds per-node timing and status</option>
+              <option value="debug">Debug — Adds full request/response I/O</option>
+              <option value="audit">Audit — Adds bodies + PII/security decisions</option>
+            </select>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.4 }}>
+              <strong>minimal</strong> writes gateway_requests only. <strong>audit</strong> captures full request/response bodies.
+            </div>
           </div>
         </div>
 
