@@ -7,9 +7,10 @@
   "ep_slug": "gateway",
   "ep_type": "gateway",
   "auth_mode": "token",
-  "gateway_token": "799846fa95d95a259d33a56e0da4961bff927f48c8ed0c9737ed45e55e38286c",
+  "gateway_token": "test-gateway-token-12345",
   "model": "fast",
   "n_users": 10,
+  "test_results": "Test 1a PASSED: 10/10 users (100%), 6.2s avg latency. Baseline established. No worker bottleneck at 30 requests.",
   "messages": [
     "Hello! Test the mock provider.",
     "What is 2+2?",

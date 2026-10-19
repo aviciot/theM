@@ -1,0 +1,22 @@
+{
+  "test_id": "1a",
+  "run_id": "4c356d53-7e38-4a84-884a-87e8278c4c87",
+  "timestamp": "2026-10-19T08:47:16+00:00",
+  "config": {
+    "users": 10,
+    "workers": 4,
+    "worker_concurrency": 25,
+    "total_slots": 100
+  },
+  "results": {
+    "total_users": 10,
+    "passed": 10,
+    "failed": 0,
+    "success_rate": 100.0,
+    "avg_latency_ms": 6224,
+    "db_connections_before": 77,
+    "db_connections_after": 77,
+    "duration_seconds": 5
+  },
+  "status": "✅ PASS"
+}

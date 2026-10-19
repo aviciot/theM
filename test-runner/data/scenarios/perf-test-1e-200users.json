@@ -1,0 +1,21 @@
+{
+  "id": "perf-test-1e-200users",
+  "name": "Perf Test 1e - 200 Users (Original Failure)",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "n_users": 200,
+  "messages": [
+    "Hello! Test the mock provider.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "test_results": "Test 1e: Original test at 200 users (600 requests). Previously failed 183/200 (91.5%). Re-testing with valid auth.",
+  "created_at": "",
+  "updated_at": ""
+}

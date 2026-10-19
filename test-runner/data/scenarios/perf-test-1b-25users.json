@@ -1,0 +1,21 @@
+{
+  "id": "perf-test-1b-25users",
+  "name": "Perf Test 1b - 25 Users",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "n_users": 25,
+  "messages": [
+    "Hello! Test the mock provider.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "test_results": "Test 1b: Scale to 25 users (75 total requests). Expected: 100% pass, within 100 worker slots.",
+  "created_at": "",
+  "updated_at": ""
+}
