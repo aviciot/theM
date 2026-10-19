@@ -1,0 +1,19 @@
+{
+  "id": "40-logging-perf-minimal",
+  "name": "40 — Logging Performance: MINIMAL",
+  "description": "Performance test comparing logging level overhead. Tests MINIMAL logging.\n\n🔧 Gateway Config:\n• Token: perf-test-minimal-token-cf99ed849d8af033c1d5ca3c193ca059\n• Profile: perf-test-minimal\n• Logging Level: **MINIMAL** (lowest overhead)\n  - Captures: Basic metrics only\n  - No request/response bodies\n  - No per-node timing\n  - Minimal database writes\n\n📊 Test Parameters:\n• Users: 100 concurrent\n• Messages: 3 per user (300 total)\n• Expected latency: FASTEST (baseline)\n\n🎯 Purpose:\nEstablish baseline performance with minimal logging overhead.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "perf-test-minimal-token-cf99ed849d8af033c1d5ca3c193ca059",
+  "stream": false,
+  "model": "fast",
+  "n_users": 100,
+  "messages": ["Test 1", "Test 2", "Test 3"],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-19T00:00:00Z",
+  "updated_at": "2026-10-19T00:00:00Z"
+}

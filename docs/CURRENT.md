@@ -1,38 +1,76 @@
 # Current Session State — the-M
-# Last updated: 2026-10-19
+# Last updated: 2026-10-19 13:50 UTC
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: see `git log -1` (governance slice 1a + handover, 2026-10-19)
+HEAD: `097c57b1` - test(gateway): rate limiting test PASSED - first successful validation
 Remote: `origin` → `aviciot/theM` on GitHub
 
-Recent commits relevant to the observability-events work (this session):
+Recent commits (2026-10-19):
 ```
-2c52eafe  docs(events): record Stage A1 live test results
-6272d932  feat(events): add events compose overlay, ClickHouse schema, event Redis and secrets script
-f6d2aaaf  docs(observability): two-stage rollout plan and event-writer failure cases
-1474e266  docs(observability): add EventSink/EventStore backend abstraction (postgres|clickhouse|dual)
-521beaae  docs(observability): ground design in current code — log writers, tenancy mapping, start point
+097c57b1  test(gateway): rate limiting test PASSED - first successful validation
+1b5deb35  feat(test-runner): add pre-test analysis to quota test scenarios
+93bae5b5  feat(test-runner): add rate limit and token quota test scenarios
+bd06be07  docs: add comprehensive rate limiting implementation status
 ```
-(Interleaved gateway commits `893144a2`, `ceb137e8`, `cf443612` are separate work — policy override /
-token tracking — not part of this track.)
 
 ---
 
-## Governance Policy — Slice 1b done, 1c next (2026-10-19)
+## Logging Level Performance Testing — INFRASTRUCTURE READY, ENFORCEMENT INCOMPLETE (2026-10-19)
 
-Design: `docs/GOVERNANCE_POLICY_DESIGN.md`.
-- 1a (`0a9980b2`): `go/internal/governance/` (Policy, Validate, Resolve) + `db/122`.
-- 1b (this commit): **122 applied live** (2 profiles copied, 2 clients re-pointed). `llmgateway` `loadPolicyFromDB` (now `policy_gov.go`) resolves tenant + client's profile + client override from `governance_policies`; `Policy` gained `AllowLists`/`ModelAllowed()` (wildcards, every scope's list must pass). Admin `/admin/gateway/policy` and `/policy-profiles` keep their flat REST shape but read/write `governance_policies` (`dal/gateway_policy.go`, mapping in `gateway_policy_map.go`; edits preserve logging/other budgets in the doc). Client `policy_profile_id` JSON field now carries `governance_profile_id`. Profile ids are now UUIDs (were bigint). Bridge rebuilt + restarted, healthy.
-- **Behaviour changes to know:** (1) the tenant policy (`PUT /admin/gateway/policy`) is now actually enforced at runtime together with the profile (before, only the profile was read). (2) Cache key is `them:gateway:policy:v2:{client_id}`; still no invalidate-on-write (15 min TTL). (3) `created_at` no longer returned on profiles. (4) Invalid policy input → 400, duplicate profile name → 409.
-- **Not verified:** authenticated live smoke of the admin endpoints / gateway call was not run (login command was declined in-session). Unit tests only: `go test ./...` green (docker golang:1.25.0).
-- Next (1c): admin UI check against live endpoints; policy-cache invalidate-on-write; then wire `logging.level` into `runrecorder`/gateway writes; then Redis meters (replace per-request `SUM(cost_usd)`); then 200-user load test.
-- After stable, ASAP: drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (tracked in `docs/STATUS.md`). Note: assignments made after 1b only update `governance_profile_id`, so a rollback to old tables would see stale `policy_profile_id`.
-- Constraints: user identity for the `user` scope = existing runtime identity (`internal:<UserID>` / `external:<ExternalUserID>`); `on_exceed` default `block`, actions via registry; metering is never sampled.
-- Go is not installed on the host: run tests with `docker run --rm -v "$PWD":/src -w /src golang:1.25.0 go test ./...` from `go/`.
+**Status:** Logging level field exists in governance policies and is read by gateway, but **enforcement is not wired yet**.
+
+**What was done this session:**
+1. ✅ Added logging level UI field to governance policy profiles (minimal/metrics/debug/audit)
+2. ✅ Created 4 governance profiles for performance testing (perf-test-minimal/metrics/debug/audit)
+3. ✅ Created 4 gateway clients mapped to the 4 profiles
+4. ✅ Created 4 test scenarios (40-43) in test-runner to measure logging overhead
+5. ✅ Added log statement in gateway showing which logging level is active
+6. ✅ Rebuilt and restarted them-go-bridge with the log statement
+7. ❌ **NOT DONE:** Actual conditional logging enforcement
+
+**Current behavior:**
+- All 4 logging levels write the same data (basic metrics only to `gateway_requests`)
+- No difference in what gets captured
+- No performance difference expected (all ~60-120ms)
+- Gateway logs show: `"logging_level": "minimal"` (or metrics/debug/audit) but doesn't act on it
+
+**What needs to be implemented (next session):**
+
+1. **DEBUG level enforcement:**
+   - Capture request/response bodies
+   - Write to `gateway_request_bodies` table (table exists, unused)
+   - Modify `dal.WriteRequest()` to return request_id
+   - Add `dal.WriteRequestBodies(requestID, tenantID, reqText, respText)`
+   - Call conditionally: `if loggingLevel == "debug" || loggingLevel == "audit"`
+
+2. **AUDIT level enforcement:**
+   - Everything from DEBUG
+   - Plus: PII decisions, File Guard logs, middleware audit trail
+   - Requires: middleware components to write audit logs
+
+3. **METRICS level enforcement:**
+   - Per-node timing in AppFlow workflows
+   - Requires: workflow activities to record timing data
+
+**Files modified (uncommitted):**
+- `go/internal/llmgateway/service.go` - added log statement showing logging level
+
+**Test artifacts:**
+- 4 governance profiles in DB: `them.governance_policies` WHERE `name LIKE 'perf-test-%'`
+- 4 gateway clients in DB: `them.gateway_clients` WHERE `label LIKE 'perf-test-%-client'`
+- 4 test scenarios: `test-runner/data/scenarios/40-43-logging-perf-*.json`
+- Rate limit temporarily disabled: `UPDATE them.tenant_quotas SET api_requests_per_minute = NULL`
+
+**Next session should:**
+1. Commit the log statement change
+2. Implement DEBUG/AUDIT body capture (30-60 min)
+3. Run all 4 tests (40-43) and measure latency difference
+4. Update test analysis fields with results
+5. Document actual overhead: minimal=Xms, debug=Yms, audit=Zms
 
 ---
 

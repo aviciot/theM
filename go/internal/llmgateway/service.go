@@ -403,6 +403,13 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 		return requestedModel, 0, nil
 	}
 
+	// Log the effective logging level for observability
+	loggingLevel := pol.LoggingLevel
+	if loggingLevel == "" {
+		loggingLevel = "minimal"
+	}
+	logger.Info("llmgateway: policy loaded", "logging_level", loggingLevel)
+
 	// Step 1: alias resolution (before allowlist check — §14 Phase 2).
 	resolved := requestedModel
 	if alias, ok := pol.ModelAliases[requestedModel]; ok && alias != "" {
