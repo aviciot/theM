@@ -1,27 +1,28 @@
 # Current Session State — the-M
-# Last updated: 2026-10-19 13:50 UTC
+# Last updated: 2026-10-19 13:58 UTC
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `097c57b1` - test(gateway): rate limiting test PASSED - first successful validation
+HEAD: `752a1581` - feat(gateway): implement conditional body logging for DEBUG/AUDIT levels
 Remote: `origin` → `aviciot/theM` on GitHub
 
 Recent commits (2026-10-19):
 ```
+752a1581  feat(gateway): implement conditional body logging for DEBUG/AUDIT levels
+d5b7dbaa  feat(gateway): add logging level observability and performance test scenarios
 097c57b1  test(gateway): rate limiting test PASSED - first successful validation
 1b5deb35  feat(test-runner): add pre-test analysis to quota test scenarios
 93bae5b5  feat(test-runner): add rate limit and token quota test scenarios
-bd06be07  docs: add comprehensive rate limiting implementation status
 ```
 
 ---
 
-## Logging Level Performance Testing — INFRASTRUCTURE READY, ENFORCEMENT INCOMPLETE (2026-10-19)
+## Logging Level Performance Testing — DEBUG/AUDIT ENFORCEMENT COMPLETE (2026-10-19)
 
-**Status:** Logging level field exists in governance policies and is read by gateway, but **enforcement is not wired yet**.
+**Status:** ✅ **COMPLETE** — DEBUG and AUDIT logging levels now conditionally capture request/response bodies.
 
 **What was done this session:**
 1. ✅ Added logging level UI field to governance policy profiles (minimal/metrics/debug/audit)
@@ -29,35 +30,25 @@ bd06be07  docs: add comprehensive rate limiting implementation status
 3. ✅ Created 4 gateway clients mapped to the 4 profiles
 4. ✅ Created 4 test scenarios (40-43) in test-runner to measure logging overhead
 5. ✅ Added log statement in gateway showing which logging level is active
-6. ✅ Rebuilt and restarted them-go-bridge with the log statement
-7. ❌ **NOT DONE:** Actual conditional logging enforcement
+6. ✅ Modified `dal.WriteRequest()` to return `request_id` (RETURNING clause)
+7. ✅ Added `dal.WriteRequestBodies()` method for `gateway_request_bodies` table
+8. ✅ Updated all 4 handler methods to conditionally capture bodies (dispatchAppFlowSync/Stream, handleSync/Stream)
+9. ✅ Rebuilt and restarted them-go-bridge with enforcement live
 
 **Current behavior:**
-- All 4 logging levels write the same data (basic metrics only to `gateway_requests`)
-- No difference in what gets captured
-- No performance difference expected (all ~60-120ms)
-- Gateway logs show: `"logging_level": "minimal"` (or metrics/debug/audit) but doesn't act on it
+- **MINIMAL/METRICS:** Write only basic metrics to `gateway_requests` (no bodies)
+- **DEBUG/AUDIT:** Write metrics + request/response JSON to `gateway_request_bodies`
+- Performance difference now measurable via scenarios 40-43
 
-**What needs to be implemented (next session):**
-
-1. **DEBUG level enforcement:**
-   - Capture request/response bodies
-   - Write to `gateway_request_bodies` table (table exists, unused)
-   - Modify `dal.WriteRequest()` to return request_id
-   - Add `dal.WriteRequestBodies(requestID, tenantID, reqText, respText)`
-   - Call conditionally: `if loggingLevel == "debug" || loggingLevel == "audit"`
-
-2. **AUDIT level enforcement:**
-   - Everything from DEBUG
-   - Plus: PII decisions, File Guard logs, middleware audit trail
-   - Requires: middleware components to write audit logs
-
-3. **METRICS level enforcement:**
-   - Per-node timing in AppFlow workflows
-   - Requires: workflow activities to record timing data
-
-**Files modified (uncommitted):**
-- `go/internal/llmgateway/service.go` - added log statement showing logging level
+**Implementation details (commit 752a1581):**
+- `WriteRequest()` returns `request_id` via `RETURNING id::text`
+- `WriteRequestBodies(requestID, tenantID, reqText, respText)` writes to `gateway_request_bodies`
+- All 4 handlers capture request JSON via `json.Marshal(req)`
+- Response capture varies by handler:
+  - Sync: `json.Marshal(resp)` (full ChatResponse)
+  - Stream: `strings.Builder` accumulates deltas from SSE chunks
+- Conditional write: `if loggingLevel == "debug" || loggingLevel == "audit"`
+- Updated test mocks to match new signatures
 
 **Test artifacts:**
 - 4 governance profiles in DB: `them.governance_policies` WHERE `name LIKE 'perf-test-%'`
@@ -65,12 +56,17 @@ bd06be07  docs: add comprehensive rate limiting implementation status
 - 4 test scenarios: `test-runner/data/scenarios/40-43-logging-perf-*.json`
 - Rate limit temporarily disabled: `UPDATE them.tenant_quotas SET api_requests_per_minute = NULL`
 
-**Next session should:**
-1. Commit the log statement change
-2. Implement DEBUG/AUDIT body capture (30-60 min)
-3. Run all 4 tests (40-43) and measure latency difference
-4. Update test analysis fields with results
-5. Document actual overhead: minimal=Xms, debug=Yms, audit=Zms
+**Next steps:**
+1. Run all 4 tests (40-43) via test-runner UI (http://localhost:3210/scenarios)
+2. Measure latency differences: minimal vs debug vs audit
+3. Update test scenario `analysis` fields with actual overhead measurements
+4. Decide whether to enable METRICS level (per-node timing in AppFlow workflows)
+5. Document: minimal=Xms, debug=Yms, audit=Zms
+
+**Future work (AUDIT level extensions):**
+- PII decisions audit trail (requires middleware integration)
+- File Guard logs (requires middleware integration)
+- Per-node AppFlow timing (METRICS level, requires workflow activity changes)
 
 ---
 
