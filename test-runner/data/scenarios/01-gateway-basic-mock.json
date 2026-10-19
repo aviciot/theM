@@ -1,23 +1,22 @@
 {
   "id": "01-gateway-basic-mock",
   "name": "01 — Gateway Basic (Mock Provider)",
-  "description": "Tests basic gateway functionality using mock LLM provider. Single user, 3 messages, no streaming.\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path (bypasses Temporal)\n• Governance Profile: 'mock'\n  - No rate limits\n  - No PII guardrails\n  - No model restrictions\n  - Logging: minimal\n\n✅ Purpose: Simplest test — verifies gateway routing, authentication, and request/response flow.",
+  "description": "Tests basic gateway functionality using mock LLM provider. Single user, 3 messages, no streaming.\n\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path (bypasses Temporal)\n• Governance Profile: 'mock'\n  - No rate limits\n  - No PII guardrails\n  - No model restrictions\n  - Logging: minimal\n\n✅ Purpose: Simplest test — verifies gateway routing, authentication, and request/response flow.",
   "test_result_ai_analysis": "✅ Grade: A+\n\n📊 Result: 1/1 users passed (100%)\n⏱️ Latency: 245ms average\n🔧 Config: Mock provider, 'mock' governance profile, no rate limits\n\n🔍 Findings:\n• All 3 messages processed successfully\n• Authentication working correctly (token hash validated)\n• Response flow clean, no errors\n• Mock provider responding instantly\n\n💡 Recommendation: Run Test 02 (Streaming) to verify SSE functionality.",
   "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
   "ep_type": "gateway",
+  "auth_mode": "token",
   "gateway_token": "test-gateway-token-12345",
-  "stream": false,
-  "n_users": 1,
   "model": "fast",
+  "n_users": 1,
   "messages": [
     "What is 2 + 2?",
     "What did I just ask you?",
     "Give me a one-sentence summary."
   ],
-  "app_id": "",
-  "app_slug": "",
-  "ep_slug": "gateway",
-  "auth_mode": "token",
-  "created_at": "2026-10-19T00:00:00Z",
-  "updated_at": "2026-10-19T00:00:00Z"
+  "created_at": "",
+  "updated_at": "2026-10-19T11:19:17Z"
 }
