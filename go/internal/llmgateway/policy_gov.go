@@ -41,6 +41,7 @@ func policyFromRows(rows []policyRow) *Policy {
 		AllowLists:          eff.ModelAllow,
 		ModelAliases:        eff.Aliases,
 		MaxTokensPerRequest: eff.MaxTokens,
+		LoggingLevel:        eff.Logging.Level,
 	}
 	// Runtime enforces one monthly USD cap today (tightest across scopes); other
 	// budgets are carried in the doc and enforced once Redis meters land (slice 3).

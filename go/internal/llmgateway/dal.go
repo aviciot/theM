@@ -36,6 +36,11 @@ type Policy struct {
 	MaxTokensPerRequest int
 	// MonthlyBudgetUSD is the rolling-month spend cap in USD. 0 = no cap.
 	MonthlyBudgetUSD float64
+	// LoggingLevel is the resolved capture level: minimal | metrics | debug | audit.
+	// Empty string = minimal (default).
+	// TODO(slice 2): enforce level in WriteRequest — audit level should write to
+	// gateway_request_bodies table (db/100_llm_gateway.sql line 149).
+	LoggingLevel string
 }
 
 // ErrInvalidClientConfig is returned when a client's configuration violates gateway rules.

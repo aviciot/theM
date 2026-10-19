@@ -69,3 +69,27 @@ func TestModelAllowed_LegacyField(t *testing.T) {
 		t.Fatal("legacy allowlist broken")
 	}
 }
+
+// GW-GOV-07: logging level is resolved and populated
+func TestPolicyFromRows_LoggingLevel(t *testing.T) {
+	// Default: minimal
+	p := policyFromRows([]policyRow{row("tenant", "t", `{"schema_version":1}`)})
+	if p == nil || p.LoggingLevel != "minimal" {
+		t.Fatalf("want default minimal, got %+v", p)
+	}
+
+	// Explicit debug level
+	p2 := policyFromRows([]policyRow{row("profile", "p", `{"schema_version":1,"logging":{"level":"debug"}}`)})
+	if p2 == nil || p2.LoggingLevel != "debug" {
+		t.Fatalf("want debug, got %+v", p2)
+	}
+
+	// Most specific wins: client overrides tenant
+	p3 := policyFromRows([]policyRow{
+		row("tenant", "t", `{"schema_version":1,"logging":{"level":"minimal"}}`),
+		row("client", "c", `{"schema_version":1,"logging":{"level":"audit"}}`),
+	})
+	if p3 == nil || p3.LoggingLevel != "audit" {
+		t.Fatalf("want client's audit level, got %+v", p3)
+	}
+}
