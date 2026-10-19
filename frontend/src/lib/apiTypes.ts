@@ -1265,7 +1265,7 @@ export interface GatewayPolicyProfile {
   model_aliases: Record<string, string>;
   max_tokens_per_request?: number | null;
   monthly_budget_usd?: number | null;
-  created_at: string;
+  created_at?: string; // no longer returned (governance_policies has no created_at)
   updated_at: string;
 }
 

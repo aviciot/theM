@@ -212,7 +212,7 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		logger.Warn("llmgateway: policy is nil (no policy assigned)", "client_id", ca.ClientID)
 	} else {
 		logger.Info("llmgateway: policy loaded", "client_id", ca.ClientID,
-			"allowed_models", policy.AllowedModels,
+			"allow_lists", policy.AllowLists,
 			"has_aliases", policy.ModelAliases != nil,
 			"max_tokens", policy.MaxTokensPerRequest)
 	}

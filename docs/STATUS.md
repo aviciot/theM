@@ -143,6 +143,5 @@ Secrets: derived via HMAC-SHA256 from `secrets.local`. Run `./generate-env.sh` t
 
 ## Pending: governance policy migration (added 2026-10-19)
 
-- **Slice 1a done:** `internal/governance/` package + `db/122_governance_policies.sql` (dry-run verified, NOT yet applied live).
-- **Slice 1b next:** apply 122; switch gateway runtime (`llmgateway/dal.go loadPolicyFromDB`) and admin policy-profile/policy endpoints to `governance_policies`.
+- **Slice 1a/1b done:** governance package, `db/122` applied live, gateway runtime + admin endpoints read `governance_policies`. Live authenticated smoke still to run; policy cache has no invalidate-on-write.
 - **Then, as early as possible once stable:** drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (requested by user 2026-10-19). Do not let this linger.

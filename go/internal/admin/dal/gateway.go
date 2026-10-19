@@ -2,10 +2,6 @@ package dal
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // ── Gateway client ────────────────────────────────────────────────────────────
@@ -27,7 +23,7 @@ type GatewayClient struct {
 func (db *DB) ListGatewayClients(ctx context.Context, tenantID string) ([]GatewayClient, error) {
 	const q = `
 		SELECT id::text, tenant_id::text, token_hash, label,
-		       profile_id::text, app_id::text, policy_profile_id::text,
+		       profile_id::text, app_id::text, governance_profile_id::text,
 		       to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM them.gateway_clients
@@ -61,7 +57,7 @@ func (db *DB) CreateGatewayClient(ctx context.Context, tenantID, tokenHash, labe
 		INSERT INTO them.gateway_clients (tenant_id, token_hash, label)
 		VALUES ($1::uuid, $2, $3)
 		RETURNING id::text, tenant_id::text, token_hash, label,
-		          profile_id::text, app_id::text, policy_profile_id::text,
+		          profile_id::text, app_id::text, governance_profile_id::text,
 		          to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
@@ -78,7 +74,7 @@ func (db *DB) CreateGatewayClient(ctx context.Context, tenantID, tokenHash, labe
 func (db *DB) GetGatewayClient(ctx context.Context, tenantID, id string) (GatewayClient, error) {
 	const q = `
 		SELECT id::text, tenant_id::text, token_hash, label,
-		       profile_id::text, app_id::text, policy_profile_id::text,
+		       profile_id::text, app_id::text, governance_profile_id::text,
 		       to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM them.gateway_clients
@@ -179,71 +175,6 @@ func (db *DB) DeleteGatewayProfile(ctx context.Context, tenantID, id string) err
 	return db.q.Exec(ctx, q, tenantID, id)
 }
 
-// ── Gateway policy ────────────────────────────────────────────────────────────
-
-// GatewayPolicyRow is the admin-facing policy representation.
-type GatewayPolicyRow struct {
-	TenantID            string          `json:"tenant_id"`
-	AllowedModels       []string        `json:"allowed_models"`
-	ModelAliases        json.RawMessage `json:"model_aliases"`
-	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
-	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
-	UpdatedAt           string          `json:"updated_at"`
-}
-
-// GetGatewayPolicy returns the policy row for a tenant, or a zero row if none exists.
-func (db *DB) GetGatewayPolicy(ctx context.Context, tenantID string) (GatewayPolicyRow, error) {
-	const q = `
-		SELECT tenant_id::text, COALESCE(allowed_models, '{}'), model_aliases,
-		       max_tokens_per_request, monthly_budget_usd,
-		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-		FROM them.gateway_policies
-		WHERE tenant_id = $1::uuid`
-
-	var p GatewayPolicyRow
-	var aliases []byte
-	err := db.q.QueryRow(ctx, q, tenantID).Scan(
-		&p.TenantID, &p.AllowedModels, &aliases,
-		&p.MaxTokensPerRequest, &p.MonthlyBudgetUSD, &p.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		p.TenantID = tenantID
-		p.AllowedModels = []string{}
-		p.ModelAliases = json.RawMessage("{}")
-		return p, nil
-	}
-	if err != nil {
-		return GatewayPolicyRow{}, err
-	}
-	if len(aliases) > 0 {
-		p.ModelAliases = json.RawMessage(aliases)
-	} else {
-		p.ModelAliases = json.RawMessage("{}")
-	}
-	return p, nil
-}
-
-// UpsertGatewayPolicy inserts or updates the policy row for a tenant.
-func (db *DB) UpsertGatewayPolicy(ctx context.Context, tenantID string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64) error {
-	if len(modelAliases) == 0 {
-		modelAliases = json.RawMessage("{}")
-	}
-	if allowedModels == nil {
-		allowedModels = []string{}
-	}
-	const q = `
-		INSERT INTO them.gateway_policies
-			(tenant_id, allowed_models, model_aliases, max_tokens_per_request, monthly_budget_usd, updated_at)
-		VALUES ($1::uuid, $2, $3, $4, $5, now())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			allowed_models         = EXCLUDED.allowed_models,
-			model_aliases          = EXCLUDED.model_aliases,
-			max_tokens_per_request = EXCLUDED.max_tokens_per_request,
-			monthly_budget_usd     = EXCLUDED.monthly_budget_usd,
-			updated_at             = now()`
-	return db.q.Exec(ctx, q, tenantID, allowedModels, modelAliases, maxTokens, monthlyBudget)
-}
-
 // ── Gateway requests (read-only for admin UI) ─────────────────────────────────
 
 // GatewayRequestRow is one row from the gateway_requests log.
@@ -308,158 +239,4 @@ func (db *DB) ListGatewayRequests(ctx context.Context, tenantID string, limit in
 		out = []GatewayRequestRow{}
 	}
 	return out, nil
-}
-
-// ── Gateway policy profiles ───────────────────────────────────────────────────
-
-// GatewayPolicyProfile is a named, reusable policy that can be assigned to clients.
-type GatewayPolicyProfile struct {
-	ID                  string          `json:"id"`
-	TenantID            string          `json:"tenant_id"`
-	Name                string          `json:"name"`
-	AllowedModels       []string        `json:"allowed_models"`
-	ModelAliases        json.RawMessage `json:"model_aliases"`
-	MaxTokensPerRequest *int            `json:"max_tokens_per_request,omitempty"`
-	MonthlyBudgetUSD    *float64        `json:"monthly_budget_usd,omitempty"`
-	CreatedAt           string          `json:"created_at"`
-	UpdatedAt           string          `json:"updated_at"`
-}
-
-// ListGatewayPolicyProfiles returns all policy profiles for a tenant.
-func (db *DB) ListGatewayPolicyProfiles(ctx context.Context, tenantID string) ([]GatewayPolicyProfile, error) {
-	const q = `
-		SELECT id::text, tenant_id::text, name,
-		       COALESCE(allowed_models, '{}'), model_aliases,
-		       max_tokens_per_request, monthly_budget_usd,
-		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-		FROM them.gateway_policy_profiles
-		WHERE tenant_id = $1::uuid
-		ORDER BY created_at`
-
-	rows, err := db.q.Query(ctx, q, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []GatewayPolicyProfile
-	for rows.Next() {
-		var p GatewayPolicyProfile
-		var aliases []byte
-		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.AllowedModels, &aliases,
-			&p.MaxTokensPerRequest, &p.MonthlyBudgetUSD, &p.CreatedAt, &p.UpdatedAt); err != nil {
-			return nil, err
-		}
-		if len(aliases) > 0 {
-			p.ModelAliases = json.RawMessage(aliases)
-		} else {
-			p.ModelAliases = json.RawMessage("{}")
-		}
-		out = append(out, p)
-	}
-	if out == nil {
-		out = []GatewayPolicyProfile{}
-	}
-	return out, nil
-}
-
-// GetGatewayPolicyProfile returns one policy profile by ID.
-// Returns pgx.ErrNoRows when not found.
-func (db *DB) GetGatewayPolicyProfile(ctx context.Context, tenantID, id string) (GatewayPolicyProfile, error) {
-	const q = `
-		SELECT id::text, tenant_id::text, name,
-		       COALESCE(allowed_models, '{}'), model_aliases,
-		       max_tokens_per_request, monthly_budget_usd,
-		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-		FROM them.gateway_policy_profiles
-		WHERE tenant_id = $1::uuid AND id = $2::bigint`
-
-	var p GatewayPolicyProfile
-	var aliases []byte
-	err := db.q.QueryRow(ctx, q, tenantID, id).Scan(
-		&p.ID, &p.TenantID, &p.Name, &p.AllowedModels, &aliases,
-		&p.MaxTokensPerRequest, &p.MonthlyBudgetUSD, &p.CreatedAt, &p.UpdatedAt,
-	)
-	if err != nil {
-		return GatewayPolicyProfile{}, err
-	}
-	if len(aliases) > 0 {
-		p.ModelAliases = json.RawMessage(aliases)
-	} else {
-		p.ModelAliases = json.RawMessage("{}")
-	}
-	return p, nil
-}
-
-// CreateGatewayPolicyProfile inserts a new policy profile.
-func (db *DB) CreateGatewayPolicyProfile(ctx context.Context, tenantID, name string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64) (GatewayPolicyProfile, error) {
-	if len(modelAliases) == 0 {
-		modelAliases = json.RawMessage("{}")
-	}
-	if allowedModels == nil {
-		allowedModels = []string{}
-	}
-	const q = `
-		INSERT INTO them.gateway_policy_profiles
-			(tenant_id, name, allowed_models, model_aliases, max_tokens_per_request, monthly_budget_usd)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6)
-		RETURNING id::text, tenant_id::text, name,
-		          COALESCE(allowed_models, '{}'), model_aliases,
-		          max_tokens_per_request, monthly_budget_usd,
-		          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		          to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
-
-	var p GatewayPolicyProfile
-	var aliases []byte
-	err := db.q.QueryRow(ctx, q, tenantID, name, allowedModels, modelAliases, maxTokens, monthlyBudget).Scan(
-		&p.ID, &p.TenantID, &p.Name, &p.AllowedModels, &aliases,
-		&p.MaxTokensPerRequest, &p.MonthlyBudgetUSD, &p.CreatedAt, &p.UpdatedAt,
-	)
-	if err != nil {
-		return GatewayPolicyProfile{}, err
-	}
-	if len(aliases) > 0 {
-		p.ModelAliases = json.RawMessage(aliases)
-	} else {
-		p.ModelAliases = json.RawMessage("{}")
-	}
-	return p, nil
-}
-
-// UpdateGatewayPolicyProfile updates an existing policy profile.
-func (db *DB) UpdateGatewayPolicyProfile(ctx context.Context, tenantID, id, name string, allowedModels []string, modelAliases json.RawMessage, maxTokens *int, monthlyBudget *float64) error {
-	if len(modelAliases) == 0 {
-		modelAliases = json.RawMessage("{}")
-	}
-	if allowedModels == nil {
-		allowedModels = []string{}
-	}
-	const q = `
-		UPDATE them.gateway_policy_profiles
-		SET name = $3,
-		    allowed_models = $4,
-		    model_aliases = $5,
-		    max_tokens_per_request = $6,
-		    monthly_budget_usd = $7,
-		    updated_at = now()
-		WHERE tenant_id = $1::uuid AND id = $2::bigint`
-	return db.q.Exec(ctx, q, tenantID, id, name, allowedModels, modelAliases, maxTokens, monthlyBudget)
-}
-
-// DeleteGatewayPolicyProfile removes a policy profile.
-// Clients referencing this profile will have their policy_profile_id set to NULL (ON DELETE SET NULL).
-func (db *DB) DeleteGatewayPolicyProfile(ctx context.Context, tenantID, id string) error {
-	const q = `DELETE FROM them.gateway_policy_profiles WHERE tenant_id = $1::uuid AND id = $2::bigint`
-	return db.q.Exec(ctx, q, tenantID, id)
-}
-
-// SetGatewayClientPolicyProfile assigns (or clears) a policy profile to a client.
-func (db *DB) SetGatewayClientPolicyProfile(ctx context.Context, tenantID, clientID string, profileID *string) error {
-	const q = `
-		UPDATE them.gateway_clients
-		SET policy_profile_id = $3::bigint
-		WHERE tenant_id = $1::uuid AND id = $2::uuid`
-	return db.q.Exec(ctx, q, tenantID, clientID, profileID)
 }

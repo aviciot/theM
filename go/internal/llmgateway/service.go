@@ -411,20 +411,11 @@ func (s *Service) checkPolicy(ctx context.Context, tenantID, clientID, requested
 	}
 
 	// Step 2: allowlist check.
-	if len(pol.AllowedModels) > 0 {
-		allowed := false
-		for _, m := range pol.AllowedModels {
-			if m == resolved {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			logger.Warn("llmgateway: model blocked by policy", "requested", requestedModel, "resolved", resolved, "allowed_models", pol.AllowedModels)
-			return "", 0, ErrModelBlocked
-		}
-		logger.Info("llmgateway: policy check complete", "resolved_model", resolved, "token_cap", pol.MaxTokensPerRequest)
+	if !pol.ModelAllowed(resolved) {
+		logger.Warn("llmgateway: model blocked by policy", "requested", requestedModel, "resolved", resolved)
+		return "", 0, ErrModelBlocked
 	}
+	logger.Info("llmgateway: policy check complete", "resolved_model", resolved, "token_cap", pol.MaxTokensPerRequest)
 
 	// Step 3: monthly budget check (fail-open on DB error).
 	if pol.MonthlyBudgetUSD > 0 {

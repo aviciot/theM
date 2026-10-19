@@ -22,12 +22,15 @@ token tracking — not part of this track.)
 
 ---
 
-## Governance Policy — Slice 1a done, 1b next (2026-10-19)
+## Governance Policy — Slice 1b done, 1c next (2026-10-19)
 
-Decision: Option A (policy first). Design: `docs/GOVERNANCE_POLICY_DESIGN.md`.
-- Done (`0a9980b2`): `go/internal/governance/` (Policy, Validate, Resolve; 8 tests) + `db/122_governance_policies.sql` (single table, scopes tenant/application/client/user/profile; copies legacy gateway policy rows). Migration dry-run verified in a rolled-back txn; **NOT applied live**.
-- Next (slice 1b): apply 122; switch `llmgateway/dal.go` `loadPolicyFromDB` + admin policy/profile endpoints to `governance_policies`; then wire `logging.level` into `runrecorder`/gateway writes; then Redis meters (replace per-request `SUM(cost_usd)`); then 200-user load test.
-- After stable, ASAP: drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (tracked in `docs/STATUS.md`).
+Design: `docs/GOVERNANCE_POLICY_DESIGN.md`.
+- 1a (`0a9980b2`): `go/internal/governance/` (Policy, Validate, Resolve) + `db/122`.
+- 1b (this commit): **122 applied live** (2 profiles copied, 2 clients re-pointed). `llmgateway` `loadPolicyFromDB` (now `policy_gov.go`) resolves tenant + client's profile + client override from `governance_policies`; `Policy` gained `AllowLists`/`ModelAllowed()` (wildcards, every scope's list must pass). Admin `/admin/gateway/policy` and `/policy-profiles` keep their flat REST shape but read/write `governance_policies` (`dal/gateway_policy.go`, mapping in `gateway_policy_map.go`; edits preserve logging/other budgets in the doc). Client `policy_profile_id` JSON field now carries `governance_profile_id`. Profile ids are now UUIDs (were bigint). Bridge rebuilt + restarted, healthy.
+- **Behaviour changes to know:** (1) the tenant policy (`PUT /admin/gateway/policy`) is now actually enforced at runtime together with the profile (before, only the profile was read). (2) Cache key is `them:gateway:policy:v2:{client_id}`; still no invalidate-on-write (15 min TTL). (3) `created_at` no longer returned on profiles. (4) Invalid policy input → 400, duplicate profile name → 409.
+- **Not verified:** authenticated live smoke of the admin endpoints / gateway call was not run (login command was declined in-session). Unit tests only: `go test ./...` green (docker golang:1.25.0).
+- Next (1c): admin UI check against live endpoints; policy-cache invalidate-on-write; then wire `logging.level` into `runrecorder`/gateway writes; then Redis meters (replace per-request `SUM(cost_usd)`); then 200-user load test.
+- After stable, ASAP: drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (tracked in `docs/STATUS.md`). Note: assignments made after 1b only update `governance_profile_id`, so a rollback to old tables would see stale `policy_profile_id`.
 - Constraints: user identity for the `user` scope = existing runtime identity (`internal:<UserID>` / `external:<ExternalUserID>`); `on_exceed` default `block`, actions via registry; metering is never sampled.
 - Go is not installed on the host: run tests with `docker run --rm -v "$PWD":/src -w /src golang:1.25.0 go test ./...` from `go/`.
 

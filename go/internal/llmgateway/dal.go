@@ -3,7 +3,7 @@
 // POST /{tenant_slug}/llm/v1/chat/completions accepts OpenAI-shaped requests
 // from closed agents (cron jobs, scripts, internal services that call an LLM
 // but expose no callable endpoint). The gateway authenticates, resolves the
-// provider key, enforces gateway_policies (allowed models, per-request token
+// provider key, enforces governance_policies (allowed models, per-request token
 // ceiling, monthly USD budget), calls the LLM, records usage, and returns the
 // response in OpenAI wire format (streaming or non-streaming).
 //
@@ -22,11 +22,14 @@ import (
 	"github.com/redis/rueidis"
 )
 
-// Policy holds the tenant-level governance rules loaded from gateway_policies.
+// Policy holds the governance rules resolved from governance_policies for one client.
 // A nil *Policy means no row exists — all models allowed, no budget cap.
 type Policy struct {
-	// AllowedModels is the resolved-model allowlist. nil or empty = allow all.
+	// AllowedModels is a single resolved-model allowlist. nil or empty = allow all.
 	AllowedModels []string
+	// AllowLists holds one allowlist per governance scope; a model must pass every
+	// list. Use Policy.ModelAllowed rather than reading these directly.
+	AllowLists [][]string
 	// ModelAliases maps alias names to concrete model IDs (e.g. "fast" → "claude-haiku-4-5-20251001").
 	ModelAliases map[string]string
 	// MaxTokensPerRequest is the per-request output ceiling. 0 = no cap.
@@ -184,7 +187,7 @@ func (d *DAL) LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, 
 func (d *DAL) LoadPolicy(ctx context.Context, tenantID, clientID string) (*Policy, error) {
 	// Try Redis cache first (if available)
 	if d.redis != nil {
-		cacheKey := "them:gateway:policy:" + clientID
+		cacheKey := "them:gateway:policy:v2:" + clientID
 		cmd := d.redis.B().Get().Key(cacheKey).Build()
 		resp := d.redis.Do(ctx, cmd)
 		if data, err := resp.AsBytes(); err == nil {
@@ -205,58 +208,11 @@ func (d *DAL) LoadPolicy(ctx context.Context, tenantID, clientID string) (*Polic
 	// Store in Redis for 15 minutes (best-effort, ignore errors)
 	if d.redis != nil && p != nil {
 		if data, jerr := json.Marshal(p); jerr == nil {
-			setCmd := d.redis.B().Set().Key("them:gateway:policy:"+clientID).Value(string(data)).Ex(15*time.Minute).Build()
+			setCmd := d.redis.B().Set().Key("them:gateway:policy:v2:"+clientID).Value(string(data)).Ex(15*time.Minute).Build()
 			_ = d.redis.Do(ctx, setCmd)
 		}
 	}
 
-	return p, nil
-}
-
-// loadPolicyFromDB queries PostgreSQL for the policy profile.
-// Extracted from LoadPolicy to enable caching layer above.
-func (d *DAL) loadPolicyFromDB(ctx context.Context, tenantID, clientID string) (*Policy, error) {
-	const q = `
-		SELECT pp.allowed_models, pp.model_aliases, pp.max_tokens_per_request, pp.monthly_budget_usd
-		FROM them.gateway_clients gc
-		JOIN them.gateway_policy_profiles pp ON pp.id = gc.policy_profile_id
-		WHERE gc.tenant_id = $1::uuid AND gc.id = $2::uuid`
-
-	var (
-		allowedModels       []string
-		modelAliasesRaw     []byte
-		maxTokensPerRequest *int
-		monthlyBudgetUSD    *float64
-	)
-	err := d.pool.QueryRow(ctx, q, tenantID, clientID).Scan(
-		&allowedModels,
-		&modelAliasesRaw,
-		&maxTokensPerRequest,
-		&monthlyBudgetUSD,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// No policy profile assigned → no enforcement.
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	p := &Policy{AllowedModels: allowedModels}
-	if maxTokensPerRequest != nil {
-		p.MaxTokensPerRequest = *maxTokensPerRequest
-	}
-	if monthlyBudgetUSD != nil {
-		p.MonthlyBudgetUSD = *monthlyBudgetUSD
-	}
-
-	// Unmarshal aliases JSON — empty/null/"{}" → nil map is fine.
-	if len(modelAliasesRaw) > 0 {
-		var aliases map[string]string
-		if jerr := json.Unmarshal(modelAliasesRaw, &aliases); jerr == nil && len(aliases) > 0 {
-			p.ModelAliases = aliases
-		}
-	}
 	return p, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -165,7 +166,7 @@ func (h *GatewayHandler) PatchClient(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := d.SetGatewayClientPolicyProfile(r.Context(), tenantID, clientID, policyProfileID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update gateway client policy profile")
+			writePolicyError(w, err, "failed to update gateway client policy profile")
 			return
 		}
 	}
@@ -241,6 +242,20 @@ func (h *GatewayHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// writePolicyError maps DAL policy errors to HTTP responses; fallback is the static 500 message.
+func writePolicyError(w http.ResponseWriter, err error, fallback string) {
+	switch {
+	case errors.Is(err, dal.ErrInvalidPolicy):
+		writeError(w, http.StatusBadRequest, "invalid policy: check allowed_models, model_aliases, max_tokens_per_request, monthly_budget_usd")
+	case dal.IsUniqueViolation(err):
+		writeError(w, http.StatusConflict, "a policy profile with this name already exists")
+	case dal.IsNoRows(err):
+		writeError(w, http.StatusNotFound, "policy profile not found")
+	default:
+		writeError(w, http.StatusInternalServerError, fallback)
+	}
+}
+
 // ── Policy ────────────────────────────────────────────────────────────────────
 
 func (h *GatewayHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +287,7 @@ func (h *GatewayHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 
 	d := dal.NewDB(h.db)
 	if err := d.UpsertGatewayPolicy(r.Context(), tenantID, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save gateway policy")
+		writePolicyError(w, err, "failed to save gateway policy")
 		return
 	}
 
@@ -338,7 +353,7 @@ func (h *GatewayHandler) CreatePolicyProfile(w http.ResponseWriter, r *http.Requ
 	d := dal.NewDB(h.db)
 	profile, err := d.CreateGatewayPolicyProfile(r.Context(), tenantID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create policy profile")
+		writePolicyError(w, err, "failed to create policy profile")
 		return
 	}
 	writeJSON(w, http.StatusCreated, profile)
@@ -381,7 +396,7 @@ func (h *GatewayHandler) UpdatePolicyProfile(w http.ResponseWriter, r *http.Requ
 
 	d := dal.NewDB(h.db)
 	if err := d.UpdateGatewayPolicyProfile(r.Context(), tenantID, profileID, body.Name, body.AllowedModels, body.ModelAliases, body.MaxTokensPerRequest, body.MonthlyBudgetUSD); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update policy profile")
+		writePolicyError(w, err, "failed to update policy profile")
 		return
 	}
 
