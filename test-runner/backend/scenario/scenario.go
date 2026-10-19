@@ -17,9 +17,11 @@ type KeycloakUser struct {
 }
 
 type Scenario struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	TenantSlug string   `json:"tenant_slug"`
+	ID                      string   `json:"id"`
+	Name                    string   `json:"name"`
+	Description             string   `json:"description,omitempty"`              // Friendly explanation of what this test covers
+	TestResultAIAnalysis    string   `json:"test_result_ai_analysis,omitempty"`  // LLM-generated analysis, findings, and grade
+	TenantSlug              string   `json:"tenant_slug"`
 	TenantID   string   `json:"tenant_id,omitempty"`
 	AppID      string   `json:"app_id"`
 	AppSlug    string   `json:"app_slug"`

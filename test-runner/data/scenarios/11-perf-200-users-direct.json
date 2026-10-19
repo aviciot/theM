@@ -1,0 +1,23 @@
+{
+  "id": "11-perf-200-users-direct",
+  "name": "11 — Performance: 200 Users (Direct Path)",
+  "description": "Performance test with 200 concurrent users, 3 messages each (600 total requests). Uses 'mock' profile, NO app, direct path (no Temporal). This was the original failure case (183/200 failed) before auth fix. Now passes 100% with ~1.3s latency. Tests gateway capacity without workflow overhead.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "test-gateway-token-12345",
+  "stream": false,
+  "n_users": 200,
+  "model": "fast",
+  "messages": [
+    "Hello! Quick test.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-19T00:00:00Z",
+  "updated_at": "2026-10-19T00:00:00Z"
+}

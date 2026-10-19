@@ -1,0 +1,23 @@
+{
+  "id": "12-perf-400-users-direct",
+  "name": "12 — Performance: 400 Users (Direct Path)",
+  "description": "Stress test with 400 concurrent users, 3 messages each (1200 total requests). Uses 'mock' profile, NO app, direct path (no Temporal). Tests gateway saturation point. Expected: 100% pass with 3-4s latency. This proves direct path can handle 400+ concurrent users before hitting resource limits.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "test-gateway-token-12345",
+  "stream": false,
+  "n_users": 400,
+  "model": "fast",
+  "messages": [
+    "Hello! Quick test.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-19T00:00:00Z",
+  "updated_at": "2026-10-19T00:00:00Z"
+}

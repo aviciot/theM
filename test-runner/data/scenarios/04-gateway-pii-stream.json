@@ -1,0 +1,21 @@
+{
+  "id": "04-gateway-pii-stream",
+  "name": "04 — Gateway PII Guardrail (Streaming)",
+  "description": "Tests PII detection with streaming responses. Single user, 1 message with SSN. Uses governance profile with PII guardrails enabled + streaming. Verifies middleware works correctly with SSE streams.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "gw-pii-test-token-67890",
+  "stream": true,
+  "n_users": 1,
+  "model": "fast",
+  "messages": [
+    "My SSN is 123-45-6789. Can you help me?"
+  ],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-19T00:00:00Z",
+  "updated_at": "2026-10-19T00:00:00Z"
+}

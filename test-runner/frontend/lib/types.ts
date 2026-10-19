@@ -29,6 +29,8 @@ export interface KeycloakUser {
 export interface Scenario {
   id: string;
   name: string;
+  description?: string;               // Human-friendly explanation of what this test covers
+  test_result_ai_analysis?: string;   // LLM-generated analysis with findings and grade
   tenant_slug: string;
   tenant_id?: string;
   app_id: string;

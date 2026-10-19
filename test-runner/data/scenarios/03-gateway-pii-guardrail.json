@@ -1,0 +1,21 @@
+{
+  "id": "03-gateway-pii-guardrail",
+  "name": "03 — Gateway PII Guardrail (Non-Streaming)",
+  "description": "Tests PII detection and redaction middleware. Single user, 1 message containing SSN and credit card. Uses governance profile with PII guardrails enabled. Expected: Request blocked or sensitive data redacted before reaching LLM.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "gw-pii-test-token-67890",
+  "stream": false,
+  "n_users": 1,
+  "model": "fast",
+  "messages": [
+    "My SSN is 123-45-6789 and my credit card is 4532-1111-2222-3333."
+  ],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-19T00:00:00Z",
+  "updated_at": "2026-10-19T00:00:00Z"
+}

@@ -1,0 +1,23 @@
+{
+  "id": "10-perf-50-users-direct",
+  "name": "10 — Performance: 50 Users (Direct Path)",
+  "description": "Performance test with 50 concurrent users, 3 messages each (150 total requests). Uses 'mock' profile with NO app assigned — requests bypass Temporal and go direct to mock LLM. Tests gateway concurrency handling without worker overhead. Expected latency: ~300-500ms.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "ep_type": "gateway",
+  "gateway_token": "test-gateway-token-12345",
+  "stream": false,
+  "n_users": 50,
+  "model": "fast",
+  "messages": [
+    "Hello! Quick test.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "auth_mode": "token",
+  "created_at": "2026-10-19T00:00:00Z",
+  "updated_at": "2026-10-19T00:00:00Z"
+}
