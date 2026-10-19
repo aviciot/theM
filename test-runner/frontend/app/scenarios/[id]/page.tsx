@@ -302,13 +302,28 @@ export default function ScenarioEditorPage() {
         )}
 
         <Field label="Virtual Users" hint={scenarioType === 'gateway' ? 'Concurrent gateway requests' : 'Each user gets their own bearer token and WS connection'}>
-          <div className="flex items-center gap-3">
-            <input
-              type="range" min={1} max={50} value={nUsers}
-              onChange={(e) => setNUsers(Number(e.target.value))}
-              className="flex-1 accent-indigo-500"
-            />
-            <span className="text-indigo-400 font-mono w-8 text-right">{nUsers}</span>
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <input
+                type="range" min={10} max={1000} step={10} value={nUsers}
+                onChange={(e) => setNUsers(Number(e.target.value))}
+                className="flex-1 accent-indigo-500"
+                list="user-ticks"
+              />
+              <span className="text-indigo-400 font-mono w-12 text-right">{nUsers}</span>
+            </div>
+            <datalist id="user-ticks">
+              <option value="100" label="100"></option>
+              <option value="200" label="200"></option>
+              <option value="300" label="300"></option>
+              <option value="400" label="400"></option>
+              <option value="500" label="500"></option>
+              <option value="600" label="600"></option>
+              <option value="700" label="700"></option>
+              <option value="800" label="800"></option>
+              <option value="900" label="900"></option>
+              <option value="1000" label="1000"></option>
+            </datalist>
           </div>
         </Field>
 

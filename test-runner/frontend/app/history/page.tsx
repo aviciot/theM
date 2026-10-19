@@ -17,10 +17,23 @@ export default function HistoryPage() {
     setRuns((r) => r.filter((x) => x.run_id !== runId));
   };
 
+  const deleteAll = async () => {
+    if (!confirm(`Delete all ${runs.length} run records?`)) return;
+    await Promise.all(runs.map(r => api.deleteHistory(r.run_id)));
+    setRuns([]);
+  };
+
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-semibold mb-1">History</h1>
-      <p className="text-gray-400 text-sm mb-6">Past test run results</p>
+      <div className="flex items-end justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold mb-1">History</h1>
+          <p className="text-gray-400 text-sm">Past test run results (latest first)</p>
+        </div>
+        {runs.length > 0 && (
+          <button onClick={deleteAll} className="btn-danger text-sm">Delete All ({runs.length})</button>
+        )}
+      </div>
 
       {loading && <p className="text-gray-500 text-sm">Loading…</p>}
       {!loading && runs.length === 0 && (
