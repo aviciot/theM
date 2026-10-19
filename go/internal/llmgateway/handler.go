@@ -233,6 +233,7 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		}
 	}
 
+	wfStartTime := time.Now()
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req, policy)
 	if err != nil {
 		rec.Status = "error"
@@ -249,6 +250,7 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow error")
 		return
 	}
+	wfTotalTime := time.Since(wfStartTime)
 	if output.Status == "failed" || output.Status == "rejected" {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
@@ -264,7 +266,8 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		"status", output.Status,
 		"tokens_in", output.TokensIn,
 		"tokens_out", output.TokensOut,
-		"response_length", len(output.FinalText))
+		"response_length", len(output.FinalText),
+		"workflow_duration_ms", wfTotalTime.Milliseconds())
 
 	// Record which model/provider was actually used (from policy override)
 	if policy != nil {
@@ -347,6 +350,7 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
+	wfStartTime := time.Now()
 	handle, wfRun, err := h.admitAndStartAppFlow(r.Context(), tenantID, ca, req, policy)
 	if err != nil {
 		rec.Status = "error"
@@ -363,6 +367,7 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow error")
 		return
 	}
+	wfTotalTime := time.Since(wfStartTime)
 	if output.Status == "failed" || output.Status == "rejected" {
 		rec.Status = "error"
 		rec.HTTPStatus = http.StatusBadGateway
@@ -378,7 +383,8 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		"status", output.Status,
 		"tokens_in", output.TokensIn,
 		"tokens_out", output.TokensOut,
-		"response_length", len(output.FinalText))
+		"response_length", len(output.FinalText),
+		"workflow_duration_ms", wfTotalTime.Milliseconds())
 
 	// Record which model/provider was actually used (from policy override)
 	if policy != nil {
