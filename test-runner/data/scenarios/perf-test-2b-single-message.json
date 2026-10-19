@@ -1,0 +1,19 @@
+{
+  "id": "perf-test-2b-single-message",
+  "name": "Perf Test 2b - Single Message (200 Users)",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "n_users": 200,
+  "messages": [
+    "Quick test - single message only"
+  ],
+  "test_results": "Test with single message per user (200 requests total). Isolates per-request latency without conversation overhead.",
+  "created_at": "",
+  "updated_at": ""
+}

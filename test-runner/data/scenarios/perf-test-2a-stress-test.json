@@ -1,0 +1,21 @@
+{
+  "id": "perf-test-2a-stress-test",
+  "name": "Perf Test 2a - Stress Test (400 Users)",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "n_users": 400,
+  "messages": [
+    "Hello! Test the mock provider.",
+    "What is 2+2?",
+    "Thank you!"
+  ],
+  "test_results": "Stress test: 400 users (1200 requests). Find true saturation point with 4 workers × 25 slots = 100 capacity.",
+  "created_at": "",
+  "updated_at": ""
+}
