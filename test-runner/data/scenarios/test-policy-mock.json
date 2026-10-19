@@ -9,13 +9,12 @@
   "auth_mode": "token",
   "gateway_token": "test-gateway-token-12345",
   "model": "fast",
-  "n_users": 10,
-  "test_results": "Test 1a PASSED: 10/10 users (100%), 6.2s avg latency. Baseline established. No worker bottleneck at 30 requests.",
+  "n_users": 280,
   "messages": [
     "Hello! Test the mock provider.",
     "What is 2+2?",
     "Thank you!"
   ],
   "created_at": "",
-  "updated_at": "2026-10-19T08:31:35Z"
+  "updated_at": "2026-10-19T08:59:49Z"
 }
