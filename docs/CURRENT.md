@@ -1,12 +1,12 @@
 # Current Session State — the-M
-# Last updated: 2026-10-18
+# Last updated: 2026-10-19
 
 ---
 
 ## HEAD
 
 Branch: `main`
-HEAD: `cf443612` — fix(gateway): support mock provider in gateway history mode (2026-10-18; not pushed)
+HEAD: `3db5f91c` — feat(gateway): calculate and record cost_usd for AppFlow requests (2026-10-19; not pushed)
 Remote: `origin` → `aviciot/theM` on GitHub
 
 Recent commits relevant to the observability-events work (this session):
@@ -22,53 +22,55 @@ token tracking — not part of this track.)
 
 ---
 
-## Observability Events — Stage A, step A1 COMPLETE (2026-10-18)
+## Performance & Observability — Policy Decision Required (2026-10-19)
 
-**Goal:** scalable storage for logs, user activity, chat, tool calls (ClickHouse + queue) without
-touching the running app. **Design (read first): `docs/OBSERVABILITY_STORAGE_DESIGN.md`** — two stages:
-Stage A = build/deploy new pieces wired to nothing; Stage B = integrate one area at a time behind
-`THE_M_EVENTS_<AREA>=off|dual|clickhouse` flags (default off).
+**Current state:** Gateway load testing (200 concurrent users) revealed Postgres bottleneck:
+- Symptom: 100% CPU, 20-50 sec response time (should be <2s)
+- Root cause: 1,600 DB writes per test (11 writes per request: 4 reads + 7 writes)
+- Bottleneck: `SUM(cost_usd)` query + full `run_steps` I/O on every node execution
 
-**Done and tested live in A1:**
-- `docker-compose.events.yml` (profile `events`): `them-clickhouse` (db `them_events`), `them-redis-events`
-  (separate Redis: AOF, `noeviction`, password). Internal only, no host ports.
-- `db/clickhouse/001_events.sql` (5 tables: gateway_request, tool_call, user_activity, audit, bodies, with TTLs),
-  `002_users.sh` (`events_writer` INSERT-only, `events_reader` SELECT-only).
-- `scripts/events-env.sh` appends `THE_M_EVENTS_*` secrets to `.env` (done on this host); `generate-env.sh` and
-  `.env.example` updated. `generate-env.ps1` NOT updated (already behind: no MinIO/RLS vars).
-- Runbook §10 + CLAUDE.md container map updated. Live results are recorded in runbook §10.
+**Two parallel tracks identified:**
 
-**Deployment state:** `them-clickhouse` and `them-redis-events` are RUNNING and healthy on this host;
-nothing else uses them. Existing containers were not touched. One harmless test row remains in
-`events_user_activity` (tenant `00000000-0000-0000-0000-0000000000a1`, expires by TTL).
+### Track 1: Observability Storage (ClickHouse) — Stage A1 COMPLETE
+**Goal:** Move high-volume logs from Postgres to ClickHouse
+**Design:** `docs/OBSERVABILITY_STORAGE_DESIGN.md` (two-stage: A=build, B=migrate)
+**Status:** A1 done (2026-10-18), containers running, A2-A4 pending
 
-**Start/stop — ALWAYS name the services** (a bare `up -d` can recreate running containers):
-```bash
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.events.yml \
-  --profile events up -d them-clickhouse them-redis-events
-```
+**Deployed:**
+- `them-clickhouse` + `them-redis-events` (profile `events`, healthy, unused)
+- Schema: 5 tables with TTLs, users created
+- Next: A2 (`internal/events/` package), A3 (event-writer), A4 (tests)
 
-**Next (one step per session, per CLAUDE.md):**
-1. **A2 — `go/internal/events/` package:** `Event` types (tenant required), `EventSink` / `EventStore`
-   interfaces (design §4.1), in-memory sink, Redis Streams sink, ClickHouse backend, a COPY of today's
-   gateway-request queries as the `postgres` backend, tenant-injecting query package, metrics, contract
-   test suite. No live service imports it. Update `go/TEST_INDEX.md`, `go/CLAUDE.md` package map,
-   `docs/implementation-status.md`, `docs/REDIS.md` (new `them:events:*` keys).
-2. **A3 — `go/cmd/event-writer` + `them-event-writer` container** (consumer group, batching, DLQ,
-   XAUTOCLAIM reaper, last-insert gauge — design §6.1).
-3. **A4 — synthetic multi-tenant load + failure tests** (kill Redis / ClickHouse / writer; every §6.1 row).
-4. Then Stage B, one area at a time, gateway requests first.
+### Track 2: Policy-Controlled Logging (NEW) — Design Required
+**Goal:** Stop logging full debug data for every request
+**Problem:** No way to disable expensive logging (bodies, full node I/O)
+**Solution:** Per-app policy: `minimal` (default) | `metrics` | `debug` | `audit`
 
-**Known blockers / cautions:**
-- Working tree has uncommitted changes in `go/` (appflow, agent-runtime, dag-worker, agentgen, llmgateway)
-  that are not from this track. Do not mix them into events commits — stage files explicitly.
-- `go/internal/llmgateway/` is under active parallel change; Stage B area 1 must wait until it is committed.
-- Verify (not yet tested): the gateway metering insert uses `r.Context()` — a client disconnect may cancel it.
+**Impact of minimal mode:**
+- 80% fewer writes (400 vs 1,600 for 200 users)
+- Postgres CPU: 20% (was 100%)
+- Response time: <2s (was 20-50s)
 
-**New hard constraints:**
-- Event `tenant_id` must come from trusted server-side context (token / epconfig), never from payload.
-- Metering/budget enforcement stays in Postgres/Redis; the events store is for reporting only.
-- Never point events at `them-redis` (it is `allkeys-lru` and would evict events).
+**DECISION NEEDED FOR NEXT SESSION:**
+
+**Option A (Recommended): Policy-Controlled Logging FIRST**
+- Immediate performance fix (one session)
+- Simpler implementation (no new containers)
+- Proves policy model before ClickHouse commitment
+- ClickHouse still valuable later (analytics, not urgent)
+
+**Option B: Finish ClickHouse Infrastructure FIRST**
+- Complete observability architecture (3-4 sessions)
+- Postgres bottleneck remains during migration
+- Add policy control after migration
+
+**Handover doc:** `docs/HANDOVER_OBSERVABILITY_POLICY.md` (full context, both options analyzed)
+
+**Hard constraints (both tracks):**
+- Tenant ID from trusted source only (token/epconfig), never payload
+- Metering/budget stays in Postgres/Redis (not event store)
+- Redis budget counters must have DB fallback
+- Temporal vs our storage: different purposes, both needed
 
 ---
 
