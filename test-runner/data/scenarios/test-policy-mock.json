@@ -7,14 +7,14 @@
   "ep_slug": "gateway",
   "ep_type": "gateway",
   "auth_mode": "token",
-  "gateway_token": "172d93d74fa98d757593321dc45973f92f691e6d5a68a9f785cf1070eae2ea2b",
+  "gateway_token": "799846fa95d95a259d33a56e0da4961bff927f48c8ed0c9737ed45e55e38286c",
   "model": "fast",
-  "n_users": 200,
+  "n_users": 10,
   "messages": [
     "Hello! Test the mock provider.",
     "What is 2+2?",
     "Thank you!"
   ],
   "created_at": "",
-  "updated_at": "2026-10-18T16:51:31Z"
+  "updated_at": "2026-10-19T08:31:35Z"
 }
