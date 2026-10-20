@@ -2,7 +2,7 @@
   "id": "42-logging-perf-debug",
   "name": "42 — Logging Performance: DEBUG",
   "description": "Performance test comparing logging level overhead. Tests DEBUG logging.\n\n🔧 Gateway Config:\n• Token: perf-test-debug-token-3ba2d3b8d4a520418e0bcb986a6f611c\n• Profile: perf-test-debug\n• Logging Level: **DEBUG** (high overhead)\n  - Captures: Metrics + timing + full request/response I/O\n  - Logs all request/response bodies\n  - Heavy DB writes\n\n📊 Test Parameters:\n• Users: 100 concurrent\n• Messages: 3 per user (300 total)\n• Expected latency: Noticeably slower than METRICS\n\n🎯 Purpose:\nMeasure overhead of full I/O logging.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "✅ PASS — 300 requests, 100% success, 52ms avg latency (~4% overhead vs MINIMAL), 300 bodies captured to gateway_request_bodies table (correct for DEBUG level).",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "perf-test-debug-token-3ba2d3b8d4a520418e0bcb986a6f611c",

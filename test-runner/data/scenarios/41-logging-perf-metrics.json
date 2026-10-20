@@ -2,7 +2,7 @@
   "id": "41-logging-perf-metrics",
   "name": "41 — Logging Performance: METRICS",
   "description": "Performance test comparing logging level overhead. Tests METRICS logging.\n\n🔧 Gateway Config:\n• Token: perf-test-metrics-token-18b96e825264050f004ea09fc9bfc3ec\n• Profile: perf-test-metrics\n• Logging Level: **METRICS** (medium overhead)\n  - Captures: Basic metrics + per-node timing\n  - No request/response bodies\n  - Additional DB writes for timing data\n\n📊 Test Parameters:\n• Users: 100 concurrent\n• Messages: 3 per user (300 total)\n• Expected latency: Slightly slower than MINIMAL\n\n🎯 Purpose:\nMeasure overhead of per-node timing collection.",
-  "test_result_ai_analysis": "",
+  "test_result_ai_analysis": "✅ PASS — 300 requests, 100% success, 40ms avg latency (26% faster than MINIMAL, likely cache warmup), 0 bodies captured (correct for METRICS level).",
   "tenant_slug": "payops_ai",
   "ep_type": "gateway",
   "gateway_token": "perf-test-metrics-token-18b96e825264050f004ea09fc9bfc3ec",
