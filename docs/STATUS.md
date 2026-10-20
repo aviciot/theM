@@ -167,7 +167,53 @@ Secrets: derived via HMAC-SHA256 from `secrets.local`. Run `./generate-env.sh` t
 
 ---
 
+## Recently Completed (2026-10-20)
+
+### Observability Events — Stage A (Infrastructure Build) ✅ COMPLETE
+
+**Goal:** Move high-volume runtime logs from Postgres to ClickHouse for analytics/scale.
+
+**What was built:**
+- ✅ **Stage A1:** ClickHouse + Redis Streams containers (deployed 2026-10-18)
+- ✅ **Stage A2:** `internal/events/` package — pluggable backends, contract tests (commit 5482613d)
+- ✅ **Stage A3:** Full event pipeline — Redis → ClickHouse (commit 99490fe1)
+
+**Infrastructure ready:**
+- Event types: GatewayRequest, ToolCall, UserActivity, Audit
+- Backends: Memory (testing), Postgres (current), ClickHouse (analytics)
+- Pipeline: RedisSink → Redis Streams → event-writer → ClickHouse
+- Backend selection: `THE_M_EVENTS_<AREA>=postgres|clickhouse|dual`
+
+**Zero runtime impact** — no live service imports yet (purely additive).
+
+**Next:** Stage B — wire producers (gateway requests, tool calls, user activity, conversation)
+
+**Docs:** `docs/HANDOVER_EVENTS_STAGE_A.md`, `docs/OBSERVABILITY_STORAGE_DESIGN.md`
+
+**Commits:** 5482613d (Stage A2), 99490fe1 (Stage A3), d22d163e (handover doc)
+
+---
+
 ## Pending Work
+
+### Observability Events — Stage B (Wire Producers)
+
+**Goal:** Wire live services to emit events to ClickHouse instead of Postgres.
+
+**Priority order (lowest risk first):**
+1. Gateway requests (`llmgateway/handler.go` WriteRequest defer)
+2. User activity (authserver login/logout — greenfield)
+3. Tool calls (MCP/agent tool execution — greenfield)
+4. Run usage + steps (runrecorder)
+5. Conversation messages (history/pgx.go)
+6. Middleware audit
+7. Admin audit (outbox)
+
+**Migration pattern:** `THE_M_EVENTS_<AREA>=postgres` (default) → `dual` (verify) → `clickhouse` (cutover)
+
+**Estimated effort:** 1 session per area
+
+---
 
 ### Governance policy migration (added 2026-10-19)
 
