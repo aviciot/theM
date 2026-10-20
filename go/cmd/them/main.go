@@ -501,23 +501,32 @@ func run() error {
 	// §16.2: fail-open on quota (Redis), fail-closed on auth (§16.2 decision).
 
 	// Event sink for gateway requests (Stage B1)
-	// Mode: postgres (default), clickhouse, dual
+	// Mode: postgres (default), clickhouse (blocked), dual
+	// Safety: ValidateEventsMode rejects unknown values and blocks clickhouse-only mode
 	var gwEventSink events.EventSink
-	eventsMode := os.Getenv("THE_M_EVENTS_GATEWAY")
+	eventsMode, err := events.ValidateEventsMode("THE_M_EVENTS_GATEWAY")
+	if err != nil {
+		log.Error("invalid events mode", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: %w", err)
+	}
+
+	// Check Redis requirement for dual/clickhouse modes
+	if err := events.RequireRedisForMode(eventsMode, cfg.RedisEventsAddr()); err != nil {
+		log.Error("events mode configuration error", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: %w", err)
+	}
+
 	switch eventsMode {
-	case "clickhouse", "dual":
-		// Redis Streams sink → them-event-writer → ClickHouse
-		// Requires redisEvents to be configured (REDIS_EVENTS_HOST)
-		if redisEvents == nil {
-			log.Error("THE_M_EVENTS_GATEWAY=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
-			return fmt.Errorf("startup: events gateway mode requires dedicated Redis events queue")
-		}
+	case events.ModeDual:
+		// Dual mode: Postgres (authoritative) + ClickHouse (mirror)
+		// Mirror failures are logged but don't block requests
 		gwEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
-		log.Info("gateway events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
+		log.Info("gateway events sink: dual mode (Postgres authoritative, ClickHouse mirror)",
+			"mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
-		// "postgres" or empty — no event emission, Postgres writes continue as-is
+		// ModePostgres: no event emission, Postgres writes only
 		gwEventSink = nil
-		log.Info("gateway events sink: Postgres only (legacy)", "mode", eventsMode)
+		log.Info("gateway events sink: Postgres only", "mode", eventsMode)
 	}
 
 	gwResolver := llmresolve.New(rlsPools.Admin, adminFernetKey, log)

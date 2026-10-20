@@ -114,8 +114,13 @@ func (d *DAL) WithEventSink(sink events.EventSink) *DAL {
 //
 // Behavior controlled by THE_M_EVENTS_GATEWAY environment variable:
 // - "postgres" or empty: write to Postgres only (default)
-// - "clickhouse": emit event to ClickHouse only, no Postgres write
-// - "dual": both (for migration verification)
+// - "clickhouse": BLOCKED at startup (missing budget/body support)
+// - "dual": both Postgres + ClickHouse (Postgres remains authoritative)
+//
+// Safety in dual mode:
+// - Event emission is best-effort (errors logged, don't block request)
+// - Postgres write is authoritative (failure blocks the request)
+// - Mirror failures preserve the Postgres record
 func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error) {
 	// Generate request ID for correlation (used by both Postgres and ClickHouse)
 	requestID := generateUUID()
