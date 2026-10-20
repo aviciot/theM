@@ -271,18 +271,22 @@ func (s *Server) ListenAndServe() error {
 		s.preDrainHook()
 	}
 
-	// Graceful drain.
+	// Graceful HTTP drain: stop accepting new requests, finish in-flight handlers.
 	ctx, cancel := context.WithTimeout(context.Background(), s.drainTimeout)
 	defer cancel()
 
 	drainStart := time.Now()
-	s.logger.Info("server draining", "timeout", s.drainTimeout)
+	s.logger.Info("server draining HTTP", "timeout", s.drainTimeout)
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("server shutdown error", "error", err)
+		// Note: if Shutdown times out, some handlers may still be running.
+		// Event sinks will close anyway, potentially losing their in-flight events.
 	}
 	metrics.ObserveDrain(drainStart)
+	s.logger.Info("HTTP drain complete", "duration_ms", time.Since(drainStart).Milliseconds())
 
-	// Release dependencies in registration order.
+	// Release dependencies in registration order (after HTTP fully drained).
+	// This includes event sinks (close/drain before Redis clients).
 	for _, c := range s.closers {
 		c.Close()
 	}
