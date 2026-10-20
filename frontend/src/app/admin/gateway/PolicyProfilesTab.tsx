@@ -300,14 +300,31 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
               onChange={e => setLoggingLevel(e.target.value)}
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#f1f5f9', fontSize: 14, boxSizing: 'border-box', cursor: 'pointer' }}
             >
-              <option value="minimal">Minimal — Basic metrics only (tokens, cost, latency)</option>
-              <option value="metrics">Metrics — Adds per-node timing and status</option>
-              <option value="debug">Debug — Adds full request/response I/O</option>
-              <option value="audit">Audit — Adds bodies + PII/security decisions</option>
+              <option value="minimal">Minimal — Basic metrics only</option>
+              <option value="metrics">Metrics — Basic + per-node timing (future)</option>
+              <option value="debug">Debug — Metrics + full request/response bodies</option>
+              <option value="audit">Audit — Debug + PII/security decisions (future)</option>
             </select>
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.4 }}>
-              <strong>minimal</strong> writes gateway_requests only. <strong>audit</strong> captures full request/response bodies.
-            </div>
+            {loggingLevel === 'minimal' && (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #3b82f6', lineHeight: 1.5 }}>
+                <strong style={{ color: '#94a3b8' }}>Minimal logging:</strong> Records basic request metrics (tokens, cost, latency, status) to <code style={{ fontSize: 10, background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>gateway_requests</code> table. Fastest, lowest storage overhead.
+              </div>
+            )}
+            {loggingLevel === 'metrics' && (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #8b5cf6', lineHeight: 1.5 }}>
+                <strong style={{ color: '#94a3b8' }}>Metrics logging:</strong> Same as Minimal today. <em>Future:</em> Will add per-node timing data to track which AppFlow nodes are slow.
+              </div>
+            )}
+            {loggingLevel === 'debug' && (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #f59e0b', lineHeight: 1.5 }}>
+                <strong style={{ color: '#94a3b8' }}>Debug logging:</strong> Captures full request/response JSON bodies to <code style={{ fontSize: 10, background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>gateway_request_bodies</code> table for troubleshooting. Higher storage cost (~4% latency overhead).
+              </div>
+            )}
+            {loggingLevel === 'audit' && (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #ef4444', lineHeight: 1.5 }}>
+                <strong style={{ color: '#94a3b8' }}>Audit logging:</strong> Same as Debug today (captures bodies). <em>Future:</em> Will add PII detection decisions, File Guard actions, and governance violations for compliance.
+              </div>
+            )}
           </div>
         </div>
 
