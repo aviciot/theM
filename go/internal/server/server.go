@@ -152,6 +152,12 @@ func (s *Server) WithPreDrainHook(fn func()) {
 	s.preDrainHook = fn
 }
 
+// AddCloser appends a closer to the shutdown sequence. Closers are invoked
+// after HTTP drain completes, in the order they were added.
+func (s *Server) AddCloser(c Closer) {
+	s.closers = append(s.closers, c)
+}
+
 // EventBus returns the event.Bus registered with this server, or nil if none
 // was provided.
 func (s *Server) EventBus() event.Bus {

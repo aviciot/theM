@@ -197,7 +197,8 @@ func run() error {
 
 	authMW := server.AuthMiddlewares{}
 	drainDuration := time.Duration(cfg.ShutdownDrainSeconds) * time.Second
-	srv := server.NewWithBus(addr, healthHandler, authMW, bus, drainDuration, log, database, redisCache)
+	// Create server with database only; other closers added later after event sink
+	srv := server.NewWithBus(addr, healthHandler, authMW, bus, drainDuration, log, database)
 
 	// ── 13. Wire bearer token cache (L1 in-process → L2 Redis → PostgreSQL) ──
 	tokenDB := auth.NewPgxQuerier(rlsPools.Admin)
@@ -513,18 +514,6 @@ func run() error {
 		}
 		gwEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
 		log.Info("gateway events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
-
-		// Register for graceful shutdown (close sink before Redis client)
-		srv.WithPreDrainHook(func() {
-			// Stop accepting new events immediately
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := gwEventSink.Close(ctx); err != nil {
-				log.Error("failed to drain gateway event sink", "error", err)
-			} else {
-				log.Info("gateway event sink drained")
-			}
-		})
 	default:
 		// "postgres" or empty — no event emission, Postgres writes continue as-is
 		gwEventSink = nil
@@ -556,6 +545,16 @@ func run() error {
 	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes(), a2aServer.Routes()))
 	log.Info("apps WS+SSE+voice+a2a mounted", "prefix", "/{tenant_slug}/apps or /{tenant_slug}/a2a")
 
+	// Add closers after HTTP drain — event sink first, then Redis clients.
+	// Order: database (already added), event sink, redisCache, redisEvents.
+	if gwEventSink != nil {
+		srv.AddCloser(&eventSinkCloser{sink: gwEventSink, logger: log})
+	}
+	srv.AddCloser(redisCache)
+	if redisEvents != nil {
+		srv.AddCloser(redisEvents)
+	}
+
 	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
@@ -585,6 +584,23 @@ func appsDispatcher(wsApps, sseApps, voiceApps, a2aApps http.Handler) http.Handl
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// eventSinkCloser adapts events.EventSink to server.Closer so the sink can be
+// drained after HTTP shutdown completes. Closes with a 5-second timeout.
+type eventSinkCloser struct {
+	sink   events.EventSink
+	logger *slog.Logger
+}
+
+func (e *eventSinkCloser) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := e.sink.Close(ctx); err != nil {
+		e.logger.Error("failed to drain event sink", "error", err)
+	} else {
+		e.logger.Info("event sink drained")
+	}
 }
 
 // fileGateAdapter bridges middleware.FileGate to the a2a.FileInterceptor interface.

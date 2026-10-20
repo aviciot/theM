@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -98,29 +100,118 @@ func (r *RetentionManager) trimSafe(ctx context.Context) error {
 }
 
 // trimStream safely trims a stream up to the point where ALL consumers have ACKed.
+// Safety: protects BOTH pending (claimed but not ACKed) AND unread (not claimed yet).
 func (r *RetentionManager) trimStream(ctx context.Context, stream, group string) (int, error) {
-	// Get pending messages info: XPENDING <stream> <group> - + 1
-	cmd := r.redis.B().Xpending().Key(stream).Group(group).Start("-").End("+").Count(1).Build()
-	result, err := r.redis.Do(ctx, cmd).ToMessage()
-	if err != nil {
-		if rueidis.IsRedisNil(err) {
-			// No pending messages
-			return r.trimToNow(ctx, stream)
-		}
+	// Check 1: Any pending messages?
+	pendingCmd := r.redis.B().Xpending().Key(stream).Group(group).Start("-").End("+").Count(1).Build()
+	_, err := r.redis.Do(ctx, pendingCmd).ToMessage()
+	if err == nil {
+		r.logger.Debug("skipping trim: pending messages exist", "stream", stream)
+		return 0, nil
+	}
+	if !rueidis.IsRedisNil(err) {
 		return 0, fmt.Errorf("XPENDING failed: %w", err)
 	}
 
-	// Parse XPENDING result to find oldest pending message ID
-	// If no pending messages, we can trim aggressively
-	// If there are pending messages, only trim up to the oldest pending ID
+	// Check 2: Get last-delivered-id from group info
+	groupCmd := r.redis.B().XinfoGroups().Key(stream).Build()
+	groupsResp, err := r.redis.Do(ctx, groupCmd).ToArray()
+	if err != nil {
+		return 0, fmt.Errorf("XINFO GROUPS failed: %w", err)
+	}
 
-	// For now, conservative approach: if ANY pending messages exist, skip trim
-	// This prevents accidentally deleting messages that might be recovered
-	r.logger.Debug("skipping trim: pending messages exist", "stream", stream)
-	return 0, nil
+	// Parse group info: XINFO GROUPS returns array of arrays
+	// Each group: [name <name> consumers <N> pending <P> last-delivered-id <id> ...]
+	var lastDeliveredID string
+	var consumersCount int64
+	for _, groupData := range groupsResp {
+		groupMap, err := groupData.AsMap()
+		if err != nil {
+			continue
+		}
+		// Check if this is our group
+		if nameMsg, ok := groupMap["name"]; ok {
+			name, _ := nameMsg.ToString()
+			if name == group {
+				// Extract last-delivered-id
+				if ldMsg, ok := groupMap["last-delivered-id"]; ok {
+					lastDeliveredID, _ = ldMsg.ToString()
+				}
+				// Extract consumers count
+				if cMsg, ok := groupMap["consumers"]; ok {
+					consumersCount, _ = cMsg.AsInt64()
+				}
+				break
+			}
+		}
+	}
+
+	// Safety checks
+	if consumersCount == 0 {
+		r.logger.Debug("skipping trim: no active consumers", "stream", stream, "group", group)
+		return 0, nil
+	}
+
+	if lastDeliveredID == "" || lastDeliveredID == "0-0" {
+		r.logger.Debug("skipping trim: no messages delivered yet", "stream", stream, "group", group)
+		return 0, nil
+	}
+
+	// Safe to trim: only messages OLDER than last-delivered-id AND older than maxAge
+	return r.trimUpTo(ctx, stream, lastDeliveredID)
 }
 
-// trimToNow trims events older than maxAge.
+// trimUpTo trims events older than BOTH last-delivered-id AND maxAge (whichever is earlier).
+// Protects unread messages by never trimming past what the consumer group has delivered.
+func (r *RetentionManager) trimUpTo(ctx context.Context, stream, maxID string) (int, error) {
+	// Parse maxID to get timestamp
+	parts := strings.Split(maxID, "-")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid message ID: %s", maxID)
+	}
+
+	deliveredMs, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse message ID timestamp: %w", err)
+	}
+
+	// Apply maxAge limit
+	cutoff := time.Now().Add(-r.maxAge)
+	cutoffMs := cutoff.UnixMilli()
+
+	// Use earlier of: delivered timestamp or age cutoff
+	trimMs := deliveredMs
+	if cutoffMs < deliveredMs {
+		trimMs = cutoffMs
+	}
+
+	trimID := fmt.Sprintf("%d-0", trimMs)
+
+	// Count before
+	beforeCmd := r.redis.B().Xlen().Key(stream).Build()
+	beforeLen, err := r.redis.Do(ctx, beforeCmd).AsInt64()
+	if err != nil {
+		return 0, fmt.Errorf("XLEN before: %w", err)
+	}
+
+	// Trim
+	trimCmd := r.redis.B().Xtrim().Key(stream).Minid().Threshold(trimID).Build()
+	if err := r.redis.Do(ctx, trimCmd).Error(); err != nil {
+		return 0, fmt.Errorf("XTRIM: %w", err)
+	}
+
+	// Count after
+	afterCmd := r.redis.B().Xlen().Key(stream).Build()
+	afterLen, err := r.redis.Do(ctx, afterCmd).AsInt64()
+	if err != nil {
+		return 0, fmt.Errorf("XLEN after: %w", err)
+	}
+
+	return int(beforeLen - afterLen), nil
+}
+
+// trimToNow trims events older than maxAge (DEPRECATED - kept for reference).
+// This method is no longer used because it doesn't protect unread messages.
 func (r *RetentionManager) trimToNow(ctx context.Context, stream string) (int, error) {
 	// Calculate cutoff timestamp
 	cutoff := time.Now().Add(-r.maxAge)
