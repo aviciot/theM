@@ -58,3 +58,4 @@ go/test_out.txt
 
 # Frontend TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
+test-runner/data/history/*.json
