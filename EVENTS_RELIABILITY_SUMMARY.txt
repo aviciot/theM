@@ -1,0 +1,86 @@
+================================================================================
+EVENTS RELIABILITY REVIEW - BRIEF SUMMARY
+================================================================================
+
+Branch: reliability/events-b1-b3-fixes
+HEAD: 7c95693f
+Date: 2026-10-20
+
+================================================================================
+IMPLEMENTED (Compiles, Untested)
+================================================================================
+
+Finding 1 - Dedicated Redis
+  - All producers → them-redis-events (noeviction + AOF)
+  - Startup fails if REDIS_EVENTS_HOST missing
+  - Event-writer uses correct Redis endpoint
+
+Finding 2 - Consumer Reliability
+  - XAUTOCLAIM (30s threshold) recovers pending from dead consumers
+  - Poison events → DLQ before ACK
+  - ClickHouse retry (3x, exponential backoff)
+  - Bounded processing (pause if CH down)
+  - Observable counters: processed, failed, dlq
+
+Finding 3 - Producer Reliability
+  - RedisSink retries (3x, 100ms backoff)
+  - Atomic counters: dropped, failed
+  - Shutdown sequence:
+    1. Drain sinks (5s deadline)
+    2. Drain HTTP (20s deadline)
+    3. Close Redis clients
+  - Stream retention: trim >24h if no pending messages
+  - DLQ retention: 7 days
+
+================================================================================
+NOT DONE
+================================================================================
+
+Runtime Testing:
+  - Zero tests executed
+  - Race detection not run
+  - Integration tests don't exist
+  - Failure scenarios untested
+
+Open Findings:
+  - Finding 4: Gateway mode validation (HIGH PRIORITY)
+  - Finding 5: Auth event identity
+  - Finding 6: MCP IsError + gateway race
+
+================================================================================
+COMMITS
+================================================================================
+
+7c95693f docs: final status report
+14f1dcf6 feat: safe stream retention
+324d8eb0 fix: shutdown ordering
+93abe1b1 fix: consumer+producer reliability
+7344cc85 fix: event-writer Redis endpoint
+53de7688 fix: dedicated Redis wiring
+
+Total: 8 commits, 15 files, ~500 lines
+
+================================================================================
+NEXT ACTION REQUIRED
+================================================================================
+
+1. Run runtime tests (commands in docs/EVENTS_RELIABILITY_STATUS.md)
+2. Fix discovered issues
+3. Run: go test -race ./internal/events/... ./cmd/event-writer/...
+4. Document results
+
+OR
+
+Revert: git checkout main
+
+================================================================================
+WARNING
+================================================================================
+
+DO NOT MERGE/DEPLOY UNTESTED
+
+30s XAUTOCLAIM threshold needs runtime verification
+Retention logic needs validation
+Shutdown sequence needs testing
+
+================================================================================
