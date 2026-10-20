@@ -1,0 +1,2902 @@
+{
+  "run_id": "819099ef-df3d-424d-82d7-efec84c64661",
+  "scenario_id": "43-logging-perf-audit",
+  "scenario_name": "43 — Logging Performance: AUDIT",
+  "n_users": 100,
+  "passed": 0,
+  "failed": 100,
+  "started_at": "2026-10-19T13:38:58Z",
+  "ended_at": "2026-10-19T13:38:58Z",
+  "results": [
+    {
+      "user_index": 0,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 31,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019200\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019260\"}}\n"
+        }
+      ],
+      "duration_ms": 63,
+      "status": "failed"
+    },
+    {
+      "user_index": 1,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 26,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 21,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019168\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019272\"}}\n"
+        }
+      ],
+      "duration_ms": 62,
+      "status": "failed"
+    },
+    {
+      "user_index": 2,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 47,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019110\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019289\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019370\"}}\n"
+        }
+      ],
+      "duration_ms": 140,
+      "status": "failed"
+    },
+    {
+      "user_index": 3,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 47,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019103\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019294\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019351\"}}\n"
+        }
+      ],
+      "duration_ms": 80,
+      "status": "failed"
+    },
+    {
+      "user_index": 4,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019118\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019236\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019327\"}}\n"
+        }
+      ],
+      "duration_ms": 78,
+      "status": "failed"
+    },
+    {
+      "user_index": 5,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019171\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019301\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019369\"}}\n"
+        }
+      ],
+      "duration_ms": 140,
+      "status": "failed"
+    },
+    {
+      "user_index": 6,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019123\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019267\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019354\"}}\n"
+        }
+      ],
+      "duration_ms": 132,
+      "status": "failed"
+    },
+    {
+      "user_index": 7,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 30,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019109\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019197\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019263\"}}\n"
+        }
+      ],
+      "duration_ms": 60,
+      "status": "failed"
+    },
+    {
+      "user_index": 8,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 47,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019172\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019296\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019358\"}}\n"
+        }
+      ],
+      "duration_ms": 79,
+      "status": "failed"
+    },
+    {
+      "user_index": 9,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 48,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019145\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019303\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019375\"}}\n"
+        }
+      ],
+      "duration_ms": 141,
+      "status": "failed"
+    },
+    {
+      "user_index": 10,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 26,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019164\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 9,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019224\"}}\n"
+        }
+      ],
+      "duration_ms": 52,
+      "status": "failed"
+    },
+    {
+      "user_index": 11,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 41,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019105\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 11,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019220\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019313\"}}\n"
+        }
+      ],
+      "duration_ms": 69,
+      "status": "failed"
+    },
+    {
+      "user_index": 12,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 47,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019159\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019275\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 72,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019344\"}}\n"
+        }
+      ],
+      "duration_ms": 135,
+      "status": "failed"
+    },
+    {
+      "user_index": 13,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 47,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019269\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019340\"}}\n"
+        }
+      ],
+      "duration_ms": 77,
+      "status": "failed"
+    },
+    {
+      "user_index": 14,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 47,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 12,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019270\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019339\"}}\n"
+        }
+      ],
+      "duration_ms": 79,
+      "status": "failed"
+    },
+    {
+      "user_index": 15,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 46,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 21,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019246\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019378\"}}\n"
+        }
+      ],
+      "duration_ms": 140,
+      "status": "failed"
+    },
+    {
+      "user_index": 16,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 47,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019122\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 22,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019302\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019383\"}}\n"
+        }
+      ],
+      "duration_ms": 140,
+      "status": "failed"
+    },
+    {
+      "user_index": 17,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019185\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019252\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019330\"}}\n"
+        }
+      ],
+      "duration_ms": 77,
+      "status": "failed"
+    },
+    {
+      "user_index": 18,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019137\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019241\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019333\"}}\n"
+        }
+      ],
+      "duration_ms": 79,
+      "status": "failed"
+    },
+    {
+      "user_index": 19,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 30,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019150\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019191\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019284\"}}\n"
+        }
+      ],
+      "duration_ms": 63,
+      "status": "failed"
+    },
+    {
+      "user_index": 20,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019160\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019283\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019357\"}}\n"
+        }
+      ],
+      "duration_ms": 79,
+      "status": "failed"
+    },
+    {
+      "user_index": 21,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 31,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019100\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 22,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019227\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 21,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019323\"}}\n"
+        }
+      ],
+      "duration_ms": 76,
+      "status": "failed"
+    },
+    {
+      "user_index": 22,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 42,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019141\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019240\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019338\"}}\n"
+        }
+      ],
+      "duration_ms": 78,
+      "status": "failed"
+    },
+    {
+      "user_index": 23,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019155\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019245\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019337\"}}\n"
+        }
+      ],
+      "duration_ms": 78,
+      "status": "failed"
+    },
+    {
+      "user_index": 24,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019120\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019288\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 72,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019350\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 25,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019142\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019256\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019335\"}}\n"
+        }
+      ],
+      "duration_ms": 78,
+      "status": "failed"
+    },
+    {
+      "user_index": 26,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 30,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 23,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019229\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019318\"}}\n"
+        }
+      ],
+      "duration_ms": 71,
+      "status": "failed"
+    },
+    {
+      "user_index": 27,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 30,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019148\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019183\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019277\"}}\n"
+        }
+      ],
+      "duration_ms": 63,
+      "status": "failed"
+    },
+    {
+      "user_index": 28,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019165\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019271\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019359\"}}\n"
+        }
+      ],
+      "duration_ms": 135,
+      "status": "failed"
+    },
+    {
+      "user_index": 29,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 41,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019119\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019225\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 22,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019320\"}}\n"
+        }
+      ],
+      "duration_ms": 74,
+      "status": "failed"
+    },
+    {
+      "user_index": 30,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019143\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019176\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019215\"}}\n"
+        }
+      ],
+      "duration_ms": 51,
+      "status": "failed"
+    },
+    {
+      "user_index": 31,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 51,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019218\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019298\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019377\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 32,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019136\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019244\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019336\"}}\n"
+        }
+      ],
+      "duration_ms": 76,
+      "status": "failed"
+    },
+    {
+      "user_index": 33,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019213\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019287\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019373\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 34,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 57,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019230\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019322\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 62,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019392\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 35,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 51,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019217\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019306\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019385\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 36,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 43,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019210\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019251\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019332\"}}\n"
+        }
+      ],
+      "duration_ms": 77,
+      "status": "failed"
+    },
+    {
+      "user_index": 37,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019204\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019265\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 71,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019353\"}}\n"
+        }
+      ],
+      "duration_ms": 138,
+      "status": "failed"
+    },
+    {
+      "user_index": 38,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 45,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019247\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019342\"}}\n"
+        }
+      ],
+      "duration_ms": 77,
+      "status": "failed"
+    },
+    {
+      "user_index": 39,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 50,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019198\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019308\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019387\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 40,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019161\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019297\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019374\"}}\n"
+        }
+      ],
+      "duration_ms": 138,
+      "status": "failed"
+    },
+    {
+      "user_index": 41,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019101\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 12,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019190\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 22,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019276\"}}\n"
+        }
+      ],
+      "duration_ms": 63,
+      "status": "failed"
+    },
+    {
+      "user_index": 42,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019131\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019178\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019261\"}}\n"
+        }
+      ],
+      "duration_ms": 63,
+      "status": "failed"
+    },
+    {
+      "user_index": 43,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019149\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019292\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019372\"}}\n"
+        }
+      ],
+      "duration_ms": 138,
+      "status": "failed"
+    },
+    {
+      "user_index": 44,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019126\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019175\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019257\"}}\n"
+        }
+      ],
+      "duration_ms": 58,
+      "status": "failed"
+    },
+    {
+      "user_index": 45,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 24,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019140\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019166\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 11,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019212\"}}\n"
+        }
+      ],
+      "duration_ms": 50,
+      "status": "failed"
+    },
+    {
+      "user_index": 46,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019124\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019290\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019379\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 47,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019104\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 26,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019228\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019326\"}}\n"
+        }
+      ],
+      "duration_ms": 76,
+      "status": "failed"
+    },
+    {
+      "user_index": 48,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 49,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019208\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019312\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019389\"}}\n"
+        }
+      ],
+      "duration_ms": 138,
+      "status": "failed"
+    },
+    {
+      "user_index": 49,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 49,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019216\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019304\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019380\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 50,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019147\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019181\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019268\"}}\n"
+        }
+      ],
+      "duration_ms": 60,
+      "status": "failed"
+    },
+    {
+      "user_index": 51,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 24,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019134\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019193\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019255\"}}\n"
+        }
+      ],
+      "duration_ms": 60,
+      "status": "failed"
+    },
+    {
+      "user_index": 52,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019174\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019282\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019356\"}}\n"
+        }
+      ],
+      "duration_ms": 133,
+      "status": "failed"
+    },
+    {
+      "user_index": 53,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019115\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 21,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019195\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019305\"}}\n"
+        }
+      ],
+      "duration_ms": 68,
+      "status": "failed"
+    },
+    {
+      "user_index": 54,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019129\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019180\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019223\"}}\n"
+        }
+      ],
+      "duration_ms": 50,
+      "status": "failed"
+    },
+    {
+      "user_index": 55,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019153\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019184\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019273\"}}\n"
+        }
+      ],
+      "duration_ms": 60,
+      "status": "failed"
+    },
+    {
+      "user_index": 56,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019121\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019258\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019365\"}}\n"
+        }
+      ],
+      "duration_ms": 133,
+      "status": "failed"
+    },
+    {
+      "user_index": 57,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019107\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019250\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019346\"}}\n"
+        }
+      ],
+      "duration_ms": 78,
+      "status": "failed"
+    },
+    {
+      "user_index": 58,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019201\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019299\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019376\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 59,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019170\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019300\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019371\"}}\n"
+        }
+      ],
+      "duration_ms": 136,
+      "status": "failed"
+    },
+    {
+      "user_index": 60,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019138\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019274\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019364\"}}\n"
+        }
+      ],
+      "duration_ms": 132,
+      "status": "failed"
+    },
+    {
+      "user_index": 61,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 43,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019132\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019243\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019367\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 62,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 39,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019156\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 24,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019286\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019366\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 63,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019167\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019278\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019347\"}}\n"
+        }
+      ],
+      "duration_ms": 75,
+      "status": "failed"
+    },
+    {
+      "user_index": 64,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019146\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019192\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019281\"}}\n"
+        }
+      ],
+      "duration_ms": 64,
+      "status": "failed"
+    },
+    {
+      "user_index": 65,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 41,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019135\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019238\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019343\"}}\n"
+        }
+      ],
+      "duration_ms": 128,
+      "status": "failed"
+    },
+    {
+      "user_index": 66,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 36,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019202\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019253\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019328\"}}\n"
+        }
+      ],
+      "duration_ms": 73,
+      "status": "failed"
+    },
+    {
+      "user_index": 67,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 42,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019205\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019248\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019348\"}}\n"
+        }
+      ],
+      "duration_ms": 75,
+      "status": "failed"
+    },
+    {
+      "user_index": 68,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019214\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019314\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 66,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019384\"}}\n"
+        }
+      ],
+      "duration_ms": 133,
+      "status": "failed"
+    },
+    {
+      "user_index": 69,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019144\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019179\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 5,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019211\"}}\n"
+        }
+      ],
+      "duration_ms": 44,
+      "status": "failed"
+    },
+    {
+      "user_index": 70,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019173\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019242\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019361\"}}\n"
+        }
+      ],
+      "duration_ms": 131,
+      "status": "failed"
+    },
+    {
+      "user_index": 71,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019114\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019188\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019264\"}}\n"
+        }
+      ],
+      "duration_ms": 61,
+      "status": "failed"
+    },
+    {
+      "user_index": 72,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 52,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019221\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019316\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019381\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 73,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019108\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019239\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019362\"}}\n"
+        }
+      ],
+      "duration_ms": 80,
+      "status": "failed"
+    },
+    {
+      "user_index": 74,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 56,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019231\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019324\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 65,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019391\"}}\n"
+        }
+      ],
+      "duration_ms": 140,
+      "status": "failed"
+    },
+    {
+      "user_index": 75,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019151\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 26,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019232\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019321\"}}\n"
+        }
+      ],
+      "duration_ms": 75,
+      "status": "failed"
+    },
+    {
+      "user_index": 76,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 41,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019139\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019235\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019341\"}}\n"
+        }
+      ],
+      "duration_ms": 131,
+      "status": "failed"
+    },
+    {
+      "user_index": 77,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 40,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019163\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 12,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019222\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 23,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019325\"}}\n"
+        }
+      ],
+      "duration_ms": 76,
+      "status": "failed"
+    },
+    {
+      "user_index": 78,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 58,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019234\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019334\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 61,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019393\"}}\n"
+        }
+      ],
+      "duration_ms": 139,
+      "status": "failed"
+    },
+    {
+      "user_index": 79,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 43,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019133\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019249\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 71,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019355\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 80,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 30,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019154\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 14,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019194\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019266\"}}\n"
+        }
+      ],
+      "duration_ms": 60,
+      "status": "failed"
+    },
+    {
+      "user_index": 81,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019207\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019262\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 73,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019345\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 82,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019125\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019280\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019349\"}}\n"
+        }
+      ],
+      "duration_ms": 130,
+      "status": "failed"
+    },
+    {
+      "user_index": 83,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 45,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019169\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019293\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 70,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019363\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 84,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 29,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019157\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019187\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 12,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019254\"}}\n"
+        }
+      ],
+      "duration_ms": 57,
+      "status": "failed"
+    },
+    {
+      "user_index": 85,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019158\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019291\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019360\"}}\n"
+        }
+      ],
+      "duration_ms": 130,
+      "status": "failed"
+    },
+    {
+      "user_index": 86,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019127\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 7,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019182\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 8,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019209\"}}\n"
+        }
+      ],
+      "duration_ms": 44,
+      "status": "failed"
+    },
+    {
+      "user_index": 87,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 27,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019130\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 21,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019199\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 15,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019307\"}}\n"
+        }
+      ],
+      "duration_ms": 65,
+      "status": "failed"
+    },
+    {
+      "user_index": 88,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 47,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019226\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019319\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019390\"}}\n"
+        }
+      ],
+      "duration_ms": 134,
+      "status": "failed"
+    },
+    {
+      "user_index": 89,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 46,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019206\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019317\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 69,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019388\"}}\n"
+        }
+      ],
+      "duration_ms": 134,
+      "status": "failed"
+    },
+    {
+      "user_index": 90,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 38,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019162\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 10,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019219\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019311\"}}\n"
+        }
+      ],
+      "duration_ms": 66,
+      "status": "failed"
+    },
+    {
+      "user_index": 91,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 49,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019196\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 17,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019310\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019382\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 92,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 48,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019203\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019315\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019386\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 93,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 27,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019099\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019186\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 13,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019259\"}}\n"
+        }
+      ],
+      "duration_ms": 57,
+      "status": "failed"
+    },
+    {
+      "user_index": 94,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 44,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019279\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 68,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019352\"}}\n"
+        }
+      ],
+      "duration_ms": 130,
+      "status": "failed"
+    },
+    {
+      "user_index": 95,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 38,
+          "ok": true
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019237\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019331\"}}\n"
+        }
+      ],
+      "duration_ms": 76,
+      "status": "failed"
+    },
+    {
+      "user_index": 96,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019152\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019177\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019309\"}}\n"
+        }
+      ],
+      "duration_ms": 69,
+      "status": "failed"
+    },
+    {
+      "user_index": 97,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 44,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019128\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 20,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019295\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 67,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019368\"}}\n"
+        }
+      ],
+      "duration_ms": 137,
+      "status": "failed"
+    },
+    {
+      "user_index": 98,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 56,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019233\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 19,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019329\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 61,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019394\"}}\n"
+        }
+      ],
+      "duration_ms": 138,
+      "status": "failed"
+    },
+    {
+      "user_index": 99,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test 1",
+          "received": "",
+          "latency_ms": 28,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019113\"}}\n"
+        },
+        {
+          "sent": "Test 2",
+          "received": "",
+          "latency_ms": 16,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019189\"}}\n"
+        },
+        {
+          "sent": "Test 3",
+          "received": "",
+          "latency_ms": 18,
+          "ok": false,
+          "error": "http 429: {\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"llmgateway: quota exceeded\",\"request_id\":\"a98f5eedecdd/fd29fRB14H-019285\"}}\n"
+        }
+      ],
+      "duration_ms": 62,
+      "status": "failed"
+    }
+  ]
+}

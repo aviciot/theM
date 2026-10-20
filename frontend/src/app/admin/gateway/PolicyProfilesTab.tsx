@@ -306,23 +306,23 @@ function ProfileModal({ profile, onClose, onSaved }: { profile: GatewayPolicyPro
               <option value="audit">Audit — Debug + PII/security decisions (future)</option>
             </select>
             {loggingLevel === 'minimal' && (
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #3b82f6', lineHeight: 1.5 }}>
-                <strong style={{ color: '#94a3b8' }}>Minimal logging:</strong> Records basic request metrics (tokens, cost, latency, status) to <code style={{ fontSize: 10, background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>gateway_requests</code> table. Fastest, lowest storage overhead.
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8, padding: '10px 12px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #3b82f6', lineHeight: 1.6 }}>
+                <strong style={{ color: '#e2e8f0' }}>Minimal logging:</strong> Records basic request metrics (tokens, cost, latency, status) to <code style={{ fontSize: 11, background: '#1e293b', padding: '2px 5px', borderRadius: 3, color: '#cbd5e1' }}>gateway_requests</code> table. Fastest, lowest storage overhead.
               </div>
             )}
             {loggingLevel === 'metrics' && (
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #8b5cf6', lineHeight: 1.5 }}>
-                <strong style={{ color: '#94a3b8' }}>Metrics logging:</strong> Same as Minimal today. <em>Future:</em> Will add per-node timing data to track which AppFlow nodes are slow.
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8, padding: '10px 12px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #8b5cf6', lineHeight: 1.6 }}>
+                <strong style={{ color: '#e2e8f0' }}>Metrics logging:</strong> Same as Minimal today. <em>Future:</em> Will add per-node timing data to track which AppFlow nodes are slow.
               </div>
             )}
             {loggingLevel === 'debug' && (
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #f59e0b', lineHeight: 1.5 }}>
-                <strong style={{ color: '#94a3b8' }}>Debug logging:</strong> Captures full request/response JSON bodies to <code style={{ fontSize: 10, background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>gateway_request_bodies</code> table for troubleshooting. Higher storage cost (~4% latency overhead).
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8, padding: '10px 12px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #f59e0b', lineHeight: 1.6 }}>
+                <strong style={{ color: '#e2e8f0' }}>Debug logging:</strong> Captures full request/response JSON bodies to <code style={{ fontSize: 11, background: '#1e293b', padding: '2px 5px', borderRadius: 3, color: '#cbd5e1' }}>gateway_request_bodies</code> table for troubleshooting. Higher storage cost (~4% latency overhead).
               </div>
             )}
             {loggingLevel === 'audit' && (
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #ef4444', lineHeight: 1.5 }}>
-                <strong style={{ color: '#94a3b8' }}>Audit logging:</strong> Same as Debug today (captures bodies). <em>Future:</em> Will add PII detection decisions, File Guard actions, and governance violations for compliance.
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8, padding: '10px 12px', background: '#0f172a', borderRadius: 6, borderLeft: '3px solid #ef4444', lineHeight: 1.6 }}>
+                <strong style={{ color: '#e2e8f0' }}>Audit logging:</strong> Same as Debug today (captures bodies). <em>Future:</em> Will add PII detection decisions, File Guard actions, and governance violations for compliance.
               </div>
             )}
           </div>

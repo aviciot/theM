@@ -629,3 +629,4 @@ func (a *gatewayQuotaAdapter) CheckAPIRPM(ctx context.Context, tenantID string) 
 	}
 	return a.enforcer.Check(ctx, tenantID, quota.Quota{APIRequestsPerMinute: q.APIRequestsPerMinute})
 }
+// Build timestamp: Tue Oct 20 06:19:57 UTC 2026

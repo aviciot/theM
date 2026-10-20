@@ -607,10 +607,16 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, start time.
 		dbReqID, werr := h.dal.WriteRequest(r.Context(), *rec)
 		if werr != nil {
 			logger.Warn("llmgateway: write_request failed", "err", werr)
-		} else if (loggingLevel == "debug" || loggingLevel == "audit") && len(respJSON) > 0 {
-			// Conditionally write bodies for DEBUG/AUDIT levels
-			if bodyErr := h.dal.WriteRequestBodies(r.Context(), dbReqID, rec.TenantID, string(reqJSON), string(respJSON)); bodyErr != nil {
-				logger.Warn("llmgateway: write_request_bodies failed", "err", bodyErr)
+		} else {
+			// Debug: always log the logging level and whether we're capturing bodies
+			logger.Info("llmgateway: body capture decision", "logging_level", loggingLevel, "resp_json_len", len(respJSON), "will_capture", (loggingLevel == "debug" || loggingLevel == "audit") && len(respJSON) > 0)
+			if (loggingLevel == "debug" || loggingLevel == "audit") && len(respJSON) > 0 {
+				// Conditionally write bodies for DEBUG/AUDIT levels
+				if bodyErr := h.dal.WriteRequestBodies(r.Context(), dbReqID, rec.TenantID, string(reqJSON), string(respJSON)); bodyErr != nil {
+					logger.Warn("llmgateway: write_request_bodies failed", "err", bodyErr)
+				} else {
+					logger.Info("llmgateway: bodies written successfully", "request_id", dbReqID)
+				}
 			}
 		}
 		logger.Info("llmgateway: request complete",
