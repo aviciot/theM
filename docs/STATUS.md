@@ -1,7 +1,7 @@
-# HISTORICAL — last updated 2026-08-31. For current state see docs/CURRENT.md
+# HISTORICAL — last updated 2026-10-20. For current state see docs/CURRENT.md
 # the-M — Current Status
-# Last updated: 2026-08-31
-# HEAD: 4a6241b
+# Last updated: 2026-10-20
+# HEAD: 8c2146dc
 
 ---
 
@@ -129,6 +129,32 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 ---
 
+## Recently Completed (moved from pending)
+
+### Logging Level Implementation — ✅ COMPLETE (2026-10-20)
+
+**Status:** Production ready, tested, documented.
+
+**What was delivered:**
+- All 4 logging levels implemented: minimal / metrics / debug / audit
+- DEBUG/AUDIT conditionally capture full request/response bodies to `gateway_request_bodies` table
+- MINIMAL/METRICS write only basic metrics (no bodies)
+- Performance overhead verified: ~4% for body capture (negligible)
+- UI: Dynamic help text with color-coded explanations for each level
+- Testing: 1,200 requests across all 4 levels, verified body capture working correctly
+
+**Files:**
+- `go/internal/llmgateway/dal.go` — WriteRequest returns ID, WriteRequestBodies method
+- `go/internal/llmgateway/handler.go` — All 4 handlers with conditional capture
+- `frontend/src/app/admin/gateway/PolicyProfilesTab.tsx` — Dynamic logging level help boxes
+- `test-runner/data/scenarios/40-43-logging-perf-*.json` — Test scenarios with results
+
+**Commits:** 752a1581 (implementation), b2f2223c (verification), 11f50a5e + d0c1390a (UI improvements)
+
+See `docs/CURRENT.md` for full implementation details and `FINAL_RESULTS.md` for test results.
+
+---
+
 ## Deployment environments
 
 | Environment | Compose files | Entry point |
@@ -141,7 +167,15 @@ Secrets: derived via HMAC-SHA256 from `secrets.local`. Run `./generate-env.sh` t
 
 ---
 
-## Pending: governance policy migration (added 2026-10-19)
+## Pending Work
+
+### Governance policy migration (added 2026-10-19)
 
 - **Slice 1a/1b done:** governance package, `db/122` applied live, gateway runtime + admin endpoints read `governance_policies`. Live authenticated smoke still to run; policy cache has no invalidate-on-write.
+- **Logging level complete (2026-10-20):** All 4 levels working, body capture tested and verified.
 - **Then, as early as possible once stable:** drop `gateway_policies`, `gateway_policy_profiles`, `gateway_clients.policy_profile_id` (requested by user 2026-10-19). Do not let this linger.
+
+### Future logging enhancements
+
+- **METRICS level:** Add per-node timing to track AppFlow bottlenecks (~2h work, new table `gateway_request_node_timings`)
+- **AUDIT level:** Add PII detection logs, File Guard decisions, governance violations for compliance
