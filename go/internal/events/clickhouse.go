@@ -576,20 +576,38 @@ func (c *ClickHouseSink) writeUserActivity(ctx context.Context, tenantID string,
 			action, resource_type, resource_id, outcome, ip, user_agent, trace_id
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+	// Convert empty strings to nil for UUID fields
+	var tenantUUID, applicationID, userID, resourceID, traceID interface{}
+	if tenantID != "" {
+		tenantUUID = tenantID
+	}
+	if ua.ApplicationID != "" {
+		applicationID = ua.ApplicationID
+	}
+	if ua.UserID != "" {
+		userID = ua.UserID
+	}
+	if ua.ResourceID != "" {
+		resourceID = ua.ResourceID
+	}
+	if ua.TraceID != "" {
+		traceID = ua.TraceID
+	}
+
 	_, err := c.db.ExecContext(ctx, query,
 		eventID,
 		1,
 		ts,
-		tenantID,
-		ua.ApplicationID,
-		ua.UserID,
+		tenantUUID,
+		applicationID,
+		userID,
 		ua.Action,
 		ua.ResourceType,
-		ua.ResourceID,
+		resourceID,
 		ua.Outcome,
 		ua.IP,
 		ua.UserAgent,
-		ua.TraceID,
+		traceID,
 	)
 
 	return err

@@ -1,6 +1,7 @@
 package authserver
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -427,17 +428,46 @@ func extractUserIDFromToken(pair *TokenPair) string {
 	if pair == nil {
 		return ""
 	}
-	// TODO: decode JWT to get user ID
-	return ""
+	return extractUserIDFromRawToken(pair.AccessToken)
 }
 
 // extractUserIDFromRawToken extracts user ID from a raw JWT token.
+// This is best-effort for logging only — no signature verification.
 func extractUserIDFromRawToken(token string) string {
 	if token == "" {
 		return ""
 	}
-	// TODO: decode JWT to get user ID
-	return ""
+
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+
+	// Decode payload (middle part)
+	// Decode payload (middle part) - unpadded base64url
+	payload := parts[1]
+	// Add padding if needed
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+
+	payloadBytes, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return ""
+	}
+
+	// Parse claims
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return ""
+	}
+
+	return claims.Sub
 }
 
 // extractIP extracts the client IP from the request.
