@@ -15,12 +15,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/rueidis"
+
+	"github.com/aviciot/them/internal/events"
 )
+
+// generateUUID returns a new UUID v4 string.
+func generateUUID() string {
+	return uuid.New().String()
+}
+
+// getEventsMode returns the current events mode from environment.
+// Values: "postgres" (default), "clickhouse", "dual".
+func getEventsMode() string {
+	mode := os.Getenv("THE_M_EVENTS_GATEWAY")
+	if mode == "" {
+		return "postgres"
+	}
+	return mode
+}
 
 // Policy holds the governance rules resolved from governance_policies for one client.
 // A nil *Policy means no row exists — all models allowed, no budget cap.
@@ -69,8 +88,9 @@ type RequestRecord struct {
 // (BYPASSRLS) because they are internal system records — tenant_id enforces
 // isolation in the table itself.
 type DAL struct {
-	pool  *pgxpool.Pool
-	redis rueidis.Client // Redis for policy cache (optional - nil = no cache)
+	pool      *pgxpool.Pool
+	redis     rueidis.Client    // Redis for policy cache (optional - nil = no cache)
+	eventSink events.EventSink  // Event sink for observability (optional - nil = no events)
 }
 
 // NewDAL creates a DAL backed by the given pool.
@@ -82,36 +102,88 @@ func (d *DAL) WithRedis(r rueidis.Client) *DAL {
 	return d
 }
 
-// WriteRequest inserts one gateway_requests row. Called in a defer so usage
-// is captured even when the client disconnects mid-stream.
-// Returns the inserted request ID for potential body capture.
-func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error) {
-	const q = `
-		INSERT INTO them.gateway_requests
-			(tenant_id, client_id, token_hash, provider, model_requested, model_served,
-			 status, http_status, error_code, tokens_in, tokens_out, cost_usd,
-			 latency_ms, ttfb_ms, streamed)
-		VALUES
-			($1::uuid,
-			 NULLIF($2,'')::uuid,
-			 NULLIF($3,''),
-			 NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
-			 $7, NULLIF($8,0), NULLIF($9,''),
-			 $10, $11, $12,
-			 NULLIF($13,0), NULLIF($14,0), $15)
-		RETURNING id::text`
+// WithEventSink attaches an event sink for observability.
+func (d *DAL) WithEventSink(sink events.EventSink) *DAL {
+	d.eventSink = sink
+	return d
+}
 
-	var requestID string
-	err := d.pool.QueryRow(ctx, q,
-		r.TenantID,
-		r.ClientID,
-		r.TokenHash,
-		r.Provider, r.ModelRequested, r.ModelServed,
-		r.Status, r.HTTPStatus, r.ErrorCode,
-		r.TokensIn, r.TokensOut, r.CostUSD,
-		r.LatencyMS, r.TTFBMs, r.Streamed,
-	).Scan(&requestID)
-	return requestID, err
+// WriteRequest inserts one gateway_requests row AND/OR emits an observability event.
+// Called in a defer so usage is captured even when the client disconnects mid-stream.
+// Returns the inserted request ID for potential body capture.
+//
+// Behavior controlled by THE_M_EVENTS_GATEWAY environment variable:
+// - "postgres" or empty: write to Postgres only (default)
+// - "clickhouse": emit event to ClickHouse only, no Postgres write
+// - "dual": both (for migration verification)
+func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error) {
+	// Generate request ID for correlation (used by both Postgres and ClickHouse)
+	requestID := generateUUID()
+
+	// Emit event if sink is configured
+	if d.eventSink != nil {
+		event := events.Event{
+			EventID:       generateUUID(),
+			SchemaVersion: 1,
+			Timestamp:     time.Now().UTC(),
+			TenantID:      r.TenantID,
+			Kind:          events.EventKindGatewayRequest,
+			GatewayRequest: &events.GatewayRequestEvent{
+				RequestID:      requestID,
+				ClientID:       r.ClientID,
+				Provider:       r.Provider,
+				ModelRequested: r.ModelRequested,
+				ModelServed:    r.ModelServed,
+				Status:         r.Status,
+				HTTPStatus:     uint16(r.HTTPStatus),
+				ErrorCode:      r.ErrorCode,
+				TokensIn:       uint32(r.TokensIn),
+				TokensOut:      uint32(r.TokensOut),
+				CostUSD:        r.CostUSD,
+				LatencyMS:      uint32(r.LatencyMS),
+				TTFBMS:         uint32(r.TTFBMs),
+				Streamed:       r.Streamed,
+			},
+		}
+		// Best effort — don't fail request if event emission fails
+		_ = d.eventSink.Emit(ctx, event)
+	}
+
+	// Conditional Postgres write (based on mode env var)
+	// TODO: read from config instead of os.Getenv
+	mode := getEventsMode()
+	if mode == "postgres" || mode == "" || mode == "dual" {
+		const q = `
+			INSERT INTO them.gateway_requests
+				(id, tenant_id, client_id, token_hash, provider, model_requested, model_served,
+				 status, http_status, error_code, tokens_in, tokens_out, cost_usd,
+				 latency_ms, ttfb_ms, streamed)
+			VALUES
+				($1::uuid, $2::uuid,
+				 NULLIF($3,'')::uuid,
+				 NULLIF($4,''),
+				 NULLIF($5,''), NULLIF($6,''), NULLIF($7,''),
+				 $8, NULLIF($9,0), NULLIF($10,''),
+				 $11, $12, $13,
+				 NULLIF($14,0), NULLIF($15,0), $16)
+			RETURNING id::text`
+
+		var dbRequestID string
+		err := d.pool.QueryRow(ctx, q,
+			requestID,
+			r.TenantID,
+			r.ClientID,
+			r.TokenHash,
+			r.Provider, r.ModelRequested, r.ModelServed,
+			r.Status, r.HTTPStatus, r.ErrorCode,
+			r.TokensIn, r.TokensOut, r.CostUSD,
+			r.LatencyMS, r.TTFBMs, r.Streamed,
+		).Scan(&dbRequestID)
+		return dbRequestID, err
+	}
+
+	// ClickHouse-only mode: return the pre-generated request ID
+	return requestID, nil
 }
 
 // WriteRequestBodies inserts request/response bodies for DEBUG and AUDIT logging levels.

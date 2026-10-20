@@ -33,6 +33,7 @@ import (
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/events"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
@@ -484,9 +485,26 @@ func run() error {
 	// closed agents (cron jobs, scripts, internal services) that call an LLM
 	// directly. Must be mounted BEFORE MountApps (catch-all "/*").
 	// §16.2: fail-open on quota (Redis), fail-closed on auth (§16.2 decision).
+
+	// Event sink for gateway requests (Stage B1)
+	// Mode: postgres (default), clickhouse, dual
+	var gwEventSink events.EventSink
+	eventsMode := os.Getenv("THE_M_EVENTS_GATEWAY")
+	switch eventsMode {
+	case "clickhouse", "dual":
+		// Redis Streams sink → them-event-writer → ClickHouse
+		// TODO: use dedicated redisEvents client when available
+		gwEventSink = events.NewRedisSink(redisCache.Client(), "them:events", 10000, 1*time.Second)
+		log.Info("gateway events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
+	default:
+		// "postgres" or empty — no event emission, Postgres writes continue as-is
+		gwEventSink = nil
+		log.Info("gateway events sink: Postgres only (legacy)", "mode", eventsMode)
+	}
+
 	gwResolver := llmresolve.New(rlsPools.Admin, adminFernetKey, log)
 	gwFactory := llmgateway.NewResolverFactory(gwResolver)
-	gwDAL := llmgateway.NewDAL(rlsPools.Admin).WithRedis(redisCache.Client())
+	gwDAL := llmgateway.NewDAL(rlsPools.Admin).WithRedis(redisCache.Client()).WithEventSink(gwEventSink)
 	gwQC := &gatewayQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
 	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log).
 		WithPolicyEnforcer(gwDAL)
