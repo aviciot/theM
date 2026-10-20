@@ -81,15 +81,24 @@ e9c260da  docs: final status - logging implementation complete, Docker build iss
 
 **Two parallel tracks identified:**
 
-### Track 1: Observability Storage (ClickHouse) — Stage A1 COMPLETE
+### Track 1: Observability Storage (ClickHouse) — Stage A2 IN PROGRESS
 **Goal:** Move high-volume logs from Postgres to ClickHouse
 **Design:** `docs/OBSERVABILITY_STORAGE_DESIGN.md` (two-stage: A=build, B=migrate)
-**Status:** A1 done (2026-10-18), containers running, A2-A4 pending
+**Status:** A1 done (2026-10-18), **A2 in progress (2026-10-20)**
 
-**Deployed:**
-- `them-clickhouse` + `them-redis-events` (profile `events`, healthy, unused)
-- Schema: 5 tables with TTLs, users created
-- Next: A2 (`internal/events/` package), A3 (event-writer), A4 (tests)
+**Completed:**
+- ✅ **A1** (2026-10-18): `them-clickhouse` + `them-redis-events` containers (profile `events`, healthy)
+- ✅ **A2** (2026-10-20): `go/internal/events/` package built:
+  - Event types: `GatewayRequestEvent`, `ToolCallEvent`, `UserActivityEvent`, `AuditEvent`
+  - Interfaces: `EventSink` (write), `EventStore` (read), `BodyStore` (content)
+  - Backends: `MemorySink`/`MemoryStore` (testing), `PostgresSink`/`PostgresStore` (current schema)
+  - Contract test suite: `ContractTests()` runs against any backend (tenant isolation, filters, aggregation)
+  - Backend selection: `THE_M_EVENTS_<AREA>=postgres|clickhouse|dual` (default: postgres)
+  - **Zero runtime impact** — no live service imports yet (purely additive)
+
+**Next:**
+- A3: `event-writer` service (Redis Streams → ClickHouse consumer)
+- A4: Integration tests + failure modes
 
 ### Track 2: Policy-Controlled Logging (NEW) — Design Required
 **Goal:** Stop logging full debug data for every request
