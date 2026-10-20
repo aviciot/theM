@@ -164,12 +164,14 @@ type EventConsumer struct {
 }
 
 // RecoverPending uses XAUTOCLAIM to recover messages pending from dead consumers.
-// Claims idle messages so they'll be picked up by the regular XREADGROUP loop.
-// Paginates via cursor until no more pending messages remain.
+// Processes reclaimed messages immediately through validation, persistence/DLQ, and ACK.
+// Paginates via cursor until cursor returns "0-0".
 func (c *EventConsumer) RecoverPending(ctx context.Context) error {
 	minIdleMs := fmt.Sprintf("%d", pendingClaimIdle.Milliseconds())
 	cursor := "0-0"
-	totalClaimed := 0
+	totalRecovered := 0
+	totalPoison := 0
+	totalFailed := 0
 
 	for {
 		// XAUTOCLAIM <stream> <group> <consumer> <min-idle-time> <cursor> COUNT 100
@@ -208,18 +210,105 @@ func (c *EventConsumer) RecoverPending(ctx context.Context) error {
 			return fmt.Errorf("parse XAUTOCLAIM messages: %w", err)
 		}
 
-		totalClaimed += len(messages)
+		// Process each reclaimed message immediately
+		for _, msg := range messages {
+			// Parse event
+			eventData, ok := msg.FieldValues["event"]
+			if !ok {
+				c.logger.Warn("poison event during recovery: missing event field", "msg_id", msg.ID)
+				if err := c.moveToDLQ(ctx, msg.ID, "missing_event_field"); err != nil {
+					c.logger.Error("failed to move poison event to DLQ", "error", err, "msg_id", msg.ID)
+					totalFailed++
+					continue
+				}
+				if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+					c.logger.Error("failed to ACK poison event", "error", err, "msg_id", msg.ID)
+					totalFailed++
+				} else {
+					totalPoison++
+				}
+				continue
+			}
 
-		// Check for end of pagination
-		if nextCursor == "0-0" || len(messages) == 0 {
+			var event events.Event
+			if err := json.Unmarshal([]byte(eventData), &event); err != nil {
+				c.logger.Error("poison event during recovery: invalid JSON", "error", err, "msg_id", msg.ID)
+				if err := c.moveToDLQ(ctx, msg.ID, fmt.Sprintf("invalid_json: %v", err)); err != nil {
+					c.logger.Error("failed to move poison event to DLQ", "error", err, "msg_id", msg.ID)
+					totalFailed++
+					continue
+				}
+				if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+					c.logger.Error("failed to ACK poison event", "error", err, "msg_id", msg.ID)
+					totalFailed++
+				} else {
+					totalPoison++
+				}
+				continue
+			}
+
+			// Validate event kind
+			if event.Kind == "" {
+				c.logger.Warn("poison event during recovery: missing kind", "msg_id", msg.ID, "event_id", event.EventID)
+				if err := c.moveToDLQ(ctx, msg.ID, "missing_kind"); err != nil {
+					c.logger.Error("failed to move poison event to DLQ", "error", err, "msg_id", msg.ID)
+					totalFailed++
+					continue
+				}
+				if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+					c.logger.Error("failed to ACK poison event", "error", err, "msg_id", msg.ID)
+					totalFailed++
+				} else {
+					totalPoison++
+				}
+				continue
+			}
+
+			// Write to ClickHouse with retry
+			var lastErr error
+			success := false
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				if err := c.sink.Emit(ctx, event); err != nil {
+					c.logger.Error("failed to write recovered event", "error", err, "event_id", event.EventID, "msg_id", msg.ID, "attempt", attempt)
+					lastErr = err
+					if attempt < maxRetries {
+						time.Sleep(time.Second * time.Duration(attempt))
+					}
+				} else {
+					success = true
+					break
+				}
+			}
+
+			if !success {
+				c.logger.Error("recovered event write failed after retries", "error", lastErr, "msg_id", msg.ID)
+				totalFailed++
+				// Don't ACK - leave pending for next recovery attempt
+				continue
+			}
+
+			// ACK after successful write
+			if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+				c.logger.Error("failed to ACK recovered event", "error", err, "msg_id", msg.ID)
+				totalFailed++
+			} else {
+				totalRecovered++
+			}
+		}
+
+		// Continue pagination until cursor is "0-0"
+		if nextCursor == "0-0" {
 			break
 		}
 
 		cursor = nextCursor
 	}
 
-	if totalClaimed > 0 {
-		c.logger.Info("recovered pending messages from dead consumers", "count", totalClaimed, "note", "claimed messages will be processed by XREADGROUP loop")
+	if totalRecovered > 0 || totalPoison > 0 || totalFailed > 0 {
+		c.logger.Info("recovery complete",
+			"recovered", totalRecovered,
+			"poison_to_dlq", totalPoison,
+			"failed", totalFailed)
 	}
 
 	return nil
@@ -235,6 +324,10 @@ func (c *EventConsumer) Run(ctx context.Context) {
 
 	ticker := time.NewTicker(c.batchTimeout)
 	defer ticker.Stop()
+
+	// Periodic recovery ticker - check for stale pending messages every 60s
+	recoveryTicker := time.NewTicker(60 * time.Second)
+	defer recoveryTicker.Stop()
 
 	consecutiveFailures := 0
 	backoff := 1 * time.Second
@@ -337,6 +430,12 @@ func (c *EventConsumer) Run(ctx context.Context) {
 		case <-ticker.C:
 			// Flush on timeout
 			flush()
+
+		case <-recoveryTicker.C:
+			// Periodic recovery of stale pending messages
+			if err := c.RecoverPending(ctx); err != nil {
+				c.logger.Error("periodic recovery failed", "error", err)
+			}
 
 		default:
 			// Read from stream (non-blocking with timeout)
