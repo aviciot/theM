@@ -7,20 +7,31 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/aviciot/them/internal/events"
+	"github.com/google/uuid"
 )
 
 // Handlers adapts the Service to HTTP. It owns request parsing, cookie handling,
 // and JSON response shapes — all kept byte-compatible with the Python auth
 // service so the existing Next.js proxy routes need no changes.
 type Handlers struct {
-	svc *Service
-	cfg *Config
-	log *slog.Logger
+	svc       *Service
+	cfg       *Config
+	log       *slog.Logger
+	eventSink events.EventSink // optional: nil = no events
 }
 
 // NewHandlers builds the HTTP handler set.
 func NewHandlers(svc *Service, cfg *Config, log *slog.Logger) *Handlers {
 	return &Handlers{svc: svc, cfg: cfg, log: log}
+}
+
+// WithEventSink attaches an event sink for observability.
+func (h *Handlers) WithEventSink(sink events.EventSink) *Handlers {
+	h.eventSink = sink
+	return h
 }
 
 const (
@@ -80,6 +91,14 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		Username: req.Username, Password: req.Password, APIKey: req.APIKey,
 		TenantSlug: req.TenantSlug,
 	})
+
+	// Emit user activity event (best effort)
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+	}
+	h.emitUserActivity(r, "login", outcome, extractUserIDFromToken(pair))
+
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
@@ -139,6 +158,14 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		token = cookieValue(r, refreshCookie)
 	}
 	pair, err := h.svc.Refresh(r.Context(), token)
+
+	// Emit user activity event (best effort)
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+	}
+	h.emitUserActivity(r, "token_refresh", outcome, extractUserIDFromToken(pair))
+
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
@@ -156,6 +183,10 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		token = cookieValue(r, accessCookie)
 	}
 	h.svc.Logout(r.Context(), token)
+
+	// Emit user activity event (best effort)
+	h.emitUserActivity(r, "logout", "success", extractUserIDFromRawToken(token))
+
 	h.clearAuthCookies(w)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
 }
@@ -361,4 +392,73 @@ func itoa(n int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// ── User activity event emission ─────────────────────────────────────────────
+
+// emitUserActivity emits a user activity event (best effort, never fails the request).
+func (h *Handlers) emitUserActivity(r *http.Request, action, outcome, userID string) {
+	if h.eventSink == nil {
+		return
+	}
+
+	event := events.Event{
+		EventID:       uuid.New().String(),
+		SchemaVersion: 1,
+		Timestamp:     time.Now().UTC(),
+		TenantID:      "", // auth service doesn't have tenant context yet
+		Kind:          events.EventKindUserActivity,
+		UserActivity: &events.UserActivityEvent{
+			UserID:       userID,
+			Action:       action,
+			ResourceType: "auth",
+			Outcome:      outcome,
+			IP:           extractIP(r),
+			UserAgent:    r.UserAgent(),
+		},
+	}
+
+	// Best effort — don't fail request if event emission fails
+	_ = h.eventSink.Emit(r.Context(), event)
+}
+
+// extractUserIDFromToken extracts user ID from a TokenPair (if available).
+func extractUserIDFromToken(pair *TokenPair) string {
+	if pair == nil {
+		return ""
+	}
+	// TODO: decode JWT to get user ID
+	return ""
+}
+
+// extractUserIDFromRawToken extracts user ID from a raw JWT token.
+func extractUserIDFromRawToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	// TODO: decode JWT to get user ID
+	return ""
+}
+
+// extractIP extracts the client IP from the request.
+func extractIP(r *http.Request) string {
+	// Check X-Forwarded-For header first (behind proxy)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first IP in the list
+		if idx := strings.Index(xff, ","); idx > 0 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr
+	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx > 0 {
+		return r.RemoteAddr[:idx]
+	}
+	return r.RemoteAddr
 }

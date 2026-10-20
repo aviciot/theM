@@ -18,6 +18,7 @@ import (
 
 	"github.com/aviciot/them/internal/authserver"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/events"
 	"github.com/aviciot/them/internal/idpcrypto"
 	"github.com/aviciot/them/internal/telemetry"
 )
@@ -55,7 +56,7 @@ func run() error {
 	// ── 4. Wire service + handlers + router ──────────────────────────────────
 	store := authserver.NewPgxStore(database.Pool())
 	svc := authserver.NewService(store, cfg, log)
-	handlers := authserver.NewHandlers(svc, cfg, log)
+
 	idpKey, err := idpcrypto.ParseKey(cfg.IDPEncryptionKey)
 	if err != nil {
 		return fmt.Errorf("IDP_ENCRYPTION_KEY: %w", err)
@@ -79,6 +80,26 @@ func run() error {
 			log.Info("redis connected for OIDC debug", "addr", addr)
 		}
 	}
+
+	// ── 4b. Event sink (user activity) ────────────────────────────────────────
+	// Mode: postgres (default), clickhouse, dual
+	var authEventSink events.EventSink
+	eventsMode := os.Getenv("THE_M_EVENTS_AUTH")
+	if redisClient != nil && (eventsMode == "clickhouse" || eventsMode == "dual") {
+		// Redis Streams sink → them-event-writer → ClickHouse
+		authEventSink = events.NewRedisSink(redisClient, "them:events", 10000, 1*time.Second)
+		log.Info("auth events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
+	} else {
+		// "postgres" or empty or no Redis — no event emission
+		authEventSink = nil
+		if eventsMode != "" && eventsMode != "postgres" {
+			log.Warn("auth events sink disabled: Redis not available", "mode", eventsMode)
+		} else {
+			log.Info("auth events sink: disabled (default)", "mode", eventsMode)
+		}
+	}
+
+	handlers := authserver.NewHandlers(svc, cfg, log).WithEventSink(authEventSink)
 
 	oidcStore := authserver.NewPgxOIDCStoreWithKeyAndRedis(database.Pool(), idpKey, redisClient)
 	signer := authserver.NewTokenSigner(cfg)

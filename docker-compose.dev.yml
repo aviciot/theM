@@ -81,6 +81,11 @@ services:
     environment:
       - THE_M_EVENTS_GATEWAY=dual
 
+  # ── Auth Go: enable clickhouse mode for user activity events ─────────────────
+  them-auth-go:
+    environment:
+      - THE_M_EVENTS_AUTH=clickhouse
+
   # ── Go Temporal Worker 1 ───────────────────────────────────────────────────────
   them-go-worker:
     build:
