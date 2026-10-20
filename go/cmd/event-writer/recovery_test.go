@@ -16,7 +16,10 @@ import (
 // Test 1: A dead consumer's pending event is persisted and ACKed by its replacement
 func TestRecoverPending_DeadConsumerReplacement(t *testing.T) {
 	// Setup: Real Redis instance (integration test)
-	redisAddr := "localhost:6379"
+	redisAddr := os.Getenv("REDIS_HOST")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -37,7 +40,7 @@ func TestRecoverPending_DeadConsumerReplacement(t *testing.T) {
 
 	// Cleanup before test
 	client.Do(ctx, client.B().Del().Key(streamKey).Build())
-	client.Do(ctx, client.B().Del().Key(dlqKey).Build()
+	client.Do(ctx, client.B().Del().Key(dlqKey).Build())
 
 	// Step 1: Create consumer group
 	client.Do(ctx, client.B().XgroupCreate().Key(streamKey).Group(groupName).Id("0").Mkstream().Build())
@@ -45,16 +48,15 @@ func TestRecoverPending_DeadConsumerReplacement(t *testing.T) {
 	// Step 2: Add an event to stream
 	testEvent := events.Event{
 		EventID:   "test-event-001",
-		Kind:      "test_kind",
-		Timestamp: time.Now().Unix(),
+		Kind:      events.EventKindGatewayRequest,
+		Timestamp: time.Now(),
 	}
 	eventJSON, _ := json.Marshal(testEvent)
 	addCmd := client.B().Xadd().Key(streamKey).Id("*").FieldValue().FieldValue("event", string(eventJSON)).Build()
-	resp, err := client.Do(ctx, addCmd).ToString()
+	_, err = client.Do(ctx, addCmd).ToString()
 	if err != nil {
 		t.Fatalf("failed to add event: %v", err)
 	}
-	messageID := resp
 
 	// Step 3: Consumer1 reads but crashes before ACK (simulate by claiming without ACK)
 	readCmd := client.B().Xreadgroup().Group(groupName, "consumer1").Count(1).Block(100).Streams().Key(streamKey).Id(">").Build()
@@ -74,9 +76,9 @@ func TestRecoverPending_DeadConsumerReplacement(t *testing.T) {
 	}
 
 	// Step 5: Consumer2 starts and runs RecoverPending after idle threshold
-	// (simulate by manually setting message idle time > 30s via sleep or time manipulation)
-	// For test speed, we'll use a shorter idle time
-	time.Sleep(2 * time.Second) // Wait 2s (idle threshold = 30s in prod, but we'll claim anyway)
+	// Wait for message to become idle (>30s threshold)
+	t.Log("Waiting 31 seconds for message to become idle...")
+	time.Sleep(31 * time.Second)
 
 	// Create mock sink that records emitted events
 	mockSink := &mockEventSink{events: make([]events.Event, 0)}
@@ -125,13 +127,17 @@ func TestRecoverPending_DeadConsumerReplacement(t *testing.T) {
 
 // Test 2: Restart before the idle threshold still eventually recovers it
 func TestRecoverPending_BeforeIdleThreshold(t *testing.T) {
+	redisAddr := os.Getenv("REDIS_HOST")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
 	ctx := context.Background()
 	client, err := rueidis.NewClient(rueidis.ClientOption{
-		InitAddress: []string{"localhost:6379"},
+		InitAddress: []string{redisAddr},
 		SelectDB:    1,
 	})
 	if err != nil {
@@ -151,8 +157,8 @@ func TestRecoverPending_BeforeIdleThreshold(t *testing.T) {
 	client.Do(ctx, client.B().XgroupCreate().Key(streamKey).Group(groupName).Id("0").Mkstream().Build())
 	testEvent := events.Event{
 		EventID:   "test-event-002",
-		Kind:      "test_kind",
-		Timestamp: time.Now().Unix(),
+		Kind:      events.EventKindGatewayRequest,
+		Timestamp: time.Now(),
 	}
 	eventJSON, _ := json.Marshal(testEvent)
 	client.Do(ctx, client.B().Xadd().Key(streamKey).Id("*").FieldValue().FieldValue("event", string(eventJSON)).Build())
@@ -185,8 +191,9 @@ func TestRecoverPending_BeforeIdleThreshold(t *testing.T) {
 	// Message may not be claimed yet if idle < threshold
 	// But with periodic recovery (60s interval), it will eventually be claimed
 
-	// For test: wait for message to become idle, then retry
-	time.Sleep(2 * time.Second)
+	// For test: wait for message to become idle (>30s), then retry
+	t.Log("Waiting 31 seconds for message to become idle...")
+	time.Sleep(31 * time.Second)
 	err = consumer.RecoverPending(ctx)
 	if err != nil {
 		t.Fatalf("Second RecoverPending failed: %v", err)
@@ -204,13 +211,17 @@ func TestRecoverPending_BeforeIdleThreshold(t *testing.T) {
 
 // Test 3: ClickHouse outage followed by recovery delivers all valid events
 func TestRecoverPending_ClickHouseOutageRecovery(t *testing.T) {
+	redisAddr := os.Getenv("REDIS_HOST")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
 	ctx := context.Background()
 	client, err := rueidis.NewClient(rueidis.ClientOption{
-		InitAddress: []string{"localhost:6379"},
+		InitAddress: []string{redisAddr},
 		SelectDB:    1,
 	})
 	if err != nil {
@@ -230,8 +241,8 @@ func TestRecoverPending_ClickHouseOutageRecovery(t *testing.T) {
 	client.Do(ctx, client.B().XgroupCreate().Key(streamKey).Group(groupName).Id("0").Mkstream().Build())
 	testEvent := events.Event{
 		EventID:   "test-event-003",
-		Kind:      "test_kind",
-		Timestamp: time.Now().Unix(),
+		Kind:      events.EventKindGatewayRequest,
+		Timestamp: time.Now(),
 	}
 	eventJSON, _ := json.Marshal(testEvent)
 	client.Do(ctx, client.B().Xadd().Key(streamKey).Id("*").FieldValue().FieldValue("event", string(eventJSON)).Build())
@@ -255,8 +266,9 @@ func TestRecoverPending_ClickHouseOutageRecovery(t *testing.T) {
 		batchTimeout:  time.Second,
 	}
 
-	// Wait for idle
-	time.Sleep(2 * time.Second)
+	// Wait for message to become idle (>30s threshold)
+	t.Log("Waiting 31 seconds for message to become idle...")
+	time.Sleep(31 * time.Second)
 
 	// Run recovery - should fail initially
 	err = consumer.RecoverPending(ctx)
