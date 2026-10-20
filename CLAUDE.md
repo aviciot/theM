@@ -209,6 +209,7 @@ cd go && go test ./...   # full suite — must be zero failures before every com
 | `go/internal/authserver/`, `go/cmd/auth-server/`, `Dockerfile.auth-go`, `docker-compose.yml` (them-auth-go) | `go test ./internal/authserver/...` + live login/me/refresh/logout smoke |
 | `go/internal/mcp/` (any file), `go/cmd/mcp-service/main.go`, `Dockerfile.mcp-service` | `go test ./internal/mcp/...` |
 | `go/internal/admin/mcp_servers.go`, `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go` | `go test ./internal/admin/...` |
+| `go/internal/events/` (any file), `go/cmd/event-writer/main.go`, `Dockerfile.event-writer`, `docker-compose.events.yml` | `go test ./internal/events/... ./cmd/event-writer/...` + **rebuild + restart them-event-writer** (Redis Streams consumer, must restart to pick up RecoverPending/retention fixes) |
 | `go/internal/agentgen/` | `go test ./internal/agentgen/...` |
 | `go/internal/temporal/` or `go/cmd/dag-worker/` | `go test ./internal/temporal/...` + **restart them-dag-worker AND them-dag-worker-2** (two replicas of the same image, same Temporal task queues) |
 | `go/cmd/agent-runtime/` | `go test ./...` + **rebuild + restart them-agent-runtime** |
@@ -245,6 +246,7 @@ docker logs them-go-worker --tail 5   # confirm polling
 | `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
 | `them-clickhouse` | Event store for logs/chat/tool-call/activity (`profiles: [events]`, `docker-compose.events.yml`, not started by default) | 8123/9000 (internal) | `db/clickhouse/`, bind mount `./data/them-clickhouse` |
 | `them-redis-events` | Event queue — separate Redis, AOF, `noeviction` (`profiles: [events]`) | 6379 (internal) | `redis/config/redis-events.conf`, bind mount `./data/them-redis-events` |
+| `them-event-writer` | Go event consumer — reads from Redis Streams, writes to ClickHouse, handles recovery + retention (`profiles: [events]`) | None (internal worker) | `go/cmd/event-writer/`, `go/internal/events/` |
 | `them-auth-go` | Go auth service — UI-facing login/me/refresh/logout + verify/validate (replaces them-auth-service for the UI contract) | 8703 (internal) | `go/cmd/auth-server/`, `go/internal/authserver/` |
 | `them-auth-service` | Python Auth/IAM microservice — users/roles/teams/permissions admin CRUD only (UI auth moved to them-auth-go) | 8701 (internal) | `auth_service/` |
 | `them-go-bridge` | Go API gateway — all routes | 8002 (internal) | `go/` |
@@ -287,6 +289,12 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal ps
 docker logs them-go-worker
 # Temporal UI: http://localhost:8088/temporal
+
+# Stack with Events (ClickHouse observability)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.events.yml --profile events up -d
+docker logs them-event-writer --tail 50
+# Event modes: THE_M_EVENTS_GATEWAY=postgres (default) | dual (Postgres + ClickHouse mirror)
+# Clickhouse-only mode is BLOCKED until budget/body support is complete
 
 # ── Hetzner (production) ──────────────────────────────────────────────────────
 ./scripts/deploy.sh up          # start / adopt stack
