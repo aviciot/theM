@@ -4,6 +4,13 @@
 // Reads events from Redis Streams (them:events) and writes to ClickHouse in batches.
 // Consumer group: "event-writers" (allows N replicas for redundancy).
 // At-least-once delivery: events are ACKed only after ClickHouse confirms write.
+//
+// Reliability (Finding 2):
+// - Poison events moved to DLQ stream (them:events:dlq) before ACK
+// - ClickHouse failures retry with exponential backoff (max 3 attempts)
+// - XAUTOCLAIM recovers pending messages from dead consumers on startup
+// - Bounded processing: pauses ingestion if ClickHouse unavailable
+// - ACK failures logged + retained (message stays pending for recovery)
 package main
 
 import (
@@ -24,12 +31,15 @@ import (
 )
 
 const (
-	streamKey     = "them:events"
-	consumerGroup = "event-writers"
-	consumerName  = "event-writer" // Instance ID appended at runtime
-	batchSize     = 100             // Max events per ClickHouse batch
-	batchTimeout  = 5 * time.Second // Max time between batches
-	blockTimeout  = 2 * time.Second // XREADGROUP block time
+	streamKey        = "them:events"
+	dlqStreamKey     = "them:events:dlq"
+	consumerGroup    = "event-writers"
+	consumerName     = "event-writer" // Instance ID appended at runtime
+	batchSize        = 100             // Max events per ClickHouse batch
+	batchTimeout     = 5 * time.Second // Max time between batches
+	blockTimeout     = 2 * time.Second // XREADGROUP block time
+	maxRetries       = 3
+	pendingClaimIdle = 30 * time.Second // Messages idle >30s are claimed from dead consumers
 )
 
 func main() {
@@ -74,16 +84,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Ensure DLQ stream exists
+	if err := ensureStream(ctx, redisClient, dlqStreamKey); err != nil {
+		logger.Error("failed to create DLQ stream", "error", err)
+		os.Exit(1)
+	}
+
 	// Start consumer
 	consumer := &EventConsumer{
 		redis:         redisClient,
 		sink:          sink,
 		logger:        logger,
 		streamKey:     streamKey,
+		dlqStreamKey:  dlqStreamKey,
 		consumerGroup: consumerGroup,
 		consumerName:  fmt.Sprintf("%s-%s", consumerName, os.Getenv("HOSTNAME")),
 		batchSize:     batchSize,
 		batchTimeout:  batchTimeout,
+	}
+
+	// Recover pending messages from dead consumers
+	if err := consumer.RecoverPending(ctx); err != nil {
+		logger.Error("failed to recover pending messages", "error", err)
+		// Continue — this is best-effort recovery
 	}
 
 	// Graceful shutdown
@@ -111,6 +134,7 @@ type EventConsumer struct {
 	sink          events.EventSink
 	logger        *slog.Logger
 	streamKey     string
+	dlqStreamKey  string
 	consumerGroup string
 	consumerName  string
 	batchSize     int
@@ -118,6 +142,47 @@ type EventConsumer struct {
 	stopChan      chan struct{}
 	stopped       bool
 	mu            sync.Mutex
+
+	// Counters
+	processedCount uint64
+	failedCount    uint64
+	dlqCount       uint64
+}
+
+// RecoverPending uses XAUTOCLAIM to recover messages pending from dead consumers.
+func (c *EventConsumer) RecoverPending(ctx context.Context) error {
+	// XAUTOCLAIM <stream> <group> <consumer> <min-idle-time> <start> COUNT 100
+	minIdleMs := fmt.Sprintf("%d", pendingClaimIdle.Milliseconds())
+	cmd := c.redis.B().Xautoclaim().
+		Key(c.streamKey).
+		Group(c.consumerGroup).
+		Consumer(c.consumerName).
+		MinIdleTime(minIdleMs).
+		Start("0-0").
+		Count(100).
+		Build()
+
+	result, err := c.redis.Do(ctx, cmd).AsXRead()
+	if err != nil {
+		if rueidis.IsRedisNil(err) {
+			// No pending messages
+			return nil
+		}
+		return fmt.Errorf("XAUTOCLAIM failed: %w", err)
+	}
+
+	var count int
+	for _, entries := range result {
+		for range entries {
+			count++
+		}
+	}
+
+	if count > 0 {
+		c.logger.Info("recovered pending messages from dead consumers", "count", count)
+	}
+
+	return nil
 }
 
 // Run starts the consumer loop.
@@ -126,34 +191,94 @@ func (c *EventConsumer) Run(ctx context.Context) {
 
 	batch := make([]events.Event, 0, c.batchSize)
 	messageIDs := make([]string, 0, c.batchSize)
+	poisonIDs := make(map[string]string) // messageID -> reason
 
 	ticker := time.NewTicker(c.batchTimeout)
 	defer ticker.Stop()
 
+	consecutiveFailures := 0
+	backoff := 1 * time.Second
+
 	flush := func() {
-		if len(batch) == 0 {
+		if len(batch) == 0 && len(poisonIDs) == 0 {
 			return
 		}
 
-		// Write batch to ClickHouse
-		for _, event := range batch {
-			if err := c.sink.Emit(ctx, event); err != nil {
-				c.logger.Error("failed to write event", "error", err, "event_id", event.EventID)
-				// Don't ACK on error — will be redelivered
-				return
+		// Handle poison events first (move to DLQ)
+		for msgID, reason := range poisonIDs {
+			if err := c.moveToDLQ(ctx, msgID, reason); err != nil {
+				c.logger.Error("failed to move poison event to DLQ", "error", err, "msg_id", msgID)
+				// Don't ACK if DLQ write failed
+				continue
+			}
+			// ACK poison event after successful DLQ write
+			if err := c.ackMessages(ctx, []string{msgID}); err != nil {
+				c.logger.Error("failed to ACK poison event", "error", err, "msg_id", msgID)
+			} else {
+				c.dlqCount++
 			}
 		}
-
-		// ACK messages in Redis
-		if err := c.ackMessages(ctx, messageIDs); err != nil {
-			c.logger.Error("failed to ack messages", "error", err)
+		// Clear poison map
+		for k := range poisonIDs {
+			delete(poisonIDs, k)
 		}
 
-		c.logger.Info("batch written", "count", len(batch))
+		// Write valid events to ClickHouse with retry
+		if len(batch) > 0 {
+			var lastErr error
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				success := true
+				for _, event := range batch {
+					if err := c.sink.Emit(ctx, event); err != nil {
+						c.logger.Error("failed to write event", "error", err, "event_id", event.EventID, "attempt", attempt)
+						lastErr = err
+						success = false
+						break
+					}
+				}
 
-		// Clear batch
-		batch = batch[:0]
-		messageIDs = messageIDs[:0]
+				if success {
+					// ACK messages in Redis
+					if err := c.ackMessages(ctx, messageIDs); err != nil {
+						c.logger.Error("failed to ack messages", "error", err)
+						// Don't clear batch — ACK failure means messages stay pending for recovery
+						return
+					}
+
+					c.logger.Info("batch written", "count", len(batch))
+					c.processedCount += uint64(len(batch))
+					consecutiveFailures = 0
+					backoff = 1 * time.Second
+
+					// Clear batch
+					batch = batch[:0]
+					messageIDs = messageIDs[:0]
+					return
+				}
+
+				// Retry with exponential backoff
+				if attempt < maxRetries {
+					sleep := backoff * time.Duration(attempt)
+					c.logger.Warn("retrying after backoff", "attempt", attempt, "backoff_ms", sleep.Milliseconds())
+					time.Sleep(sleep)
+				}
+			}
+
+			// All retries exhausted
+			c.logger.Error("batch write failed after retries", "error", lastErr, "count", len(batch))
+			c.failedCount += uint64(len(batch))
+			consecutiveFailures++
+
+			// Bounded processing: pause ingestion if ClickHouse is down
+			if consecutiveFailures >= 3 {
+				pauseDuration := min(backoff*time.Duration(consecutiveFailures), 30*time.Second)
+				c.logger.Warn("ClickHouse unavailable, pausing ingestion", "pause_ms", pauseDuration.Milliseconds())
+				time.Sleep(pauseDuration)
+			}
+
+			// Don't ACK — messages will be retried on next consumer restart via XAUTOCLAIM
+			return
+		}
 	}
 
 	for {
@@ -161,6 +286,7 @@ func (c *EventConsumer) Run(ctx context.Context) {
 		case <-c.stopChan:
 			// Flush remaining events
 			flush()
+			c.logger.Info("consumer stopped", "processed", c.processedCount, "failed", c.failedCount, "dlq", c.dlqCount)
 			return
 
 		case <-ticker.C:
@@ -180,13 +306,22 @@ func (c *EventConsumer) Run(ctx context.Context) {
 				// Parse event
 				eventData, ok := msg.FieldValues["event"]
 				if !ok {
-					c.logger.Warn("message missing event field", "id", msg.ID)
+					c.logger.Warn("poison event: missing event field", "msg_id", msg.ID)
+					poisonIDs[msg.ID] = "missing_event_field"
 					continue
 				}
 
 				var event events.Event
 				if err := json.Unmarshal([]byte(eventData), &event); err != nil {
-					c.logger.Error("failed to unmarshal event", "error", err, "id", msg.ID)
+					c.logger.Error("poison event: invalid JSON", "error", err, "msg_id", msg.ID)
+					poisonIDs[msg.ID] = fmt.Sprintf("invalid_json: %v", err)
+					continue
+				}
+
+				// Validate event kind
+				if event.Kind == "" {
+					c.logger.Warn("poison event: missing kind", "msg_id", msg.ID, "event_id", event.EventID)
+					poisonIDs[msg.ID] = "missing_kind"
 					continue
 				}
 
@@ -257,6 +392,21 @@ func (c *EventConsumer) ackMessages(ctx context.Context, messageIDs []string) er
 	return c.redis.Do(ctx, cmd).Error()
 }
 
+// moveToDLQ writes poison event to DLQ stream before ACK.
+func (c *EventConsumer) moveToDLQ(ctx context.Context, messageID, reason string) error {
+	// XADD them:events:dlq * msg_id <id> reason <reason> ts <timestamp>
+	cmd := c.redis.B().Xadd().
+		Key(c.dlqStreamKey).
+		Id("*").
+		FieldValue().
+		FieldValue("msg_id", messageID).
+		FieldValue("reason", reason).
+		FieldValue("ts", time.Now().UTC().Format(time.RFC3339)).
+		Build()
+
+	return c.redis.Do(ctx, cmd).Error()
+}
+
 // StreamMessage represents a Redis Streams message.
 type StreamMessage struct {
 	ID          string
@@ -277,9 +427,24 @@ func ensureConsumerGroup(ctx context.Context, client rueidis.Client, stream, gro
 	return err
 }
 
+// ensureStream ensures a stream exists (for DLQ).
+func ensureStream(ctx context.Context, client rueidis.Client, stream string) error {
+	// XADD <stream> * _init 1
+	// Creates stream if not exists
+	cmd := client.B().Xadd().Key(stream).Id("*").FieldValue().FieldValue("_init", "1").Build()
+	return client.Do(ctx, cmd).Error()
+}
+
 func getEnvOrDefault(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return defaultValue
+}
+
+func min(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }

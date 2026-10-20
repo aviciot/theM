@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -12,6 +13,11 @@ import (
 
 // RedisSink writes events to Redis Streams for async processing.
 // Non-blocking: events are buffered in memory and flushed by a background goroutine.
+//
+// Reliability (Finding 3):
+// - Bounded retries on Redis failure (3 attempts with backoff)
+// - Observable counters: dropped (buffer full), failed (Redis write failed after retries)
+// - Graceful Close: drains buffer + honors deadline, rejects Emit after Close
 type RedisSink struct {
 	client      rueidis.Client
 	streamKey   string
@@ -21,7 +27,12 @@ type RedisSink struct {
 	wg          sync.WaitGroup
 	ctx         context.Context
 	cancel      context.CancelFunc
-	droppedCtr  int64 // counter for dropped events (buffer full)
+
+	// Counters (atomic for safe concurrent access)
+	droppedCtr  atomic.Int64 // buffer full
+	failedCtr   atomic.Int64 // Redis write failed after retries
+
+	closed      atomic.Bool
 	mu          sync.Mutex
 }
 
@@ -57,31 +68,56 @@ func NewRedisSink(client rueidis.Client, streamKey string, bufferSize int, flush
 
 // Emit adds an event to the buffer. Non-blocking until buffer is full.
 // If buffer is full, returns error (best-effort delivery, operational events).
+// Returns error if sink is closed.
 func (r *RedisSink) Emit(ctx context.Context, event Event) error {
+	if r.closed.Load() {
+		return fmt.Errorf("redis sink: closed")
+	}
+
 	select {
 	case r.buffer <- event:
 		return nil
 	default:
 		// Buffer full — drop event and increment counter
-		r.mu.Lock()
-		r.droppedCtr++
-		r.mu.Unlock()
-		return fmt.Errorf("redis sink: buffer full (dropped %d events total)", r.droppedCtr)
+		dropped := r.droppedCtr.Add(1)
+		return fmt.Errorf("redis sink: buffer full (dropped %d events total)", dropped)
 	}
 }
 
-// Close stops the background flusher and flushes remaining buffered events.
+// Close stops the background flusher and drains remaining buffered events.
+// Honors the deadline from ctx. After Close, Emit will reject new events.
 func (r *RedisSink) Close(ctx context.Context) error {
+	if !r.closed.CompareAndSwap(false, true) {
+		return nil // Already closed
+	}
+
+	// Signal flusher to stop accepting new events
 	r.cancel()
-	r.wg.Wait()
-	return nil
+
+	// Drain remaining buffered events with deadline
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		// Deadline exceeded — return partial drain
+		return fmt.Errorf("redis sink: close deadline exceeded, some events may be lost")
+	}
 }
 
 // DroppedCount returns the number of events dropped due to buffer overflow.
 func (r *RedisSink) DroppedCount() int64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.droppedCtr
+	return r.droppedCtr.Load()
+}
+
+// FailedCount returns the number of events that failed Redis write after retries.
+func (r *RedisSink) FailedCount() int64 {
+	return r.failedCtr.Load()
 }
 
 // flushLoop batches events and writes to Redis Streams.
@@ -98,21 +134,33 @@ func (r *RedisSink) flushLoop() {
 			return
 		}
 
-		// Write batch to Redis Streams
-		if err := r.writeBatch(batch); err != nil {
-			// Log error but don't fail — best effort
-			// TODO: emit metric for failed writes
-			_ = err
+		// Write batch to Redis Streams with bounded retries
+		if err := r.writeBatchWithRetry(batch); err != nil {
+			// All retries exhausted — count as failed
+			r.failedCtr.Add(int64(len(batch)))
 		}
 
-		// Clear batch
+		// Clear batch (either succeeded or exhausted retries)
 		batch = batch[:0]
 	}
 
 	for {
 		select {
 		case <-r.ctx.Done():
-			// Flush remaining events before exit
+			// Drain remaining buffered events (deadline is in Close)
+			draining := true
+			for draining {
+				select {
+				case event := <-r.buffer:
+					batch = append(batch, event)
+					if len(batch) >= 100 {
+						flush()
+					}
+				default:
+					draining = false
+				}
+			}
+			// Flush final batch
 			flush()
 			return
 
@@ -131,11 +179,32 @@ func (r *RedisSink) flushLoop() {
 	}
 }
 
-// writeBatch writes a batch of events to Redis Streams using XADD.
-func (r *RedisSink) writeBatch(events []Event) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+// writeBatchWithRetry writes a batch with bounded retries (max 3 attempts).
+func (r *RedisSink) writeBatchWithRetry(events []Event) error {
+	const maxRetries = 3
+	backoff := 100 * time.Millisecond
 
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := r.writeBatch(ctx, events)
+		cancel()
+
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		if attempt < maxRetries {
+			time.Sleep(backoff * time.Duration(attempt))
+		}
+	}
+
+	return fmt.Errorf("redis sink: write failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// writeBatch writes a batch of events to Redis Streams using XADD (single attempt).
+func (r *RedisSink) writeBatch(ctx context.Context, events []Event) error {
 	for _, event := range events {
 		// Serialize event to JSON
 		data, err := json.Marshal(event)

@@ -1,0 +1,26 @@
+{
+  "run_id": "f9297644-c624-4546-920d-6191bfa34624",
+  "scenario_id": "04-gateway-pii-stream",
+  "scenario_name": "04 — Gateway PII Guardrail (Streaming)",
+  "n_users": 1,
+  "passed": 1,
+  "failed": 0,
+  "started_at": "2026-10-20T07:32:01Z",
+  "ended_at": "2026-10-20T07:32:01Z",
+  "results": [
+    {
+      "user_index": 0,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "My SSN is 123-45-6789. Can you help me?",
+          "received": "",
+          "latency_ms": 4,
+          "ok": true
+        }
+      ],
+      "duration_ms": 4,
+      "status": "passed"
+    }
+  ]
+}

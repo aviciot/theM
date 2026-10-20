@@ -1,0 +1,110 @@
+{
+  "run_id": "9eb79c97-8da7-4fde-9b6a-5149d692d1fd",
+  "scenario_id": "05-gateway-rate-limit-api",
+  "scenario_name": "05 — Gateway Rate Limit (API 10/min)",
+  "n_users": 1,
+  "passed": 1,
+  "failed": 0,
+  "started_at": "2026-10-20T07:31:37Z",
+  "ended_at": "2026-10-20T07:31:38Z",
+  "results": [
+    {
+      "user_index": 0,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Request 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 34,
+          "ok": true
+        },
+        {
+          "sent": "Request 2",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 12,
+          "ok": true
+        },
+        {
+          "sent": "Request 3",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 21,
+          "ok": true
+        },
+        {
+          "sent": "Request 4",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 14,
+          "ok": true
+        },
+        {
+          "sent": "Request 5",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 12,
+          "ok": true
+        },
+        {
+          "sent": "Request 6",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 11,
+          "ok": true
+        },
+        {
+          "sent": "Request 7",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 8,
+          "ok": true
+        },
+        {
+          "sent": "Request 8",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 9,
+          "ok": true
+        },
+        {
+          "sent": "Request 9",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 10,
+          "ok": true
+        },
+        {
+          "sent": "Request 10",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 11,
+          "ok": true
+        },
+        {
+          "sent": "Request 11 - should be blocked",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 8,
+          "ok": true
+        },
+        {
+          "sent": "Request 12 - should be blocked",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 8,
+          "ok": true
+        },
+        {
+          "sent": "Request 13 - should be blocked",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 8,
+          "ok": true
+        },
+        {
+          "sent": "Request 14 - should be blocked",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 9,
+          "ok": true
+        },
+        {
+          "sent": "Request 15 - should be blocked",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 9,
+          "ok": true
+        }
+      ],
+      "duration_ms": 191,
+      "status": "passed"
+    }
+  ]
+}
