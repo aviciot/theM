@@ -110,8 +110,8 @@ services:
     profiles: [events]
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - REDIS_EVENTS_ADDR=them-redis-events:6379
-      - REDIS_EVENTS_PASSWORD=${THE_M_EVENTS_REDIS_PASSWORD:?run scripts/events-env.sh}
+      - REDIS_EVENTS_ADDR=them-redis:6379
+      - REDIS_EVENTS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
       - CLICKHOUSE_DSN=clickhouse://events_writer:${THE_M_EVENTS_CH_WRITER_PASSWORD:?run scripts/events-env.sh}@them-clickhouse:9000/them_events
       - HOSTNAME=them-event-writer
     depends_on:

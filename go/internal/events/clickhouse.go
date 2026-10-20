@@ -486,16 +486,34 @@ func (c *ClickHouseSink) writeGatewayRequest(ctx context.Context, tenantID strin
 			latency_ms, ttfb_ms, streamed, body_ref
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+	// Convert empty strings to nil for UUID fields (ClickHouse requires valid UUID or NULL)
+	var applicationID, clientID, userID, traceID, bodyRef interface{}
+	if gw.ApplicationID != "" {
+		applicationID = gw.ApplicationID
+	}
+	if gw.ClientID != "" {
+		clientID = gw.ClientID
+	}
+	if gw.UserID != "" {
+		userID = gw.UserID
+	}
+	if gw.TraceID != "" {
+		traceID = gw.TraceID
+	}
+	if gw.BodyRef != "" {
+		bodyRef = gw.BodyRef
+	}
+
 	_, err := c.db.ExecContext(ctx, query,
 		eventID,
 		1, // schema_version
 		ts,
 		tenantID,
-		gw.ApplicationID,
-		gw.ClientID,
-		gw.UserID,
+		applicationID,
+		clientID,
+		userID,
 		gw.RequestID,
-		gw.TraceID,
+		traceID,
 		gw.Provider,
 		gw.ModelRequested,
 		gw.ModelServed,
@@ -508,7 +526,7 @@ func (c *ClickHouseSink) writeGatewayRequest(ctx context.Context, tenantID strin
 		gw.LatencyMS,
 		gw.TTFBMS,
 		gw.Streamed,
-		gw.BodyRef,
+		bodyRef,
 	)
 
 	return err

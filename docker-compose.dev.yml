@@ -76,6 +76,11 @@ services:
       - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
       - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
 
+  # ── Go Bridge: enable dual mode for events testing ───────────────────────────
+  them-go-bridge:
+    environment:
+      - THE_M_EVENTS_GATEWAY=dual
+
   # ── Go Temporal Worker 1 ───────────────────────────────────────────────────────
   them-go-worker:
     build:
