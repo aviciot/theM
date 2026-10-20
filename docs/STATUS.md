@@ -169,34 +169,36 @@ Secrets: derived via HMAC-SHA256 from `secrets.local`. Run `./generate-env.sh` t
 
 ## Recently Completed (2026-10-20)
 
-### Observability Events — Stage A (Infrastructure Build) ✅ COMPLETE
+### Observability Events — Stage A + B1 ✅ COMPLETE
 
 **Goal:** Move high-volume runtime logs from Postgres to ClickHouse for analytics/scale.
 
-**What was built:**
-- ✅ **Stage A1:** ClickHouse + Redis Streams containers (deployed 2026-10-18)
-- ✅ **Stage A2:** `internal/events/` package — pluggable backends, contract tests (commit 5482613d)
-- ✅ **Stage A3:** Full event pipeline — Redis → ClickHouse (commit 99490fe1)
+**Stage A (Infrastructure Build):**
+- ✅ **A1:** ClickHouse + Redis Streams containers (deployed 2026-10-18)
+- ✅ **A2:** `internal/events/` package — pluggable backends, contract tests (commit 5482613d)
+- ✅ **A3:** Full event pipeline — Redis → ClickHouse (commit 99490fe1, fixed 8079bf33)
 
-**Infrastructure ready:**
-- Event types: GatewayRequest, ToolCall, UserActivity, Audit
-- Backends: Memory (testing), Postgres (current), ClickHouse (analytics)
-- Pipeline: RedisSink → Redis Streams → event-writer → ClickHouse
-- Backend selection: `THE_M_EVENTS_<AREA>=postgres|clickhouse|dual`
+**Stage B1 (Gateway Requests Producer):**
+- ✅ **B1:** LLM Gateway wired to emit events (commit 20bf4ef1)
+- `llmgateway.WriteRequest` now emits to ClickHouse based on `THE_M_EVENTS_GATEWAY` env var
+- Modes: `postgres` (default), `clickhouse` (events only), `dual` (both for verification)
+- Event flow: Request → WriteRequest → RedisSink → `them:events` stream → them-event-writer → ClickHouse
 
-**Zero runtime impact** — no live service imports yet (purely additive).
+**Ready for testing:**
+- Set `THE_M_EVENTS_GATEWAY=dual` in `.env` and restart `them-go-bridge`
+- Send gateway requests and verify both Postgres `gateway_requests` AND ClickHouse `events_gateway_request` receive rows
 
-**Next:** Stage B — wire producers (gateway requests, tool calls, user activity, conversation)
+**Next:** Stage B2-B7 (user activity, tool calls, runs, conversation, middleware, admin audit)
 
 **Docs:** `docs/HANDOVER_EVENTS_STAGE_A.md`, `docs/OBSERVABILITY_STORAGE_DESIGN.md`
 
-**Commits:** 5482613d (Stage A2), 99490fe1 (Stage A3), d22d163e (handover doc)
+**Commits:** 5482613d (Stage A2), 99490fe1 (Stage A3), 8079bf33 (Stage A fixes), 20bf4ef1 (Stage B1)
 
 ---
 
 ## Pending Work
 
-### Observability Events — Stage B (Wire Producers)
+### Observability Events — Stage B2+ (Additional Producers)
 
 **Goal:** Wire live services to emit events to ClickHouse instead of Postgres.
 
