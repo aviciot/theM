@@ -33,7 +33,8 @@ const (
 )
 
 func main() {
-	logger := telemetry.NewLogger(os.Getenv("LOG_LEVEL"))
+	tel := telemetry.New(os.Getenv("LOG_LEVEL"), "json", "event-writer")
+	logger := tel.Logger
 
 	// Redis connection (dedicated events instance)
 	redisAddr := getEnvOrDefault("REDIS_EVENTS_ADDR", "them-redis-events:6379")
@@ -49,10 +50,22 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	// ClickHouse sink (Stage A3 — to be implemented)
-	// For now, use in-memory sink as placeholder
-	sink := events.NewMemorySink()
-	logger.Warn("Using MemorySink placeholder - ClickHouse backend not implemented yet")
+	// ClickHouse sink
+	chDSN := os.Getenv("CLICKHOUSE_DSN")
+	if chDSN == "" {
+		logger.Error("CLICKHOUSE_DSN environment variable not set")
+		os.Exit(1)
+	}
+
+	clickhouseSink, err := events.NewClickHouseSink(chDSN)
+	if err != nil {
+		logger.Error("failed to connect to ClickHouse", "error", err)
+		os.Exit(1)
+	}
+	defer clickhouseSink.Close(context.Background())
+
+	logger.Info("ClickHouse sink initialized")
+	sink := clickhouseSink
 
 	// Create consumer group if not exists
 	ctx := context.Background()
@@ -201,11 +214,11 @@ func (c *EventConsumer) Stop() {
 
 // readMessages reads pending or new messages from the stream.
 func (c *EventConsumer) readMessages(ctx context.Context) ([]StreamMessage, error) {
-	// XREADGROUP GROUP <group> <consumer> BLOCK <ms> COUNT 10 STREAMS <stream> >
+	// XREADGROUP GROUP <group> <consumer> COUNT 10 BLOCK <ms> STREAMS <stream> >
 	cmd := c.redis.B().Xreadgroup().
 		Group(c.consumerGroup, c.consumerName).
-		Block(int64(blockTimeout.Milliseconds())).
 		Count(10).
+		Block(int64(blockTimeout.Milliseconds())).
 		Streams().
 		Key(c.streamKey).
 		Id(">"). // ">" means new messages only
@@ -221,11 +234,11 @@ func (c *EventConsumer) readMessages(ctx context.Context) ([]StreamMessage, erro
 	}
 
 	var messages []StreamMessage
-	for _, stream := range result {
-		for _, msg := range stream.Messages {
+	for _, entries := range result {
+		for _, entry := range entries {
 			messages = append(messages, StreamMessage{
-				ID:          msg.ID,
-				FieldValues: msg.FieldValues,
+				ID:          entry.ID,
+				FieldValues: entry.FieldValues,
 			})
 		}
 	}

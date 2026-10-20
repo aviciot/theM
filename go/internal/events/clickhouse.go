@@ -103,7 +103,7 @@ func (c *ClickHouseStore) ListGatewayRequests(ctx context.Context, tenantID stri
 	var results []GatewayRequestEvent
 	for rows.Next() {
 		var e GatewayRequestEvent
-		var applicationID, clientID, provider, modelRequested, modelServed, status, errorCode, bodyRef sql.NullString
+		var applicationID, clientID, provider, modelRequested, modelServed, status, errorCode sql.NullString
 		var httpStatus sql.NullInt32
 		var latencyMS, ttfbMS sql.NullInt32
 
@@ -475,7 +475,7 @@ func (c *ClickHouseSink) Close(ctx context.Context) error {
 
 func (c *ClickHouseSink) writeGatewayRequest(ctx context.Context, tenantID string, ts time.Time, eventID string, gw *GatewayRequestEvent) error {
 	if gw == nil {
-		return fmt.errorf("clickhouse sink: nil gateway request event")
+		return fmt.Errorf("clickhouse sink: nil gateway request event")
 	}
 
 	query := `
