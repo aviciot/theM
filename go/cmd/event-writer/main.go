@@ -164,36 +164,62 @@ type EventConsumer struct {
 }
 
 // RecoverPending uses XAUTOCLAIM to recover messages pending from dead consumers.
+// Claims idle messages so they'll be picked up by the regular XREADGROUP loop.
+// Paginates via cursor until no more pending messages remain.
 func (c *EventConsumer) RecoverPending(ctx context.Context) error {
-	// XAUTOCLAIM <stream> <group> <consumer> <min-idle-time> <start> COUNT 100
 	minIdleMs := fmt.Sprintf("%d", pendingClaimIdle.Milliseconds())
-	cmd := c.redis.B().Xautoclaim().
-		Key(c.streamKey).
-		Group(c.consumerGroup).
-		Consumer(c.consumerName).
-		MinIdleTime(minIdleMs).
-		Start("0-0").
-		Count(100).
-		Build()
+	cursor := "0-0"
+	totalClaimed := 0
 
-	result, err := c.redis.Do(ctx, cmd).AsXRead()
-	if err != nil {
-		if rueidis.IsRedisNil(err) {
-			// No pending messages
-			return nil
+	for {
+		// XAUTOCLAIM <stream> <group> <consumer> <min-idle-time> <cursor> COUNT 100
+		// Returns: [next-cursor, [claimed-messages], [deleted-message-ids]]
+		cmd := c.redis.B().Xautoclaim().
+			Key(c.streamKey).
+			Group(c.consumerGroup).
+			Consumer(c.consumerName).
+			MinIdleTime(minIdleMs).
+			Start(cursor).
+			Count(100).
+			Build()
+
+		// XAUTOCLAIM returns an array: [cursor-string, messages-array, ...]
+		resp, err := c.redis.Do(ctx, cmd).ToArray()
+		if err != nil {
+			if rueidis.IsRedisNil(err) {
+				break // No more pending
+			}
+			return fmt.Errorf("XAUTOCLAIM failed: %w", err)
 		}
-		return fmt.Errorf("XAUTOCLAIM failed: %w", err)
+
+		if len(resp) < 2 {
+			break // Unexpected response format
+		}
+
+		// Extract next cursor
+		nextCursor, err := resp[0].ToString()
+		if err != nil {
+			return fmt.Errorf("parse XAUTOCLAIM cursor: %w", err)
+		}
+
+		// Extract messages array
+		messages, err := resp[1].AsXRange()
+		if err != nil {
+			return fmt.Errorf("parse XAUTOCLAIM messages: %w", err)
+		}
+
+		totalClaimed += len(messages)
+
+		// Check for end of pagination
+		if nextCursor == "0-0" || len(messages) == 0 {
+			break
+		}
+
+		cursor = nextCursor
 	}
 
-	var count int
-	for _, entries := range result {
-		for range entries {
-			count++
-		}
-	}
-
-	if count > 0 {
-		c.logger.Info("recovered pending messages from dead consumers", "count", count)
+	if totalClaimed > 0 {
+		c.logger.Info("recovered pending messages from dead consumers", "count", totalClaimed, "note", "claimed messages will be processed by XREADGROUP loop")
 	}
 
 	return nil
@@ -283,14 +309,19 @@ func (c *EventConsumer) Run(ctx context.Context) {
 			c.failedCount += uint64(len(batch))
 			consecutiveFailures++
 
+			// Don't ACK — messages will be retried on next consumer restart via XAUTOCLAIM
+			// CRITICAL: Clear batch and messageIDs to enforce batch boundary.
+			// Without this, the consumer retains the failed batch and immediately
+			// retries it, creating a tight failure loop instead of moving forward.
+			batch = batch[:0]
+			messageIDs = messageIDs[:0]
+
 			// Bounded processing: pause ingestion if ClickHouse is down
 			if consecutiveFailures >= 3 {
 				pauseDuration := min(backoff*time.Duration(consecutiveFailures), 30*time.Second)
 				c.logger.Warn("ClickHouse unavailable, pausing ingestion", "pause_ms", pauseDuration.Milliseconds())
 				time.Sleep(pauseDuration)
 			}
-
-			// Don't ACK — messages will be retried on next consumer restart via XAUTOCLAIM
 			return
 		}
 	}

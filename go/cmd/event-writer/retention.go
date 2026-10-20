@@ -103,14 +103,15 @@ func (r *RetentionManager) trimSafe(ctx context.Context) error {
 // Safety: protects BOTH pending (claimed but not ACKed) AND unread (not claimed yet).
 func (r *RetentionManager) trimStream(ctx context.Context, stream, group string) (int, error) {
 	// Check 1: Any pending messages?
+	// XPENDING returns an array. Empty array = no pending, non-empty = has pending.
 	pendingCmd := r.redis.B().Xpending().Key(stream).Group(group).Start("-").End("+").Count(1).Build()
-	_, err := r.redis.Do(ctx, pendingCmd).ToMessage()
-	if err == nil {
-		r.logger.Debug("skipping trim: pending messages exist", "stream", stream)
-		return 0, nil
-	}
-	if !rueidis.IsRedisNil(err) {
+	pendingArr, err := r.redis.Do(ctx, pendingCmd).ToArray()
+	if err != nil {
 		return 0, fmt.Errorf("XPENDING failed: %w", err)
+	}
+	if len(pendingArr) > 0 {
+		r.logger.Debug("skipping trim: pending messages exist", "stream", stream, "count", len(pendingArr))
+		return 0, nil
 	}
 
 	// Check 2: Get last-delivered-id from group info

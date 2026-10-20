@@ -137,25 +137,29 @@ func run() error {
 		log.Info("shutdown signal received", "signal", sig.String())
 	}
 
-	// Drain event sink before HTTP shutdown (stop accepting events, flush buffer)
+	// Cancel background goroutines before draining HTTP
+	runCancel()
+	leader.Release(ctx)
+
+	// Shutdown HTTP server first (drain in-flight requests)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("HTTP shutdown failed", "error", err)
+		// Continue to drain event sink even if HTTP shutdown fails
+	} else {
+		log.Info("HTTP server drained")
+	}
+
+	// Drain event sink AFTER HTTP shutdown (all handlers finished, no new events)
 	if toolEventSink != nil {
 		sinkCtx, sinkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer sinkCancel()
 		if err := toolEventSink.Close(sinkCtx); err != nil {
 			log.Error("failed to drain tool event sink", "error", err)
 		} else {
 			log.Info("tool event sink drained")
 		}
-		sinkCancel()
-	}
-
-	// Cancel background goroutines before draining HTTP.
-	runCancel()
-	leader.Release(ctx)
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("graceful shutdown: %w", err)
 	}
 	log.Info("mcp-service stopped cleanly")
 	return nil

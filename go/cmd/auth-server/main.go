@@ -154,22 +154,27 @@ func run() error {
 		log.Info("shutdown signal received", "signal", sig.String())
 	}
 
-	// Drain event sink before HTTP shutdown (stop accepting events, flush buffer)
+	// Shutdown HTTP server first (drain in-flight requests)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("HTTP shutdown failed", "error", err)
+		// Continue to drain event sink even if HTTP shutdown fails
+	} else {
+		log.Info("HTTP server drained")
+	}
+
+	// Drain event sink AFTER HTTP shutdown (all handlers finished, no new events)
 	if authEventSink != nil {
 		sinkCtx, sinkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer sinkCancel()
 		if err := authEventSink.Close(sinkCtx); err != nil {
 			log.Error("failed to drain auth event sink", "error", err)
 		} else {
 			log.Info("auth event sink drained")
 		}
-		sinkCancel()
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("graceful shutdown failed: %w", err)
-	}
 	log.Info("auth-server stopped cleanly")
 	return nil
 }
