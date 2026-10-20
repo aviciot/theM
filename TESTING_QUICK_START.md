@@ -24,7 +24,7 @@
 
 ## Option 1: Fully Automated (Recommended)
 
-**Run all 4 scenarios and verify results:**
+**Run all 4 scenarios, verify, and generate analysis:**
 
 ```bash
 # 1. Run tests (takes ~5-10 minutes for all 4)
@@ -32,6 +32,9 @@
 
 # 2. Verify body capture behavior
 docker exec -it them-postgres psql -U them -d them -f scripts/verify-logging-levels.sql
+
+# 3. Generate analysis for each scenario
+./scripts/analyze-logging-results.sh
 ```
 
 **What to expect:**
@@ -42,6 +45,7 @@ docker exec -it them-postgres psql -U them -d them -f scripts/verify-logging-lev
   - ✅ Body count (should be ~300 for DEBUG/AUDIT, 0 for MINIMAL/METRICS)
   - ✅ Latency comparison (DEBUG/AUDIT should be 30-60% slower)
   - ✅ Sample body content
+- Analysis script generates formatted analysis text for each scenario
 
 ---
 
@@ -177,11 +181,46 @@ docker exec -it them-postgres psql -U them -d them -c \
 
 ## Next Steps After Testing
 
-1. **Document Results**
-   - Update scenario `test_result_ai_analysis` fields with actual measurements
-   - Commit updated scenario files
+1. **Review Generated Analysis**
+   ```bash
+   # View analysis for each scenario
+   cat /tmp/analysis-40.txt  # MINIMAL
+   cat /tmp/analysis-41.txt  # METRICS
+   cat /tmp/analysis-42.txt  # DEBUG
+   cat /tmp/analysis-43.txt  # AUDIT
+   ```
 
-2. **Production Rollout**
+2. **Update Scenario Files** (Choose one method):
+
+   **Method A: Via UI** (Easiest)
+   1. Go to http://localhost:3210/scenarios
+   2. Click "Edit" on scenario 40
+   3. Paste `/tmp/analysis-40.txt` content into "Test Result Analysis" field
+   4. Click Save
+   5. Repeat for scenarios 41, 42, 43
+
+   **Method B: Via JSON Files**
+   ```bash
+   cd /opt/docker/them/test-runner/data/scenarios/
+   
+   # Edit each scenario JSON file
+   # Copy content from /tmp/analysis-XX.txt into "test_result_ai_analysis" field
+   
+   # Example:
+   vim 40-logging-perf-minimal.json
+   # Update: "test_result_ai_analysis": "<paste analysis here>"
+   ```
+
+3. **Commit Updated Scenarios**
+   ```bash
+   git add test-runner/data/scenarios/40*.json
+   git add test-runner/data/scenarios/41*.json
+   git add test-runner/data/scenarios/42*.json
+   git add test-runner/data/scenarios/43*.json
+   git commit -m "test: update logging level scenario analysis with actual results"
+   ```
+
+4. **Production Rollout**
    - Keep all apps on MINIMAL by default
    - Use DEBUG only for specific troubleshooting
    - Use AUDIT for compliance-regulated apps
