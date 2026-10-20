@@ -86,6 +86,11 @@ services:
     environment:
       - THE_M_EVENTS_AUTH=clickhouse
 
+  # ── MCP Service: enable clickhouse mode for tool call events ─────────────────
+  them-mcp-service:
+    environment:
+      - THE_M_EVENTS_TOOLS=clickhouse
+
   # ── Go Temporal Worker 1 ───────────────────────────────────────────────────────
   them-go-worker:
     build:

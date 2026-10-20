@@ -544,22 +544,49 @@ func (c *ClickHouseSink) writeToolCall(ctx context.Context, tenantID string, ts 
 			duration_ms, args_ref, result_ref
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+	// Convert empty strings to nil for UUID fields
+	var tenantUUID, applicationID, runID, requestID, traceID, userID, argsRef, resultRef interface{}
+	if tenantID != "" {
+		tenantUUID = tenantID
+	}
+	if tc.ApplicationID != "" {
+		applicationID = tc.ApplicationID
+	}
+	if tc.RunID != "" {
+		runID = tc.RunID
+	}
+	if tc.RequestID != "" {
+		requestID = tc.RequestID
+	}
+	if tc.TraceID != "" {
+		traceID = tc.TraceID
+	}
+	if tc.UserID != "" {
+		userID = tc.UserID
+	}
+	if tc.ArgsRef != "" {
+		argsRef = tc.ArgsRef
+	}
+	if tc.ResultRef != "" {
+		resultRef = tc.ResultRef
+	}
+
 	_, err := c.db.ExecContext(ctx, query,
 		eventID,
 		1,
 		ts,
-		tenantID,
-		tc.ApplicationID,
-		tc.RunID,
-		tc.RequestID,
-		tc.TraceID,
-		tc.UserID,
+		tenantUUID,
+		applicationID,
+		runID,
+		requestID,
+		traceID,
+		userID,
 		tc.ToolName,
 		tc.MCPServer,
 		tc.Status,
 		tc.DurationMS,
-		tc.ArgsRef,
-		tc.ResultRef,
+		argsRef,
+		resultRef,
 	)
 
 	return err

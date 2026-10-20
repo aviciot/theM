@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/events"
 	"github.com/aviciot/them/internal/metrics"
 )
 
@@ -35,6 +38,7 @@ type Executor struct {
 	registry   *Registry
 	secretKey  []byte
 	metricsRec metrics.Recorder
+	eventSink  events.EventSink
 }
 
 // NewExecutor creates an Executor. secretKey is the Fernet key for credential decryption.
@@ -52,9 +56,17 @@ func (e *Executor) WithMetricsRecorder(rec metrics.Recorder) *Executor {
 	return e
 }
 
+// WithEventSink attaches an event sink for observability.
+func (e *Executor) WithEventSink(sink events.EventSink) *Executor {
+	e.eventSink = sink
+	return e
+}
+
 // Execute resolves credentials for the given application + MCP server slug,
 // calls the tool, and returns the result.
 func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) ExecuteResponse {
+	startTime := time.Now()
+
 	if req.ApplicationID == "" || req.MCPServerSlug == "" || req.ToolName == "" {
 		return ExecuteResponse{Error: "application_id, mcp_server_slug, and tool_name are required"}
 	}
@@ -68,17 +80,20 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) ExecuteRespo
 	// 2. Resolve MCP server — tenant-scoped.
 	server, err := e.dal.GetServerBySlugAndTenant(ctx, req.MCPServerSlug, tenantID)
 	if err != nil {
+		e.emitToolCallEvent(ctx, req, tenantID, "", "error", time.Since(startTime))
 		return ExecuteResponse{Error: fmt.Sprintf("mcp server %q not found for tenant: %v", req.MCPServerSlug, err)}
 	}
 
 	// 3. Resolve credential.
 	authHeaderName, authValue, err := e.resolveCredential(ctx, req, server)
 	if err != nil {
+		e.emitToolCallEvent(ctx, req, tenantID, req.MCPServerSlug, "error", time.Since(startTime))
 		return ExecuteResponse{Error: err.Error()}
 	}
 
 	// 4. Validate tool is in manifest (when manifest is non-empty).
 	if err := e.validateTool(server, req.ToolName); err != nil {
+		e.emitToolCallEvent(ctx, req, tenantID, req.MCPServerSlug, "error", time.Since(startTime))
 		return ExecuteResponse{Error: err.Error()}
 	}
 
@@ -88,14 +103,19 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) ExecuteRespo
 	// design) and initialize it before calling the tool.
 	client := NewClient(server.URL, authHeaderName, authValue)
 	if err := client.Initialize(ctx); err != nil {
+		e.emitToolCallEvent(ctx, req, tenantID, req.MCPServerSlug, "error", time.Since(startTime))
 		return ExecuteResponse{Error: fmt.Sprintf("mcp initialize failed: %v", err)}
 	}
 	result, err := client.Call(ctx, req.ToolName, req.Arguments)
 	if err != nil {
+		e.emitToolCallEvent(ctx, req, tenantID, req.MCPServerSlug, "error", time.Since(startTime))
 		return ExecuteResponse{Error: fmt.Sprintf("mcp call failed: %v", err)}
 	}
 
 	raw, _ := json.Marshal(result)
+
+	// Emit success event
+	e.emitToolCallEvent(ctx, req, tenantID, req.MCPServerSlug, "ok", time.Since(startTime))
 
 	if e.metricsRec != nil {
 		appID := req.ApplicationID
@@ -180,4 +200,29 @@ func (e *Executor) validateTool(server Server, toolName string) error {
 		}
 	}
 	return fmt.Errorf("tool %q not found in manifest for mcp server %q", toolName, server.Slug)
+}
+
+// emitToolCallEvent emits a tool call event (best effort, never fails the request).
+func (e *Executor) emitToolCallEvent(ctx context.Context, req ExecuteRequest, tenantID, mcpServer, status string, duration time.Duration) {
+	if e.eventSink == nil {
+		return
+	}
+
+	event := events.Event{
+		EventID:       uuid.New().String(),
+		SchemaVersion: 1,
+		Timestamp:     time.Now().UTC(),
+		TenantID:      tenantID,
+		Kind:          events.EventKindToolCall,
+		ToolCall: &events.ToolCallEvent{
+			ApplicationID: req.ApplicationID,
+			ToolName:      req.ToolName,
+			MCPServer:     mcpServer,
+			Status:        status,
+			DurationMS:    uint32(duration.Milliseconds()),
+		},
+	}
+
+	// Best effort — don't fail request if event emission fails
+	_ = e.eventSink.Emit(ctx, event)
 }

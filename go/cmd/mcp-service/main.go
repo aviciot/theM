@@ -16,6 +16,7 @@ import (
 
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/events"
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/mcp"
 	"github.com/aviciot/them/internal/metrics"
@@ -62,16 +63,32 @@ func run() error {
 	defer redisCache.Close()
 	log.Info("redis connected", "addr", cfg.RedisAddr())
 
-	// ── 6. MCP internals ──────────────────────────────────────────────────────
+	// ── 6. Event sink (tool calls) ────────────────────────────────────────────
+	// Mode: postgres (default), clickhouse, dual
+	var toolEventSink events.EventSink
+	eventsMode := os.Getenv("THE_M_EVENTS_TOOLS")
+	switch eventsMode {
+	case "clickhouse", "dual":
+		// Redis Streams sink → them-event-writer → ClickHouse
+		toolEventSink = events.NewRedisSink(redisCache.Client(), "them:events", 10000, 1*time.Second)
+		log.Info("tool events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
+	default:
+		// "postgres" or empty — no event emission (greenfield, no Postgres writes)
+		toolEventSink = nil
+		log.Info("tool events sink: disabled (default)", "mode", eventsMode)
+	}
+
+	// ── 7. MCP internals ──────────────────────────────────────────────────────
 	dal := mcp.NewDAL(database.Pool())
 	registry := mcp.NewRegistry(redisCache.Client())
 	leader := mcp.NewLeaderLock(redisCache.Client(), cfg.InstanceID)
 	supervisor := mcp.NewSupervisor(dal, registry, leader, cfg.HealthIntervalSeconds, cfg.SecretKey, log)
 	mcpMetrics := cache.NewMetricsRedisClient(redisCache.Client())
 	executor := mcp.NewExecutor(dal, registry, cfg.SecretKey).
-		WithMetricsRecorder(metrics.NewRedisRecorder(mcpMetrics))
+		WithMetricsRecorder(metrics.NewRedisRecorder(mcpMetrics)).
+		WithEventSink(toolEventSink)
 
-	// ── 7. HTTP server ────────────────────────────────────────────────────────
+	// ── 8. HTTP server ────────────────────────────────────────────────────────
 	healthHandler := health.New(cfg.InstanceID, database, redisCache)
 	router := mcp.NewRouter(healthHandler, supervisor, executor, "1.0.0")
 
@@ -81,11 +98,11 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// ── 8. Supervisor (per-server worker goroutines, leader-elected) ──────────
+	// ── 9. Supervisor (per-server worker goroutines, leader-elected) ──────────
 	go supervisor.Run(runCtx)
 	log.Info("supervisor started")
 
-	// ── 9. Serve with graceful shutdown ───────────────────────────────────────
+	// ── 10. Serve with graceful shutdown ──────────────────────────────────────
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Info("mcp-service listening", "addr", cfg.Addr())
