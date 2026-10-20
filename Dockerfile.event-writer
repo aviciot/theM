@@ -1,0 +1,27 @@
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+
+# Install git for go mod tidy
+RUN apk add --no-cache git
+
+# Copy module manifest
+COPY go/go.mod ./
+RUN go mod tidy
+
+# Copy source and build
+COPY go/ ./
+RUN go mod tidy && \
+    go test ./internal/events/... && \
+    CGO_ENABLED=0 GOOS=linux go build -o /event-writer ./cmd/event-writer/
+
+# ── Runtime image ──────────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /app
+
+COPY --from=builder /event-writer ./event-writer
+
+CMD ["./event-writer"]

@@ -3,6 +3,7 @@ module github.com/aviciot/them
 go 1.25.0
 
 require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.26.0
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1

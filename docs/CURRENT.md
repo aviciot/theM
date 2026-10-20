@@ -81,24 +81,29 @@ e9c260da  docs: final status - logging implementation complete, Docker build iss
 
 **Two parallel tracks identified:**
 
-### Track 1: Observability Storage (ClickHouse) — Stage A2 IN PROGRESS
+### Track 1: Observability Storage (ClickHouse) — Stage A3 COMPLETE
 **Goal:** Move high-volume logs from Postgres to ClickHouse
 **Design:** `docs/OBSERVABILITY_STORAGE_DESIGN.md` (two-stage: A=build, B=migrate)
-**Status:** A1 done (2026-10-18), **A2 in progress (2026-10-20)**
+**Status:** A1-A3 done (2026-10-20), **A4 pending (tests)**
 
 **Completed:**
 - ✅ **A1** (2026-10-18): `them-clickhouse` + `them-redis-events` containers (profile `events`, healthy)
-- ✅ **A2** (2026-10-20): `go/internal/events/` package built:
+- ✅ **A2** (2026-10-20): `go/internal/events/` package:
   - Event types: `GatewayRequestEvent`, `ToolCallEvent`, `UserActivityEvent`, `AuditEvent`
   - Interfaces: `EventSink` (write), `EventStore` (read), `BodyStore` (content)
   - Backends: `MemorySink`/`MemoryStore` (testing), `PostgresSink`/`PostgresStore` (current schema)
   - Contract test suite: `ContractTests()` runs against any backend (tenant isolation, filters, aggregation)
   - Backend selection: `THE_M_EVENTS_<AREA>=postgres|clickhouse|dual` (default: postgres)
+- ✅ **A3** (2026-10-20): Event pipeline complete:
+  - `RedisSink` — non-blocking buffered writes to Redis Streams
+  - `ClickHouseSink`/`ClickHouseStore` — full backend implementation
+  - `cmd/event-writer` — Redis Streams consumer (consumer group "event-writers")
+  - `Dockerfile.event-writer` + `docker-compose.events.yml` integration
   - **Zero runtime impact** — no live service imports yet (purely additive)
 
 **Next:**
-- A3: `event-writer` service (Redis Streams → ClickHouse consumer)
-- A4: Integration tests + failure modes
+- A4: Integration tests (ClickHouse backend contract suite, failure modes)
+- Stage B: Wire producers (gateway, tool calls, user activity, conversation)
 
 ### Track 2: Policy-Controlled Logging (NEW) — Design Required
 **Goal:** Stop logging full debug data for every request
