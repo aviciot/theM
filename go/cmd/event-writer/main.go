@@ -109,6 +109,20 @@ func main() {
 		// Continue — this is best-effort recovery
 	}
 
+	// Start retention manager (safe stream trimming)
+	retentionMgr := NewRetentionManager(
+		redisClient,
+		logger,
+		streamKey,
+		dlqStreamKey,
+		consumerGroup,
+		24*time.Hour,   // maxAge: trim events older than 24h (if fully ACKed)
+		15*time.Minute, // trimInterval: check every 15 minutes
+	)
+	retentionMgr.Start()
+	defer retentionMgr.Stop()
+	logger.Info("retention manager started", "max_age_hours", 24, "trim_interval_min", 15)
+
 	// Graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
