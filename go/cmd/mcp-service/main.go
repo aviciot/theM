@@ -137,6 +137,17 @@ func run() error {
 		log.Info("shutdown signal received", "signal", sig.String())
 	}
 
+	// Drain event sink before HTTP shutdown (stop accepting events, flush buffer)
+	if toolEventSink != nil {
+		sinkCtx, sinkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := toolEventSink.Close(sinkCtx); err != nil {
+			log.Error("failed to drain tool event sink", "error", err)
+		} else {
+			log.Info("tool event sink drained")
+		}
+		sinkCancel()
+	}
+
 	// Cancel background goroutines before draining HTTP.
 	runCancel()
 	leader.Release(ctx)

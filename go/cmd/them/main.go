@@ -513,6 +513,18 @@ func run() error {
 		}
 		gwEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
 		log.Info("gateway events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
+
+		// Register for graceful shutdown (close sink before Redis client)
+		srv.WithPreDrainHook(func() {
+			// Stop accepting new events immediately
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := gwEventSink.Close(ctx); err != nil {
+				log.Error("failed to drain gateway event sink", "error", err)
+			} else {
+				log.Info("gateway event sink drained")
+			}
+		})
 	default:
 		// "postgres" or empty — no event emission, Postgres writes continue as-is
 		gwEventSink = nil

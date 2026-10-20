@@ -154,6 +154,17 @@ func run() error {
 		log.Info("shutdown signal received", "signal", sig.String())
 	}
 
+	// Drain event sink before HTTP shutdown (stop accepting events, flush buffer)
+	if authEventSink != nil {
+		sinkCtx, sinkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := authEventSink.Close(sinkCtx); err != nil {
+			log.Error("failed to drain auth event sink", "error", err)
+		} else {
+			log.Info("auth event sink drained")
+		}
+		sinkCancel()
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
