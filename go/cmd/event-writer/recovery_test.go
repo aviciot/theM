@@ -112,7 +112,8 @@ func TestRecoverPending_DeadConsumerReplacement(t *testing.T) {
 	}
 
 	// Step 8: Verify message was ACKed (pending count should be 0)
-	pending, err = client.Do(ctx, pendingCmd).ToArray()
+	pendingCheckCmd := client.B().Xpending().Key(streamKey).Group(groupName).Start("-").End("+").Count(10).Build()
+	pending, err = client.Do(ctx, pendingCheckCmd).ToArray()
 	if err != nil {
 		t.Fatalf("XPENDING check failed: %v", err)
 	}
@@ -290,6 +291,10 @@ func TestRecoverPending_ClickHouseOutageRecovery(t *testing.T) {
 	workingSink := &mockEventSink{events: make([]events.Event, 0)}
 	consumer.sink = workingSink
 
+	// Wait for message to become idle again (was just claimed, needs to be idle >30s again)
+	t.Log("Waiting 31 seconds for message to become idle again after failed recovery...")
+	time.Sleep(31 * time.Second)
+
 	// Run recovery again - should succeed
 	err = consumer.RecoverPending(ctx)
 	if err != nil {
@@ -301,7 +306,8 @@ func TestRecoverPending_ClickHouseOutageRecovery(t *testing.T) {
 		t.Fatalf("expected 1 event after recovery, got %d", len(workingSink.events))
 	}
 
-	pending, err = client.Do(ctx, pendingCmd).ToArray()
+	pendingFinalCmd := client.B().Xpending().Key(streamKey).Group(groupName).Start("-").End("+").Count(10).Build()
+	pending, err = client.Do(ctx, pendingFinalCmd).ToArray()
 	if err != nil {
 		t.Fatalf("XPENDING check failed: %v", err)
 	}
