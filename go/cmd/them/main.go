@@ -117,6 +117,19 @@ func run() error {
 	}
 	log.Info("redis connected", "addr", cfg.RedisAddr(), "db", cfg.RedisDB)
 
+	// ── 4b. Connect to Redis Events (dedicated queue for observability events) ─
+	var redisEvents *cache.Cache
+	if cfg.RedisEventsAddr() != "" {
+		redisEvents, err = cache.New(ctx, cfg.RedisEventsAddr(), cfg.RedisEventsPassword, cfg.RedisEventsDB)
+		if err != nil {
+			database.Close()
+			redisCache.Close()
+			log.Error("failed to connect to redis events", slog.String("error", err.Error()))
+			return fmt.Errorf("startup: redis events: %w", err)
+		}
+		log.Info("redis events connected", "addr", cfg.RedisEventsAddr(), "db", cfg.RedisEventsDB)
+	}
+
 	// ── 5. Create in-process event bus ───────────────────────────────────────
 	bus := event.NewBus()
 	log.Info("event bus initialised")
@@ -493,9 +506,13 @@ func run() error {
 	switch eventsMode {
 	case "clickhouse", "dual":
 		// Redis Streams sink → them-event-writer → ClickHouse
-		// TODO: use dedicated redisEvents client when available
-		gwEventSink = events.NewRedisSink(redisCache.Client(), "them:events", 10000, 1*time.Second)
-		log.Info("gateway events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
+		// Requires redisEvents to be configured (REDIS_EVENTS_HOST)
+		if redisEvents == nil {
+			log.Error("THE_M_EVENTS_GATEWAY=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
+			return fmt.Errorf("startup: events gateway mode requires dedicated Redis events queue")
+		}
+		gwEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
+		log.Info("gateway events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
 		// "postgres" or empty — no event emission, Postgres writes continue as-is
 		gwEventSink = nil

@@ -80,16 +80,25 @@ services:
   them-go-bridge:
     environment:
       - THE_M_EVENTS_GATEWAY=dual
+      - REDIS_EVENTS_HOST=them-redis-events
+      - REDIS_EVENTS_PORT=6379
+      - REDIS_EVENTS_PASSWORD=${THE_M_EVENTS_REDIS_PASSWORD:-}
 
   # ── Auth Go: enable clickhouse mode for user activity events ─────────────────
   them-auth-go:
     environment:
       - THE_M_EVENTS_AUTH=clickhouse
+      - REDIS_EVENTS_HOST=them-redis-events
+      - REDIS_EVENTS_PORT=6379
+      - REDIS_EVENTS_PASSWORD=${THE_M_EVENTS_REDIS_PASSWORD:-}
 
   # ── MCP Service: enable clickhouse mode for tool call events ─────────────────
   them-mcp-service:
     environment:
       - THE_M_EVENTS_TOOLS=clickhouse
+      - REDIS_EVENTS_HOST=them-redis-events
+      - REDIS_EVENTS_PORT=6379
+      - REDIS_EVENTS_PASSWORD=${THE_M_EVENTS_REDIS_PASSWORD:-}
 
   # ── Go Temporal Worker 1 ───────────────────────────────────────────────────────
   them-go-worker:

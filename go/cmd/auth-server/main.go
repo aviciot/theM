@@ -81,22 +81,44 @@ func run() error {
 		}
 	}
 
-	// ── 4b. Event sink (user activity) ────────────────────────────────────────
+	// ── 4b. Redis Events (dedicated queue for observability events) ──────────
+	var redisEventsClient rueidis.Client
+	if cfg.RedisEventsAddr() != "" {
+		opts := rueidis.ClientOption{
+			InitAddress:  []string{cfg.RedisEventsAddr()},
+			SelectDB:     0,
+			DisableCache: true,
+		}
+		if cfg.RedisEventsPassword != "" {
+			opts.Password = cfg.RedisEventsPassword
+		}
+		rc, err := rueidis.NewClient(opts)
+		if err != nil {
+			database.Close()
+			log.Error("failed to connect to redis events", "err", err)
+			return fmt.Errorf("startup: redis events: %w", err)
+		}
+		redisEventsClient = rc
+		defer rc.Close()
+		log.Info("redis events connected", "addr", cfg.RedisEventsAddr())
+	}
+
+	// ── 4c. Event sink (user activity) ────────────────────────────────────────
 	// Mode: postgres (default), clickhouse, dual
 	var authEventSink events.EventSink
 	eventsMode := os.Getenv("THE_M_EVENTS_AUTH")
-	if redisClient != nil && (eventsMode == "clickhouse" || eventsMode == "dual") {
-		// Redis Streams sink → them-event-writer → ClickHouse
-		authEventSink = events.NewRedisSink(redisClient, "them:events", 10000, 1*time.Second)
-		log.Info("auth events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
-	} else {
-		// "postgres" or empty or no Redis — no event emission
-		authEventSink = nil
-		if eventsMode != "" && eventsMode != "postgres" {
-			log.Warn("auth events sink disabled: Redis not available", "mode", eventsMode)
-		} else {
-			log.Info("auth events sink: disabled (default)", "mode", eventsMode)
+	if eventsMode == "clickhouse" || eventsMode == "dual" {
+		if redisEventsClient == nil {
+			log.Error("THE_M_EVENTS_AUTH=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
+			return fmt.Errorf("startup: events auth mode requires dedicated Redis events queue")
 		}
+		// Redis Streams sink → them-event-writer → ClickHouse
+		authEventSink = events.NewRedisSink(redisEventsClient, "them:events", 10000, 1*time.Second)
+		log.Info("auth events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
+	} else {
+		// "postgres" or empty — no event emission
+		authEventSink = nil
+		log.Info("auth events sink: disabled (default)", "mode", eventsMode)
 	}
 
 	handlers := authserver.NewHandlers(svc, cfg, log).WithEventSink(authEventSink)

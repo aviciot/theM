@@ -63,6 +63,17 @@ func run() error {
 	defer redisCache.Close()
 	log.Info("redis connected", "addr", cfg.RedisAddr())
 
+	// ── 5b. Redis Events (dedicated queue for observability events) ──────────
+	var redisEvents *cache.Cache
+	if cfg.RedisEventsAddr() != "" {
+		redisEvents, err = cache.New(ctx, cfg.RedisEventsAddr(), cfg.RedisEventsPassword, 0)
+		if err != nil {
+			return fmt.Errorf("startup: redis events: %w", err)
+		}
+		defer redisEvents.Close()
+		log.Info("redis events connected", "addr", cfg.RedisEventsAddr())
+	}
+
 	// ── 6. Event sink (tool calls) ────────────────────────────────────────────
 	// Mode: postgres (default), clickhouse, dual
 	var toolEventSink events.EventSink
@@ -70,8 +81,13 @@ func run() error {
 	switch eventsMode {
 	case "clickhouse", "dual":
 		// Redis Streams sink → them-event-writer → ClickHouse
-		toolEventSink = events.NewRedisSink(redisCache.Client(), "them:events", 10000, 1*time.Second)
-		log.Info("tool events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
+		// Requires redisEvents to be configured (REDIS_EVENTS_HOST)
+		if redisEvents == nil {
+			log.Error("THE_M_EVENTS_TOOLS=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
+			return fmt.Errorf("startup: events tool mode requires dedicated Redis events queue")
+		}
+		toolEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
+		log.Info("tool events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
 		// "postgres" or empty — no event emission (greenfield, no Postgres writes)
 		toolEventSink = nil
