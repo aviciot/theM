@@ -1,0 +1,38 @@
+{
+  "run_id": "a47fc452-92af-4a94-81c8-419ae5e1e644",
+  "scenario_id": "06-gateway-token-limit",
+  "scenario_name": "06 — Gateway Monthly Token Limit (50k)",
+  "n_users": 1,
+  "passed": 1,
+  "failed": 0,
+  "started_at": "2026-10-20T07:32:19Z",
+  "ended_at": "2026-10-20T07:32:19Z",
+  "results": [
+    {
+      "user_index": 0,
+      "connected": true,
+      "steps": [
+        {
+          "sent": "Test token counting - message 1",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 26,
+          "ok": true
+        },
+        {
+          "sent": "Test token counting - message 2",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 11,
+          "ok": true
+        },
+        {
+          "sent": "Test token counting - message 3",
+          "received": "[mock] Hello! I am the mock LLM provider. No real AI key is configured — this is a test response.",
+          "latency_ms": 10,
+          "ok": true
+        }
+      ],
+      "duration_ms": 48,
+      "status": "passed"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -293,7 +294,9 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 	}
 
 	out := make(chan GatewayEvent, 64)
-	callRes := CallResult{Provider: provName, ModelServed: resolvedModel}
+	// callResPtr shared between return and goroutine - protected by mutex
+	callResPtr := &CallResult{Provider: provName, ModelServed: resolvedModel}
+	var callResMu sync.Mutex
 
 	go func() {
 		defer close(out)
@@ -309,7 +312,9 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 				if !ttfbSet {
 					ttfbSet = true
 					ttfb = int(time.Since(start).Milliseconds())
-					callRes.TTFBMs = ttfb
+					callResMu.Lock()
+					callResPtr.TTFBMs = ttfb
+					callResMu.Unlock()
 				}
 				chunk := SSEChunk{
 					ID:      callID,
@@ -332,9 +337,11 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 				var u llm.Usage
 				if ev.Usage != nil {
 					u = *ev.Usage
-					callRes.TokensIn = u.InputTokens
-					callRes.TokensOut = u.OutputTokens
-					callRes.CostUSD = estimateCost(provName, resolvedModel, u.InputTokens, u.OutputTokens)
+					callResMu.Lock()
+					callResPtr.TokensIn = u.InputTokens
+					callResPtr.TokensOut = u.OutputTokens
+					callResPtr.CostUSD = estimateCost(provName, resolvedModel, u.InputTokens, u.OutputTokens)
+					callResMu.Unlock()
 				}
 				finReason := "stop"
 				if ev.StopReason != "" {
@@ -362,15 +369,26 @@ func (s *Service) Stream(ctx context.Context, tenantID, clientID string, req Cha
 			}
 		}
 		out <- GatewayEvent{Done: true}
+		callResMu.Lock()
+		tokensIn := callResPtr.TokensIn
+		tokensOut := callResPtr.TokensOut
+		costUSD := callResPtr.CostUSD
+		ttfbMs := callResPtr.TTFBMs
+		callResMu.Unlock()
 		logger.Info("llmgateway: provider stream complete",
 			"provider", provName,
-			"tokens_in", callRes.TokensIn,
-			"tokens_out", callRes.TokensOut,
-			"cost_usd", callRes.CostUSD,
-			"ttfb_ms", callRes.TTFBMs)
+			"tokens_in", tokensIn,
+			"tokens_out", tokensOut,
+			"cost_usd", costUSD,
+			"ttfb_ms", ttfbMs)
 	}()
 
-	return StreamResult{Provider: provName, ModelServed: resolvedModel, Events: out}, callRes, nil
+	// Return pointer so caller can safely read (with proper locking if needed)
+	// Note: current handler ignores this return value
+	callResMu.Lock()
+	callResSnapshot := *callResPtr
+	callResMu.Unlock()
+	return StreamResult{Provider: provName, ModelServed: resolvedModel, Events: out}, callResSnapshot, nil
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

@@ -54,6 +54,12 @@ type Config struct {
 	RedisPort     int
 	RedisPassword string
 
+	// Redis Events (dedicated queue for observability events)
+	// Optional — when empty, user activity events are disabled.
+	RedisEventsHost     string
+	RedisEventsPort     int
+	RedisEventsPassword string
+
 	LogLevel  string
 	LogFormat string
 
@@ -85,6 +91,10 @@ func LoadConfig() (*Config, error) {
 		RedisHost:     getEnv("REDIS_HOST", ""),
 		RedisPort:     getEnvInt("REDIS_PORT", 6379),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+
+		RedisEventsHost:     getEnv("REDIS_EVENTS_HOST", ""),
+		RedisEventsPort:     getEnvInt("REDIS_EVENTS_PORT", 6379),
+		RedisEventsPassword: getEnv("REDIS_EVENTS_PASSWORD", ""),
 
 		LogLevel:  getEnv("LOG_LEVEL", "INFO"),
 		LogFormat: getEnv("LOG_FORMAT", "json"),
@@ -140,6 +150,15 @@ func (c *Config) RedisAddr() string {
 		return ""
 	}
 	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
+}
+
+// RedisEventsAddr returns the events Redis address in host:port form.
+// Returns "" when RedisEventsHost is not configured (events are disabled).
+func (c *Config) RedisEventsAddr() string {
+	if c.RedisEventsHost == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", c.RedisEventsHost, c.RedisEventsPort)
 }
 
 // SafeString returns a log-safe one-line representation. All secrets are masked.

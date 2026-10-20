@@ -63,6 +63,17 @@ func run() error {
 	defer redisCache.Close()
 	log.Info("redis connected", "addr", cfg.RedisAddr())
 
+	// ── 5b. Redis Events (dedicated queue for observability events) ──────────
+	var redisEvents *cache.Cache
+	if cfg.RedisEventsAddr() != "" {
+		redisEvents, err = cache.New(ctx, cfg.RedisEventsAddr(), cfg.RedisEventsPassword, 0)
+		if err != nil {
+			return fmt.Errorf("startup: redis events: %w", err)
+		}
+		defer redisEvents.Close()
+		log.Info("redis events connected", "addr", cfg.RedisEventsAddr())
+	}
+
 	// ── 6. Event sink (tool calls) ────────────────────────────────────────────
 	// Mode: postgres (default), clickhouse, dual
 	var toolEventSink events.EventSink
@@ -70,8 +81,13 @@ func run() error {
 	switch eventsMode {
 	case "clickhouse", "dual":
 		// Redis Streams sink → them-event-writer → ClickHouse
-		toolEventSink = events.NewRedisSink(redisCache.Client(), "them:events", 10000, 1*time.Second)
-		log.Info("tool events sink: ClickHouse (via Redis Streams)", "mode", eventsMode)
+		// Requires redisEvents to be configured (REDIS_EVENTS_HOST)
+		if redisEvents == nil {
+			log.Error("THE_M_EVENTS_TOOLS=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
+			return fmt.Errorf("startup: events tool mode requires dedicated Redis events queue")
+		}
+		toolEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
+		log.Info("tool events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
 		// "postgres" or empty — no event emission (greenfield, no Postgres writes)
 		toolEventSink = nil
@@ -121,14 +137,29 @@ func run() error {
 		log.Info("shutdown signal received", "signal", sig.String())
 	}
 
-	// Cancel background goroutines before draining HTTP.
+	// Cancel background goroutines before draining HTTP
 	runCancel()
 	leader.Release(ctx)
 
+	// Shutdown HTTP server first (drain in-flight requests)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("graceful shutdown: %w", err)
+		log.Error("HTTP shutdown failed", "error", err)
+		// Continue to drain event sink even if HTTP shutdown fails
+	} else {
+		log.Info("HTTP server drained")
+	}
+
+	// Drain event sink AFTER HTTP shutdown (all handlers finished, no new events)
+	if toolEventSink != nil {
+		sinkCtx, sinkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer sinkCancel()
+		if err := toolEventSink.Close(sinkCtx); err != nil {
+			log.Error("failed to drain tool event sink", "error", err)
+		} else {
+			log.Info("tool event sink drained")
+		}
 	}
 	log.Info("mcp-service stopped cleanly")
 	return nil

@@ -37,11 +37,18 @@ type Config struct {
 	DBPassword string
 	DBPoolSize int
 
-	// Redis
+	// Redis (main cache — sessions, rate limits, gates, metrics)
 	RedisHost     string
 	RedisPort     int
 	RedisPassword string
 	RedisDB       int
+
+	// Redis Events (dedicated queue for observability events)
+	// Optional — when empty, events are disabled or use main Redis (not recommended).
+	RedisEventsHost     string
+	RedisEventsPort     int
+	RedisEventsPassword string
+	RedisEventsDB       int
 
 	// Security — never log these values
 	SecretKey string
@@ -157,6 +164,11 @@ func Load() (*Config, error) {
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvInt("REDIS_DB", 0),
 
+		RedisEventsHost:     getEnv("REDIS_EVENTS_HOST", ""),
+		RedisEventsPort:     getEnvInt("REDIS_EVENTS_PORT", 6379),
+		RedisEventsPassword: getEnv("REDIS_EVENTS_PASSWORD", ""),
+		RedisEventsDB:       getEnvInt("REDIS_EVENTS_DB", 0),
+
 		SecretKey: getEnv("SECRET_KEY", ""),
 		JWTSecret: getEnv("JWT_SECRET", ""),
 
@@ -249,6 +261,15 @@ func (c *Config) DSN() string {
 // RedisAddr returns the Redis address in "host:port" form.
 func (c *Config) RedisAddr() string {
 	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
+}
+
+// RedisEventsAddr returns the events Redis address in "host:port" form.
+// Returns empty string when events Redis is not configured.
+func (c *Config) RedisEventsAddr() string {
+	if c.RedisEventsHost == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", c.RedisEventsHost, c.RedisEventsPort)
 }
 
 // SafeString returns a log-safe representation of the config — all secret

@@ -27,6 +27,11 @@ type Config struct {
 	RedisPassword string
 	RedisDB       int
 
+	// Redis Events (dedicated queue for observability events)
+	RedisEventsHost     string
+	RedisEventsPort     int
+	RedisEventsPassword string
+
 	// SecretKey is used for Fernet credential decryption (same key as them-go-bridge).
 	SecretKey string
 
@@ -56,6 +61,9 @@ func LoadConfig() (*Config, error) {
 		RedisPort:             getEnvInt("REDIS_PORT", 6379),
 		RedisPassword:         getEnv("REDIS_PASSWORD", ""),
 		RedisDB:               getEnvInt("REDIS_DB", 0),
+		RedisEventsHost:       getEnv("REDIS_EVENTS_HOST", ""),
+		RedisEventsPort:       getEnvInt("REDIS_EVENTS_PORT", 6379),
+		RedisEventsPassword:   getEnv("REDIS_EVENTS_PASSWORD", ""),
 		SecretKey:             getEnv("SECRET_KEY", ""),
 		HealthIntervalSeconds: getEnvInt("MCP_HEALTH_INTERVAL_SECONDS", 30),
 		AllowHTTP:             getEnvBool("MCP_ALLOW_HTTP", false),
@@ -94,6 +102,14 @@ func (c *Config) DSN() string {
 // RedisAddr returns "host:port".
 func (c *Config) RedisAddr() string {
 	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
+}
+
+// RedisEventsAddr returns events Redis "host:port", or "" if not configured.
+func (c *Config) RedisEventsAddr() string {
+	if c.RedisEventsHost == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", c.RedisEventsHost, c.RedisEventsPort)
 }
 
 // Addr returns the HTTP listen address.
