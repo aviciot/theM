@@ -1,23 +1,24 @@
 {
   "id": "06-gateway-token-limit",
   "name": "06 — Gateway Monthly Token Limit (50k)",
-  "description": "Tests monthly LLM token usage enforcement.\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path\n• Tenant Quota (payops_ai):\n  - Monthly LLM tokens: 50,000\n  - Enforcement: PostgreSQL SUM of total_tokens_in + total_tokens_out\n  - Table: them.runs (WHERE completed this month)\n\n📊 How It Works:\n1. System counts tokens used this month from DB\n2. If total >= 50,000 → Block new requests\n3. Returns error: \"monthly LLM token limit exceeded\"\n\n⚠️ Current Month Usage:\n• Check DB: SELECT SUM(total_tokens_in + total_tokens_out) FROM them.runs WHERE completed_at >= date_trunc('month', NOW())\n• If already > 50k → This test will fail immediately\n• If < 50k → Run many requests until limit hit\n\n🔍 Verifies:\n• Token counting works\n• Monthly limit enforcement\n• Blocking behavior\n\n⚠️ Note: This test depends on current month's usage.\nIf you've already used 50k+ tokens this month, all requests will be blocked.\n\n✅ Purpose: Prove monthly token quota blocks requests after crossing 50k limit.",
-  "test_result_ai_analysis": "⏳ Grade: Not Run Yet\n\n📊 Expected Result:\n• If tokens_used < 50k: Requests pass ✅\n• If tokens_used >= 50k: Requests blocked ❌\n\n🔧 Quota Configuration:\n• Tenant: payops_ai\n• Limit: 50,000 tokens per month\n• Enforcement: PostgreSQL SUM query\n• Table: them.runs (total_tokens_in + total_tokens_out)\n• Current usage: 0 tokens (as of test creation)\n\n⚠️ Important Note:\n• Mock provider returns 0 tokens → Won't trigger limit\n• To test properly: Use real LLM provider (not 'fast' alias)\n• This test verifies the CHECK works, not actual blocking\n\n🎯 What to Verify After Running:\n1. Check if test passed or failed\n2. Query DB: SELECT SUM(total_tokens_in + total_tokens_out) FROM them.runs WHERE completed_at >= date_trunc('month', NOW())\n3. Compare usage vs 50k limit\n4. If blocked: Verify error message\n\n💡 After Running: Update this field with:\n✅ Grade: [A-F]\n📊 Result: X/3 passed\n🔢 Tokens used: [number]\n🔍 Findings: Was limit enforced? Token counting accurate?\n💡 Recommendation: Test with real provider to trigger actual blocking",
+  "description": "Tests monthly LLM token usage enforcement.\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path\n• Tenant Quota (payops_ai):\n  - Monthly LLM tokens: 50,000\n  - Enforcement: PostgreSQL SUM of total_tokens_in + total_tokens_out\n  - Table: them.runs (WHERE completed this month)\n\n📊 How It Works:\n1. System counts tokens used this month from DB\n2. If total \u003e= 50,000 → Block new requests\n3. Returns error: \"monthly LLM token limit exceeded\"\n\n⚠️ Current Month Usage:\n• Check DB: SELECT SUM(total_tokens_in + total_tokens_out) FROM them.runs WHERE completed_at \u003e= date_trunc('month', NOW())\n• If already \u003e 50k → This test will fail immediately\n• If \u003c 50k → Run many requests until limit hit\n\n🔍 Verifies:\n• Token counting works\n• Monthly limit enforcement\n• Blocking behavior\n\n⚠️ Note: This test depends on current month's usage.\nIf you've already used 50k+ tokens this month, all requests will be blocked.\n\n✅ Purpose: Prove monthly token quota blocks requests after crossing 50k limit.",
+  "test_result_ai_analysis": "⏳ Grade: Not Run Yet\n\n📊 Expected Result:\n• If tokens_used \u003c 50k: Requests pass ✅\n• If tokens_used \u003e= 50k: Requests blocked ❌\n\n🔧 Quota Configuration:\n• Tenant: payops_ai\n• Limit: 50,000 tokens per month\n• Enforcement: PostgreSQL SUM query\n• Table: them.runs (total_tokens_in + total_tokens_out)\n• Current usage: 0 tokens (as of test creation)\n\n⚠️ Important Note:\n• Mock provider returns 0 tokens → Won't trigger limit\n• To test properly: Use real LLM provider (not 'fast' alias)\n• This test verifies the CHECK works, not actual blocking\n\n🎯 What to Verify After Running:\n1. Check if test passed or failed\n2. Query DB: SELECT SUM(total_tokens_in + total_tokens_out) FROM them.runs WHERE completed_at \u003e= date_trunc('month', NOW())\n3. Compare usage vs 50k limit\n4. If blocked: Verify error message\n\n💡 After Running: Update this field with:\n✅ Grade: [A-F]\n📊 Result: X/3 passed\n🔢 Tokens used: [number]\n🔍 Findings: Was limit enforced? Token counting accurate?\n💡 Recommendation: Test with real provider to trigger actual blocking",
   "tenant_slug": "payops_ai",
-  "ep_type": "gateway",
-  "gateway_token": "test-gateway-token-12345",
-  "stream": false,
-  "model": "fast",
-  "n_users": 1,
-  "messages": [
-    "Test token counting - message 1",
-    "Test token counting - message 2",
-    "Test token counting - message 3"
-  ],
   "app_id": "",
   "app_slug": "",
   "ep_slug": "gateway",
+  "ep_type": "gateway",
   "auth_mode": "token",
-  "created_at": "2026-10-19T00:00:00Z",
-  "updated_at": "2026-10-19T00:00:00Z"
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "n_users": 300,
+  "messages": [
+    "Test token counting - message 1",
+    "Test token counting - message 2",
+    "Test token counting - message 3",
+    "Test token counting - message 4",
+    "Test token counting - message 5"
+  ],
+  "created_at": "",
+  "updated_at": "2026-10-20T07:35:22Z"
 }
