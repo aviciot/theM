@@ -72,6 +72,7 @@ services:
     command: >
       redis-server /etc/redis/redis.conf
       --requirepass ${THE_M_EVENTS_REDIS_PASSWORD:?run scripts/events-env.sh}
+      --stop-writes-on-bgsave-error no
     volumes:
       - ./data/them-redis-events:/data
       - ./redis/config/redis-events.conf:/etc/redis/redis.conf:ro

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -123,11 +124,54 @@ func main() {
 	defer retentionMgr.Stop()
 	logger.Info("retention manager started", "max_age_hours", 24, "trim_interval_min", 15)
 
+	// Health check HTTP server
+	healthAddr := getEnvOrDefault("HEALTH_ADDR", ":8080")
+	healthServer := &http.Server{
+		Addr: healthAddr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/health" {
+				http.NotFound(w, r)
+				return
+			}
+
+			// Get consumer lag
+			lag, pending, err := consumer.GetLag(r.Context())
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprintf(w, `{"status":"error","error":"%s"}`, err.Error())
+				return
+			}
+
+			// Health check fails if lag > 1000 or pending > 100
+			status := "healthy"
+			code := http.StatusOK
+			if lag > 1000 || pending > 100 {
+				status = "degraded"
+				code = http.StatusServiceUnavailable
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(code)
+			fmt.Fprintf(w, `{"status":"%s","lag":%d,"pending":%d,"processed":%d,"failed":%d,"dlq":%d}`,
+				status, lag, pending, consumer.processedCount, consumer.failedCount, consumer.dlqCount)
+		}),
+	}
+
+	// Start health server
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		logger.Info("health check listening", "addr", healthAddr)
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("health server error", "error", err)
+		}
+	}()
+
 	// Graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -136,6 +180,14 @@ func main() {
 
 	<-sigChan
 	logger.Info("Shutting down event-writer")
+
+	// Shutdown health server
+	healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer healthCancel()
+	if err := healthServer.Shutdown(healthCtx); err != nil {
+		logger.Error("health server shutdown error", "error", err)
+	}
+
 	consumer.Stop()
 	wg.Wait()
 
@@ -489,6 +541,46 @@ func (c *EventConsumer) Stop() {
 		close(c.stopChan)
 		c.stopped = true
 	}
+}
+
+// GetLag returns the consumer group lag and pending count.
+func (c *EventConsumer) GetLag(ctx context.Context) (lag int64, pending int64, err error) {
+	// XINFO GROUPS <stream>
+	cmd := c.redis.B().XinfoGroups().Key(c.streamKey).Build()
+	groups, err := c.redis.Do(ctx, cmd).ToArray()
+	if err != nil {
+		return 0, 0, fmt.Errorf("XINFO GROUPS failed: %w", err)
+	}
+
+	// Parse group info (returns array of maps)
+	for _, groupData := range groups {
+		groupMap, err := groupData.AsMap()
+		if err != nil {
+			continue
+		}
+
+		nameMsg, ok := groupMap["name"]
+		if !ok {
+			continue
+		}
+		name, _ := nameMsg.ToString()
+		if name != c.consumerGroup {
+			continue
+		}
+
+		// Extract lag and pending
+		if lagMsg, ok := groupMap["lag"]; ok {
+			lagVal, _ := lagMsg.AsInt64()
+			lag = lagVal
+		}
+		if pendingMsg, ok := groupMap["pending"]; ok {
+			pendingVal, _ := pendingMsg.AsInt64()
+			pending = pendingVal
+		}
+		return lag, pending, nil
+	}
+
+	return 0, 0, fmt.Errorf("consumer group %s not found", c.consumerGroup)
 }
 
 // readMessages reads pending or new messages from the stream.
