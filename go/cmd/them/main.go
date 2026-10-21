@@ -501,10 +501,11 @@ func run() error {
 	// §16.2: fail-open on quota (Redis), fail-closed on auth (§16.2 decision).
 
 	// Event sink for gateway requests (Stage B1)
-	// Mode: postgres (default), clickhouse (blocked), dual
-	// Safety: ValidateEventsMode rejects unknown values and blocks clickhouse-only mode
+	// Mode: postgres (default), clickhouse (blocked for gateway only), dual
+	// Safety: ValidateGatewayEventsMode rejects unknown values and blocks clickhouse-only mode
+	// (clickhouse blocked for gateway due to missing budget queries + request body storage)
 	var gwEventSink events.EventSink
-	eventsMode, err := events.ValidateEventsMode("THE_M_EVENTS_GATEWAY")
+	eventsMode, err := events.ValidateGatewayEventsMode("THE_M_EVENTS_GATEWAY")
 	if err != nil {
 		log.Error("invalid events mode", slog.String("error", err.Error()))
 		return fmt.Errorf("startup: %w", err)

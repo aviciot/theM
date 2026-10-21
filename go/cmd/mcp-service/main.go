@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -95,14 +96,14 @@ func run() error {
 	}
 
 	switch eventsMode {
-	case events.ModeDual:
-		// Dual mode: Postgres (authoritative) + ClickHouse (mirror)
-		// Mirror failures are logged but don't block requests
+	case events.ModeClickhouse, events.ModeDual:
+		// Clickhouse or Dual mode: emit to Redis Streams for event-writer to consume
+		// MCP has no Postgres table yet, so both modes write to ClickHouse only
 		toolEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
-		log.Info("tool events sink: dual mode (Postgres authoritative, ClickHouse mirror)",
+		log.Info("tool events sink: ClickHouse (via Redis Streams)",
 			"mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
-		// ModePostgres: no event emission (greenfield, no Postgres tool calls table yet)
+		// ModePostgres: no event emission (no Postgres table for tool events yet)
 		toolEventSink = nil
 		log.Info("tool events sink: disabled (Postgres only)", "mode", eventsMode)
 	}

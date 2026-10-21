@@ -26,9 +26,40 @@ const (
 //
 // Safety rules:
 // 1. Unknown values are rejected (prevents silent misconfiguration)
-// 2. "clickhouse" is blocked until budget/body support is complete
+// 2. "clickhouse" is allowed by default (Auth/Tools have no PG tables yet)
 // 3. Empty defaults to "postgres" (safe default)
+//
+// For Gateway-specific validation (blocks clickhouse until budget/body support),
+// use ValidateGatewayEventsMode instead.
 func ValidateEventsMode(envVar string) (EventsMode, error) {
+	mode := os.Getenv(envVar)
+
+	// Empty defaults to postgres (safe, fully supported)
+	if mode == "" {
+		return ModePostgres, nil
+	}
+
+	switch EventsMode(mode) {
+	case ModePostgres:
+		return ModePostgres, nil
+
+	case ModeDual:
+		return ModeDual, nil
+
+	case ModeClickhouse:
+		return ModeClickhouse, nil
+
+	default:
+		return "", fmt.Errorf(
+			"invalid events mode %q in %s: must be 'postgres' (default), 'dual', 'clickhouse', or empty",
+			mode, envVar)
+	}
+}
+
+// ValidateGatewayEventsMode validates events mode specifically for the Gateway service.
+// Blocks clickhouse-only mode until budget accounting queries and request body storage
+// are implemented. Auth and Tools services should use ValidateEventsMode instead.
+func ValidateGatewayEventsMode(envVar string) (EventsMode, error) {
 	mode := os.Getenv(envVar)
 
 	// Empty defaults to postgres (safe, fully supported)
@@ -46,14 +77,14 @@ func ValidateEventsMode(envVar string) (EventsMode, error) {
 	case ModeClickhouse:
 		// Block clickhouse-only mode until Phase 2 features are complete
 		return "", fmt.Errorf(
-			"events mode 'clickhouse' is not yet supported: missing budget accounting queries and request body storage. "+
+			"gateway events mode 'clickhouse' is not yet supported: missing budget accounting queries and request body storage. "+
 			"Use 'postgres' (default) or 'dual' (migration verification mode) instead. "+
 			"Set %s=postgres or %s=dual", envVar, envVar)
 
 	default:
 		return "", fmt.Errorf(
 			"invalid events mode %q in %s: must be 'postgres' (default), 'dual', or empty. "+
-			"'clickhouse' is blocked until Phase 2 complete", mode, envVar)
+			"'clickhouse' is blocked for gateway until Phase 2 complete", mode, envVar)
 	}
 }
 

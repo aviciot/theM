@@ -125,14 +125,14 @@ func run() error {
 	}
 
 	switch eventsMode {
-	case events.ModeDual:
-		// Dual mode: Postgres (authoritative) + ClickHouse (mirror)
-		// Mirror failures are logged but don't block requests
+	case events.ModeClickhouse, events.ModeDual:
+		// Clickhouse or Dual mode: emit to Redis Streams for event-writer to consume
+		// Auth has no Postgres table yet, so both modes write to ClickHouse only
 		authEventSink = events.NewRedisSink(redisEventsClient, "them:events", 10000, 1*time.Second)
-		log.Info("auth events sink: dual mode (Postgres authoritative, ClickHouse mirror)",
+		log.Info("auth events sink: ClickHouse (via Redis Streams)",
 			"mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
-		// ModePostgres: no event emission, Postgres writes only
+		// ModePostgres: no event emission (no Postgres table for auth events yet)
 		authEventSink = nil
 		log.Info("auth events sink: disabled (Postgres only)", "mode", eventsMode)
 	}
