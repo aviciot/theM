@@ -1,0 +1,328 @@
+[12:40:24] ========================================
+[12:40:24] Gateway Performance Test: postgres vs dual
+[12:40:24] Scenarios: ['10-perf-50-users-direct', '11-perf-200-users-direct', '12-perf-400-users-direct', '40-logging-perf-minimal', '41-logging-perf-metrics', '42-logging-perf-debug', '43-logging-perf-audit']
+[12:40:24] Runs per scenario/mode: 3
+[12:40:24] Total tests: 42
+[12:40:24] ========================================
+
+[12:40:24] ========================================
+[12:40:24] RUN 1 - MODE: postgres
+[12:40:24] ========================================
+[12:40:24] Switching to mode: postgres
+[12:40:36] ✅ Mode switched to: postgres
+
+[12:40:36] Clearing test data...
+[12:40:37] ✅ Data cleared
+[12:40:37] Running scenario: 10-perf-50-users-direct
+[12:40:39] ✅ 10-perf-50-users-direct: p50=194ms p95=633ms p99=636ms rps=150.0
+
+[12:40:44] Clearing test data...
+[12:40:44] ✅ Data cleared
+[12:40:44] Running scenario: 11-perf-200-users-direct
+[12:40:47] ✅ 11-perf-200-users-direct: p50=221ms p95=290ms p99=334ms rps=600.0
+
+[12:40:52] Clearing test data...
+[12:40:52] ✅ Data cleared
+[12:40:52] Running scenario: 12-perf-400-users-direct
+[12:40:55] ✅ 12-perf-400-users-direct: p50=567ms p95=714ms p99=776ms rps=600.0
+
+[12:41:00] Clearing test data...
+[12:41:01] ✅ Data cleared
+[12:41:01] Running scenario: 40-logging-perf-minimal
+[12:41:03] ✅ 40-logging-perf-minimal: p50=91ms p95=101ms p99=105ms rps=0.0
+
+[12:41:08] Clearing test data...
+[12:41:08] ✅ Data cleared
+[12:41:08] Running scenario: 41-logging-perf-metrics
+[12:41:11] ✅ 41-logging-perf-metrics: p50=24ms p95=81ms p99=86ms rps=300.0
+
+[12:41:16] Clearing test data...
+[12:41:16] ✅ Data cleared
+[12:41:16] Running scenario: 42-logging-perf-debug
+[12:41:19] ✅ 42-logging-perf-debug: p50=104ms p95=176ms p99=212ms rps=300.0
+
+[12:41:24] Clearing test data...
+[12:41:24] ✅ Data cleared
+[12:41:24] Running scenario: 43-logging-perf-audit
+[12:41:26] ✅ 43-logging-perf-audit: p50=105ms p95=180ms p99=184ms rps=0.0
+
+[12:41:31] ========================================
+[12:41:31] RUN 1 - MODE: dual
+[12:41:31] ========================================
+[12:41:31] Switching to mode: dual
+[12:41:44] ✅ Mode switched to: dual
+
+[12:41:44] Clearing test data...
+[12:41:45] ✅ Data cleared
+[12:41:45] Running scenario: 10-perf-50-users-direct
+[12:42:16] ⚠️  Missing 150 events in ClickHouse
+[12:42:17] ✅ 10-perf-50-users-direct: p50=114ms p95=550ms p99=554ms rps=0.0
+
+[12:42:22] Clearing test data...
+[12:42:22] ✅ Data cleared
+[12:42:22] Running scenario: 11-perf-200-users-direct
+[12:42:54] ⚠️  Missing 600 events in ClickHouse
+[12:42:55] ✅ 11-perf-200-users-direct: p50=283ms p95=379ms p99=389ms rps=600.0
+
+[12:43:00] Clearing test data...
+[12:43:00] ✅ Data cleared
+[12:43:00] Running scenario: 12-perf-400-users-direct
+[12:43:33] ⚠️  Missing 1200 events in ClickHouse
+[12:43:34] ✅ 12-perf-400-users-direct: p50=488ms p95=898ms p99=916ms rps=600.0
+
+[12:43:39] Clearing test data...
+[12:43:39] ✅ Data cleared
+[12:43:39] Running scenario: 40-logging-perf-minimal
+[12:44:11] ⚠️  Missing 300 events in ClickHouse
+[12:44:12] ✅ 40-logging-perf-minimal: p50=54ms p95=96ms p99=98ms rps=300.0
+
+[12:44:17] Clearing test data...
+[12:44:17] ✅ Data cleared
+[12:44:17] Running scenario: 41-logging-perf-metrics
+[12:44:49] ⚠️  Missing 300 events in ClickHouse
+[12:44:50] ✅ 41-logging-perf-metrics: p50=32ms p95=90ms p99=92ms rps=0.0
+
+[12:44:55] Clearing test data...
+[12:44:56] ✅ Data cleared
+[12:44:56] Running scenario: 42-logging-perf-debug
+[12:45:27] ⚠️  Missing 300 events in ClickHouse
+[12:45:28] ✅ 42-logging-perf-debug: p50=102ms p95=161ms p99=167ms rps=0.0
+
+[12:45:33] Clearing test data...
+[12:45:33] ✅ Data cleared
+[12:45:33] Running scenario: 43-logging-perf-audit
+[12:46:05] ⚠️  Missing 300 events in ClickHouse
+[12:46:06] ✅ 43-logging-perf-audit: p50=100ms p95=127ms p99=135ms rps=300.0
+
+[12:46:11] ========================================
+[12:46:11] RUN 2 - MODE: dual
+[12:46:11] ========================================
+[12:46:11] Switching to mode: dual
+[12:46:23] ✅ Mode switched to: dual
+
+[12:46:23] Clearing test data...
+[12:46:23] ✅ Data cleared
+[12:46:23] Running scenario: 10-perf-50-users-direct
+[12:46:55] ⚠️  Missing 150 events in ClickHouse
+[12:46:56] ✅ 10-perf-50-users-direct: p50=102ms p95=626ms p99=627ms rps=150.0
+
+[12:47:01] Clearing test data...
+[12:47:01] ✅ Data cleared
+[12:47:01] Running scenario: 11-perf-200-users-direct
+[12:47:33] ⚠️  Missing 600 events in ClickHouse
+[12:47:34] ✅ 11-perf-200-users-direct: p50=205ms p95=277ms p99=288ms rps=600.0
+
+[12:47:39] Clearing test data...
+[12:47:39] ✅ Data cleared
+[12:47:39] Running scenario: 12-perf-400-users-direct
+[12:48:12] ⚠️  Missing 1200 events in ClickHouse
+[12:48:13] ✅ 12-perf-400-users-direct: p50=498ms p95=598ms p99=601ms rps=600.0
+
+[12:48:18] Clearing test data...
+[12:48:18] ✅ Data cleared
+[12:48:18] Running scenario: 40-logging-perf-minimal
+[12:48:50] ⚠️  Missing 300 events in ClickHouse
+[12:48:51] ✅ 40-logging-perf-minimal: p50=41ms p95=93ms p99=99ms rps=0.0
+
+[12:48:56] Clearing test data...
+[12:48:56] ✅ Data cleared
+[12:48:56] Running scenario: 41-logging-perf-metrics
+[12:49:27] ⚠️  Missing 300 events in ClickHouse
+[12:49:29] ✅ 41-logging-perf-metrics: p50=48ms p95=98ms p99=101ms rps=0.0
+
+[12:49:34] Clearing test data...
+[12:49:34] ✅ Data cleared
+[12:49:34] Running scenario: 42-logging-perf-debug
+[12:50:05] ⚠️  Missing 300 events in ClickHouse
+[12:50:07] ✅ 42-logging-perf-debug: p50=109ms p95=185ms p99=189ms rps=0.0
+
+[12:50:12] Clearing test data...
+[12:50:12] ✅ Data cleared
+[12:50:12] Running scenario: 43-logging-perf-audit
+[12:50:43] ⚠️  Missing 300 events in ClickHouse
+[12:50:44] ✅ 43-logging-perf-audit: p50=133ms p95=191ms p99=197ms rps=0.0
+
+[12:50:49] ========================================
+[12:50:49] RUN 2 - MODE: postgres
+[12:50:49] ========================================
+[12:50:49] Switching to mode: postgres
+[12:51:03] ✅ Mode switched to: postgres
+
+[12:51:03] Clearing test data...
+[12:51:03] ✅ Data cleared
+[12:51:03] Running scenario: 10-perf-50-users-direct
+[12:51:05] ✅ 10-perf-50-users-direct: p50=198ms p95=540ms p99=543ms rps=150.0
+
+[12:51:10] Clearing test data...
+[12:51:11] ✅ Data cleared
+[12:51:11] Running scenario: 11-perf-200-users-direct
+[12:51:13] ✅ 11-perf-200-users-direct: p50=213ms p95=292ms p99=296ms rps=0.0
+
+[12:51:18] Clearing test data...
+[12:51:18] ✅ Data cleared
+[12:51:18] Running scenario: 12-perf-400-users-direct
+[12:51:22] ✅ 12-perf-400-users-direct: p50=486ms p95=603ms p99=608ms rps=600.0
+
+[12:51:27] Clearing test data...
+[12:51:27] ✅ Data cleared
+[12:51:27] Running scenario: 40-logging-perf-minimal
+[12:51:29] ✅ 40-logging-perf-minimal: p50=29ms p95=67ms p99=80ms rps=0.0
+
+[12:51:34] Clearing test data...
+[12:51:35] ✅ Data cleared
+[12:51:35] Running scenario: 41-logging-perf-metrics
+[12:51:37] ✅ 41-logging-perf-metrics: p50=39ms p95=91ms p99=94ms rps=0.0
+
+[12:51:42] Clearing test data...
+[12:51:43] ✅ Data cleared
+[12:51:43] Running scenario: 42-logging-perf-debug
+[12:51:45] ✅ 42-logging-perf-debug: p50=107ms p95=162ms p99=170ms rps=0.0
+
+[12:51:50] Clearing test data...
+[12:51:50] ✅ Data cleared
+[12:51:50] Running scenario: 43-logging-perf-audit
+[12:51:53] ✅ 43-logging-perf-audit: p50=97ms p95=105ms p99=163ms rps=300.0
+
+[12:51:58] ========================================
+[12:51:58] RUN 3 - MODE: postgres
+[12:51:58] ========================================
+[12:51:58] Switching to mode: postgres
+[12:52:10] ✅ Mode switched to: postgres
+
+[12:52:10] Clearing test data...
+[12:52:10] ✅ Data cleared
+[12:52:10] Running scenario: 10-perf-50-users-direct
+[12:52:12] ✅ 10-perf-50-users-direct: p50=204ms p95=552ms p99=559ms rps=150.0
+
+[12:52:17] Clearing test data...
+[12:52:18] ✅ Data cleared
+[12:52:18] Running scenario: 11-perf-200-users-direct
+[12:52:20] ✅ 11-perf-200-users-direct: p50=218ms p95=296ms p99=299ms rps=0.0
+
+[12:52:25] Clearing test data...
+[12:52:26] ✅ Data cleared
+[12:52:26] Running scenario: 12-perf-400-users-direct
+[12:52:29] ✅ 12-perf-400-users-direct: p50=495ms p95=598ms p99=647ms rps=600.0
+
+[12:52:34] Clearing test data...
+[12:52:34] ✅ Data cleared
+[12:52:34] Running scenario: 40-logging-perf-minimal
+[12:52:37] ✅ 40-logging-perf-minimal: p50=92ms p95=98ms p99=102ms rps=300.0
+
+[12:52:42] Clearing test data...
+[12:52:42] ✅ Data cleared
+[12:52:42] Running scenario: 41-logging-perf-metrics
+[12:52:44] ✅ 41-logging-perf-metrics: p50=41ms p95=91ms p99=93ms rps=0.0
+
+[12:52:49] Clearing test data...
+[12:52:50] ✅ Data cleared
+[12:52:50] Running scenario: 42-logging-perf-debug
+[12:52:52] ✅ 42-logging-perf-debug: p50=110ms p95=180ms p99=184ms rps=0.0
+
+[12:52:57] Clearing test data...
+[12:52:58] ✅ Data cleared
+[12:52:58] Running scenario: 43-logging-perf-audit
+[12:53:00] ✅ 43-logging-perf-audit: p50=107ms p95=175ms p99=179ms rps=0.0
+
+[12:53:05] ========================================
+[12:53:05] RUN 3 - MODE: dual
+[12:53:05] ========================================
+[12:53:05] Switching to mode: dual
+[12:53:17] ✅ Mode switched to: dual
+
+[12:53:17] Clearing test data...
+[12:53:17] ✅ Data cleared
+[12:53:17] Running scenario: 10-perf-50-users-direct
+[12:53:50] ⚠️  Missing 150 events in ClickHouse
+[12:53:51] ✅ 10-perf-50-users-direct: p50=106ms p95=814ms p99=821ms rps=150.0
+
+[12:53:56] Clearing test data...
+[12:53:56] ✅ Data cleared
+[12:53:56] Running scenario: 11-perf-200-users-direct
+[12:54:28] ⚠️  Missing 600 events in ClickHouse
+[12:54:29] ✅ 11-perf-200-users-direct: p50=203ms p95=278ms p99=282ms rps=600.0
+
+[12:54:34] Clearing test data...
+[12:54:34] ✅ Data cleared
+[12:54:34] Running scenario: 12-perf-400-users-direct
+[12:55:07] ⚠️  Missing 1200 events in ClickHouse
+[12:55:08] ✅ 12-perf-400-users-direct: p50=508ms p95=604ms p99=676ms rps=600.0
+
+[12:55:13] Clearing test data...
+[12:55:13] ✅ Data cleared
+[12:55:13] Running scenario: 40-logging-perf-minimal
+[12:55:45] ⚠️  Missing 300 events in ClickHouse
+[12:55:46] ✅ 40-logging-perf-minimal: p50=122ms p95=328ms p99=338ms rps=300.0
+
+[12:55:51] Clearing test data...
+[12:55:51] ✅ Data cleared
+[12:55:51] Running scenario: 41-logging-perf-metrics
+[12:56:23] ⚠️  Missing 300 events in ClickHouse
+[12:56:24] ✅ 41-logging-perf-metrics: p50=43ms p95=93ms p99=95ms rps=0.0
+
+[12:56:29] Clearing test data...
+[12:56:29] ✅ Data cleared
+[12:56:29] Running scenario: 42-logging-perf-debug
+[12:57:01] ⚠️  Missing 300 events in ClickHouse
+[12:57:02] ✅ 42-logging-perf-debug: p50=106ms p95=118ms p99=177ms rps=300.0
+
+[12:57:07] Clearing test data...
+[12:57:07] ✅ Data cleared
+[12:57:07] Running scenario: 43-logging-perf-audit
+[12:57:39] ⚠️  Missing 300 events in ClickHouse
+[12:57:40] ✅ 43-logging-perf-audit: p50=91ms p95=120ms p99=123ms rps=0.0
+
+[12:57:45] ========================================
+[12:57:45] ✅ All tests complete
+[12:57:45] Results saved to: /opt/docker/them/perf_test_results_raw.json
+[12:57:45] ========================================
+[12:57:45] 
+Generating summary...
+
+================================================================================
+PERFORMANCE COMPARISON SUMMARY
+================================================================================
+
+Scenario: 10-perf-50-users-direct
+  p50: 198.7ms → 107.3ms (-46.0%)
+  p95: 575.0ms → 663.3ms (+15.4%)
+  p99: 579.3ms → 667.3ms (+15.2%)
+  RPS: 150.0 → 100.0 (-33.3%)
+
+Scenario: 11-perf-200-users-direct
+  p50: 217.3ms → 230.3ms (+6.0%)
+  p95: 292.7ms → 311.3ms (+6.4%)
+  p99: 309.7ms → 319.7ms (+3.2%)
+  RPS: 200.0 → 600.0 (+200.0%)
+
+Scenario: 12-perf-400-users-direct
+  p50: 516.0ms → 498.0ms (-3.5%)
+  p95: 638.3ms → 700.0ms (+9.7%)
+  p99: 677.0ms → 731.0ms (+8.0%)
+  RPS: 600.0 → 600.0 (+0.0%)
+
+Scenario: 40-logging-perf-minimal
+  p50: 70.7ms → 72.3ms (+2.4%)
+  p95: 88.7ms → 172.3ms (+94.4%)
+  p99: 95.7ms → 178.3ms (+86.4%)
+  RPS: 100.0 → 200.0 (+100.0%)
+
+Scenario: 41-logging-perf-metrics
+  p50: 34.7ms → 41.0ms (+18.3%)
+  p95: 87.7ms → 93.7ms (+6.8%)
+  p99: 91.0ms → 96.0ms (+5.5%)
+  RPS: 100.0 → 0.0 (-100.0%)
+
+Scenario: 42-logging-perf-debug
+  p50: 107.0ms → 105.7ms (-1.2%)
+  p95: 172.7ms → 154.7ms (-10.4%)
+  p99: 188.7ms → 177.7ms (-5.8%)
+  RPS: 100.0 → 100.0 (+0.0%)
+
+Scenario: 43-logging-perf-audit
+  p50: 103.0ms → 108.0ms (+4.9%)
+  p95: 153.3ms → 146.0ms (-4.8%)
+  p99: 175.3ms → 151.7ms (-13.5%)
+  RPS: 100.0 → 100.0 (+0.0%)
+[12:57:45] 
+Summary saved to: /opt/docker/them/perf_test_summary.json
