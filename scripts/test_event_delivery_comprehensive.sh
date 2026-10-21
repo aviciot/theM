@@ -28,7 +28,7 @@ TEST_COUNT=100
 TENANT_ID="ad7d567d-b222-40be-acb6-7929cf6ae168"  # From reconciliation
 PROVIDER="test-provider"
 MODEL="test-model-comprehensive"
-TEST_TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
+TEST_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 log "=== Comprehensive Event Delivery Test ==="
 log "Test count: $TEST_COUNT events"

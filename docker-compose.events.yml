@@ -69,10 +69,10 @@ services:
     image: redis:7-alpine
     container_name: them-redis-events
     profiles: [events]
+    user: "999:1006"  # redis:gid — matches Alpine redis user
     command: >
       redis-server /etc/redis/redis.conf
       --requirepass ${THE_M_EVENTS_REDIS_PASSWORD:?run scripts/events-env.sh}
-      --stop-writes-on-bgsave-error no
     volumes:
       - ./data/them-redis-events:/data
       - ./redis/config/redis-events.conf:/etc/redis/redis.conf:ro
