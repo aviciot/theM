@@ -229,21 +229,25 @@ func (s *Service) SetPreferences(ctx context.Context, accessToken string, prefs 
 	return s.store.SetPreferences(ctx, claims.UserID(), prefs)
 }
 
-// Logout blacklists the given access token until its natural expiry. It is
-// best-effort: an unparsable token is a no-op (matches Python).
-func (s *Service) Logout(ctx context.Context, accessToken string) {
+// Logout blacklists the given access token until its natural expiry and returns
+// the verified claims for event attribution. Returns nil claims when the token
+// cannot be verified (expired, malformed, forged) — callers MUST record unverified
+// logout explicitly rather than attributing it to the unverified token's claims.
+func (s *Service) Logout(ctx context.Context, accessToken string) *verifiedClaims {
 	if accessToken == "" {
-		return
+		return nil
 	}
 	claims, err := s.signer.Verify(accessToken)
 	if err != nil {
 		// Even expired/invalid tokens: nothing to revoke. Do not error the logout.
-		return
+		// Return nil so caller records "unknown" identity rather than forged claims.
+		return nil
 	}
 	exp := time.Unix(claims.Exp, 0)
 	if err := s.store.Blacklist(ctx, hashToken(accessToken), exp); err != nil {
 		s.log.Warn("logout: failed to blacklist token", "user_id", claims.UserID(), "error", err)
 	}
+	return claims
 }
 
 // issuePair mints an access+refresh pair, honours the role token_expiry, and

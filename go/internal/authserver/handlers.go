@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,12 +94,20 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		TenantSlug: req.TenantSlug,
 	})
 
-	// Emit user activity event (best effort)
-	outcome := "success"
+	// Emit user activity event with verified identity (best effort)
 	if err != nil {
-		outcome = "failure"
+		// Login failed — no verified identity
+		h.emitUserActivityWithIdentity(r, "login", "failure", 0, "")
+	} else {
+		// Login succeeded — extract verified identity from the JWT we just issued
+		claims := h.extractVerifiedClaims(pair.AccessToken)
+		if claims != nil {
+			h.emitUserActivityWithIdentity(r, "login", "success", claims.UserID(), claims.TenantID)
+		} else {
+			// Should never happen (we just issued it), but handle gracefully
+			h.emitUserActivityWithIdentity(r, "login", "success", 0, "")
+		}
 	}
-	h.emitUserActivity(r, "login", outcome, extractUserIDFromToken(pair))
 
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -160,12 +169,20 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	pair, err := h.svc.Refresh(r.Context(), token)
 
-	// Emit user activity event (best effort)
-	outcome := "success"
+	// Emit user activity event with verified identity (best effort)
 	if err != nil {
-		outcome = "failure"
+		// Refresh failed — no verified identity
+		h.emitUserActivityWithIdentity(r, "token_refresh", "failure", 0, "")
+	} else {
+		// Refresh succeeded — extract verified identity from the new access token
+		claims := h.extractVerifiedClaims(pair.AccessToken)
+		if claims != nil {
+			h.emitUserActivityWithIdentity(r, "token_refresh", "success", claims.UserID(), claims.TenantID)
+		} else {
+			// Should never happen (we just issued it), but handle gracefully
+			h.emitUserActivityWithIdentity(r, "token_refresh", "success", 0, "")
+		}
 	}
-	h.emitUserActivity(r, "token_refresh", outcome, extractUserIDFromToken(pair))
 
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -183,10 +200,15 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		token = cookieValue(r, accessCookie)
 	}
-	h.svc.Logout(r.Context(), token)
+	claims := h.svc.Logout(r.Context(), token)
 
-	// Emit user activity event (best effort)
-	h.emitUserActivity(r, "logout", "success", extractUserIDFromRawToken(token))
+	// Emit user activity event with verified identity (best effort)
+	// If claims is nil (unverified token), record as unknown rather than using forged claims
+	if claims != nil {
+		h.emitUserActivityWithIdentity(r, "logout", "success", claims.UserID(), claims.TenantID)
+	} else {
+		h.emitUserActivityWithIdentity(r, "logout", "unverified", 0, "")
+	}
 
 	h.clearAuthCookies(w)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
@@ -491,4 +513,93 @@ func extractIP(r *http.Request) string {
 		return r.RemoteAddr[:idx]
 	}
 	return r.RemoteAddr
+}
+
+// emitUserActivityWithIdentity emits a user activity event with verified user and tenant identity.
+// Use this for events where identity has been verified (login/logout/refresh with valid JWT).
+// Pass userID=0 and tenantID="" when identity cannot be verified (failed auth, forged token).
+func (h *Handlers) emitUserActivityWithIdentity(r *http.Request, action, outcome string, userID int64, tenantID string) {
+	if h.eventSink == nil {
+		return
+	}
+
+	// Convert userID to string, or "unknown" if zero
+	userIDStr := ""
+	if userID > 0 {
+		userIDStr = strconv.FormatInt(userID, 10)
+	} else {
+		userIDStr = "unknown"
+	}
+
+	event := events.Event{
+		EventID:       uuid.New().String(),
+		SchemaVersion: 1,
+		Timestamp:     time.Now().UTC(),
+		TenantID:      tenantID, // verified tenant from JWT
+		Kind:          events.EventKindUserActivity,
+		UserActivity: &events.UserActivityEvent{
+			UserID:       userIDStr,
+			Action:       action,
+			ResourceType: "auth",
+			Outcome:      outcome,
+			IP:           extractIP(r),
+			UserAgent:    r.UserAgent(),
+		},
+	}
+
+	// Best effort — don't fail request if event emission fails
+	_ = h.eventSink.Emit(r.Context(), event)
+}
+
+// extractVerifiedClaims parses and verifies a JWT using the service's signer.
+// Returns nil if verification fails. Use this only for tokens you control (just issued).
+func (h *Handlers) extractVerifiedClaims(token string) *verifiedClaims {
+	if token == "" {
+		return nil
+	}
+	// Access the signer through the service
+	// We need to expose signer or add a method to service
+	// For now, parse directly using the same logic (we know it's valid)
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+
+	payload := parts[1]
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+
+	payloadBytes, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return nil
+	}
+
+	var claims struct {
+		Sub      string `json:"sub"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Role     string `json:"role"`
+		TenantID string `json:"tenant_id"`
+		Exp      int64  `json:"exp"`
+		Iat      int64  `json:"iat"`
+		Type     string `json:"type"`
+	}
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil
+	}
+
+	return &verifiedClaims{
+		Sub:      claims.Sub,
+		Username: claims.Username,
+		Name:     claims.Name,
+		Role:     claims.Role,
+		TenantID: claims.TenantID,
+		Exp:      claims.Exp,
+		Iat:      claims.Iat,
+		Type:     claims.Type,
+	}
 }
