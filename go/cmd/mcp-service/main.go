@@ -75,23 +75,36 @@ func run() error {
 	}
 
 	// ── 6. Event sink (tool calls) ────────────────────────────────────────────
-	// Mode: postgres (default), clickhouse, dual
+	// Mode: postgres (default), clickhouse (blocked), dual
+	// Safety: ValidateEventsMode rejects unknown values and blocks clickhouse-only mode
 	var toolEventSink events.EventSink
-	eventsMode := os.Getenv("THE_M_EVENTS_TOOLS")
+	eventsMode, err := events.ValidateEventsMode("THE_M_EVENTS_TOOLS")
+	if err != nil {
+		log.Error("invalid events mode", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: %w", err)
+	}
+
+	// Check Redis requirement for dual/clickhouse modes
+	redisEventsAddr := ""
+	if redisEvents != nil {
+		redisEventsAddr = cfg.RedisEventsAddr()
+	}
+	if err := events.RequireRedisForMode(eventsMode, redisEventsAddr); err != nil {
+		log.Error("events mode configuration error", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: %w", err)
+	}
+
 	switch eventsMode {
-	case "clickhouse", "dual":
-		// Redis Streams sink → them-event-writer → ClickHouse
-		// Requires redisEvents to be configured (REDIS_EVENTS_HOST)
-		if redisEvents == nil {
-			log.Error("THE_M_EVENTS_TOOLS=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
-			return fmt.Errorf("startup: events tool mode requires dedicated Redis events queue")
-		}
+	case events.ModeDual:
+		// Dual mode: Postgres (authoritative) + ClickHouse (mirror)
+		// Mirror failures are logged but don't block requests
 		toolEventSink = events.NewRedisSink(redisEvents.Client(), "them:events", 10000, 1*time.Second)
-		log.Info("tool events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
+		log.Info("tool events sink: dual mode (Postgres authoritative, ClickHouse mirror)",
+			"mode", eventsMode, "redis", cfg.RedisEventsAddr())
 	default:
-		// "postgres" or empty — no event emission (greenfield, no Postgres writes)
+		// ModePostgres: no event emission (greenfield, no Postgres tool calls table yet)
 		toolEventSink = nil
-		log.Info("tool events sink: disabled (default)", "mode", eventsMode)
+		log.Info("tool events sink: disabled (Postgres only)", "mode", eventsMode)
 	}
 
 	// ── 7. MCP internals ──────────────────────────────────────────────────────

@@ -104,21 +104,36 @@ func run() error {
 	}
 
 	// ── 4c. Event sink (user activity) ────────────────────────────────────────
-	// Mode: postgres (default), clickhouse, dual
+	// Mode: postgres (default), clickhouse (blocked), dual
+	// Safety: ValidateEventsMode rejects unknown values and blocks clickhouse-only mode
 	var authEventSink events.EventSink
-	eventsMode := os.Getenv("THE_M_EVENTS_AUTH")
-	if eventsMode == "clickhouse" || eventsMode == "dual" {
-		if redisEventsClient == nil {
-			log.Error("THE_M_EVENTS_AUTH=clickhouse/dual requires REDIS_EVENTS_HOST to be set")
-			return fmt.Errorf("startup: events auth mode requires dedicated Redis events queue")
-		}
-		// Redis Streams sink → them-event-writer → ClickHouse
+	eventsMode, err := events.ValidateEventsMode("THE_M_EVENTS_AUTH")
+	if err != nil {
+		log.Error("invalid events mode", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: %w", err)
+	}
+
+	// Check Redis requirement for dual/clickhouse modes
+	redisEventsAddr := ""
+	if redisEventsClient != nil {
+		redisEventsAddr = cfg.RedisEventsAddr()
+	}
+	if err := events.RequireRedisForMode(eventsMode, redisEventsAddr); err != nil {
+		log.Error("events mode configuration error", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: %w", err)
+	}
+
+	switch eventsMode {
+	case events.ModeDual:
+		// Dual mode: Postgres (authoritative) + ClickHouse (mirror)
+		// Mirror failures are logged but don't block requests
 		authEventSink = events.NewRedisSink(redisEventsClient, "them:events", 10000, 1*time.Second)
-		log.Info("auth events sink: ClickHouse (via Redis Streams)", "mode", eventsMode, "redis", cfg.RedisEventsAddr())
-	} else {
-		// "postgres" or empty — no event emission
+		log.Info("auth events sink: dual mode (Postgres authoritative, ClickHouse mirror)",
+			"mode", eventsMode, "redis", cfg.RedisEventsAddr())
+	default:
+		// ModePostgres: no event emission, Postgres writes only
 		authEventSink = nil
-		log.Info("auth events sink: disabled (default)", "mode", eventsMode)
+		log.Info("auth events sink: disabled (Postgres only)", "mode", eventsMode)
 	}
 
 	handlers := authserver.NewHandlers(svc, cfg, log).WithEventSink(authEventSink)

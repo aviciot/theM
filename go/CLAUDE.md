@@ -48,6 +48,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/gate/` | Runtime admission gate. Check (SADD + ReservationTTL 10s) → Register (Hash in session) → Confirm (extend to 90s). Rollback on Register failure. Queue via BLPop signal channel; wake is a re-compete not a guarantee. | `gate.go` |
 | `internal/session/` | Session lifecycle — Hash (state) only. Atomic Lua SREM+DEL shadow on End. | `session.go` |
 | `internal/event/` | In-process fan-out event bus | `bus.go` |
+| `internal/events/` | Observability events — EventSink (Redis Streams → ClickHouse), EventsMode validation, RecoverPending with periodic recovery, retention policy | `redis.go`, `mode.go`, `clickhouse.go` |
+| `cmd/event-writer/` | Event consumer — reads Redis Streams (consumer group), writes ClickHouse, handles recovery + retention | `main.go`, `recovery_test.go`, `retention.go` |
 | `internal/domain/` | Canonical Message/Run types, status enums | `domain.go` |
 | `internal/runrecorder/` | Run persistence to them.runs / run_steps / run_usage | `recorder.go` |
 | `internal/llm/` | Provider interface, AnthropicProvider, MockProvider | `provider.go`, `anthropic.go`, `mock.go` |
