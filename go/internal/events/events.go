@@ -14,17 +14,17 @@ import (
 // Event is the top-level envelope for all event types.
 // Every event carries tenant_id for isolation and event_id for deduplication.
 type Event struct {
-	EventID       string    `json:"event_id"`       // UUID v4 — dedup key (at-least-once delivery)
-	SchemaVersion uint16    `json:"schema_version"` // schema version — allows writer to route unknown versions to DLQ
-	Timestamp     time.Time `json:"timestamp"`      // event occurrence time (not insertion time)
-	TenantID      string    `json:"tenant_id"`      // UUID — tenant boundary
-	Kind          EventKind `json:"kind"`           // discriminator for payload type
+	EventID       string    `json:"EventID"`       // UUID v4 — dedup key (at-least-once delivery)
+	SchemaVersion uint16    `json:"SchemaVersion"` // schema version — allows writer to route unknown versions to DLQ
+	Timestamp     time.Time `json:"Timestamp"`      // event occurrence time (not insertion time)
+	TenantID      string    `json:"TenantID"`      // UUID — tenant boundary
+	Kind          EventKind `json:"Kind"`           // discriminator for payload type
 
 	// Payload — exactly one must be non-nil
-	GatewayRequest *GatewayRequestEvent `json:"gateway_request,omitempty"`
-	ToolCall       *ToolCallEvent       `json:"tool_call,omitempty"`
-	UserActivity   *UserActivityEvent   `json:"user_activity,omitempty"`
-	Audit          *AuditEvent          `json:"audit,omitempty"`
+	GatewayRequest *GatewayRequestEvent `json:"GatewayRequest,omitempty"`
+	ToolCall       *ToolCallEvent       `json:"ToolCall,omitempty"`
+	UserActivity   *UserActivityEvent   `json:"UserActivity,omitempty"`
+	Audit          *AuditEvent          `json:"Audit,omitempty"`
 	// Conversation, RunStep, etc. added in Stage B
 }
 
@@ -41,24 +41,24 @@ const (
 // GatewayRequestEvent — LLM Gateway request metadata (bodies stored separately via BodyStore).
 // Maps to ClickHouse events_gateway_request + Postgres gateway_requests.
 type GatewayRequestEvent struct {
-	ApplicationID  string  `json:"application_id"`           // UUID
-	ClientID       string  `json:"client_id"`                // UUID — may be empty (direct call, not via gateway client)
-	UserID         string  `json:"user_id"`                  // external_user_id or user_id as string
-	RequestID      string  `json:"request_id"`               // UUID — correlates with bodies
-	TraceID        string  `json:"trace_id,omitempty"`       // distributed trace ID
-	Provider       string  `json:"provider"`                 // 'anthropic', 'openai', etc.
-	ModelRequested string  `json:"model_requested"`          // client's model string
-	ModelServed    string  `json:"model_served"`             // actual model sent upstream
-	Status         string  `json:"status"`                   // 'ok', 'error', 'blocked', 'rate_limited'
-	HTTPStatus     uint16  `json:"http_status,omitempty"`    //
-	ErrorCode      string  `json:"error_code,omitempty"`     //
-	TokensIn       uint32  `json:"tokens_in"`                //
-	TokensOut      uint32  `json:"tokens_out"`               //
-	CostUSD        float64 `json:"cost_usd"`                 // stored as Decimal(12,8) in ClickHouse
-	LatencyMS      uint32  `json:"latency_ms"`               //
-	TTFBMS         uint32  `json:"ttfb_ms,omitempty"`        // time-to-first-byte for streaming
-	Streamed       bool    `json:"streamed,omitempty"`       //
-	BodyRef        string  `json:"body_ref,omitempty"`       // UUID — points to events_bodies (optional)
+	ApplicationID  string  `json:"ApplicationID"`           // UUID
+	ClientID       string  `json:"ClientID"`                // UUID — may be empty (direct call, not via gateway client)
+	UserID         string  `json:"UserID"`                  // external_user_id or user_id as string
+	RequestID      string  `json:"RequestID"`               // UUID — correlates with bodies
+	TraceID        string  `json:"TraceID,omitempty"`       // distributed trace ID
+	Provider       string  `json:"Provider"`                 // 'anthropic', 'openai', etc.
+	ModelRequested string  `json:"ModelRequested"`          // client's model string
+	ModelServed    string  `json:"ModelServed"`             // actual model sent upstream
+	Status         string  `json:"Status"`                   // 'ok', 'error', 'blocked', 'rate_limited'
+	HTTPStatus     uint16  `json:"HTTPStatus,omitempty"`    //
+	ErrorCode      string  `json:"ErrorCode,omitempty"`     //
+	TokensIn       uint32  `json:"TokensIn"`                //
+	TokensOut      uint32  `json:"TokensOut"`               //
+	CostUSD        float64 `json:"CostUSD"`                 // stored as Decimal(12,8) in ClickHouse
+	LatencyMS      uint32  `json:"LatencyMS"`               //
+	TTFBMS         uint32  `json:"TTFBMS,omitempty"`        // time-to-first-byte for streaming
+	Streamed       bool    `json:"Streamed,omitempty"`       //
+	BodyRef        string  `json:"BodyRef,omitempty"`       // UUID — points to events_bodies (optional)
 }
 
 // ToolCallEvent — MCP or agent tool invocation.

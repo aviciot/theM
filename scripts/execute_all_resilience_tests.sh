@@ -4,7 +4,7 @@
 
 set -e
 
-TEST_RUNNER_URL="http://10.55.125.43:8090"
+TEST_RUNNER_URL="http://10.55.125.43:8093"
 SCENARIO_ID="50-event-delivery-test"
 
 echo "=== Event Delivery Resilience Tests ==="
@@ -20,9 +20,9 @@ trigger_test() {
 
     RESPONSE=$(curl -s -X POST "$TEST_RUNNER_URL/run" \
         -H "Content-Type: application/json" \
-        -d "{\"scenarioId\":\"$SCENARIO_ID\"}")
+        -d "{\"scenario_id\":\"$SCENARIO_ID\"}")
 
-    RUN_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('runId', ''))" 2>/dev/null || echo "")
+    RUN_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('run_id', ''))" 2>/dev/null || echo "")
 
     if [ -z "$RUN_ID" ]; then
         echo "  ❌ Failed to trigger test"
