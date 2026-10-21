@@ -316,12 +316,22 @@ func (c *EventConsumer) RecoverPending(ctx context.Context) error {
 				continue
 			}
 
-			// Write to ClickHouse with retry
+			// Validate and write event
 			var lastErr error
 			success := false
+
 			for attempt := 1; attempt <= maxRetries; attempt++ {
 				if err := c.sink.Emit(ctx, event); err != nil {
-					c.logger.Error("failed to write recovered event", "error", err, "event_id", event.EventID, "msg_id", msg.ID, "attempt", attempt)
+					// Check if malformed (validation error)
+					if events.IsMalformedEvent(err) {
+						// Don't retry validation errors
+						c.logger.Warn("poison event during recovery", "msg_id", msg.ID, "event_id", event.EventID, "error", err)
+						lastErr = err
+						break // Stop retrying
+					}
+
+					// Transient error → retry
+					c.logger.Error("failed to write recovered event (transient)", "error", err, "event_id", event.EventID, "msg_id", msg.ID, "attempt", attempt)
 					lastErr = err
 					if attempt < maxRetries {
 						time.Sleep(time.Second * time.Duration(attempt))
@@ -332,19 +342,34 @@ func (c *EventConsumer) RecoverPending(ctx context.Context) error {
 				}
 			}
 
-			if !success {
-				c.logger.Error("recovered event write failed after retries", "error", lastErr, "msg_id", msg.ID)
-				totalFailed++
-				// Don't ACK - leave pending for next recovery attempt
-				continue
-			}
-
-			// ACK after successful write
-			if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
-				c.logger.Error("failed to ACK recovered event", "error", err, "msg_id", msg.ID)
-				totalFailed++
+			// Handle result
+			if success {
+				// ACK after successful write
+				if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+					c.logger.Error("failed to ACK recovered event", "error", err, "msg_id", msg.ID)
+					totalFailed++
+				} else {
+					totalRecovered++
+				}
+			} else if events.IsMalformedEvent(lastErr) {
+				// Move poison to DLQ
+				if err := c.moveToDLQ(ctx, msg.ID, fmt.Sprintf("validation_failed: %v", lastErr)); err != nil {
+					c.logger.Error("failed to move poison event to DLQ", "error", err, "msg_id", msg.ID)
+					totalFailed++
+					continue // Leave pending for manual intervention
+				}
+				// ACK poison event after DLQ write
+				if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+					c.logger.Error("failed to ACK poison event", "error", err, "msg_id", msg.ID)
+					totalFailed++
+				} else {
+					totalPoison++
+				}
 			} else {
-				totalRecovered++
+				// Transient failure after retries → leave pending for next recovery
+				c.logger.Error("recovered event write failed after retries (transient)", "error", lastErr, "msg_id", msg.ID)
+				totalFailed++
+				// Don't ACK - will retry in next RecoverPending call
 			}
 		}
 
@@ -410,64 +435,130 @@ func (c *EventConsumer) Run(ctx context.Context) {
 
 		// Write valid events to ClickHouse with retry
 		if len(batch) > 0 {
-			var lastErr error
-			for attempt := 1; attempt <= maxRetries; attempt++ {
-				success := true
-				for _, event := range batch {
-					if err := c.sink.Emit(ctx, event); err != nil {
-						c.logger.Error("failed to write event", "error", err, "event_id", event.EventID, "attempt", attempt)
-						lastErr = err
-						success = false
-						break
-					}
-				}
+			// Process each event, separating valid from malformed
+			validEvents := []events.Event{}
+			validMsgIDs := []string{}
+			malformedEvents := []struct {
+				msgID string
+				err   error
+			}{}
 
-				if success {
-					// ACK messages in Redis
-					if err := c.ackMessages(ctx, messageIDs); err != nil {
-						c.logger.Error("failed to ack messages", "error", err)
-						// Don't clear batch — ACK failure means messages stay pending for recovery
+			for i, event := range batch {
+				if err := c.sink.Emit(ctx, event); err != nil {
+					if events.IsMalformedEvent(err) {
+						// Validation failed → poison
+						c.logger.Warn("poison event in batch", "msg_id", messageIDs[i], "event_id", event.EventID, "error", err)
+						malformedEvents = append(malformedEvents, struct {
+							msgID string
+							err   error
+						}{messageIDs[i], err})
+					} else {
+						// Transient failure → retry entire batch
+						c.logger.Error("failed to write event (transient)", "error", err, "event_id", event.EventID)
+
+						// Retry batch with backoff
+						var lastErr error
+						for attempt := 1; attempt <= maxRetries; attempt++ {
+							success := true
+							for j, evt := range batch {
+								if err := c.sink.Emit(ctx, evt); err != nil {
+									lastErr = err
+									success = false
+									if events.IsMalformedEvent(err) {
+										// New poison discovered mid-retry
+										c.logger.Warn("poison event discovered during retry", "msg_id", messageIDs[j], "error", err)
+										malformedEvents = append(malformedEvents, struct {
+											msgID string
+											err   error
+										}{messageIDs[j], err})
+										continue
+									}
+									break // Transient error → stop and retry batch
+								}
+							}
+
+							if success {
+								// ACK all messages
+								if err := c.ackMessages(ctx, messageIDs); err != nil {
+									c.logger.Error("failed to ack messages", "error", err)
+									return
+								}
+
+								// Move poison to DLQ
+								for _, poison := range malformedEvents {
+									if err := c.moveToDLQ(ctx, poison.msgID, fmt.Sprintf("validation_failed: %v", poison.err)); err != nil {
+										c.logger.Error("failed to move poison to DLQ", "error", err, "msg_id", poison.msgID)
+									}
+									// Poison already ACKed above
+									c.dlqCount++
+								}
+
+								c.logger.Info("batch written", "count", len(batch), "poison", len(malformedEvents))
+								c.processedCount += uint64(len(batch) - len(malformedEvents))
+								consecutiveFailures = 0
+								backoff = 1 * time.Second
+								batch = batch[:0]
+								messageIDs = messageIDs[:0]
+								return
+							}
+
+							if attempt < maxRetries {
+								sleep := backoff * time.Duration(attempt)
+								c.logger.Warn("retrying after backoff", "attempt", attempt, "backoff_ms", sleep.Milliseconds())
+								time.Sleep(sleep)
+							}
+						}
+
+						// All retries exhausted (transient failures)
+						c.logger.Error("batch write failed after retries (transient)", "error", lastErr, "count", len(batch))
+						c.failedCount += uint64(len(batch))
+						consecutiveFailures++
+						batch = batch[:0]
+						messageIDs = messageIDs[:0]
+
+						if consecutiveFailures >= 3 {
+							pauseDuration := min(backoff*time.Duration(consecutiveFailures), 30*time.Second)
+							c.logger.Warn("ClickHouse unavailable, pausing ingestion", "pause_ms", pauseDuration.Milliseconds())
+							time.Sleep(pauseDuration)
+						}
 						return
 					}
+				} else {
+					// Event written successfully
+					validEvents = append(validEvents, event)
+					validMsgIDs = append(validMsgIDs, messageIDs[i])
+				}
+			}
 
-					c.logger.Info("batch written", "count", len(batch))
-					c.processedCount += uint64(len(batch))
-					consecutiveFailures = 0
-					backoff = 1 * time.Second
-
-					// Clear batch
-					batch = batch[:0]
-					messageIDs = messageIDs[:0]
+			// ACK valid messages
+			if len(validMsgIDs) > 0 {
+				if err := c.ackMessages(ctx, validMsgIDs); err != nil {
+					c.logger.Error("failed to ack valid messages", "error", err)
 					return
 				}
+				c.processedCount += uint64(len(validMsgIDs))
+			}
 
-				// Retry with exponential backoff
-				if attempt < maxRetries {
-					sleep := backoff * time.Duration(attempt)
-					c.logger.Warn("retrying after backoff", "attempt", attempt, "backoff_ms", sleep.Milliseconds())
-					time.Sleep(sleep)
+			// Move malformed to DLQ and ACK
+			for _, poison := range malformedEvents {
+				if err := c.moveToDLQ(ctx, poison.msgID, fmt.Sprintf("validation_failed: %v", poison.err)); err != nil {
+					c.logger.Error("failed to move poison to DLQ", "error", err, "msg_id", poison.msgID)
+					continue
+				}
+				if err := c.ackMessages(ctx, []string{poison.msgID}); err != nil {
+					c.logger.Error("failed to ACK poison event", "error", err, "msg_id", poison.msgID)
+				} else {
+					c.dlqCount++
 				}
 			}
 
-			// All retries exhausted
-			c.logger.Error("batch write failed after retries", "error", lastErr, "count", len(batch))
-			c.failedCount += uint64(len(batch))
-			consecutiveFailures++
-
-			// Don't ACK — messages will be retried on next consumer restart via XAUTOCLAIM
-			// CRITICAL: Clear batch and messageIDs to enforce batch boundary.
-			// Without this, the consumer retains the failed batch and immediately
-			// retries it, creating a tight failure loop instead of moving forward.
+			if len(validEvents) > 0 || len(malformedEvents) > 0 {
+				c.logger.Info("batch processed", "valid", len(validEvents), "poison", len(malformedEvents))
+			}
+			consecutiveFailures = 0
+			backoff = 1 * time.Second
 			batch = batch[:0]
 			messageIDs = messageIDs[:0]
-
-			// Bounded processing: pause ingestion if ClickHouse is down
-			if consecutiveFailures >= 3 {
-				pauseDuration := min(backoff*time.Duration(consecutiveFailures), 30*time.Second)
-				c.logger.Warn("ClickHouse unavailable, pausing ingestion", "pause_ms", pauseDuration.Milliseconds())
-				time.Sleep(pauseDuration)
-			}
-			return
 		}
 	}
 

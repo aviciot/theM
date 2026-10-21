@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
@@ -454,18 +455,43 @@ func NewClickHouseSink(dsn string) (*ClickHouseSink, error) {
 
 // Emit writes an event to ClickHouse.
 func (c *ClickHouseSink) Emit(ctx context.Context, event Event) error {
+	// Validate BEFORE attempting write
+	if err := ValidateEvent(event); err != nil {
+		return fmt.Errorf("%w: %v", ErrMalformedEvent, err)
+	}
+
+	var err error
 	switch event.Kind {
 	case EventKindGatewayRequest:
-		return c.writeGatewayRequest(ctx, event.TenantID, event.Timestamp, event.EventID, event.GatewayRequest)
+		err = c.writeGatewayRequest(ctx, event.TenantID, event.Timestamp, event.EventID, event.GatewayRequest)
 	case EventKindToolCall:
-		return c.writeToolCall(ctx, event.TenantID, event.Timestamp, event.EventID, event.ToolCall)
+		err = c.writeToolCall(ctx, event.TenantID, event.Timestamp, event.EventID, event.ToolCall)
 	case EventKindUserActivity:
-		return c.writeUserActivity(ctx, event.TenantID, event.Timestamp, event.EventID, event.UserActivity)
+		err = c.writeUserActivity(ctx, event.TenantID, event.Timestamp, event.EventID, event.UserActivity)
 	case EventKindAudit:
-		return c.writeAudit(ctx, event.TenantID, event.Timestamp, event.EventID, event.Audit)
+		err = c.writeAudit(ctx, event.TenantID, event.Timestamp, event.EventID, event.Audit)
 	default:
 		return fmt.Errorf("clickhouse sink: unknown event kind: %s", event.Kind)
 	}
+
+	// Check if write failed due to ClickHouse connection issue (transient)
+	if err != nil && isClickHouseConnectionError(err) {
+		return fmt.Errorf("%w: %v", ErrTransientFailure, err)
+	}
+
+	return err
+}
+
+func isClickHouseConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "dial tcp") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "no such host")
 }
 
 // Close closes the ClickHouse connection.
