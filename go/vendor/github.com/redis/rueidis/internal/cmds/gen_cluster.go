@@ -83,6 +83,19 @@ func (c ClusterBumpepoch) Build() Completed {
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }
 
+type ClusterCancelslotmigrations Incomplete
+
+func (b Builder) ClusterCancelslotmigrations() (c ClusterCancelslotmigrations) {
+	c = ClusterCancelslotmigrations{cs: get(), ks: b.ks}
+	c.cs.s = append(c.cs.s, "CLUSTER", "CANCELSLOTMIGRATIONS")
+	return c
+}
+
+func (c ClusterCancelslotmigrations) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
 type ClusterCountFailureReports Incomplete
 
 func (b Builder) ClusterCountFailureReports() (c ClusterCountFailureReports) {
@@ -273,6 +286,19 @@ func (c ClusterGetkeysinslotSlot) Count(count int64) ClusterGetkeysinslotCount {
 	return (ClusterGetkeysinslotCount)(c)
 }
 
+type ClusterGetslotmigrations Incomplete
+
+func (b Builder) ClusterGetslotmigrations() (c ClusterGetslotmigrations) {
+	c = ClusterGetslotmigrations{cs: get(), ks: b.ks}
+	c.cs.s = append(c.cs.s, "CLUSTER", "GETSLOTMIGRATIONS")
+	return c
+}
+
+func (c ClusterGetslotmigrations) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
 type ClusterInfo Incomplete
 
 func (b Builder) ClusterInfo() (c ClusterInfo) {
@@ -356,6 +382,43 @@ func (c ClusterMeetPort) ClusterBusPort(clusterBusPort int64) ClusterMeetCluster
 func (c ClusterMeetPort) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterMigrateslots Incomplete
+
+func (b Builder) ClusterMigrateslots() (c ClusterMigrateslots) {
+	c = ClusterMigrateslots{cs: get(), ks: b.ks}
+	c.cs.s = append(c.cs.s, "CLUSTER", "MIGRATESLOTS")
+	return c
+}
+
+func (c ClusterMigrateslots) Slotsrange() ClusterMigrateslotsSlotMigrationSpecSlotsrange {
+	c.cs.s = append(c.cs.s, "SLOTSRANGE")
+	return (ClusterMigrateslotsSlotMigrationSpecSlotsrange)(c)
+}
+
+type ClusterMigrateslotsSlotMigrationSpecNode Incomplete
+
+func (c ClusterMigrateslotsSlotMigrationSpecNode) Slotsrange() ClusterMigrateslotsSlotMigrationSpecSlotsrange {
+	c.cs.s = append(c.cs.s, "SLOTSRANGE")
+	return (ClusterMigrateslotsSlotMigrationSpecSlotsrange)(c)
+}
+
+func (c ClusterMigrateslotsSlotMigrationSpecNode) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterMigrateslotsSlotMigrationSpecSlotsrange Incomplete
+
+func (c ClusterMigrateslotsSlotMigrationSpecSlotsrange) Slotsrange(startSlot int64, endSlot int64) ClusterMigrateslotsSlotMigrationSpecSlotsrange {
+	c.cs.s = append(c.cs.s, strconv.FormatInt(startSlot, 10), strconv.FormatInt(endSlot, 10))
+	return c
+}
+
+func (c ClusterMigrateslotsSlotMigrationSpecSlotsrange) Node(nodeId string) ClusterMigrateslotsSlotMigrationSpecNode {
+	c.cs.s = append(c.cs.s, "NODE", nodeId)
+	return (ClusterMigrateslotsSlotMigrationSpecNode)(c)
 }
 
 type ClusterMyid Incomplete
@@ -522,6 +585,11 @@ func (c ClusterSetslot) Slot(slot int64) ClusterSetslotSlot {
 
 type ClusterSetslotNodeId Incomplete
 
+func (c ClusterSetslotNodeId) Timeout(timeout int64) ClusterSetslotTimeout {
+	c.cs.s = append(c.cs.s, "TIMEOUT", strconv.FormatInt(timeout, 10))
+	return (ClusterSetslotTimeout)(c)
+}
+
 func (c ClusterSetslotNodeId) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
@@ -556,6 +624,11 @@ func (c ClusterSetslotSubcommandImporting) NodeId(nodeId string) ClusterSetslotN
 	return (ClusterSetslotNodeId)(c)
 }
 
+func (c ClusterSetslotSubcommandImporting) Timeout(timeout int64) ClusterSetslotTimeout {
+	c.cs.s = append(c.cs.s, "TIMEOUT", strconv.FormatInt(timeout, 10))
+	return (ClusterSetslotTimeout)(c)
+}
+
 func (c ClusterSetslotSubcommandImporting) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
@@ -566,6 +639,11 @@ type ClusterSetslotSubcommandMigrating Incomplete
 func (c ClusterSetslotSubcommandMigrating) NodeId(nodeId string) ClusterSetslotNodeId {
 	c.cs.s = append(c.cs.s, nodeId)
 	return (ClusterSetslotNodeId)(c)
+}
+
+func (c ClusterSetslotSubcommandMigrating) Timeout(timeout int64) ClusterSetslotTimeout {
+	c.cs.s = append(c.cs.s, "TIMEOUT", strconv.FormatInt(timeout, 10))
+	return (ClusterSetslotTimeout)(c)
 }
 
 func (c ClusterSetslotSubcommandMigrating) Build() Completed {
@@ -580,6 +658,11 @@ func (c ClusterSetslotSubcommandNode) NodeId(nodeId string) ClusterSetslotNodeId
 	return (ClusterSetslotNodeId)(c)
 }
 
+func (c ClusterSetslotSubcommandNode) Timeout(timeout int64) ClusterSetslotTimeout {
+	c.cs.s = append(c.cs.s, "TIMEOUT", strconv.FormatInt(timeout, 10))
+	return (ClusterSetslotTimeout)(c)
+}
+
 func (c ClusterSetslotSubcommandNode) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
@@ -592,7 +675,19 @@ func (c ClusterSetslotSubcommandStable) NodeId(nodeId string) ClusterSetslotNode
 	return (ClusterSetslotNodeId)(c)
 }
 
+func (c ClusterSetslotSubcommandStable) Timeout(timeout int64) ClusterSetslotTimeout {
+	c.cs.s = append(c.cs.s, "TIMEOUT", strconv.FormatInt(timeout, 10))
+	return (ClusterSetslotTimeout)(c)
+}
+
 func (c ClusterSetslotSubcommandStable) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterSetslotTimeout Incomplete
+
+func (c ClusterSetslotTimeout) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }
@@ -630,6 +725,105 @@ func (c ClusterSlavesNodeId) Build() Completed {
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }
 
+type ClusterSlotStats Incomplete
+
+func (b Builder) ClusterSlotStats() (c ClusterSlotStats) {
+	c = ClusterSlotStats{cs: get(), ks: b.ks}
+	c.cs.s = append(c.cs.s, "CLUSTER", "SLOT-STATS")
+	return c
+}
+
+func (c ClusterSlotStats) Slotsrange() ClusterSlotStatsFilterSlotsrangeSlotsrange {
+	c.cs.s = append(c.cs.s, "SLOTSRANGE")
+	return (ClusterSlotStatsFilterSlotsrangeSlotsrange)(c)
+}
+
+func (c ClusterSlotStats) Orderby() ClusterSlotStatsFilterOrderbyOrderby {
+	c.cs.s = append(c.cs.s, "ORDERBY")
+	return (ClusterSlotStatsFilterOrderbyOrderby)(c)
+}
+
+type ClusterSlotStatsFilterOrderbyLimit Incomplete
+
+func (c ClusterSlotStatsFilterOrderbyLimit) Asc() ClusterSlotStatsFilterOrderbyOrderAsc {
+	c.cs.s = append(c.cs.s, "ASC")
+	return (ClusterSlotStatsFilterOrderbyOrderAsc)(c)
+}
+
+func (c ClusterSlotStatsFilterOrderbyLimit) Desc() ClusterSlotStatsFilterOrderbyOrderDesc {
+	c.cs.s = append(c.cs.s, "DESC")
+	return (ClusterSlotStatsFilterOrderbyOrderDesc)(c)
+}
+
+func (c ClusterSlotStatsFilterOrderbyLimit) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterSlotStatsFilterOrderbyMetric Incomplete
+
+func (c ClusterSlotStatsFilterOrderbyMetric) Limit(limit int64) ClusterSlotStatsFilterOrderbyLimit {
+	c.cs.s = append(c.cs.s, "LIMIT", strconv.FormatInt(limit, 10))
+	return (ClusterSlotStatsFilterOrderbyLimit)(c)
+}
+
+func (c ClusterSlotStatsFilterOrderbyMetric) Asc() ClusterSlotStatsFilterOrderbyOrderAsc {
+	c.cs.s = append(c.cs.s, "ASC")
+	return (ClusterSlotStatsFilterOrderbyOrderAsc)(c)
+}
+
+func (c ClusterSlotStatsFilterOrderbyMetric) Desc() ClusterSlotStatsFilterOrderbyOrderDesc {
+	c.cs.s = append(c.cs.s, "DESC")
+	return (ClusterSlotStatsFilterOrderbyOrderDesc)(c)
+}
+
+func (c ClusterSlotStatsFilterOrderbyMetric) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterSlotStatsFilterOrderbyOrderAsc Incomplete
+
+func (c ClusterSlotStatsFilterOrderbyOrderAsc) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterSlotStatsFilterOrderbyOrderDesc Incomplete
+
+func (c ClusterSlotStatsFilterOrderbyOrderDesc) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterSlotStatsFilterOrderbyOrderby Incomplete
+
+func (c ClusterSlotStatsFilterOrderbyOrderby) Metric(metric string) ClusterSlotStatsFilterOrderbyMetric {
+	c.cs.s = append(c.cs.s, metric)
+	return (ClusterSlotStatsFilterOrderbyMetric)(c)
+}
+
+type ClusterSlotStatsFilterSlotsrangeEndSlot Incomplete
+
+func (c ClusterSlotStatsFilterSlotsrangeEndSlot) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterSlotStatsFilterSlotsrangeSlotsrange Incomplete
+
+func (c ClusterSlotStatsFilterSlotsrangeSlotsrange) StartSlot(startSlot int64) ClusterSlotStatsFilterSlotsrangeStartSlot {
+	c.cs.s = append(c.cs.s, strconv.FormatInt(startSlot, 10))
+	return (ClusterSlotStatsFilterSlotsrangeStartSlot)(c)
+}
+
+type ClusterSlotStatsFilterSlotsrangeStartSlot Incomplete
+
+func (c ClusterSlotStatsFilterSlotsrangeStartSlot) EndSlot(endSlot int64) ClusterSlotStatsFilterSlotsrangeEndSlot {
+	c.cs.s = append(c.cs.s, strconv.FormatInt(endSlot, 10))
+	return (ClusterSlotStatsFilterSlotsrangeEndSlot)(c)
+}
+
 type ClusterSlots Incomplete
 
 func (b Builder) ClusterSlots() (c ClusterSlots) {
@@ -639,6 +833,104 @@ func (b Builder) ClusterSlots() (c ClusterSlots) {
 }
 
 func (c ClusterSlots) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type Clusterscan Incomplete
+
+func (b Builder) Clusterscan() (c Clusterscan) {
+	c = Clusterscan{cs: get(), ks: b.ks}
+	c.cs.s = append(c.cs.s, "CLUSTERSCAN")
+	return c
+}
+
+func (c Clusterscan) Cursor(cursor string) ClusterscanCursor {
+	c.cs.s = append(c.cs.s, cursor)
+	return (ClusterscanCursor)(c)
+}
+
+type ClusterscanCount Incomplete
+
+func (c ClusterscanCount) Type(typ string) ClusterscanType {
+	c.cs.s = append(c.cs.s, "TYPE", typ)
+	return (ClusterscanType)(c)
+}
+
+func (c ClusterscanCount) Slot(slot int64) ClusterscanSlot {
+	c.cs.s = append(c.cs.s, "SLOT", strconv.FormatInt(slot, 10))
+	return (ClusterscanSlot)(c)
+}
+
+func (c ClusterscanCount) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterscanCursor Incomplete
+
+func (c ClusterscanCursor) Match(pattern string) ClusterscanMatch {
+	c.cs.s = append(c.cs.s, "MATCH", pattern)
+	return (ClusterscanMatch)(c)
+}
+
+func (c ClusterscanCursor) Count(count int64) ClusterscanCount {
+	c.cs.s = append(c.cs.s, "COUNT", strconv.FormatInt(count, 10))
+	return (ClusterscanCount)(c)
+}
+
+func (c ClusterscanCursor) Type(typ string) ClusterscanType {
+	c.cs.s = append(c.cs.s, "TYPE", typ)
+	return (ClusterscanType)(c)
+}
+
+func (c ClusterscanCursor) Slot(slot int64) ClusterscanSlot {
+	c.cs.s = append(c.cs.s, "SLOT", strconv.FormatInt(slot, 10))
+	return (ClusterscanSlot)(c)
+}
+
+func (c ClusterscanCursor) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterscanMatch Incomplete
+
+func (c ClusterscanMatch) Count(count int64) ClusterscanCount {
+	c.cs.s = append(c.cs.s, "COUNT", strconv.FormatInt(count, 10))
+	return (ClusterscanCount)(c)
+}
+
+func (c ClusterscanMatch) Type(typ string) ClusterscanType {
+	c.cs.s = append(c.cs.s, "TYPE", typ)
+	return (ClusterscanType)(c)
+}
+
+func (c ClusterscanMatch) Slot(slot int64) ClusterscanSlot {
+	c.cs.s = append(c.cs.s, "SLOT", strconv.FormatInt(slot, 10))
+	return (ClusterscanSlot)(c)
+}
+
+func (c ClusterscanMatch) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterscanSlot Incomplete
+
+func (c ClusterscanSlot) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ClusterscanType Incomplete
+
+func (c ClusterscanType) Slot(slot int64) ClusterscanSlot {
+	c.cs.s = append(c.cs.s, "SLOT", strconv.FormatInt(slot, 10))
+	return (ClusterscanSlot)(c)
+}
+
+func (c ClusterscanType) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }

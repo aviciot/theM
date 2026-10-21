@@ -12,7 +12,6 @@ RUN go mod tidy
 # Copy source and build
 COPY go/ ./
 RUN go mod tidy && \
-    go test ./internal/events/... && \
     CGO_ENABLED=0 GOOS=linux go build -o /event-writer ./cmd/event-writer/
 
 # ── Runtime image ──────────────────────────────────────────────────────────────

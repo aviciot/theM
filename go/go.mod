@@ -9,7 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.1
 	github.com/jackc/pgx/v5 v5.6.0
 	github.com/prometheus/client_golang v1.19.1
-	github.com/redis/rueidis v1.0.43
+	github.com/redis/rueidis v1.0.79
 	github.com/stretchr/testify v1.11.1
 	go.temporal.io/sdk v1.26.1
 )

@@ -624,6 +624,18 @@ func (c Zinter) Numkeys(numkeys int64) ZinterNumkeys {
 	return (ZinterNumkeys)(c)
 }
 
+type ZinterAggregateCount Incomplete
+
+func (c ZinterAggregateCount) Withscores() ZinterWithscores {
+	c.cs.s = append(c.cs.s, "WITHSCORES")
+	return (ZinterWithscores)(c)
+}
+
+func (c ZinterAggregateCount) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
 type ZinterAggregateMax Incomplete
 
 func (c ZinterAggregateMax) Withscores() ZinterWithscores {
@@ -700,6 +712,11 @@ func (c ZinterKey) AggregateMax() ZinterAggregateMax {
 	return (ZinterAggregateMax)(c)
 }
 
+func (c ZinterKey) AggregateCount() ZinterAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZinterAggregateCount)(c)
+}
+
 func (c ZinterKey) Withscores() ZinterWithscores {
 	c.cs.s = append(c.cs.s, "WITHSCORES")
 	return (ZinterWithscores)(c)
@@ -750,6 +767,11 @@ func (c ZinterWeights) AggregateMin() ZinterAggregateMin {
 func (c ZinterWeights) AggregateMax() ZinterAggregateMax {
 	c.cs.s = append(c.cs.s, "AGGREGATE", "MAX")
 	return (ZinterAggregateMax)(c)
+}
+
+func (c ZinterWeights) AggregateCount() ZinterAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZinterAggregateCount)(c)
 }
 
 func (c ZinterWeights) Withscores() ZinterWithscores {
@@ -851,6 +873,13 @@ func (c Zinterstore) Destination(destination string) ZinterstoreDestination {
 	return (ZinterstoreDestination)(c)
 }
 
+type ZinterstoreAggregateCount Incomplete
+
+func (c ZinterstoreAggregateCount) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
 type ZinterstoreAggregateMax Incomplete
 
 func (c ZinterstoreAggregateMax) Build() Completed {
@@ -919,6 +948,11 @@ func (c ZinterstoreKey) AggregateMax() ZinterstoreAggregateMax {
 	return (ZinterstoreAggregateMax)(c)
 }
 
+func (c ZinterstoreKey) AggregateCount() ZinterstoreAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZinterstoreAggregateCount)(c)
+}
+
 func (c ZinterstoreKey) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
@@ -964,6 +998,11 @@ func (c ZinterstoreWeights) AggregateMin() ZinterstoreAggregateMin {
 func (c ZinterstoreWeights) AggregateMax() ZinterstoreAggregateMax {
 	c.cs.s = append(c.cs.s, "AGGREGATE", "MAX")
 	return (ZinterstoreAggregateMax)(c)
+}
+
+func (c ZinterstoreWeights) AggregateCount() ZinterstoreAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZinterstoreAggregateCount)(c)
 }
 
 func (c ZinterstoreWeights) Build() Completed {
@@ -2197,6 +2236,11 @@ func (c Zscan) Key(key string) ZscanKey {
 
 type ZscanCount Incomplete
 
+func (c ZscanCount) Noscores() ZscanNoscores {
+	c.cs.s = append(c.cs.s, "NOSCORES")
+	return (ZscanNoscores)(c)
+}
+
 func (c ZscanCount) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
@@ -2212,6 +2256,11 @@ func (c ZscanCursor) Match(pattern string) ZscanMatch {
 func (c ZscanCursor) Count(count int64) ZscanCount {
 	c.cs.s = append(c.cs.s, "COUNT", strconv.FormatInt(count, 10))
 	return (ZscanCount)(c)
+}
+
+func (c ZscanCursor) Noscores() ZscanNoscores {
+	c.cs.s = append(c.cs.s, "NOSCORES")
+	return (ZscanNoscores)(c)
 }
 
 func (c ZscanCursor) Build() Completed {
@@ -2233,7 +2282,19 @@ func (c ZscanMatch) Count(count int64) ZscanCount {
 	return (ZscanCount)(c)
 }
 
+func (c ZscanMatch) Noscores() ZscanNoscores {
+	c.cs.s = append(c.cs.s, "NOSCORES")
+	return (ZscanNoscores)(c)
+}
+
 func (c ZscanMatch) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
+}
+
+type ZscanNoscores Incomplete
+
+func (c ZscanNoscores) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }
@@ -2286,6 +2347,18 @@ func (b Builder) Zunion() (c Zunion) {
 func (c Zunion) Numkeys(numkeys int64) ZunionNumkeys {
 	c.cs.s = append(c.cs.s, strconv.FormatInt(numkeys, 10))
 	return (ZunionNumkeys)(c)
+}
+
+type ZunionAggregateCount Incomplete
+
+func (c ZunionAggregateCount) Withscores() ZunionWithscores {
+	c.cs.s = append(c.cs.s, "WITHSCORES")
+	return (ZunionWithscores)(c)
+}
+
+func (c ZunionAggregateCount) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }
 
 type ZunionAggregateMax Incomplete
@@ -2364,6 +2437,11 @@ func (c ZunionKey) AggregateMax() ZunionAggregateMax {
 	return (ZunionAggregateMax)(c)
 }
 
+func (c ZunionKey) AggregateCount() ZunionAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZunionAggregateCount)(c)
+}
+
 func (c ZunionKey) Withscores() ZunionWithscores {
 	c.cs.s = append(c.cs.s, "WITHSCORES")
 	return (ZunionWithscores)(c)
@@ -2416,6 +2494,11 @@ func (c ZunionWeights) AggregateMax() ZunionAggregateMax {
 	return (ZunionAggregateMax)(c)
 }
 
+func (c ZunionWeights) AggregateCount() ZunionAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZunionAggregateCount)(c)
+}
+
 func (c ZunionWeights) Withscores() ZunionWithscores {
 	c.cs.s = append(c.cs.s, "WITHSCORES")
 	return (ZunionWithscores)(c)
@@ -2449,6 +2532,13 @@ func (c Zunionstore) Destination(destination string) ZunionstoreDestination {
 	}
 	c.cs.s = append(c.cs.s, destination)
 	return (ZunionstoreDestination)(c)
+}
+
+type ZunionstoreAggregateCount Incomplete
+
+func (c ZunionstoreAggregateCount) Build() Completed {
+	c.cs.Build()
+	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
 }
 
 type ZunionstoreAggregateMax Incomplete
@@ -2519,6 +2609,11 @@ func (c ZunionstoreKey) AggregateMax() ZunionstoreAggregateMax {
 	return (ZunionstoreAggregateMax)(c)
 }
 
+func (c ZunionstoreKey) AggregateCount() ZunionstoreAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZunionstoreAggregateCount)(c)
+}
+
 func (c ZunionstoreKey) Build() Completed {
 	c.cs.Build()
 	return Completed{cs: c.cs, cf: uint16(c.cf), ks: c.ks}
@@ -2564,6 +2659,11 @@ func (c ZunionstoreWeights) AggregateMin() ZunionstoreAggregateMin {
 func (c ZunionstoreWeights) AggregateMax() ZunionstoreAggregateMax {
 	c.cs.s = append(c.cs.s, "AGGREGATE", "MAX")
 	return (ZunionstoreAggregateMax)(c)
+}
+
+func (c ZunionstoreWeights) AggregateCount() ZunionstoreAggregateCount {
+	c.cs.s = append(c.cs.s, "AGGREGATE", "COUNT")
+	return (ZunionstoreAggregateCount)(c)
 }
 
 func (c ZunionstoreWeights) Build() Completed {

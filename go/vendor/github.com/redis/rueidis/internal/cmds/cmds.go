@@ -3,14 +3,22 @@ package cmds
 import "strings"
 
 const (
-	optInTag = uint16(1 << 15)
-	blockTag = uint16(1 << 14)
-	readonly = uint16(1 << 13)
-	noRetTag = uint16(1<<12) | readonly // make noRetTag can also be retried
-	mtGetTag = uint16(1<<11) | readonly // make mtGetTag can also be retried
-	scrRoTag = uint16(1<<10) | readonly // make scrRoTag can also be retried
+	optInTag     = uint16(1 << 15)
+	blockTag     = uint16(1 << 14)
+	readonly     = uint16(1<<13) | retryableTag
+	noRetTag     = uint16(1<<12) | readonly | pipeTag // make noRetTag can also be retried and auto pipelining
+	mtGetTag     = uint16(1<<11) | readonly           // make mtGetTag can also be retried
+	scrRoTag     = uint16(1<<10) | readonly           // make scrRoTag can also be retried
+	unsubTag     = uint16(1<<9) | noRetTag
+	pipeTag      = uint16(1 << 8) // make blocking mode request can use auto pipelining
+	retryableTag = uint16(1 << 7) // make command retryable
+	// staticTTLTag marks a cacheable command whose reply the read
+	// goroutine commits directly to the client-side cache (no
+	// MULTI/EXEC unwrap). Set via Cacheable.ToStaticTTL().
+	staticTTLTag = uint16(1 << 6)
+	// make single blocking command attempt unblock and reuse the connection instead of closing it when canceled
+	unblockTag = uint16(1 << 5)
 	// InitSlot indicates that the command be sent to any redis node in cluster
-	// When SendToReplicas is set, InitSlot command will be sent to primary node
 	InitSlot = uint16(1 << 14)
 	// NoSlot indicates that the command has no key slot specified
 	NoSlot = uint16(1 << 15)
@@ -20,6 +28,11 @@ var (
 	// OptInCmd is predefined CLIENT CACHING YES
 	OptInCmd = Completed{
 		cs: newCommandSlice([]string{"CLIENT", "CACHING", "YES"}),
+		cf: optInTag,
+	}
+	// OptInNopCmd is a predefined alternative for CLIENT CACHING YES in BCAST/OPTOUT mode.
+	OptInNopCmd = Completed{
+		cs: newCommandSlice([]string{"ECHO", ""}),
 		cf: optInTag,
 	}
 	// MultiCmd is predefined MULTI
@@ -33,22 +46,23 @@ var (
 	// RoleCmd is predefined ROLE
 	RoleCmd = Completed{
 		cs: newCommandSlice([]string{"ROLE"}),
+		cf: pipeTag,
 	}
 
 	// UnsubscribeCmd is predefined UNSUBSCRIBE
 	UnsubscribeCmd = Completed{
 		cs: newCommandSlice([]string{"UNSUBSCRIBE"}),
-		cf: noRetTag,
+		cf: unsubTag,
 	}
 	// PUnsubscribeCmd is predefined PUNSUBSCRIBE
 	PUnsubscribeCmd = Completed{
 		cs: newCommandSlice([]string{"PUNSUBSCRIBE"}),
-		cf: noRetTag,
+		cf: unsubTag,
 	}
 	// SUnsubscribeCmd is predefined SUNSUBSCRIBE
 	SUnsubscribeCmd = Completed{
 		cs: newCommandSlice([]string{"SUNSUBSCRIBE"}),
-		cf: noRetTag,
+		cf: unsubTag,
 	}
 	// PingCmd is predefined PING
 	PingCmd = Completed{
@@ -57,10 +71,12 @@ var (
 	// SlotCmd is predefined CLUSTER SLOTS
 	SlotCmd = Completed{
 		cs: newCommandSlice([]string{"CLUSTER", "SLOTS"}),
+		cf: pipeTag,
 	}
 	// ShardsCmd is predefined CLUSTER SHARDS
 	ShardsCmd = Completed{
 		cs: newCommandSlice([]string{"CLUSTER", "SHARDS"}),
+		cf: pipeTag,
 	}
 	// AskingCmd is predefined CLUSTER ASKING
 	AskingCmd = Completed{
@@ -74,7 +90,11 @@ var (
 	// SentinelUnSubscribe is predefined UNSUBSCRIBE ASKING
 	SentinelUnSubscribe = Completed{
 		cs: newCommandSlice([]string{"UNSUBSCRIBE", "+sentinel", "+slave", "-sdown", "+sdown", "+switch-master", "+reboot"}),
-		cf: noRetTag,
+		cf: unsubTag,
+	}
+	// ClientTrackingOffCmd is predefined CLIENT TRACKING OFF
+	ClientTrackingOffCmd = Completed{
+		cs: newCommandSlice([]string{"CLIENT", "TRACKING", "OFF"}),
 	}
 
 	// DiscardCmd is predefined DISCARD
@@ -88,7 +108,7 @@ func ToBlock(c *Completed) {
 	c.cf |= blockTag
 }
 
-// Incomplete represents an incomplete Redis command. It should then be completed by calling the Build().
+// Incomplete represents an incomplete Redis command. It should then be completed by calling Build().
 type Incomplete struct {
 	cs *CommandSlice
 	cf int16 // use int16 instead of uint16 to make a difference with Completed
@@ -108,6 +128,31 @@ func (c Completed) Pin() Completed {
 	return c
 }
 
+// ToPipe returns a new command with pipeTag
+func (c Completed) ToPipe() Completed {
+	c.cf |= pipeTag
+	return c
+}
+
+// ToRetryable return a new command with retryableTag
+func (c Completed) ToRetryable() Completed {
+	c.cf |= retryableTag
+	return c
+}
+
+// UnblockOnCancel returns a new command that, if it is a blocking command (ex. BLPOP) aborted by its context,
+// makes the client send CLIENT UNBLOCK and reuse the connection if the server confirms it was unblocked, instead
+// of closing it. It requires Redis 6+ and permission to run CLIENT UNBLOCK, otherwise the connection is closed as before.
+// It only applies to Do, and under ClientOption.DisableAutoPipelining only together with ToPipe().
+// It has no effect on DoMulti or on a DedicatedClient.
+// Do not use it behind proxies that may route connections to different servers, as CLIENT UNBLOCK may reach
+// another server and unblock an unrelated client.
+// Ref: https://github.com/redis/rueidis/issues/897
+func (c Completed) UnblockOnCancel() Completed {
+	c.cf |= unblockTag
+	return c
+}
+
 // IsEmpty checks if it is an empty command.
 func (c *Completed) IsEmpty() bool {
 	return c.cs == nil || len(c.cs.s) == 0
@@ -116,6 +161,21 @@ func (c *Completed) IsEmpty() bool {
 // IsOptIn checks if it is client side caching opt-int command.
 func (c *Completed) IsOptIn() bool {
 	return c.cf&optInTag == optInTag
+}
+
+// IsStaticTTL reports whether the cacheable command was tagged with
+// Cacheable.ToStaticTTL. When set, the connection's read goroutine
+// commits the reply directly to the client-side cache and skips the
+// MULTI/PTTL/EXEC wrapper.
+func IsStaticTTL(c Completed) bool {
+	return c.cf&staticTTLTag == staticTTLTag
+}
+
+// ClearStaticTTL clears the staticTTLTag from the command. Used
+// at wrapped-wire (MULTI/EXEC) build sites so the read goroutine's
+// direct-commit gate cannot fire on the cmd's "QUEUED" reply.
+func ClearStaticTTL(c *Cacheable) {
+	c.cf &^= staticTTLTag
 }
 
 // IsBlock checks if it is blocking command which needs to be process by dedicated connection.
@@ -128,6 +188,11 @@ func (c *Completed) NoReply() bool {
 	return c.cf&noRetTag == noRetTag
 }
 
+// IsUnsub checks if it is one of the UNSUBSCRIBE, PUNSUBSCRIBE, or SUNSUBSCRIBE commands.
+func (c *Completed) IsUnsub() bool {
+	return c.cf&unsubTag == unsubTag
+}
+
 // IsReadOnly checks if it is readonly command and can be retried when network error.
 func (c *Completed) IsReadOnly() bool {
 	return c.cf&readonly == readonly
@@ -136,6 +201,29 @@ func (c *Completed) IsReadOnly() bool {
 // IsWrite checks if it is not readonly command.
 func (c *Completed) IsWrite() bool {
 	return !c.IsReadOnly()
+}
+
+// IsPipe checks if it is set pipeTag which prefers auto pipelining
+func (c *Completed) IsPipe() bool {
+	return c.cf&pipeTag == pipeTag
+}
+
+// IsRetryable checks if it is set retryableTag
+func (c *Completed) IsRetryable() bool {
+	return c.cf&retryableTag == retryableTag
+}
+
+// IsUnblockOnCancel checks if unblockTag is set
+func (c *Completed) IsUnblockOnCancel() bool {
+	return c.cf&unblockTag == unblockTag
+}
+
+// ClearUnblockOnCancel clears the unblockTag from the command. Used
+// by dedicated clients, which never send CLIENT UNBLOCK, so that a
+// canceled blocking command closes their connection instead of
+// leaving it blocked.
+func ClearUnblockOnCancel(c *Completed) {
+	c.cf &^= unblockTag
 }
 
 // Commands returns the commands as []string.
@@ -160,6 +248,8 @@ func (c Completed) SetSlot(key string) Completed {
 	return c
 }
 
+var Slot = slot
+
 // Cacheable represents a completed Redis command which supports server-assisted client side caching,
 // and it should be created by the Cache() of command builder.
 type Cacheable Completed
@@ -167,6 +257,34 @@ type Cacheable Completed
 // Pin prevents a Cacheable to be recycled
 func (c Cacheable) Pin() Cacheable {
 	c.cs.r = 1
+	return c
+}
+
+// ToStaticTTL marks the cacheable command so DoCache / DoMultiCache
+// skip the MULTI/PTTL/EXEC wrapper and use the caller-provided ttl
+// as authoritative for the client-side cache entry's lifetime.
+// Intended for callers whose freshness is enforced by active CLIENT
+// TRACKING invalidations on the cluster — writes that explicitly
+// invalidate the affected cached keys, making the per-read PTTL
+// clamp redundant — or who are willing to accept the client-supplied
+// ttl as the sole staleness bound: the client-side cache entry
+// expires at populate_time + ttl regardless of the server-side key's
+// PTTL. CLIENT TRACKING invalidations and LRU eviction still purge
+// entries; nothing extends them.
+//
+// MGET / JSON.MGET commands fall back to the default client-side
+// cache wire shape, which closely follows the Redis-side key TTL
+// via the per-read PTTL clamp. DoCache dispatches them to a
+// dedicated multi-key path before this tag is consulted; DoMultiCache
+// rejects MGET outright.
+//
+// For DoMultiCache, the direct wire is taken only when every command
+// in the batch is tagged with ToStaticTTL. A batch containing any
+// untagged command falls back to the standard wire for all of them
+// (the all-or-nothing rule). For best results, prefer batches that
+// are either fully tagged or fully untagged.
+func (c Cacheable) ToStaticTTL() Cacheable {
+	c.cf |= staticTTLTag
 	return c
 }
 
@@ -184,7 +302,7 @@ func (c *Cacheable) Commands() []string {
 
 // IsMGet returns if the command is MGET
 func (c *Cacheable) IsMGet() bool {
-	return c.cf == mtGetTag
+	return c.cf&mtGetTag == mtGetTag
 }
 
 // MGetCacheCmd returns the cache command of the MGET singular command
@@ -208,7 +326,7 @@ func CacheKey(c Cacheable) (key, command string) {
 
 	kp := 1
 
-	if c.cf == scrRoTag {
+	if c.cf&scrRoTag == scrRoTag {
 		if c.cs.s[2] != "1" {
 			panic(multiKeyCacheErr)
 		}
@@ -232,6 +350,12 @@ func CacheKey(c Cacheable) (key, command string) {
 		}
 	}
 	return key, sb.String()
+}
+
+// AppendCompleted appends an arg to a Completed
+func AppendCompleted(c Completed, s string) {
+	c.cs.s = append(c.cs.s, s)
+	c.cs.l += 1
 }
 
 // CompletedCS get the underlying *CommandSlice

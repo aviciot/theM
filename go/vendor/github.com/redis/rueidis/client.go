@@ -11,13 +11,15 @@ import (
 
 type singleClient struct {
 	conn         conn
+	retryHandler retryHandler
 	stop         uint32
 	cmd          Builder
 	retry        bool
+	hasLftm      bool
 	DisableCache bool
 }
 
-func newSingleClient(opt *ClientOption, prev conn, connFn connFn) (*singleClient, error) {
+func newSingleClient(opt *ClientOption, prev conn, connFn connFn, retryer retryHandler) (*singleClient, error) {
 	if len(opt.InitAddress) == 0 {
 		return nil, ErrNoAddr
 	}
@@ -28,14 +30,18 @@ func newSingleClient(opt *ClientOption, prev conn, connFn connFn) (*singleClient
 
 	conn := connFn(opt.InitAddress[0], opt)
 	conn.Override(prev)
-	if err := conn.Dial(); err != nil {
-		return nil, err
+	err := conn.Dial()
+	if err != nil {
+		if !opt.ForceSingleClient {
+			return nil, err
+		}
 	}
-	return newSingleClientWithConn(conn, cmds.NewBuilder(cmds.NoSlot), !opt.DisableRetry, opt.DisableCache), nil
+	// return a singleClient instance even when Dial fails if ForceSingleClient is true.
+	return newSingleClientWithConn(conn, cmds.NewBuilder(cmds.NoSlot), !opt.DisableRetry, opt.DisableCache, retryer, opt.ConnLifetime > 0), err
 }
 
-func newSingleClientWithConn(conn conn, builder Builder, retry, disableCache bool) *singleClient {
-	return &singleClient{cmd: builder, conn: conn, retry: retry, DisableCache: disableCache}
+func newSingleClientWithConn(conn conn, builder Builder, retry, disableCache bool, retryer retryHandler, hasLftm bool) *singleClient {
+	return &singleClient{cmd: builder, conn: conn, retry: retry, retryHandler: retryer, hasLftm: hasLftm, DisableCache: disableCache}
 }
 
 func (c *singleClient) B() Builder {
@@ -43,12 +49,21 @@ func (c *singleClient) B() Builder {
 }
 
 func (c *singleClient) Do(ctx context.Context, cmd Completed) (resp RedisResult) {
+	attempts := 1
 retry:
 	resp = c.conn.Do(ctx, cmd)
-	if c.retry && cmd.IsReadOnly() && c.isRetryable(resp.NonRedisError(), ctx) {
-		goto retry
+	if err := resp.Error(); err != nil {
+		if err == errConnExpired {
+			goto retry
+		}
+		if c.retry && cmd.IsRetryable() && c.isRetryable(err, ctx) {
+			if c.retryHandler.WaitOrSkipRetry(ctx, attempts, cmd, err) {
+				attempts++
+				goto retry
+			}
+		}
 	}
-	if resp.NonRedisError() == nil { // not recycle cmds if error, since cmds may be used later in pipe. consider recycle them by pipe
+	if resp.NonRedisError() == nil { // not recycle cmds if error, since cmds may be used later in the pipe.
 		cmds.PutCompleted(cmd)
 	}
 	return resp
@@ -62,7 +77,7 @@ func (c *singleClient) DoStream(ctx context.Context, cmd Completed) RedisResultS
 
 func (c *singleClient) DoMultiStream(ctx context.Context, multi ...Completed) MultiRedisResultStream {
 	if len(multi) == 0 {
-		return RedisResultStream{e: io.EOF}
+		return NewErrorResultStream(io.EOF)
 	}
 	s := c.conn.DoMultiStream(ctx, multi...)
 	for _, cmd := range multi {
@@ -75,12 +90,46 @@ func (c *singleClient) DoMulti(ctx context.Context, multi ...Completed) (resps [
 	if len(multi) == 0 {
 		return nil
 	}
+	attempts := 1
 retry:
 	resps = c.conn.DoMulti(ctx, multi...).s
-	if c.retry && allReadOnly(multi) {
-		for _, resp := range resps {
-			if c.isRetryable(resp.NonRedisError(), ctx) {
-				goto retry
+	if c.hasLftm {
+		var ml []Completed
+	recover:
+		ml = ml[:0]
+		var txIdx int // check transaction block, if zero, then not in transaction
+		for i, resp := range resps {
+			if resp.NonRedisError() == errConnExpired {
+				if txIdx > 0 {
+					ml = multi[txIdx:]
+				} else {
+					ml = multi[i:]
+				}
+				break
+			}
+			// if no error, then check if transaction block
+			if isMulti(multi[i]) {
+				txIdx = i
+			} else if isExec(multi[i]) {
+				txIdx = 0
+			}
+		}
+		if len(ml) > 0 {
+			rs := c.conn.DoMulti(ctx, ml...).s
+			resps = append(resps[:len(resps)-len(rs)], rs...)
+			goto recover
+		}
+	}
+	if c.retry && allRetryable(multi) {
+		for i, resp := range resps {
+			if c.isRetryable(resp.Error(), ctx) {
+				shouldRetry := c.retryHandler.WaitOrSkipRetry(
+					ctx, attempts, multi[i], resp.Error(),
+				)
+				if shouldRetry {
+					attempts++
+					goto retry
+				}
 			}
 		}
 	}
@@ -96,12 +145,35 @@ func (c *singleClient) DoMultiCache(ctx context.Context, multi ...CacheableTTL) 
 	if len(multi) == 0 {
 		return nil
 	}
+	attempts := 1
 retry:
 	resps = c.conn.DoMultiCache(ctx, multi...).s
+	if c.hasLftm {
+		var ml []CacheableTTL
+	recover:
+		ml = ml[:0]
+		for i, resp := range resps {
+			if resp.NonRedisError() == errConnExpired {
+				ml = multi[i:]
+				break
+			}
+		}
+		if len(ml) > 0 {
+			rs := c.conn.DoMultiCache(ctx, ml...).s
+			resps = append(resps[:len(resps)-len(rs)], rs...)
+			goto recover
+		}
+	}
 	if c.retry {
-		for _, resp := range resps {
-			if c.isRetryable(resp.NonRedisError(), ctx) {
-				goto retry
+		for i, resp := range resps {
+			if c.isRetryable(resp.Error(), ctx) {
+				shouldRetry := c.retryHandler.WaitOrSkipRetry(
+					ctx, attempts, Completed(multi[i].Cmd), resp.Error(),
+				)
+				if shouldRetry {
+					attempts++
+					goto retry
+				}
 			}
 		}
 	}
@@ -114,10 +186,19 @@ retry:
 }
 
 func (c *singleClient) DoCache(ctx context.Context, cmd Cacheable, ttl time.Duration) (resp RedisResult) {
+	attempts := 1
 retry:
 	resp = c.conn.DoCache(ctx, cmd, ttl)
-	if c.retry && c.isRetryable(resp.NonRedisError(), ctx) {
-		goto retry
+	if err := resp.Error(); err != nil {
+		if err == errConnExpired {
+			goto retry
+		}
+		if c.retry && c.isRetryable(err, ctx) {
+			if c.retryHandler.WaitOrSkipRetry(ctx, attempts, Completed(cmd), err) {
+				attempts++
+				goto retry
+			}
+		}
 	}
 	if err := resp.NonRedisError(); err == nil || err == ErrDoCacheAborted {
 		cmds.PutCacheable(cmd)
@@ -126,11 +207,19 @@ retry:
 }
 
 func (c *singleClient) Receive(ctx context.Context, subscribe Completed, fn func(msg PubSubMessage)) (err error) {
+	attempts := 1
 retry:
 	err = c.conn.Receive(ctx, subscribe, fn)
+	if err == errConnExpired {
+		goto retry
+	}
 	if c.retry {
 		if _, ok := err.(*RedisError); !ok && c.isRetryable(err, ctx) {
-			goto retry
+			shouldRetry := c.retryHandler.WaitOrSkipRetry(ctx, attempts, subscribe, err)
+			if shouldRetry {
+				attempts++
+				goto retry
+			}
 		}
 	}
 	if err == nil {
@@ -140,21 +229,25 @@ retry:
 }
 
 func (c *singleClient) Dedicated(fn func(DedicatedClient) error) (err error) {
-	wire := c.conn.Acquire()
-	dsc := &dedicatedSingleClient{cmd: c.cmd, conn: c.conn, wire: wire, retry: c.retry}
+	wire := c.conn.Acquire(context.Background())
+	dsc := &dedicatedSingleClient{cmd: c.cmd, conn: c.conn, wire: wire, retry: c.retry, retryHandler: c.retryHandler}
 	err = fn(dsc)
 	dsc.release()
 	return err
 }
 
 func (c *singleClient) Dedicate() (DedicatedClient, func()) {
-	wire := c.conn.Acquire()
-	dsc := &dedicatedSingleClient{cmd: c.cmd, conn: c.conn, wire: wire, retry: c.retry}
+	wire := c.conn.Acquire(context.Background())
+	dsc := &dedicatedSingleClient{cmd: c.cmd, conn: c.conn, wire: wire, retry: c.retry, retryHandler: c.retryHandler}
 	return dsc, dsc.release
 }
 
 func (c *singleClient) Nodes() map[string]Client {
 	return map[string]Client{c.conn.Addr(): c}
+}
+
+func (c *singleClient) Mode() ClientMode {
+	return ClientModeStandalone
 }
 
 func (c *singleClient) Close() {
@@ -163,12 +256,12 @@ func (c *singleClient) Close() {
 }
 
 type dedicatedSingleClient struct {
-	conn conn
-	wire wire
-	mark uint32
-	cmd  Builder
-
-	retry bool
+	conn         conn
+	wire         wire
+	retryHandler retryHandler
+	mark         uint32
+	cmd          Builder
+	retry        bool
 }
 
 func (c *dedicatedSingleClient) B() Builder {
@@ -176,13 +269,21 @@ func (c *dedicatedSingleClient) B() Builder {
 }
 
 func (c *dedicatedSingleClient) Do(ctx context.Context, cmd Completed) (resp RedisResult) {
+	cmds.ClearUnblockOnCancel(&cmd)
+	attempts := 1
 retry:
 	if err := c.check(); err != nil {
-		return newErrResult(err)
+		return NewErrorResult(err)
 	}
 	resp = c.wire.Do(ctx, cmd)
-	if c.retry && cmd.IsReadOnly() && isRetryable(resp.NonRedisError(), c.wire, ctx) {
-		goto retry
+	if c.retry && cmd.IsRetryable() && isRetryable(resp.Error(), c.wire, ctx) {
+		shouldRetry := c.retryHandler.WaitOrSkipRetry(
+			ctx, attempts, cmd, resp.Error(),
+		)
+		if shouldRetry {
+			attempts++
+			goto retry
+		}
 	}
 	if resp.NonRedisError() == nil {
 		cmds.PutCompleted(cmd)
@@ -194,19 +295,26 @@ func (c *dedicatedSingleClient) DoMulti(ctx context.Context, multi ...Completed)
 	if len(multi) == 0 {
 		return nil
 	}
+	attempts := 1
 	retryable := c.retry
 	if retryable {
-		retryable = allReadOnly(multi)
+		retryable = allRetryable(multi)
 	}
 retry:
 	if err := c.check(); err != nil {
 		return fillErrs(len(multi), err)
 	}
 	resp = c.wire.DoMulti(ctx, multi...).s
-	if retryable && anyRetryable(resp, c.wire, ctx) {
-		goto retry
-	}
 	for i, cmd := range multi {
+		if retryable && isRetryable(resp[i].Error(), c.wire, ctx) {
+			shouldRetry := c.retryHandler.WaitOrSkipRetry(
+				ctx, attempts, multi[i], resp[i].Error(),
+			)
+			if shouldRetry {
+				attempts++
+				goto retry
+			}
+		}
 		if resp[i].NonRedisError() == nil {
 			cmds.PutCompleted(cmd)
 		}
@@ -215,6 +323,7 @@ retry:
 }
 
 func (c *dedicatedSingleClient) Receive(ctx context.Context, subscribe Completed, fn func(msg PubSubMessage)) (err error) {
+	attempts := 1
 retry:
 	if err := c.check(); err != nil {
 		return err
@@ -222,7 +331,13 @@ retry:
 	err = c.wire.Receive(ctx, subscribe, fn)
 	if c.retry {
 		if _, ok := err.(*RedisError); !ok && isRetryable(err, c.wire, ctx) {
-			goto retry
+			shouldRetry := c.retryHandler.WaitOrSkipRetry(
+				ctx, attempts, subscribe, err,
+			)
+			if shouldRetry {
+				attempts++
+				goto retry
+			}
 		}
 	}
 	if err == nil {
@@ -238,6 +353,17 @@ func (c *dedicatedSingleClient) SetPubSubHooks(hooks PubSubHooks) <-chan error {
 		return ch
 	}
 	return c.wire.SetPubSubHooks(hooks)
+}
+
+func (c *dedicatedSingleClient) SetOnInvalidations(fn func([]RedisMessage)) <-chan error {
+	if err := c.check(); err != nil {
+		ch := make(chan error, 1)
+		ch <- err
+		return ch
+	}
+	hooks := c.wire.GetPubSubHooks()
+	hooks.onInvalidations = fn
+	return c.SetPubSubHooks(hooks)
 }
 
 func (c *dedicatedSingleClient) Close() {
@@ -259,25 +385,28 @@ func (c *dedicatedSingleClient) release() {
 }
 
 func (c *singleClient) isRetryable(err error, ctx context.Context) bool {
-	return err != nil && err != ErrDoCacheAborted && atomic.LoadUint32(&c.stop) == 0 && ctx.Err() == nil
+	if err == nil || err == Nil || err == ErrDoCacheAborted || atomic.LoadUint32(&c.stop) != 0 || ctx.Err() != nil {
+		return false
+	}
+	if err, ok := err.(*RedisError); ok {
+		return err.IsLoading()
+	}
+	return true
 }
 
 func isRetryable(err error, w wire, ctx context.Context) bool {
-	return err != nil && w.Error() == nil && ctx.Err() == nil
-}
-
-func anyRetryable(resp []RedisResult, w wire, ctx context.Context) bool {
-	for _, r := range resp {
-		if isRetryable(r.NonRedisError(), w, ctx) {
-			return true
-		}
+	if err == nil || err == Nil || w.Error() != nil || ctx.Err() != nil {
+		return false
 	}
-	return false
+	if err, ok := err.(*RedisError); ok {
+		return err.IsLoading()
+	}
+	return true
 }
 
-func allReadOnly(multi []Completed) bool {
+func allRetryable(multi []Completed) bool {
 	for _, cmd := range multi {
-		if cmd.IsWrite() {
+		if !cmd.IsRetryable() {
 			return false
 		}
 	}
@@ -285,7 +414,7 @@ func allReadOnly(multi []Completed) bool {
 }
 
 func chooseSlot(multi []Completed) uint16 {
-	for i := 0; i < len(multi); i++ {
+	for i := range multi {
 		if multi[i].Slot() != cmds.InitSlot {
 			for j := i + 1; j < len(multi); j++ {
 				if multi[j].Slot() != cmds.InitSlot && multi[j].Slot() != multi[i].Slot() {

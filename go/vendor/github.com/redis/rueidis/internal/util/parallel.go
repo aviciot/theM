@@ -29,15 +29,14 @@ func worker[V any](wg *sync.WaitGroup, ch chan V, fn func(k V)) {
 
 func closeThenParallel[V any](maxp int, ch chan V, fn func(k V)) {
 	close(ch)
-	concurrency := len(ch)
-	if concurrency > maxp {
-		concurrency = maxp
-	}
+	concurrency := min(len(ch), maxp)
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
 	for i := 1; i < concurrency; i++ {
 		go worker(&wg, ch, fn)
 	}
-	worker(&wg, ch, fn)
+	if concurrency > 0 {
+		worker(&wg, ch, fn)
+	}
 	wg.Wait()
 }
