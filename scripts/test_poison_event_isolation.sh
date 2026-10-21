@@ -37,8 +37,8 @@ VALID_EVENT_1=$(cat <<EOF
   "gateway_request": {
     "request_id": "$EVENT1_REQ_ID",
     "application_id": "22222222-2222-2222-2222-222222222222",
-    "client_id": "test-client",
-    "user_id": "test-user",
+    "client_id": "",
+    "user_id": "",
     "provider": "mock",
     "model_requested": "test-model",
     "model_served": "poison-isolation-test-v1",
@@ -80,8 +80,8 @@ VALID_EVENT_3=$(cat <<EOF
   "gateway_request": {
     "request_id": "$EVENT3_REQ_ID",
     "application_id": "22222222-2222-2222-2222-222222222222",
-    "client_id": "test-client",
-    "user_id": "test-user",
+    "client_id": "",
+    "user_id": "",
     "provider": "mock",
     "model_requested": "test-model",
     "model_served": "poison-isolation-test-v1",

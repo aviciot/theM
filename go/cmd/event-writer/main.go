@@ -435,112 +435,78 @@ func (c *EventConsumer) Run(ctx context.Context) {
 
 		// Write valid events to ClickHouse with retry
 		if len(batch) > 0 {
-			// Process each event, separating valid from malformed
-			validEvents := []events.Event{}
+			// First pass: separate valid from malformed (validation only, no write yet)
+			validBatch := []events.Event{}
 			validMsgIDs := []string{}
-			malformedEvents := []struct {
+			poisonBatch := []struct {
 				msgID string
 				err   error
 			}{}
 
 			for i, event := range batch {
-				if err := c.sink.Emit(ctx, event); err != nil {
-					if events.IsMalformedEvent(err) {
-						// Validation failed → poison
-						c.logger.Warn("poison event in batch", "msg_id", messageIDs[i], "event_id", event.EventID, "error", err)
-						malformedEvents = append(malformedEvents, struct {
-							msgID string
-							err   error
-						}{messageIDs[i], err})
-					} else {
-						// Transient failure → retry entire batch
-						c.logger.Error("failed to write event (transient)", "error", err, "event_id", event.EventID)
-
-						// Retry batch with backoff
-						var lastErr error
-						for attempt := 1; attempt <= maxRetries; attempt++ {
-							success := true
-							for j, evt := range batch {
-								if err := c.sink.Emit(ctx, evt); err != nil {
-									lastErr = err
-									success = false
-									if events.IsMalformedEvent(err) {
-										// New poison discovered mid-retry
-										c.logger.Warn("poison event discovered during retry", "msg_id", messageIDs[j], "error", err)
-										malformedEvents = append(malformedEvents, struct {
-											msgID string
-											err   error
-										}{messageIDs[j], err})
-										continue
-									}
-									break // Transient error → stop and retry batch
-								}
-							}
-
-							if success {
-								// ACK all messages
-								if err := c.ackMessages(ctx, messageIDs); err != nil {
-									c.logger.Error("failed to ack messages", "error", err)
-									return
-								}
-
-								// Move poison to DLQ
-								for _, poison := range malformedEvents {
-									if err := c.moveToDLQ(ctx, poison.msgID, fmt.Sprintf("validation_failed: %v", poison.err)); err != nil {
-										c.logger.Error("failed to move poison to DLQ", "error", err, "msg_id", poison.msgID)
-									}
-									// Poison already ACKed above
-									c.dlqCount++
-								}
-
-								c.logger.Info("batch written", "count", len(batch), "poison", len(malformedEvents))
-								c.processedCount += uint64(len(batch) - len(malformedEvents))
-								consecutiveFailures = 0
-								backoff = 1 * time.Second
-								batch = batch[:0]
-								messageIDs = messageIDs[:0]
-								return
-							}
-
-							if attempt < maxRetries {
-								sleep := backoff * time.Duration(attempt)
-								c.logger.Warn("retrying after backoff", "attempt", attempt, "backoff_ms", sleep.Milliseconds())
-								time.Sleep(sleep)
-							}
-						}
-
-						// All retries exhausted (transient failures)
-						c.logger.Error("batch write failed after retries (transient)", "error", lastErr, "count", len(batch))
-						c.failedCount += uint64(len(batch))
-						consecutiveFailures++
-						batch = batch[:0]
-						messageIDs = messageIDs[:0]
-
-						if consecutiveFailures >= 3 {
-							pauseDuration := min(backoff*time.Duration(consecutiveFailures), 30*time.Second)
-							c.logger.Warn("ClickHouse unavailable, pausing ingestion", "pause_ms", pauseDuration.Milliseconds())
-							time.Sleep(pauseDuration)
-						}
-						return
-					}
+				if err := events.ValidateEvent(event); err != nil {
+					c.logger.Warn("poison event in batch", "msg_id", messageIDs[i], "event_id", event.EventID, "error", err)
+					poisonBatch = append(poisonBatch, struct {
+						msgID string
+						err   error
+					}{messageIDs[i], fmt.Errorf("%w: %v", events.ErrMalformedEvent, err)})
 				} else {
-					// Event written successfully
-					validEvents = append(validEvents, event)
+					validBatch = append(validBatch, event)
 					validMsgIDs = append(validMsgIDs, messageIDs[i])
 				}
 			}
 
-			// ACK valid messages
-			if len(validMsgIDs) > 0 {
-				if err := c.ackMessages(ctx, validMsgIDs); err != nil {
-					c.logger.Error("failed to ack valid messages", "error", err)
+			// Second pass: write valid events with retry
+			if len(validBatch) > 0 {
+				var lastErr error
+				for attempt := 1; attempt <= maxRetries; attempt++ {
+					success := true
+					for _, event := range validBatch {
+						if err := c.sink.Emit(ctx, event); err != nil {
+							c.logger.Error("failed to write valid event", "error", err, "event_id", event.EventID, "attempt", attempt)
+							lastErr = err
+							success = false
+							break
+						}
+					}
+
+					if success {
+						if err := c.ackMessages(ctx, validMsgIDs); err != nil {
+							c.logger.Error("failed to ack valid messages", "error", err)
+							return
+						}
+						c.processedCount += uint64(len(validBatch))
+						c.logger.Info("batch written", "count", len(validBatch))
+						consecutiveFailures = 0
+						backoff = 1 * time.Second
+						break
+					}
+
+					if attempt < maxRetries {
+						sleep := backoff * time.Duration(attempt)
+						c.logger.Warn("retrying after backoff", "attempt", attempt, "backoff_ms", sleep.Milliseconds())
+						time.Sleep(sleep)
+					}
+				}
+
+				if lastErr != nil {
+					c.logger.Error("batch write failed after retries (transient)", "error", lastErr, "count", len(validBatch))
+					c.failedCount += uint64(len(validBatch))
+					consecutiveFailures++
+					batch = batch[:0]
+					messageIDs = messageIDs[:0]
+
+					if consecutiveFailures >= 3 {
+						pauseDuration := min(backoff*time.Duration(consecutiveFailures), 30*time.Second)
+						c.logger.Warn("ClickHouse unavailable, pausing ingestion", "pause_ms", pauseDuration.Milliseconds())
+						time.Sleep(pauseDuration)
+					}
 					return
 				}
-				c.processedCount += uint64(len(validMsgIDs))
 			}
 
-			// Move malformed to DLQ and ACK
-			for _, poison := range malformedEvents {
+			// Third pass: move poison to DLQ
+			for _, poison := range poisonBatch {
 				if err := c.moveToDLQ(ctx, poison.msgID, fmt.Sprintf("validation_failed: %v", poison.err)); err != nil {
 					c.logger.Error("failed to move poison to DLQ", "error", err, "msg_id", poison.msgID)
 					continue
@@ -552,11 +518,10 @@ func (c *EventConsumer) Run(ctx context.Context) {
 				}
 			}
 
-			if len(validEvents) > 0 || len(malformedEvents) > 0 {
-				c.logger.Info("batch processed", "valid", len(validEvents), "poison", len(malformedEvents))
+			if len(poisonBatch) > 0 {
+				c.logger.Info("poison events to DLQ", "count", len(poisonBatch))
 			}
-			consecutiveFailures = 0
-			backoff = 1 * time.Second
+
 			batch = batch[:0]
 			messageIDs = messageIDs[:0]
 		}
