@@ -37,6 +37,8 @@ const (
 	AdmitErrQuotaAPIRPM
 	// AdmitErrQuotaMonthlyLLMTokens — tenant monthly_llm_tokens quota exceeded.
 	AdmitErrQuotaMonthlyLLMTokens
+	// AdmitErrQuotaUserDailyCost — user daily cost limit exceeded (from auth_service.roles.cost_limit_daily).
+	AdmitErrQuotaUserDailyCost
 )
 
 // AdmitError is the typed error returned by Lifecycle.Admit on failure.
@@ -76,6 +78,8 @@ func (e *AdmitError) Error() string {
 		return "api rate limit exceeded"
 	case AdmitErrQuotaMonthlyLLMTokens:
 		return "monthly token limit exceeded"
+	case AdmitErrQuotaUserDailyCost:
+		return "daily cost limit exceeded"
 	default:
 		return "internal error"
 	}
@@ -97,6 +101,8 @@ func httpStatusForKind(k AdmitErrorKind) int {
 		return 403
 	case AdmitErrCapExceeded, AdmitErrRateLimited, AdmitErrQuotaConcurrentRuns, AdmitErrQuotaRunsPerMinute, AdmitErrQuotaMonthlyRuns, AdmitErrQuotaAPIRPM, AdmitErrQuotaMonthlyLLMTokens:
 		return 429
+	case AdmitErrQuotaUserDailyCost:
+		return 402
 	case AdmitErrQueueFull, AdmitErrDBUnavailable:
 		return 503
 	case AdmitErrNotImplemented:

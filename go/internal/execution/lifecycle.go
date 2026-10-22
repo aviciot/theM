@@ -64,6 +64,18 @@ var ErrQuotaAPIRPM = errors.New("quota: api requests per minute exceeded")
 // monthly_llm_tokens is exceeded. Lifecycle maps it to AdmitErrQuotaMonthlyLLMTokens.
 var ErrQuotaMonthlyLLMTokens = errors.New("quota: monthly LLM token limit exceeded")
 
+// UserRateLimiter enforces per-user rate limits (requests per minute).
+type UserRateLimiter interface {
+	// CheckLimit returns true if the user has exceeded their rpm limit.
+	CheckLimit(ctx context.Context, userID int64, rpm int) (bool, error)
+}
+
+// UserQuotaChecker queries per-user daily spend.
+type UserQuotaChecker interface {
+	// GetUserDailySpend returns the total USD spent by the user today.
+	GetUserDailySpend(ctx context.Context, userID int64) (float64, error)
+}
+
 // Lifecycle executes the shared admission-and-run-start pipeline used by the WS,
 // SSE, and A2A protocol handlers. It is constructed once at server startup and
 // shared across all handlers via dependency injection.
@@ -83,6 +95,8 @@ type Lifecycle struct {
 	extJWTValidator     *auth.ExternalJWTValidator // optional; validates external RS256 JWTs
 	roleChecker         RoleChecker                // optional; nil = tenant role gate disabled
 	platformRoleChecker PlatformRoleChecker        // optional; nil = platform role enforcement disabled
+	userRateLimiter     UserRateLimiter            // optional; nil = no per-user rate limiting
+	userQuotaChecker    UserQuotaChecker           // optional; nil = no per-user cost limiting
 	temporalCfgLoader  TemporalConfigLoader       // optional; nil = hardcoded defaults for AppFlow
 	llmOverrideLoader  AppFlowLLMOverrideLoader   // optional; nil = no inline LLM node overrides applied
 	logVerbosityLoader LogVerbosityLoader         // optional; nil = dal.DefaultLogVerbosity for AppFlow
@@ -165,6 +179,20 @@ func (lc *Lifecycle) WithRoleChecker(rc RoleChecker) *Lifecycle {
 // When nil (default), required_role checks are disabled and all user_jwt requests proceed.
 func (lc *Lifecycle) WithPlatformRoleChecker(prc PlatformRoleChecker) *Lifecycle {
 	lc.platformRoleChecker = prc
+	return lc
+}
+
+// WithUserRateLimiter attaches a UserRateLimiter to enable per-user rate limiting.
+// When nil (default), per-user rate limits are not enforced.
+func (lc *Lifecycle) WithUserRateLimiter(url UserRateLimiter) *Lifecycle {
+	lc.userRateLimiter = url
+	return lc
+}
+
+// WithUserQuotaChecker attaches a UserQuotaChecker to enable per-user daily cost limits.
+// When nil (default), per-user cost limits are not enforced.
+func (lc *Lifecycle) WithUserQuotaChecker(uqc UserQuotaChecker) *Lifecycle {
+	lc.userQuotaChecker = uqc
 	return lc
 }
 
@@ -347,6 +375,48 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 			lc.logger.Debug("execution: user platform role insufficient",
 				"user_id", req.UserID, "user_role", userRole, "required_role", resolvedCfg.RequiredRole)
 			return nil, admitErr(AdmitErrForbidden)
+		}
+	}
+
+	// ── 3.8. User quota enforcement (rate + cost limits) ─────────────────────
+	// For user_jwt mode, enforce per-user rate limits and daily cost limits.
+	// Only applies when both platformRoleChecker and quota enforcers are wired.
+	if resolvedCfg.AccessMode == epconfig.AccessModeUser && req.UserID > 0 {
+		if lc.platformRoleChecker != nil && (lc.userRateLimiter != nil || lc.userQuotaChecker != nil) {
+			roleConfig, roleErr := lc.platformRoleChecker.GetRoleConfig(ctx, req.UserID)
+			if roleErr != nil {
+				lc.logger.Warn("execution: role config lookup failed for quota check",
+					"user_id", req.UserID, "error", roleErr)
+				// Continue without quota enforcement (fail-open)
+			} else if roleConfig != nil {
+				// Check rate limit (requests per minute)
+				if lc.userRateLimiter != nil && roleConfig.RateLimit > 0 {
+					exceeded, rlErr := lc.userRateLimiter.CheckLimit(ctx, req.UserID, roleConfig.RateLimit)
+					if rlErr != nil {
+						lc.logger.Warn("execution: rate limit check failed",
+							"user_id", req.UserID, "error", rlErr)
+						// Continue without rate limiting (fail-open)
+					} else if exceeded {
+						lc.logger.Debug("execution: user rate limit exceeded",
+							"user_id", req.UserID, "limit", roleConfig.RateLimit)
+						return nil, admitErr(AdmitErrRateLimited)
+					}
+				}
+
+				// Check daily cost limit
+				if lc.userQuotaChecker != nil && roleConfig.CostLimitDaily > 0 {
+					dailySpend, csErr := lc.userQuotaChecker.GetUserDailySpend(ctx, req.UserID)
+					if csErr != nil {
+						lc.logger.Warn("execution: daily spend check failed",
+							"user_id", req.UserID, "error", csErr)
+						// Continue without cost limiting (fail-open)
+					} else if dailySpend >= roleConfig.CostLimitDaily {
+						lc.logger.Debug("execution: user daily cost limit exceeded",
+							"user_id", req.UserID, "daily_spend", dailySpend, "limit", roleConfig.CostLimitDaily)
+						return nil, admitErr(AdmitErrQuotaUserDailyCost)
+					}
+				}
+			}
 		}
 	}
 

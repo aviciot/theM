@@ -308,6 +308,15 @@ func run() error {
 	execLifecycle.WithPlatformRoleChecker(platformRoleChecker)
 	log.Info("platform role enforcer wired (entry_points.required_role)")
 
+	// ── 16d-quota. Wire per-user quota enforcers ──────────────────────────────
+	// Enforces per-user rate limits (requests/minute) and daily cost limits (USD/day)
+	// from auth_service.roles config. Only applies to user_jwt EPs.
+	userRateLimiter := ratelimit.NewUserLimiter(rlRedis)
+	execLifecycle.WithUserRateLimiter(userRateLimiter)
+	userQuotaChecker := execution.NewUserQuotaChecker(rlsPools.Admin)
+	execLifecycle.WithUserQuotaChecker(userQuotaChecker)
+	log.Info("user quota enforcers wired (rate + daily cost limits)")
+
 	// Wire Temporal execution config loader — reads merged platform+app Temporal controls at workflow start.
 	execLifecycle.WithTemporalConfigLoader(appflow.NewPgxTemporalConfigLoader(rlsPools))
 	log.Info("temporal config loader wired")

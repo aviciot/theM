@@ -16,6 +16,18 @@ type PlatformRoleChecker interface {
 	// GetUserRole returns the role name for the given user_id.
 	// Returns empty string if user not found or no role assigned.
 	GetUserRole(ctx context.Context, userID int64) (string, error)
+
+	// GetRoleConfig returns the full role configuration for the given user.
+	// Returns nil if user not found or no role assigned.
+	GetRoleConfig(ctx context.Context, userID int64) (*RoleConfig, error)
+}
+
+// RoleConfig contains platform role limits and permissions.
+type RoleConfig struct {
+	Name             string
+	RateLimit        int     // requests per minute (0 = unlimited)
+	CostLimitDaily   float64 // USD per day (0 = unlimited)
+	DashboardAccess  string  // "admin" | "view" | "none"
 }
 
 // pgxPlatformRoleChecker queries auth_service.users JOIN roles.
@@ -47,4 +59,26 @@ func (rc *pgxPlatformRoleChecker) GetUserRole(ctx context.Context, userID int64)
 		return "", fmt.Errorf("role query failed: %w", err)
 	}
 	return roleName, nil
+}
+
+// GetRoleConfig loads the user's full role configuration.
+// Returns nil if user not found or has no role assigned.
+func (rc *pgxPlatformRoleChecker) GetRoleConfig(ctx context.Context, userID int64) (*RoleConfig, error) {
+	const q = `
+		SELECT r.name, r.rate_limit, r.cost_limit_daily, r.dashboard_access
+		FROM auth_service.users u
+		JOIN auth_service.roles r ON u.role_id = r.id
+		WHERE u.id = $1
+	`
+	var cfg RoleConfig
+	err := rc.pool.QueryRow(ctx, q, userID).Scan(
+		&cfg.Name, &cfg.RateLimit, &cfg.CostLimitDaily, &cfg.DashboardAccess,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("role config query failed: %w", err)
+	}
+	return &cfg, nil
 }

@@ -186,7 +186,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/ws/handler.go` | `go test ./internal/ws/... ./internal/execution/...` |
 | `internal/sse/handler.go` | `go test ./internal/sse/... ./internal/execution/...` |
 | `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go` | `go test ./internal/epconfig/...` |
-| `internal/execution/lifecycle.go` or `internal/execution/roles.go` | `go test ./internal/execution/... ./internal/ws/... ./internal/sse/...` |
+| `internal/execution/lifecycle.go` or `internal/execution/roles.go` or `internal/execution/quotas.go` or `internal/ratelimit/user_limiter.go` | `go test ./internal/execution/... ./internal/ratelimit/... ./internal/ws/... ./internal/sse/...` |
 | `internal/a2a/server.go` | `go test ./internal/a2a/...` |
 | `internal/temporal/temporal_executor.go` | `go test ./internal/temporal/...` |
 | `internal/appflow/` (any file) | `go test ./internal/appflow/...` |

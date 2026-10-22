@@ -29,6 +29,18 @@ func (m *mockPlatformRoleChecker) GetUserRole(ctx context.Context, userID int64)
 	return role, nil
 }
 
+func (m *mockPlatformRoleChecker) GetRoleConfig(ctx context.Context, userID int64) (*RoleConfig, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	role, ok := m.userRoles[userID]
+	if !ok {
+		return nil, nil
+	}
+	// Return a minimal RoleConfig for basic role tests (quota tests use mockPlatformRoleCheckerWithConfig)
+	return &RoleConfig{Name: role}, nil
+}
+
 // TestLifecycle_RequiredRole_Pass verifies that a user with the matching role is admitted.
 func TestLifecycle_RequiredRole_Pass(t *testing.T) {
 	// Setup: Alice (user_id=42) has role "developer"
