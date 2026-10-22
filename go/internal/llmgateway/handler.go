@@ -16,6 +16,7 @@ import (
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/appflow"
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/tenantctx"
@@ -155,17 +156,25 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Update logger with model and stream info
 	logger = logger.With("model", req.Model, "stream", req.Stream)
 
-	// ── 4. Use token hash and client ID from middleware context ─────────────
+	// ── 4. Extract user_id from JWT if present (user_jwt mode) ──────────────
+	var userID int64
+	if claims, hasJWT := auth.ClaimsFromCtx(r.Context()); hasJWT {
+		userID = claims.UserID
+		logger = logger.With("user_id", userID)
+	}
+
+	// ── 5. Use token hash and client ID from middleware context ─────────────
 	rec := RequestRecord{
 		TenantID:       tenantID,
 		ClientID:       gwClient.ClientID,
 		TokenHash:      gwClient.TokenHash,
+		UserID:         userID,
 		ModelRequested: req.Model,
 		Status:         "ok",
 		Streamed:       req.Stream,
 	}
 
-	// ── 5. If client has a profile app — dispatch via AppFlow ────────────────
+	// ── 6. If client has a profile app — dispatch via AppFlow ────────────────
 	if h.lc != nil {
 		ca, caErr := h.dal.LoadClientApp(r.Context(), gwClient.TokenHash)
 		if caErr == nil && ca != nil {

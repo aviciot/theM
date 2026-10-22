@@ -70,6 +70,7 @@ type RequestRecord struct {
 	TenantID       string
 	ClientID       string  // gateway_clients.id UUID; empty in Phase 1
 	TokenHash      string  // sha256-hex of bearer token for audit
+	UserID         int64   // the-M user ID from JWT (user_jwt mode); 0 if token-based auth
 	Provider       string
 	ModelRequested string
 	ModelServed    string
@@ -160,17 +161,18 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 	if mode == "postgres" || mode == "" || mode == "dual" {
 		const q = `
 			INSERT INTO them.gateway_requests
-				(id, tenant_id, client_id, token_hash, provider, model_requested, model_served,
+				(id, tenant_id, client_id, token_hash, user_id, provider, model_requested, model_served,
 				 status, http_status, error_code, tokens_in, tokens_out, cost_usd,
 				 latency_ms, ttfb_ms, streamed)
 			VALUES
 				($1::uuid, $2::uuid,
 				 NULLIF($3,'')::uuid,
 				 NULLIF($4,''),
-				 NULLIF($5,''), NULLIF($6,''), NULLIF($7,''),
-				 $8, NULLIF($9,0), NULLIF($10,''),
-				 $11, $12, $13,
-				 NULLIF($14,0), NULLIF($15,0), $16)
+				 NULLIF($5,0),
+				 NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+				 $9, NULLIF($10,0), NULLIF($11,''),
+				 $12, $13, $14,
+				 NULLIF($15,0), NULLIF($16,0), $17)
 			RETURNING id::text`
 
 		var dbRequestID string
@@ -179,6 +181,7 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 			r.TenantID,
 			r.ClientID,
 			r.TokenHash,
+			r.UserID,
 			r.Provider, r.ModelRequested, r.ModelServed,
 			r.Status, r.HTTPStatus, r.ErrorCode,
 			r.TokensIn, r.TokensOut, r.CostUSD,
