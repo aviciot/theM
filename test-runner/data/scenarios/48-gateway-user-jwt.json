@@ -1,0 +1,23 @@
+{
+  "id": "48-gateway-user-jwt",
+  "name": "48 — Gateway User JWT Tracking",
+  "description": "Tests Phase 3: Gateway optional user identification via JWT. Verifies that X-User-JWT header is parsed, user_id extracted, and recorded in gateway_requests table.\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path (bypasses Temporal)\n• Governance Profile: 'mock'\n  - No rate limits\n  - No PII guardrails\n  - Logging: minimal\n\n🎯 Test Goal:\n• Send Gateway requests with X-User-JWT header\n• Verify user_id is extracted from JWT claims\n• Verify user_id is recorded in gateway_requests.user_id column\n• Verify fail-open: invalid JWT doesn't break request\n\n✅ Expected Behavior:\n• All requests succeed (200 OK)\n• Requests WITH valid JWT → user_id recorded in DB\n• Requests WITHOUT JWT → user_id = NULL in DB\n• Requests with INVALID JWT → user_id = NULL, request still succeeds\n\n💡 Purpose: Validates Phase 3 implementation - Gateway can now track which the-M user made each request for quota enforcement.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "stream": false,
+  "n_users": 1,
+  "messages": [
+    "Test message 1 - with JWT",
+    "Test message 2 - with JWT",
+    "Test message 3 - with JWT"
+  ],
+  "created_at": "2026-10-22T00:00:00Z",
+  "updated_at": "2026-10-22T00:00:00Z"
+}

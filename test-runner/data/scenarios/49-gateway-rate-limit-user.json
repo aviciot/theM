@@ -1,0 +1,32 @@
+{
+  "id": "49-gateway-rate-limit-user",
+  "name": "49 — Gateway Per-User Rate Limit",
+  "description": "Tests Phase 4: Gateway per-user rate limiting. User has role 'viewer' with 100 requests/minute limit. Sends 120 requests to verify rate limit enforcement.\n\n🔧 Gateway Config:\n• Token: test-gateway-token-12345\n• NO app assigned → Direct path (bypasses Temporal)\n• Governance Profile: 'mock' (gateway-level limits disabled)\n  - Gateway profile has NO rate limits\n  - But USER role has 100 rpm limit\n\n👤 User Config:\n• User: test-viewer (user_id from JWT)\n• Role: viewer\n• Rate Limit: 100 requests/minute\n• Daily Cost Limit: $5.00/day\n\n🎯 Test Goal:\n• Send 120 requests in <60 seconds with X-User-JWT header\n• First ~100 requests should succeed (200 OK)\n• Requests beyond limit should fail with 429 (rate limit exceeded)\n• Verify fail-open: if quota check fails, request proceeds\n\n✅ Expected Behavior:\n• Requests 1-100: 200 OK\n• Requests 101-120: 429 Too Many Requests\n• Error message: \"rate limit exceeded\"\n• Redis key created: rl:user:{userID}:minute:{timestamp}\n\n📊 Success Criteria:\n• ~83% pass rate (100/120 requests)\n• 429 errors contain \"rate_limited\" error code\n• No 500 errors (quota check must not crash gateway)\n\n💡 Purpose: Validates Phase 4 rate limiting - prevents users from exceeding their role-based request limits.",
+  "test_result_ai_analysis": "",
+  "tenant_slug": "payops_ai",
+  "app_id": "",
+  "app_slug": "",
+  "ep_slug": "gateway",
+  "ep_type": "gateway",
+  "auth_mode": "token",
+  "gateway_token": "test-gateway-token-12345",
+  "model": "fast",
+  "stream": false,
+  "n_users": 1,
+  "messages": [
+    "1","2","3","4","5","6","7","8","9","10",
+    "11","12","13","14","15","16","17","18","19","20",
+    "21","22","23","24","25","26","27","28","29","30",
+    "31","32","33","34","35","36","37","38","39","40",
+    "41","42","43","44","45","46","47","48","49","50",
+    "51","52","53","54","55","56","57","58","59","60",
+    "61","62","63","64","65","66","67","68","69","70",
+    "71","72","73","74","75","76","77","78","79","80",
+    "81","82","83","84","85","86","87","88","89","90",
+    "91","92","93","94","95","96","97","98","99","100",
+    "101","102","103","104","105","106","107","108","109","110",
+    "111","112","113","114","115","116","117","118","119","120"
+  ],
+  "created_at": "2026-10-22T00:00:00Z",
+  "updated_at": "2026-10-22T00:00:00Z"
+}
