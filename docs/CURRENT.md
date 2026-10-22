@@ -1,47 +1,62 @@
 # Current State — the-M
-# Last Updated: 2026-10-21 12:59 UTC
+# Last Updated: 2026-10-22 00:00 UTC
 # Branch: main
-# HEAD: 347a6b38
+# HEAD: 9c8ceb5f
 
 ---
 
 ## Quick Status
 
-✅ **Gateway Performance Testing Complete**  
-✅ **Dual mode approved for production**  
-✅ **Event-writer healthy**  
-🔄 **Next**: Push results, then Run usage/steps producer
+✅ **Performance Testing Complete**  
+✅ **Delivery Verification Complete**  
+✅ **Dual mode functional (delivery proven)**  
+🔄 **Next**: Performance cost evaluation (optional) or Run producer implementation
 
 ---
 
 ## Latest Work (2026-10-21)
 
-### Gateway Performance Comparison: postgres vs dual
+### Performance Testing & Delivery Verification - COMPLETE
 
-**Completed**: 42 test runs (7 scenarios × 2 modes × 3 iterations)
-**Duration**: 12:40 - 12:57 UTC (17 minutes)
-**Commit**: 347a6b38
+**Session Duration**: 12:40 - 17:14 UTC (4.5 hours)  
+**Commits**: 80ab9842, 3e60cff3, bf8c5a76, 9c8ceb5f
 
-**Results**:
-- ✅ **No measurable performance overhead** from dual mode
-- Latency: 3 scenarios faster, 3 comparable, 1 outlier (likely test variance)
-- Median: -46% to +18% (no consistent degradation pattern)
-- p95/p99: -13% to +15% (mostly within ±10%)
-- Throughput: No degradation (100% pass rate)
-- Resource: +9% RAM (+50MB), negligible CPU
+**What Was Accomplished**:
 
-**Conclusion**: ✅ **Dual mode APPROVED** — provides ClickHouse observability with no performance cost.
+1. ✅ **Gateway performance benchmark executed** (corrected methodology)
+   - Fixed FLUSHDB issue (preserved consumer groups)
+   - Fixed RPS calculation (actual completed / elapsed time)
+   - Scenario 40: 3 runs per mode (postgres, dual)
+   - Results: +13% median latency preliminary (needs more runs for confidence)
 
-**Documentation**: `docs/PERFORMANCE_COMPARISON_RESULTS.md` (full analysis)
+2. ✅ **Schema fully documented** (`docs/SCHEMA_GATEWAY_EVENTS.md`)
+   - PostgreSQL `gateway_requests` (17 columns)
+   - ClickHouse `events_gateway_request` (22 columns)
+   - ID mapping: PG `id` (UUID) → CH `request_id` (String)
+   - Verification methodology documented
+
+3. ✅ **Delivery question resolved** (`docs/DELIVERY_VERIFICATION_CONCLUSION.md`)
+   - **Finding**: Events deliver successfully in dual mode
+   - "10+ minute delay" was verification timing error, not failure
+   - Event-writer healthy, 300/300 events delivered
+   - Actual delivery: 5-30s typical, up to 2 min under load
+
+**Key Findings**:
+- **Delivery**: ✅ VERIFIED FUNCTIONAL - all events reach ClickHouse
+- **Performance**: ⚠️ PRELIMINARY - +13% median latency (+18ms absolute)
+- **RPS**: No throughput degradation (300 req/sec both modes)
+- **Resources**: Negligible (CPU +0.03%, RAM -1.5MB)
 
 ---
 
 ## Current HEAD
 
 ```
-347a6b38 perf: Gateway postgres vs dual mode comparison complete
-90a817aa docs: prepare performance testing handover - postgres vs dual comparison
-2540e295 docs: verification complete - DLQ mock tests passed, ready for Run producer
+9c8ceb5f docs: delivery verification conclusion - events deliver successfully
+bf8c5a76 docs: schema documentation + ID verification script fixed
+3e60cff3 docs: performance test next steps - verification methodology needed
+80ab9842 perf: corrected Gateway benchmark - scenario 40, postgres vs dual
+90a817aa docs: prepare performance testing handover
 ```
 
 ---
@@ -50,13 +65,13 @@
 
 ### Infrastructure Status
 - **Gateway mode**: `dual` (THE_M_EVENTS_GATEWAY=dual)
-- **Event-writer**: Healthy, processing events (batch written: 100/batch)
-- **ClickHouse**: Running, receiving events
-- **Redis events**: Running, consumer group recreated
-- **Branch**: main (clean, NOT PUSHED — see next tasks)
+- **Event-writer**: Healthy (processing batches, no errors)
+- **ClickHouse**: Running, receiving events (delivery verified)
+- **Redis events**: Consumer group healthy (lag=0, pending=0)
+- **Branch**: main (clean, pushed)
 
 ### Container Health
-All core containers running and healthy:
+All core + events containers running:
 - ✅ them-traefik (reverse proxy)
 - ✅ them-postgres (DB)
 - ✅ them-redis (cache)
@@ -69,55 +84,131 @@ All core containers running and healthy:
 
 ---
 
+## Performance Testing Results
+
+### Documentation
+- `docs/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Full test results
+- `docs/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan (optional)
+- `docs/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery verification closed
+- `docs/SCHEMA_GATEWAY_EVENTS.md` - Schema reference
+
+### Scripts
+- `scripts/perf_focused_test.py` - Corrected benchmark runner
+- `scripts/verify_delivery_by_id.py` - ID-based verification tool
+- `scripts/verify_delivery_timing.sh` - Delivery timing test
+
+### Data Files
+- `perf_focused_results_raw.json` - Raw measurements (6 runs)
+- `perf_focused_summary.json` - Aggregated results
+
+---
+
+## Dual Mode Status
+
+### Delivery (Production-Ready)
+- ✅ Event-writer functional
+- ✅ Consumer groups stable
+- ✅ All events delivered (verified)
+- ✅ Timing acceptable (5-30s typical, 2min max)
+- ✅ No errors or failures
+
+### Performance (Needs Decision)
+- ⚠️ +13.4% median latency (+18ms: 132ms → 149ms)
+- ✅ No throughput impact (RPS unchanged)
+- ✅ Negligible resource overhead
+- ⚠️ Small sample size (only 3 runs per mode)
+- ⚠️ Statistical significance not confirmed
+
+**Trade-off Decision Required**:
+- Is +18ms median latency acceptable for ClickHouse observability?
+- Current finding is PRELIMINARY (needs 5-10 runs for confidence)
+
+---
+
 ## Next Tasks (Priority Order)
 
-### 1. Push Performance Results (IMMEDIATE)
-```bash
-cd /opt/docker/them
-git push origin main
-```
-**Reason**: Commit 347a6b38 is local-only, contains critical performance test results.
+### 1. Performance Cost Evaluation (OPTIONAL)
+
+**If dual mode deployment is being considered**:
+- Run 5-10 iterations of scenario 40 per mode
+- Calculate 95% confidence intervals
+- Run t-test for statistical significance
+- Decide if +13% latency is acceptable
+
+**If staying in postgres mode**:
+- Skip additional testing
+- Document decision rationale
+- Move to next priority task
 
 ### 2. Run Usage/Steps Producer (DEFERRED FROM PREVIOUS)
-**Status**: BLOCKED until performance testing complete (NOW UNBLOCKED)
-**Location**: `go/internal/events/` (Run/RunStep event producers)
-**Requirement**: Same verification procedure as Gateway (postgres/dual comparison if needed)
 
-### 3. Optional: Fix Test Script
-**Files**: `scripts/perf_comparison.py`
-**Changes**:
-- Remove `FLUSHDB` call, or recreate consumer group after flush
-- Fix RPS calculation (use test-runner's duration field)
-**Priority**: Low (test complete, script works, just has artifacts)
+**Status**: BLOCKED until performance testing complete (NOW UNBLOCKED)  
+**Location**: `go/internal/events/` (Run/RunStep event producers)  
+**Requirement**: Implement Run and RunStep event emission in dual mode
+
+### 3. Optional Test Improvements
+
+**Low Priority** - only if needed:
+- Fix test script for real Gateway endpoint (not mock)
+- Test additional scenarios (11, 12) with corrected methodology
+- Implement request-ID tracking in production
 
 ---
 
 ## Known Issues
 
-### 1. Test Script: Redis Consumer Group Issue
-**Issue**: `scripts/perf_comparison.py` calls `FLUSHDB` on `them-redis-events`, which deletes the consumer group.
-**Impact**: ClickHouse delivery verification failed during test (events emitted but not consumed).
-**Status**: Event-writer restarted, consumer group recreated, now healthy.
-**Fix**: Update test script to NOT flush Redis events DB, or recreate consumer group after flush.
+### 1. Performance Test Sample Size
+**Issue**: Only 3 runs per mode (low statistical confidence)  
+**Impact**: +13% latency finding is preliminary  
+**Status**: Documented in next steps, additional testing optional
 
-### 2. RPS Calculation Artifacts
-**Issue**: Some test scenarios show `rps=0.0` or inconsistent values.
-**Root cause**: Timestamp parsing in `analyze_results` function.
-**Impact**: RPS comparison unreliable (but throughput NOT actually degraded).
-**Fix**: Use test-runner's own duration calculation, not manual timestamp parsing.
+### 2. Test Scenario Compatibility
+**Issue**: Scenario 40 uses mock provider, doesn't write to `gateway_requests`  
+**Impact**: ID-based verification couldn't be tested end-to-end  
+**Status**: Verification script ready, needs production scenario  
+**Priority**: Low (delivery already verified via count + event-writer health)
 
 ---
 
 ## Files Changed (since 90a817aa)
 
-### New Files
-- `docs/PERFORMANCE_COMPARISON_RESULTS.md` — Full performance test analysis
-- `docs/PERFORMANCE_TEST_IN_PROGRESS.md` — Test execution log
-- `scripts/perf_comparison.py` — Automated test runner (Python)
-- `scripts/check_perf_progress.sh` — Progress checker
-- `perf_test_results_raw.json` — Raw results (42 runs)
-- `perf_test_summary.json` — Aggregated comparison
-- `perf_comparison_log.txt` — Test output log
+### New Documentation
+- `docs/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Test results and analysis
+- `docs/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan
+- `docs/SCHEMA_GATEWAY_EVENTS.md` - Complete schema reference
+- `docs/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery question closed
+- `docs/PERFORMANCE_TEST_IN_PROGRESS.md` - Test execution log
+
+### New Scripts
+- `scripts/perf_focused_test.py` - Performance benchmark runner (Python)
+- `scripts/verify_delivery_by_id.py` - ID-based verification (Python)
+- `scripts/verify_delivery_timing.sh` - Timing verification (Bash)
+- `scripts/check_perf_progress.sh` - Progress monitor
+- `scripts/perf_comparison.py` - Multi-scenario runner (unused)
+
+### Data Files
+- `perf_focused_results_raw.json` - Raw test data
+- `perf_focused_summary.json` - Aggregated summary
+- `perf_comparison_log.txt` - Old test log
+- `perf_test_results_raw.json` - Old test data (invalid)
+- `perf_test_summary.json` - Old test summary (invalid)
+
+---
+
+## Context for Next Session
+
+**What was accomplished**:
+- Performance testing complete (corrected methodology)
+- Delivery verification complete (events deliver successfully)
+- Schema documented
+- Verification tools created
+
+**What's next**:
+1. **Decision**: Evaluate +13% latency cost for dual mode (optional)
+2. **OR**: Move to Run usage/steps producer (main priority)
+3. **Optional**: Additional performance testing for confidence
+
+**Current mode**: `dual` (delivery verified, performance cost documented)
 
 ---
 
@@ -140,11 +231,25 @@ docker exec them-go-bridge env | grep THE_M_EVENTS_GATEWAY
 
 # Check event-writer health
 docker logs them-event-writer --tail 10
-# Expected: "batch written" messages (no NOGROUP errors)
+# Expected: "batch written" messages, no errors
+```
+
+### Health Check
+```bash
+# All containers
+docker compose --project-name them_gateway \
+  -f docker-compose.yml \
+  -f docker-compose.dev.yml \
+  -f docker-compose.events.yml \
+  --profile events ps
+
+# Event system specifically
+docker exec them-clickhouse clickhouse-client --query "SELECT count() FROM them_events.events_gateway_request WHERE ts > now() - INTERVAL 1 HOUR;"
+docker exec them-redis-events redis-cli XINFO GROUPS them:events:gateway
 ```
 
 ---
 
-**Updated**: 2026-10-21 12:59 UTC  
+**Updated**: 2026-10-22 00:00 UTC  
 **Session**: Performance testing complete  
-**Next**: Push results (git push origin main), then Run producer
+**Next**: Performance cost decision or Run producer implementation
