@@ -49,7 +49,8 @@ SELECT
     COALESCE(ao.llm_provider, ''),
     COALESCE(ao.llm_model, ''),
     COALESCE(ep.allowed_principals, 'internal'),
-    COALESCE(ad.definition::text, '{}')
+    COALESCE(ad.definition::text, '{}'),
+    COALESCE(ep.required_role, '')
 FROM them.entry_points ep
 JOIN them.applications a ON a.id = ep.application_id
 LEFT JOIN them.app_orchestrators ao
@@ -89,6 +90,7 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlu
 		&orchLLMModel,
 		&row.AllowedPrincipals,
 		&activeDefinitionText,
+		&row.RequiredRole,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

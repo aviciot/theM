@@ -301,6 +301,13 @@ func run() error {
 	execLifecycle.WithRoleChecker(roles.NewService(roleQuerier))
 	log.Info("role gate wired (tenant_role_grants per application)")
 
+	// ── 16c-platform-role. Wire platform role enforcer ────────────────────────
+	// Enforces entry_points.required_role against auth_service.roles (platform roles).
+	// Checks user's platform role (developer/analyst/viewer) for user_jwt EPs.
+	platformRoleChecker := execution.NewPgxPlatformRoleChecker(rlsPools.Admin)
+	execLifecycle.WithPlatformRoleChecker(platformRoleChecker)
+	log.Info("platform role enforcer wired (entry_points.required_role)")
+
 	// Wire Temporal execution config loader — reads merged platform+app Temporal controls at workflow start.
 	execLifecycle.WithTemporalConfigLoader(appflow.NewPgxTemporalConfigLoader(rlsPools))
 	log.Info("temporal config loader wired")

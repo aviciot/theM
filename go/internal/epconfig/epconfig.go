@@ -115,6 +115,7 @@ type EPConfig struct {
 	EPType             string // "websocket" | "sse" | etc.
 	AccessMode         string // "public" | "token" | "user_jwt" | "external_jwt"
 	AllowedPrincipals  string // "internal" | "external" | "both"; default "internal"
+	RequiredRole       string // entry_points.required_role; empty = no role requirement
 
 	// Orchestrator binding (SEC-04).
 	// AppOrchestratorID is the UUID of the bound app_orchestrators row.
@@ -252,6 +253,10 @@ type EPConfigRow struct {
 
 	// Principal guard (Phase 3). "internal" | "external" | "both".
 	AllowedPrincipals string
+
+	// RequiredRole is the platform role required to access this EP (from auth_service.roles).
+	// Empty string = no role requirement.
+	RequiredRole string
 
 	// ActiveDefinitionJSON is the raw JSON of the active application_definitions row.
 	// Nil when no active definition exists (legacy app without a published canvas).
@@ -495,6 +500,7 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 		AppEnabled:           row.AppEnabled,
 		AccessMode:           accessMode,
 		AllowedPrincipals:    ap,
+		RequiredRole:         row.RequiredRole,
 		EPMaxConcurrent:      epMax,
 		AppMaxConcurrent:     rt.MaxConcurrentSessions,
 		RateLimitRPM:         rt.RateLimitRPM,

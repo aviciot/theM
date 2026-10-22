@@ -78,10 +78,11 @@ type Lifecycle struct {
 	recorder           RunCreator
 	temporal           transport.TemporalClientExecutor
 	quota              QuotaEnforcer              // optional; nil = no quota enforcement
-	jwtSecret          []byte                     // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
-	ridpLoader         transport.RuntimeIDPLoader // optional; loads per-tenant external JWT config
-	extJWTValidator    *auth.ExternalJWTValidator // optional; validates external RS256 JWTs
-	roleChecker        RoleChecker                // optional; nil = role gate disabled
+	jwtSecret           []byte                     // HMAC-SHA256 secret for AccessModeUser HS256 JWT validation
+	ridpLoader          transport.RuntimeIDPLoader // optional; loads per-tenant external JWT config
+	extJWTValidator     *auth.ExternalJWTValidator // optional; validates external RS256 JWTs
+	roleChecker         RoleChecker                // optional; nil = tenant role gate disabled
+	platformRoleChecker PlatformRoleChecker        // optional; nil = platform role enforcement disabled
 	temporalCfgLoader  TemporalConfigLoader       // optional; nil = hardcoded defaults for AppFlow
 	llmOverrideLoader  AppFlowLLMOverrideLoader   // optional; nil = no inline LLM node overrides applied
 	logVerbosityLoader LogVerbosityLoader         // optional; nil = dal.DefaultLogVerbosity for AppFlow
@@ -157,6 +158,13 @@ type RoleChecker interface {
 // When nil (default), the role gate is disabled and all authenticated requests proceed.
 func (lc *Lifecycle) WithRoleChecker(rc RoleChecker) *Lifecycle {
 	lc.roleChecker = rc
+	return lc
+}
+
+// WithPlatformRoleChecker attaches a PlatformRoleChecker to enable required_role enforcement.
+// When nil (default), required_role checks are disabled and all user_jwt requests proceed.
+func (lc *Lifecycle) WithPlatformRoleChecker(prc PlatformRoleChecker) *Lifecycle {
+	lc.platformRoleChecker = prc
 	return lc
 }
 
@@ -318,6 +326,28 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 		// Store the-M user ID for history isolation and run attribution.
 		req.UserID = claims.UserID
+	}
+
+	// ── 3.7. Required role enforcement ───────────────────────────────────────
+	// If EP has a required_role, check the authenticated user's platform role.
+	// Only applies to AccessModeUser (user_jwt) — token/public modes skip this.
+	if resolvedCfg.AccessMode == epconfig.AccessModeUser && resolvedCfg.RequiredRole != "" {
+		if lc.platformRoleChecker == nil {
+			lc.logger.Warn("execution: EP requires role but no PlatformRoleChecker configured",
+				"ep_slug", req.EPSlug, "required_role", resolvedCfg.RequiredRole)
+			return nil, admitErr(AdmitErrInternal)
+		}
+		userRole, roleErr := lc.platformRoleChecker.GetUserRole(ctx, req.UserID)
+		if roleErr != nil {
+			lc.logger.Warn("execution: platform role lookup failed",
+				"user_id", req.UserID, "error", roleErr)
+			return nil, admitErr(AdmitErrInternal)
+		}
+		if userRole != resolvedCfg.RequiredRole {
+			lc.logger.Debug("execution: user platform role insufficient",
+				"user_id", req.UserID, "user_role", userRole, "required_role", resolvedCfg.RequiredRole)
+			return nil, admitErr(AdmitErrForbidden)
+		}
 	}
 
 	// ── 3.6. AccessModeExternal — validate bank-issued RS256 JWT via JWKS ────
