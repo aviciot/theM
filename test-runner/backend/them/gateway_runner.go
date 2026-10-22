@@ -40,9 +40,10 @@ type gwResponse struct {
 
 // RunUserGateway sends the messages array to the gateway OpenAI-compat endpoint.
 // All virtual users share the same gateway token (it's a service credential).
+// userJWT is an optional X-User-JWT header for per-user quota enforcement testing.
 // If stream=true, uses SSE streaming and accumulates chunks.
 // messages are sent as a full conversation array (multi-turn history passthrough).
-func RunUserGateway(ctx context.Context, baseURL, tenantSlug, gatewayToken, model string, stream bool, userIndex int, messages []string, out chan<- UserResult) {
+func RunUserGateway(ctx context.Context, baseURL, tenantSlug, gatewayToken, userJWT, model string, stream bool, userIndex int, messages []string, out chan<- UserResult) {
 	start := time.Now()
 	result := UserResult{
 		UserIndex: userIndex,
@@ -101,6 +102,9 @@ func RunUserGateway(ctx context.Context, baseURL, tenantSlug, gatewayToken, mode
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+gatewayToken)
+		if userJWT != "" {
+			httpReq.Header.Set("X-User-JWT", userJWT)
+		}
 		if stream {
 			httpReq.Header.Set("Accept", "text/event-stream")
 		}

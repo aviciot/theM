@@ -44,9 +44,11 @@ type Scenario struct {
 	// GatewayToken is the raw hex bearer token from them.gateway_clients.
 	// Stream controls whether to use SSE streaming (true) or a single JSON response (false).
 	// Model overrides the default model sent to the gateway (default: claude-sonnet-4-6).
+	// UserJWT is an optional X-User-JWT header value (for testing per-user quota enforcement).
 	GatewayToken string   `json:"gateway_token,omitempty"`
 	Stream       bool     `json:"stream,omitempty"`
 	Model        string   `json:"model,omitempty"`
+	UserJWT      string   `json:"user_jwt,omitempty"`
 	NUsers       int      `json:"n_users"`
 	Messages     []string `json:"messages"`
 	CreatedAt            string         `json:"created_at"`

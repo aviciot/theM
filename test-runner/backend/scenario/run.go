@@ -159,7 +159,7 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 				themURL = client.BaseURL()
 			}
 			if sc.EPType == "gateway" {
-				them.RunUserGateway(ctx, themURL, sc.TenantSlug, sc.GatewayToken, sc.Model, sc.Stream, idx, sc.Messages, updates)
+				them.RunUserGateway(ctx, themURL, sc.TenantSlug, sc.GatewayToken, sc.UserJWT, sc.Model, sc.Stream, idx, sc.Messages, updates)
 			} else if sc.EPType == "a2a" {
 				them.RunUserA2A(ctx, themURL, sc.TenantSlug, sc.AppSlug, sc.EPSlug, bearerToken, idx, sc.Messages, updates)
 			} else {
