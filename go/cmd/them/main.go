@@ -553,11 +553,12 @@ func run() error {
 	gwSvc := llmgateway.NewService(gwFactory, gwDAL, gwQC, log).
 		WithPolicyEnforcer(gwDAL)
 	gwHandler := llmgateway.NewHandler(gwSvc, gwDAL, slugResolver, log).
-		WithAppFlow(execLifecycle, bus)
+		WithAppFlow(execLifecycle, bus).
+		WithQuotaEnforcers(platformRoleChecker, userRateLimiter, userQuotaChecker)
 	gwClientMW := llmgateway.GatewayClientMiddleware(gwDAL)
 	gwJWTMW := llmgateway.OptionalJWTMiddleware([]byte(cfg.JWTSecret))
 	srv.MountGateway(gwJWTMW(gwClientMW(gwHandler.ChatCompletionsHandler())))
-	log.Info("LLM gateway mounted", "path", "/{tenant_slug}/llm/v1/chat/completions (token + optional user JWT)")
+	log.Info("LLM gateway mounted", "path", "/{tenant_slug}/llm/v1/chat/completions (token + optional user JWT + quotas)")
 
 	// ── 19b. Mount /{tenant_slug}/apps/* (WS + SSE + voice) ─────────────────
 	// Voice handler needs AppService (for provider-key decryption), which requires

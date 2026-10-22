@@ -51,6 +51,11 @@ type Handler struct {
 	// Optional — set via WithAppFlow to enable profile-app dispatch.
 	bus event.Bus
 	lc  *execution.Lifecycle
+
+	// Optional — set via WithQuotaEnforcers to enable per-user quota enforcement.
+	platformRoleChecker execution.PlatformRoleChecker
+	userRateLimiter     execution.UserRateLimiter
+	userQuotaChecker    execution.UserQuotaChecker
 }
 
 // NewHandler creates a Handler. resolver may be nil (slug validation skipped).
@@ -67,6 +72,19 @@ func NewHandler(svc *Service, dal DALWriter, resolver tenantctx.SlugResolver, lo
 func (h *Handler) WithAppFlow(lc *execution.Lifecycle, bus event.Bus) *Handler {
 	h.lc = lc
 	h.bus = bus
+	return h
+}
+
+// WithQuotaEnforcers sets the quota enforcement dependencies.
+// When set, the handler enforces per-user rate limits and daily cost limits.
+func (h *Handler) WithQuotaEnforcers(
+	roleChecker execution.PlatformRoleChecker,
+	rateLimiter execution.UserRateLimiter,
+	quotaChecker execution.UserQuotaChecker,
+) *Handler {
+	h.platformRoleChecker = roleChecker
+	h.userRateLimiter = rateLimiter
+	h.userQuotaChecker = quotaChecker
 	return h
 }
 
@@ -163,7 +181,48 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		logger = logger.With("user_id", userID)
 	}
 
-	// ── 5. Use token hash and client ID from middleware context ─────────────
+	// ── 5. Enforce per-user quotas (rate + daily cost) ──────────────────────
+	// Only applies when user_id is present (from JWT) and quota enforcers are wired.
+	if userID > 0 && h.platformRoleChecker != nil && (h.userRateLimiter != nil || h.userQuotaChecker != nil) {
+		roleConfig, roleErr := h.platformRoleChecker.GetRoleConfig(r.Context(), userID)
+		if roleErr != nil {
+			logger.Warn("llmgateway: role config lookup failed for quota check",
+				"user_id", userID, "error", roleErr)
+			// Continue without quota enforcement (fail-open)
+		} else if roleConfig != nil {
+			// Check rate limit (requests per minute)
+			if h.userRateLimiter != nil && roleConfig.RateLimit > 0 {
+				exceeded, rlErr := h.userRateLimiter.CheckLimit(r.Context(), userID, roleConfig.RateLimit)
+				if rlErr != nil {
+					logger.Warn("llmgateway: rate limit check failed",
+						"user_id", userID, "error", rlErr)
+					// Continue without rate limiting (fail-open)
+				} else if exceeded {
+					logger.Debug("llmgateway: user rate limit exceeded",
+						"user_id", userID, "limit", roleConfig.RateLimit)
+					writeGatewayErrorWithID(w, requestID, http.StatusTooManyRequests, "rate_limited", "rate limit exceeded")
+					return
+				}
+			}
+
+			// Check daily cost limit (USD per day)
+			if h.userQuotaChecker != nil && roleConfig.CostLimitDaily > 0 {
+				dailySpend, csErr := h.userQuotaChecker.GetUserDailySpendFromGateway(r.Context(), userID)
+				if csErr != nil {
+					logger.Warn("llmgateway: daily spend check failed",
+						"user_id", userID, "error", csErr)
+					// Continue without cost limiting (fail-open)
+				} else if dailySpend >= roleConfig.CostLimitDaily {
+					logger.Debug("llmgateway: user daily cost limit exceeded",
+						"user_id", userID, "daily_spend", dailySpend, "limit", roleConfig.CostLimitDaily)
+					writeGatewayErrorWithID(w, requestID, http.StatusPaymentRequired, "quota_exceeded", "daily cost limit exceeded")
+					return
+				}
+			}
+		}
+	}
+
+	// ── 6. Use token hash and client ID from middleware context ─────────────
 	rec := RequestRecord{
 		TenantID:       tenantID,
 		ClientID:       gwClient.ClientID,
@@ -174,7 +233,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		Streamed:       req.Stream,
 	}
 
-	// ── 6. If client has a profile app — dispatch via AppFlow ────────────────
+	// ── 7. If client has a profile app — dispatch via AppFlow ────────────────
 	if h.lc != nil {
 		ca, caErr := h.dal.LoadClientApp(r.Context(), gwClient.TokenHash)
 		if caErr == nil && ca != nil {

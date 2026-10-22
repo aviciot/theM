@@ -72,8 +72,10 @@ type UserRateLimiter interface {
 
 // UserQuotaChecker queries per-user daily spend.
 type UserQuotaChecker interface {
-	// GetUserDailySpend returns the total USD spent by the user today.
+	// GetUserDailySpend returns the total USD spent by the user today via Canvas (run_usage).
 	GetUserDailySpend(ctx context.Context, userID int64) (float64, error)
+	// GetUserDailySpendFromGateway returns the total USD spent by the user today via Gateway (gateway_requests).
+	GetUserDailySpendFromGateway(ctx context.Context, userID int64) (float64, error)
 }
 
 // Lifecycle executes the shared admission-and-run-start pipeline used by the WS,

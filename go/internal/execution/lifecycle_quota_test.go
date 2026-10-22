@@ -32,6 +32,11 @@ func (m *mockUserQuotaChecker) GetUserDailySpend(ctx context.Context, userID int
 	return m.dailySpend, nil
 }
 
+func (m *mockUserQuotaChecker) GetUserDailySpendFromGateway(ctx context.Context, userID int64) (float64, error) {
+	// Canvas tests don't use Gateway spend
+	return 0, nil
+}
+
 // mockPlatformRoleCheckerWithConfig extends mockPlatformRoleChecker to return RoleConfig.
 type mockPlatformRoleCheckerWithConfig struct {
 	roleConfigs map[int64]*RoleConfig // userID -> RoleConfig
