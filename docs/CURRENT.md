@@ -16,6 +16,7 @@ Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints on
 - Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
 - Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item
 - **Handover rule:** do NOT hand over per item; keep going to the next item. Hand over only when context is almost full (or user asks), with a short paste-ready prompt (template in `docs/DOCS_REBOOT_PLAN.md` section 10)
+- **Findings backlog:** `docs/plans/code-findings-backlog.md` — add every bug/risk found while documenting; must be kept updated
 - Unrelated work below (performance/delivery testing) is the previous session's state
 
 ---

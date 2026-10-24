@@ -123,6 +123,8 @@ Found in #3 (details in `architecture/run-lifecycle.md` Known gaps): Temporal is
 
 Found in #4 (details in `architecture/app-canvas-appflow.md` Known gaps): fork branch errors are swallowed; `walkBranch` supports only 6 node kinds; Text/File Guards are skipped inside fork branches; agent-only flows may send no answer text over WS/SSE (`done.final_text` dropped). Code tasks, not docs tasks.
 
+**Findings backlog:** every bug/risk/inefficiency found while documenting goes in `docs/plans/code-findings-backlog.md` (add a row in the same commit; mark fixed there when fixed). Fixed after the reboot completes.
+
 ## 10. Session handover rule
 
 Do **not** end the session after each tracker item. Finish an item (commit + update the section 9 tracker and the "DOCS REBOOT IN PROGRESS" block in `docs/CURRENT.md`), then continue straight into the next item.
