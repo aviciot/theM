@@ -92,3 +92,27 @@ last_verified: 2026-10-24 # commit hash or date someone confirmed doc == code
 - Rendered site (MkDocs) now or later?
 - Hook strictness: warn first, block later?
 - Should `LESSONS.md` be split per area now or at step 3?
+
+## 9. Progress tracker (update this table every session)
+
+Status: `todo` → `done` (written from code, verified, committed). Method per doc: read code + tests, fill `docs/_templates/architecture.md`, list real gaps found, `docs_lint.py check && index`, commit.
+
+| # | Item | Suggested `owns:` (start here) | Status |
+|---|---|---|---|
+| 0 | Archive old docs + skeleton + hook + `/docs-update` skill | — | done (`6cbf4cd9`) |
+| 1 | Events pipeline (pilot) | `go/internal/events/`, `go/cmd/event-writer/` | done (`bfba7c3a`) |
+| 2 | Platform overview & container map | `docker-compose*.yml`, `traefik/`, `go/cmd/them/` | todo |
+| 3 | Run lifecycle (WS/SSE → gate → Temporal → agents) | `go/internal/ws/`, `sse/`, `gate/`, `session/`, `temporal/`, `orchestrator/` | todo |
+| 4 | App Canvas / AppFlow (compile, publish, runtime) | `go/internal/appflow/`, `go/cmd/dag-worker/` | todo |
+| 5 | Auth & roles (unify the ~10 archived role/auth docs) | `go/internal/auth/`, `authserver/`, `execution/roles.go` | todo |
+| 6 | Multi-tenancy & RLS | `go/internal/db/`, `db/0*_*.sql` | todo |
+| 7 | LLM Gateway (policy, quotas, tracing) | `go/internal/llmgateway/`, `governance/`, `llmresolve/` | todo |
+| 8 | MCP service | `go/internal/mcp/`, `go/cmd/mcp-service/` | todo |
+| 9 | A2A agents & agentgen | `go/cmd/agent-runtime/`, `go/internal/agentgen/`, `a2a/` | todo |
+| 10 | App export/import & Deploy-to-Tenant | `go/internal/admin/dal/app_deploy.go` | todo |
+| 11 | Give kept docs front matter + move into folders (`SCHEMA`, `REDIS` → `reference/`; ADRs → `decisions/`; runbook → `guides/`; `AUTH` merges into #5) | — | todo |
+| 12 | Split `LESSONS.md` per area into `docs/lessons/` | — | todo |
+| 13 | Generated reference (schema, routes, node types) + CI `docs-lint` | — | todo |
+| 14 | Switch hook from warn to block (once 2–10 are done and stable) | — | todo |
+
+Known gap to fix when touching REDIS.md: `them:events` / `them:events:dlq` are missing (found in #1).

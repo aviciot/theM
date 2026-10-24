@@ -5,6 +5,19 @@
 
 ---
 
+## DOCS REBOOT IN PROGRESS (read this first)
+
+Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
+- Plan + **progress tracker (section 9)**: `docs/DOCS_REBOOT_PLAN.md`
+- Done: archive + skeleton (`6cbf4cd9`), pilot `docs/architecture/events-pipeline.md` (`bfba7c3a`)
+- Next: item #2 in the tracker (platform overview & container map), one subsystem per session
+- Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
+- Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
+- Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item
+- Unrelated work below (performance/delivery testing) is the previous session's state
+
+---
+
 ## Quick Status
 
 ✅ **Performance Testing Complete**  
