@@ -105,7 +105,7 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 | 3 | Run lifecycle (WS/SSE → gate → Temporal → agents) | `go/internal/ws/`, `sse/`, `gate/`, `session/`, `temporal/`, `orchestrator/` | done (see git log) |
 | 4 | App Canvas / AppFlow (compile, publish, runtime) | `go/internal/appflow/`, `go/cmd/dag-worker/` | done (see git log) |
 | 5 | Auth & roles (unify the ~10 archived role/auth docs) | `go/internal/auth/`, `authserver/`, `execution/roles.go` | done (see git log) |
-| 6 | Multi-tenancy & RLS | `go/internal/db/`, `db/0*_*.sql` | todo |
+| 6 | Multi-tenancy & RLS | `go/internal/db/`, `db/0*_*.sql` | done (see git log) |
 | 7 | LLM Gateway (policy, quotas, tracing) | `go/internal/llmgateway/`, `governance/`, `llmresolve/` | todo |
 | 8 | MCP service | `go/internal/mcp/`, `go/cmd/mcp-service/` | todo |
 | 9 | A2A agents & agentgen | `go/cmd/agent-runtime/`, `go/internal/agentgen/`, `a2a/` | todo |

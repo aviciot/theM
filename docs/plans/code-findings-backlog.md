@@ -45,3 +45,14 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-28 | L | Auth | `Cache.Revoke` has no production caller (admin tokens service re-implements it inline) | `auth/token_cache.go`, `admin/service/tokens.go` | open |
 | F-29 | L | Auth | `JWTMiddleware` returns `err.Error()` to client; `RuntimeLogin` and `Login` duplicate logic | `auth/middleware.go`, `authserver/service.go` | open |
 | F-30 | L | Docs | Legacy `docs/AUTH.md` contradicts code (refresh claims, bootstrap tenant fallback) | `docs/AUTH.md` | open |
+| F-31 | H | Tenancy | Gate/session Redis keys use only the EP slug (`them:ep:{slug}:*`, queue key): tenants with same EP slug share one cap and queue | `gate/gate.go`, `session/session.go` | open |
+| F-32 | H | Tenancy | Superuser `them` is the DB user for auth-go, mcp-service, middleware-worker, agent-runtime and the bridge's legacy pool (bypasses RLS/FORCE) | compose env, `cmd/*/main.go` | open |
+| F-33 | M | Tenancy | Only ~8 admin handlers use `BeginTenantTx`; ~36 Admin-pool (BYPASSRLS) sites rely on hand-written `WHERE tenant_id` | `internal/admin`, workers | open |
+| F-34 | M | Tenancy | No RLS on `hil_approvals` (has tenant_id), `app_debug_config`, `app_flow_llm_overrides`, `app_temporal_config`, `gateway_profile_steps`, while `them_app` has DML; `tenants`/`tenant_quotas` readable by `them_app` | `db/` | open |
+| F-35 | M | DB | `db/001_schema.sql` is missing many live tables (gateway_*, governance_policies, tenant_runtime_config, hil_approvals, …); fresh install per README does not match live schema | `db/001_schema.sql`, `db/README.md` | open |
+| F-36 | M | DB | No migration runner; `schema_migrations` has 52 of 125 migrations (latest recorded 111) | `db/` | open |
+| F-37 | L | DB | `tenant_roles`, `tenant_role_mappings`, `tenant_role_grants` RLS not FORCE; integration test CV-02 expects all FORCE; some tables owned by `them` not `them_owner` | `db/095_tenant_roles.sql` | open |
+| F-38 | L | Tenancy | Tenant slug resolver caches 5 min: disabled tenant still serves runtime traffic | `tenantctx/resolver.go` | open |
+| F-39 | L | Tenancy | `llm_providers_read` exposes bootstrap-tenant (platform) providers to every tenant; confirm no secret columns are readable | `db/110_*.sql` | open |
+| F-40 | L | Docs | `db/README.md` is Python-era (`them-bridge (app/)`, init skips migrations 003+) | `db/README.md` | open |
+| F-41 | L | Tests | `rls_integration_test.go` CV-01 expects ≥28 RLS tables / all FORCE — verify it passes; add `hil_approvals` etc. to the catalog test | `internal/db/rls_integration_test.go` | open |
