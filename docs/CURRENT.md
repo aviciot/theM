@@ -9,8 +9,9 @@
 
 Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
 - Plan + **progress tracker (section 9)**: `docs/DOCS_REBOOT_PLAN.md`
-- Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`
-- Next: item #3 in the tracker (run lifecycle), one subsystem per session
+- Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`
+- Next: item #4 in the tracker (App Canvas / AppFlow), one subsystem per session
+- Open code bugs found by #3 (not fixed, docs only): reconciler workflow-ID mismatch, `session.Touch` never called, silent pre-orchestrator failures — see `run-lifecycle.md` Known gaps
 - Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
 - Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
 - Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item

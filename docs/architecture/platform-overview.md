@@ -89,7 +89,7 @@ which dispatches `/{tenant}/apps/*` (WS, SSE, voice) and `/{tenant}/a2a/*`.
 config → telemetry → Postgres + two RLS pools (`THEM_DB_URL_APP`, `THEM_DB_URL_ADMIN`, both required)
 → Redis → optional events Redis → in-process event bus → session store → run recorder → rate limiter →
 admission gate → agent registry → auth middleware → health + HTTP server → bearer-token cache →
-optional Temporal client (`TEMPORAL_ENABLED`) + run reconciler → entry-point config loader → execution
+Temporal client (required in practice, see `run-lifecycle.md` gap 1) + run reconciler → entry-point config loader → execution
 lifecycle + quota/role enforcers → WS, SSE, dashboard WS → heartbeat/liveness loops → A2A → artifacts →
 admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful drain on SIGTERM).
 
@@ -103,7 +103,8 @@ admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful dra
 | Down | Effect |
 |---|---|
 | Postgres / Redis | Bridge cannot start (required at startup); health endpoints fail |
-| Temporal or workers | Bridge runs, but orchestrated/AppFlow runs do not progress |
+| Temporal server | Bridge cannot start (`client.Dial` at startup) |
+| Workers only | Bridge runs, but orchestrated/AppFlow runs do not progress |
 | `them-mcp-service` | MCP tool calls fail; rest of the platform unaffected |
 | Event Redis / ClickHouse | See `events-pipeline.md`; never blocks requests |
 | `them-auth-go` | New logins fail; existing JWTs keep validating (the bridge checks them locally) |

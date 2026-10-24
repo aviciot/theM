@@ -102,7 +102,7 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 | 0 | Archive old docs + skeleton + hook + `/docs-update` skill | — | done (`6cbf4cd9`) |
 | 1 | Events pipeline (pilot) | `go/internal/events/`, `go/cmd/event-writer/` | done (`bfba7c3a`) |
 | 2 | Platform overview & container map | `docker-compose*.yml`, `traefik/`, `go/cmd/them/` | done (see git log) |
-| 3 | Run lifecycle (WS/SSE → gate → Temporal → agents) | `go/internal/ws/`, `sse/`, `gate/`, `session/`, `temporal/`, `orchestrator/` | todo |
+| 3 | Run lifecycle (WS/SSE → gate → Temporal → agents) | `go/internal/ws/`, `sse/`, `gate/`, `session/`, `temporal/`, `orchestrator/` | done (see git log) |
 | 4 | App Canvas / AppFlow (compile, publish, runtime) | `go/internal/appflow/`, `go/cmd/dag-worker/` | todo |
 | 5 | Auth & roles (unify the ~10 archived role/auth docs) | `go/internal/auth/`, `authserver/`, `execution/roles.go` | todo |
 | 6 | Multi-tenancy & RLS | `go/internal/db/`, `db/0*_*.sql` | todo |
@@ -118,6 +118,8 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 Known gap to fix when touching REDIS.md: `them:events` / `them:events:dlq` are missing (found in #1).
 
 Found in #2: root `CLAUDE.md` still has Python-era rules (`app/adapters/`, `auth_client.py`, `auth_service.*`, port 8701, `python3.12 run_tests.py`) — clean up in item #5 (auth) / #3. Repo root has many stray status/result files to triage.
+
+Found in #3 (details in `architecture/run-lifecycle.md` Known gaps): Temporal is mandatory (nil client panics `NewLifecycle`); reconciler workflow-ID mismatch (never repairs runs); `session.Touch` never called (gate undercounts after 90s); pre-orchestrator failures emit no `error` event. Fix as code tasks, not docs tasks. `REDIS.md` session/gate keys are Python-era (item #11).
 
 ## 10. Session handover rule
 
