@@ -7,6 +7,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | Doc | Type | Status | Verified | Owns |
 |---|---|---|---|---|
 | [Events Pipeline](architecture/events-pipeline.md) | architecture | current | 2026-10-24 | `go/internal/events/`, `go/cmd/event-writer/`, `db/clickhouse/`, `docker-compose.events.yml`, `redis/config/redis-events.conf` |
+| [Platform Overview & Container Map](architecture/platform-overview.md) | architecture | current | 2026-10-24 | `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.temporal.yml`, `docker-compose.hetzner.yml`, `traefik/`, `go/cmd/them/main.go`, `go/internal/server/` |
 
 ## Legacy (no front matter yet — verify before trusting)
 
