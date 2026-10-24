@@ -56,3 +56,17 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-39 | L | Tenancy | `llm_providers_read` exposes bootstrap-tenant (platform) providers to every tenant; confirm no secret columns are readable | `db/110_*.sql` | open |
 | F-40 | L | Docs | `db/README.md` is Python-era (`them-bridge (app/)`, init skips migrations 003+) | `db/README.md` | open |
 | F-41 | L | Tests | `rls_integration_test.go` CV-01 expects ≥28 RLS tables / all FORCE — verify it passes; add `hil_approvals` etc. to the catalog test | `internal/db/rls_integration_test.go` | open |
+| F-42 | H | Gateway | `WriteRequest` inserts `user_id` but live `gateway_requests` has no such column (migration 125 not applied): usage writes fail on this DB | `llmgateway/dal.go`, `db/125_*.sql` | open |
+| F-43 | H | Gateway | Profile-app path skips model allow-list, API-RPM quota, tenant run quotas and gate (AdmitDebug); caller's `model` picks provider | `llmgateway/handler.go` | open |
+| F-44 | M | Gateway | Usage write in `defer` uses `r.Context()` (cancelled on client disconnect) → usage/cost lost | `llmgateway/handler.go` | open |
+| F-45 | M | Gateway | Cost from static rate card with stale model IDs; unknown Anthropic models billed at Sonnet rate; DB `model_pricing` ignored | `llmgateway/service.go` | open |
+| F-46 | M | Gateway | Only monthly-USD budget enforced, tenant-wide (not per client), check-then-spend race; other budgets, `warn_at`, `sample_rate`, `capture_bodies`, `retention_days` stored but not enforced | `llmgateway/policy_gov.go` | open |
+| F-47 | M | Gateway | Request/response bodies stored plaintext at debug/audit; `retain_until` never purged | `llmgateway/dal.go` | open |
+| F-48 | H | Gateway | Provider `base_url` set by tenant admin is not validated → SSRF from bridge and workers; ollama/mock need no key | `admin/service/llm_providers.go`, `llm/openai.go` | open |
+| F-49 | L | Gateway | `system` messages rewritten to `user`; array content/tools/n/stop/top_p unsupported | `llmgateway/service.go` | open |
+| F-50 | L | Gateway | No request body size cap or message-count limit | `llmgateway/handler.go` | open |
+| F-51 | L | Gateway | `X-User-JWT` tenant not checked against client tenant (attribution/quota spoof) | `llmgateway/auth.go` | open |
+| F-52 | L | Gateway | `gateway_clients` has no expiry/revoked/enabled; `last_seen` never updated; no throttling of bad tokens | `llmgateway/dal.go`, `db/100_*.sql` | open |
+| F-53 | L | Gateway | Policy errors fail open on direct path but closed on profile-app path; nil policy never cached (DB hit per request) | `llmgateway/service.go`, `dal.go` | open |
+| F-54 | L | Gateway | `modelToProvider` has no gemini (providers seeded in db/107); profile-app "streaming" is one chunk | `llmgateway/service.go` | open |
+| F-55 | L | Docs | `llmresolve` header claims platform-default fallback (code never uses it); `them:gateway:policy:v2:*` missing from `REDIS.md` | `llmresolve/llmresolve.go`, `docs/REDIS.md` | open |
