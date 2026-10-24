@@ -1,0 +1,4 @@
+#!/bin/sh
+# Docs freshness: warn-only for now (see docs/DOCS_REBOOT_PLAN.md). Never blocks a commit.
+python3.12 scripts/docs_lint.py staged || true
+exit 0

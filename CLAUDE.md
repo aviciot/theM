@@ -6,20 +6,11 @@
 
 ## Read These First
 
-Before touching any code, read these docs if you haven't this session:
+Docs were reset 2026-10-24 (plan: `docs/DOCS_REBOOT_PLAN.md`). Old docs are in `docs/_archive/` — hints only, never ground truth.
 
-| Doc | When to read |
-|---|---|
-| `docs/INDEX.md` | Find the right doc fast |
-| `docs/CURRENT.md` | Current architecture state, containers, next task |
-| `docs/SCHEMA.md` | Touching DB schema or writing queries |
-| `docs/REDIS.md` | Touching anything that reads/writes Redis |
-| `docs/ADAPTERS.md` | Adding/changing an agent transport |
-| `docs/A2A_AGENTS.md` | Working with A2A test agents — start/stop, enable, test commands |
-| `docs/STATUS.md` | Know what's broken/pending before you start |
-| `docs/LESSONS.md` | Before any judgment call — read what burned us before |
-| `scripts/tests/INDEX.md` | Before running or writing tests |
-| `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, environment, or container recreation work |
+1. `docs/INDEX.md` — generated; find the doc that `owns` the code you are touching.
+2. `docs/CURRENT.md` — current state, next task, blockers.
+3. Reference docs when relevant: `docs/SCHEMA.md` (DB), `docs/REDIS.md` (Redis), `docs/A2A_AGENTS.md`, `docs/AUTH.md`, `docs/LESSONS.md` (before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` (Docker/deploy/containers).
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
 
@@ -158,7 +149,7 @@ Quick version of the rule (see the plan doc for the full reasoning):
 
 - **Never** query `auth_service.*` tables directly — use `app/services/auth_client.py` (HTTP to 8701) from Python, or `internal/auth/` from Go
 - **Never** use DB name `odin` or schema `odin` — everything is `them`
-- New agent transport → new file in `app/adapters/` + register in `factory.py` + doc in `docs/ADAPTERS.md`
+- New agent transport → new file in `app/adapters/` + register in `factory.py` + document it in the owning `docs/architecture/` doc
 - **A2A work** (canvas agent builder, agentgen, agent cards, typed parts, wire format) → invoke `/a2a` skill first — it loads the Go A2A ground truth (wire format, AgentSpec, interpreter, security invariants, Phase D checklist)
 - **App Canvas work** (building/debugging an application: entry points, appflow nodes — llm/condition/fork/join/router/hil — connections, Debug Mode API sequence) → invoke `/app-canvas` skill first — node-type rules are live-queryable via `GET /admin/node-types`, but the app-JSON envelope, entry-point creation gotcha, and the full build+debug API sequence are NOT exposed by any endpoint and only documented in that skill. **If the Skill tool returns "Unknown skill", fall back immediately to `Read /opt/docker/them/.claude/skills/app-canvas.md`** — the file is the skill; reading it directly is equivalent.
 - Work under `go/` must also follow `go/CLAUDE.md`
@@ -178,12 +169,11 @@ Quick version of the rule (see the plan doc for the full reasoning):
 
 ## Rules — Documentation (mandatory)
 
-- New Redis key → `docs/REDIS.md`
-- New DB table or column → `docs/SCHEMA.md` + `db/001_schema.sql`
-- New/changed flow → `docs/CURRENT.md`
-- Bug fix or non-obvious behavior → `docs/LESSONS.md`
-- Unresolved at session end → `docs/STATUS.md`
-- Trust code over docs; always update the doc when they diverge
+- Every code change: find the owning doc (`python3.12 scripts/docs_lint.py owners <paths>`), update it in the same commit, bump `last_verified`. Use `/docs-update` (`.claude/skills/docs-update.md`).
+- **No new top-level docs.** New doc = one of `docs/{architecture,reference,guides,decisions,plans,lessons}/` with front matter (`docs/_templates/`). No `*_STATUS`, `*_RESULTS`, `HANDOVER_*` files — state goes in `docs/CURRENT.md`, results in commit messages.
+- New Redis key → `docs/REDIS.md`. New DB table/column → `docs/SCHEMA.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/LESSONS.md`.
+- Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index`. The pre-commit hook (`.githooks/`) warns if owned code changed without its doc.
+- Trust code over docs; update the doc when they diverge.
 
 ---
 

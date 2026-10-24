@@ -1,0 +1,94 @@
+# Docs Reboot Plan
+
+Status: PROPOSAL (2026-10-24) — nothing moved or deleted yet.
+
+## 1. Findings (measured, not guessed)
+
+- **168 md files, ~62k lines** under `docs/` (+ `go/CLAUDE.md`, `scripts/tests/INDEX.md`, `.claude/skills/*`).
+- **142 of 168 are not in `INDEX.md`**; INDEX itself was last updated 2026-09-06, and says `STATUS.md` is "historical" while `CLAUDE.md` tells Claude to read it.
+- **Created-by-session sprawl**: ~39 `*_PLAN`, 10 `HANDOVER_*`, 12 `*STATUS*`, 10 `*RESULTS*`, 22 `*TEST*`. These are work logs, not documentation.
+- **Clear duplication clusters** (same topic, many files):
+  - Events/delivery: ~25 files (`EVENT_DELIVERY_*`, `EVENTS_*`, `POISON_*`, `RESILIENCE_*`, `VERIFICATION_*`)
+  - Gateway/quotas/tracing/policy: ~12 files
+  - Roles/auth: ~10 files (`ROLES_*`, `ROLE_BASED_*`, `USER_AUTH_*`, `END_USER_AUTH_*`, `UNIFIED_ROLE_*`)
+  - Two lessons files (`LESSONS.md` 1784 lines, `lessons-learned.md` 1187 lines)
+- **Root cause**: no rule for *where new information goes*, so every task creates a new file, and nothing forces an update to an existing one. Docs are written once at task time and never revisited.
+- Things that already work and should be kept as the model: `SCHEMA.md`, `REDIS.md`, `go/CLAUDE.md` trigger map, `scripts/tests/INDEX.md`, the two skills.
+
+## 2. Principles
+
+1. **Few docs, each with an owner in code.** A doc exists only if it describes something that exists *now*.
+2. **Generate what can be generated** (schema, routes, node types, test index); hand-write only the *why* and *how it flows*.
+3. **Work logs don't belong in docs/.** Status, test results, handovers → commit message / PR / `CURRENT.md`.
+4. **Staleness must be detectable by a machine**, not by someone remembering.
+5. **Claude is told, per code path, which doc to update** — same mechanism as the existing test trigger map.
+
+## 3. Proposed structure (6 categories, based on Diátaxis + ADRs)
+
+```
+docs/
+  INDEX.md              generated from front matter — never hand-edited
+  CURRENT.md            the ONLY "state" file: HEAD, deployed, next task, blockers
+  architecture/         one doc per subsystem: how it works, flows, invariants, failure modes
+  reference/            facts: SCHEMA, REDIS, ROUTES, NODE_TYPES, ENV, EVENTS (generated where possible)
+  guides/               how-to + runbooks (local env, deploy, add a node, add an adapter, tenant provisioning)
+  decisions/            ADRs — immutable, numbered, superseded not edited
+  plans/                active design/plan docs, each with owner + exit criteria; archived when done
+  lessons/              ONE file per area (append-only), replaces the 2 giant files
+  _archive/             everything retired (kept in git, excluded from INDEX and from Claude's search)
+```
+
+**Architecture docs to write first (the critical "how it works" set, ~10):**
+platform overview & container map · request/run lifecycle (WS/SSE → bridge → Temporal → agents) ·
+App Canvas / AppFlow compile+publish+runtime · auth & roles (single doc, unify the 10) ·
+multi-tenancy & RLS · LLM Gateway (policy, quotas, tracing) · events pipeline (Redis Streams → ClickHouse) ·
+MCP service · A2A agents · export/import & deploy-to-tenant.
+
+## 4. Front matter on every doc (the enforcement hook)
+
+```yaml
+---
+title: Events Pipeline
+type: architecture        # architecture | reference | guide | decision | plan | lessons
+status: current           # current | draft | superseded
+owns:                     # code paths this doc describes
+  - go/internal/events/
+  - go/cmd/event-writer/
+last_verified: 2026-10-24 # commit hash or date someone confirmed doc == code
+---
+```
+
+`owns:` is the key idea: it lets tooling answer "which doc describes this file?" in both directions.
+
+## 5. Keeping it fresh (the part that actually solves the problem)
+
+| Mechanism | What it does |
+|---|---|
+| **Doc trigger map in `CLAUDE.md`** (generated from `owns:`) | Same shape as the Go test map: "changed `go/internal/events/` → update `architecture/events.md`". Claude reads it before commit. |
+| **Stop/pre-commit hook** | If staged files match an `owns:` path and the owning doc isn't also staged → warn/block with the doc name. |
+| **CI `docs-lint`** | Front matter valid, links resolve, no md outside the 6 folders, no doc whose `owns:` paths no longer exist, no doc newer-code-than-`last_verified` older than N days (report only at first). |
+| **Generated reference** | `SCHEMA` via `tbls`/`schemaspy` from live Postgres, routes from router/OpenAPI, node types from `GET /admin/node-types`, Redis keys + test index from a script. CI fails if generated output differs from committed. |
+| **`/docs-update` skill** | Claude's checklist: find owning doc via `owns:`, update, bump `last_verified`, add lesson if non-obvious. Replaces the long "Rules — Documentation" prose. |
+| **Hard rule: no new top-level file** | New information goes into an existing owner doc; a new doc needs a new `owns:` entry. Plans get archived on completion. |
+
+## 6. Tooling options (decide at step 3)
+
+- **Minimum (recommended start):** plain markdown + front matter + one Python lint/index script + hooks. Zero new infra.
+- **Next step:** MkDocs Material (or Docusaurus) to render a searchable site from the same folder, Mermaid diagrams, built in CI. Optional, doesn't change the structure.
+- **Later:** doc search as an MCP tool so Claude queries docs by topic instead of reading INDEX.
+
+## 7. Rollout (small, each step independently valuable)
+
+1. **Freeze + archive**: `git mv` everything except the keep-list (CLAUDE.md-referenced docs, `SCHEMA`, `REDIS`, `LESSONS`, ADRs, runbook, `CURRENT`) into `_archive/`. Nothing deleted; git history keeps it.
+2. **Triage table**: for each archived file mark `distill` (has facts worth pulling into a new architecture doc) / `drop`. Events, gateway, roles clusters first.
+3. **Write the skeleton**: the 6 folders, front-matter spec, lint+index script, hook, `/docs-update` skill, rewrite CLAUDE.md "Read These First" + "Documentation" sections (shorter, points to trigger map).
+4. **Write the ~10 architecture docs** one subsystem per session, verified against code (not copied from old docs). Each ends with `last_verified`.
+5. **Generate reference docs** + CI check.
+6. **Turn on enforcement** (hook blocking, CI failing) once the set is stable.
+
+## 8. Open decisions for the owner
+
+- Archive-all-then-rebuild (recommended, matches your instinct) vs. in-place cleanup?
+- Rendered site (MkDocs) now or later?
+- Hook strictness: warn first, block later?
+- Should `LESSONS.md` be split per area now or at step 3?
