@@ -6,6 +6,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 
 | Doc | Type | Status | Verified | Owns |
 |---|---|---|---|---|
+| [Events Pipeline](architecture/events-pipeline.md) | architecture | current | 2026-10-24 | `go/internal/events/`, `go/cmd/event-writer/`, `db/clickhouse/`, `docker-compose.events.yml`, `redis/config/redis-events.conf` |
 
 ## Legacy (no front matter yet — verify before trusting)
 
