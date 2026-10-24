@@ -103,7 +103,7 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 | 1 | Events pipeline (pilot) | `go/internal/events/`, `go/cmd/event-writer/` | done (`bfba7c3a`) |
 | 2 | Platform overview & container map | `docker-compose*.yml`, `traefik/`, `go/cmd/them/` | done (see git log) |
 | 3 | Run lifecycle (WS/SSE → gate → Temporal → agents) | `go/internal/ws/`, `sse/`, `gate/`, `session/`, `temporal/`, `orchestrator/` | done (see git log) |
-| 4 | App Canvas / AppFlow (compile, publish, runtime) | `go/internal/appflow/`, `go/cmd/dag-worker/` | todo |
+| 4 | App Canvas / AppFlow (compile, publish, runtime) | `go/internal/appflow/`, `go/cmd/dag-worker/` | done (see git log) |
 | 5 | Auth & roles (unify the ~10 archived role/auth docs) | `go/internal/auth/`, `authserver/`, `execution/roles.go` | todo |
 | 6 | Multi-tenancy & RLS | `go/internal/db/`, `db/0*_*.sql` | todo |
 | 7 | LLM Gateway (policy, quotas, tracing) | `go/internal/llmgateway/`, `governance/`, `llmresolve/` | todo |
@@ -121,10 +121,14 @@ Found in #2: root `CLAUDE.md` still has Python-era rules (`app/adapters/`, `auth
 
 Found in #3 (details in `architecture/run-lifecycle.md` Known gaps): Temporal is mandatory (nil client panics `NewLifecycle`); reconciler workflow-ID mismatch (never repairs runs); `session.Touch` never called (gate undercounts after 90s); pre-orchestrator failures emit no `error` event. Fix as code tasks, not docs tasks. `REDIS.md` session/gate keys are Python-era (item #11).
 
+Found in #4 (details in `architecture/app-canvas-appflow.md` Known gaps): fork branch errors are swallowed; `walkBranch` supports only 6 node kinds; Text/File Guards are skipped inside fork branches; agent-only flows may send no answer text over WS/SSE (`done.final_text` dropped). Code tasks, not docs tasks.
+
 ## 10. Session handover rule
 
-When a session should end (item finished, context getting long, or user asks), Claude must:
-1. Commit the work, update the section 9 tracker and the "DOCS REBOOT IN PROGRESS" block in `docs/CURRENT.md` (next item number, HEAD).
+Do **not** end the session after each tracker item. Finish an item (commit + update the section 9 tracker and the "DOCS REBOOT IN PROGRESS" block in `docs/CURRENT.md`), then continue straight into the next item.
+
+Hand over **only when context is almost full** (or the user asks). At that point Claude must:
+1. Commit the work and make sure the tracker and `docs/CURRENT.md` (next item number, HEAD) are current.
 2. **Send the user a short handover prompt in chat** (3–4 lines) they can paste into a fresh session. Template:
 
 > Continue the docs reboot. Read `docs/CURRENT.md` and `docs/DOCS_REBOOT_PLAN.md` section 9, then do item #N (<name>) using `/docs-update` and `docs/_templates/architecture.md`. Write from the code, not the archive. Update the tracker and commit.

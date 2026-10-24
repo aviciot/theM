@@ -6,6 +6,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 
 | Doc | Type | Status | Verified | Owns |
 |---|---|---|---|---|
+| [App Canvas / AppFlow (compile, publish, runtime, debug)](architecture/app-canvas-appflow.md) | architecture | current | 2026-10-24 | `go/internal/appflow/`, `go/internal/nodedefs/`, `go/internal/debugcred/`, `go/internal/admin/service/publish.go`, `go/internal/admin/service/appflow_debug.go`, `go/internal/admin/appflow_debug.go`, `go/cmd/dag-worker/main.go` |
 | [Events Pipeline](architecture/events-pipeline.md) | architecture | current | 2026-10-24 | `go/internal/events/`, `go/cmd/event-writer/`, `db/clickhouse/`, `docker-compose.events.yml`, `redis/config/redis-events.conf` |
 | [Platform Overview & Container Map](architecture/platform-overview.md) | architecture | current | 2026-10-24 | `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.temporal.yml`, `docker-compose.hetzner.yml`, `traefik/`, `go/cmd/them/main.go`, `go/internal/server/` |
 | [Run Lifecycle (WS/SSE → admission → Temporal → agents)](architecture/run-lifecycle.md) | architecture | current | 2026-10-24 | `go/internal/ws/`, `go/internal/sse/`, `go/internal/execution/`, `go/internal/transport/`, `go/internal/gate/`, `go/internal/session/`, `go/internal/epconfig/`, `go/internal/runstream/`, `go/internal/reconciler/`, `go/internal/orchestrator/`, `go/internal/temporal/workflow.go`, `go/internal/temporal/activities.go`, `go/internal/temporal/client.go`, `go/internal/temporal/signaler.go`, `go/cmd/worker/` |
