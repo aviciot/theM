@@ -118,3 +118,11 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 Known gap to fix when touching REDIS.md: `them:events` / `them:events:dlq` are missing (found in #1).
 
 Found in #2: root `CLAUDE.md` still has Python-era rules (`app/adapters/`, `auth_client.py`, `auth_service.*`, port 8701, `python3.12 run_tests.py`) — clean up in item #5 (auth) / #3. Repo root has many stray status/result files to triage.
+
+## 10. Session handover rule
+
+When a session should end (item finished, context getting long, or user asks), Claude must:
+1. Commit the work, update the section 9 tracker and the "DOCS REBOOT IN PROGRESS" block in `docs/CURRENT.md` (next item number, HEAD).
+2. **Send the user a short handover prompt in chat** (3–4 lines) they can paste into a fresh session. Template:
+
+> Continue the docs reboot. Read `docs/CURRENT.md` and `docs/DOCS_REBOOT_PLAN.md` section 9, then do item #N (<name>) using `/docs-update` and `docs/_templates/architecture.md`. Write from the code, not the archive. Update the tracker and commit.

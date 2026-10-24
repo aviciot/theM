@@ -14,6 +14,7 @@ Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints on
 - Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
 - Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
 - Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item
+- **Handover rule:** when a session should end, Claude must send the user a short paste-ready handover prompt (template in `docs/DOCS_REBOOT_PLAN.md` section 10)
 - Unrelated work below (performance/delivery testing) is the previous session's state
 
 ---
