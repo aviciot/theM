@@ -8,13 +8,338 @@
 
 ## Table of Contents
 
-1. [What Problem Does This Solve?](#what-problem-does-this-solve)
-2. [How It Works](#how-it-works)
-3. [The Two Tokens Explained](#the-two-tokens-explained)
-4. [Real-World Example](#real-world-example)
-5. [Technical Implementation](#technical-implementation)
-6. [API Reference](#api-reference)
-7. [Testing Guide](#testing-guide)
+1. [Who Is This For? (Customer Types)](#who-is-this-for-customer-types)
+2. [the-M Auth Options Explained](#the-m-auth-options-explained)
+3. [What Problem Does This Solve?](#what-problem-does-this-solve)
+4. [How It Works](#how-it-works)
+5. [The Two Tokens Explained](#the-two-tokens-explained)
+6. [Real-World Example](#real-world-example)
+7. [Technical Implementation](#technical-implementation)
+8. [API Reference](#api-reference)
+9. [Testing Guide](#testing-guide)
+
+---
+
+## Who Is This For? (Customer Types)
+
+the-M serves **three types of customers**, each with different use cases and auth needs:
+
+### 1. 🎨 **Canvas App Builders** (Interactive Applications)
+
+**Who they are:**
+- Organizations building AI-powered apps for their end-users
+- Example: HR chatbot, customer support assistant, data analysis tool
+
+**What they build:**
+- Multi-agent orchestrated applications in the-M Canvas
+- Apps with UI that end-users interact with via web browser
+
+**How end-users connect:**
+- **WebSocket** or **Server-Sent Events (SSE)** entry points
+- Real-time, conversational interfaces
+
+**Auth method:**
+- **Option 1: Token-based** — the-M creates access tokens per session
+- **Option 2: User JWT** — Users login with username/password, get JWT
+- **Option 3: External JWT** (Keycloak/SSO) — Enterprise single sign-on
+
+**Quota enforcement:**
+- ✅ Per-user quotas (Phases 1-2) — already working
+- Each logged-in user has their own rate/cost limits
+
+**Example:**
+```
+End User (Alice) → Opens HR Chatbot in browser
+                 → Logs in with alice@company.com
+                 → WebSocket connection established
+                 → the-M tracks Alice's usage
+                 → Enforces Alice's viewer quota (100 req/min, $5/day)
+```
+
+---
+
+### 2. 🤖 **Closed Agent Operators** (Headless Services)
+
+**Who they are:**
+- Organizations with existing AI services/bots that need LLM access
+- Example: Slack bot, cron job, internal automation script, third-party integration
+
+**What they use:**
+- **LLM Gateway** — OpenAI-compatible API proxy
+- Their own application (not built in the-M Canvas)
+
+**How they connect:**
+- **HTTP API** (`/llm/v1/chat/completions`)
+- Standard OpenAI format requests
+
+**Auth method:**
+- **Gateway Token** (always required) — Service-level API key
+- **+ User JWT** (optional, NEW in Phases 3-4) — Identify which end-user
+
+**Quota enforcement:**
+- ✅ Gateway-level quotas — rate/cost limits per service (already working)
+- ✅ **Per-user quotas (Phases 3-4)** — NEW! When agent includes User JWT
+
+**Example:**
+```
+Company Slack Bot → Calls the-M Gateway API
+                  → Uses Gateway Token (bot authentication)
+                  → Optionally includes User JWT (employee identification)
+                  → the-M tracks: "Slack Bot made request for Alice"
+                  → Enforces Alice's quota, not shared bot quota
+```
+
+**This document is for this customer type!** 👈
+
+---
+
+### 3. 🔗 **Agent-to-Agent (A2A) Integrators**
+
+**Who they are:**
+- Organizations connecting external autonomous agents
+- Example: Security scanner agent, vision analysis agent, external LLM service
+
+**What they build:**
+- Agents that call other agents (JSON-RPC 2.0 protocol)
+- Multi-agent workflows where agents are external services
+
+**How they connect:**
+- **A2A Entry Points** — JSON-RPC over HTTP
+
+**Auth method:**
+- **Token-based** (the-M access tokens)
+- Agents authenticate with bearer tokens
+
+**Quota enforcement:**
+- App-level quotas (governed by App Canvas settings)
+
+**Example:**
+```
+External Security Agent → Calls the-M A2A endpoint
+                        → Analyzes code for vulnerabilities
+                        → Returns findings in JSON-RPC format
+```
+
+---
+
+### Quick Comparison Table
+
+| Customer Type | What They Build | How Users Connect | Auth Methods | Per-User Quotas |
+|---|---|---|---|---|
+| **Canvas App Builders** | Interactive apps in the-M | WebSocket/SSE (browser) | Token / User JWT / External JWT | ✅ Yes (Phases 1-2) |
+| **Closed Agent Operators** | External bots/services | HTTP API (Gateway) | Gateway Token + User JWT (optional) | ✅ Yes (Phases 3-4) NEW! |
+| **A2A Integrators** | External agents | JSON-RPC A2A | Token | App-level only |
+
+---
+
+## the-M Auth Options Explained
+
+the-M supports **four authentication methods** depending on your use case:
+
+### Auth Option 1: Token-Based (Access Tokens)
+
+**What it is:**
+- Opaque bearer tokens created by the-M
+- Stored in `them.access_tokens` table
+
+**Who uses it:**
+- Canvas applications (temporary session tokens)
+- A2A agents (long-lived agent tokens)
+
+**How it works:**
+```bash
+# Create a token via the-M admin API
+POST /admin/apps/{app_id}/tokens
+{
+  "label": "User session for Alice",
+  "expires_in": 900  # 15 minutes
+}
+
+# Response
+{
+  "token": "abc123def456...",  # 64-char hex string
+  "id": "uuid-here"
+}
+
+# Use it
+WebSocket: wss://them.example.com/payops_ai/apps/my-app/chat?token=abc123def456...
+HTTP: Authorization: Bearer abc123def456...
+```
+
+**Quota tracking:**
+- ✅ Per-token limits (can be scoped to applications)
+- ✅ Per-user limits (when token is associated with user_id)
+
+**Best for:**
+- WebSocket/SSE connections (Canvas apps)
+- Short-lived user sessions
+- A2A agent authentication
+
+---
+
+### Auth Option 2: User JWT (the-M Internal Auth)
+
+**What it is:**
+- JWT tokens issued by **the-M's auth service** (them-auth-go)
+- Signed with HS256 (HMAC-SHA256)
+- Contains user_id, username, role_id
+
+**Who uses it:**
+- Canvas app users (after login)
+- **Gateway users (NEW in Phase 3/4)** — closed agents identifying end-users
+
+**How it works:**
+```bash
+# User logs in to the-M
+POST /{tenant_slug}/auth/login
+{
+  "username": "alice@company.com",
+  "password": "user-password"
+}
+
+# Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "...",
+  "expires_in": 900
+}
+
+# JWT payload (decoded)
+{
+  "sub": "42",
+  "user_id": 42,
+  "username": "alice@company.com",
+  "role_id": 2,  # developer
+  "exp": 1698346500
+}
+
+# Use it
+Canvas (WebSocket): ?token=eyJhbGc...
+Gateway: X-User-JWT: eyJhbGc...
+```
+
+**Quota tracking:**
+- ✅ Per-user limits based on role (super_admin, developer, analyst, viewer, end_user)
+- User's role determines rate_limit (req/min) and cost_limit_daily (USD/day)
+
+**Best for:**
+- Canvas apps with user login
+- **Gateway with per-user tracking** (Phases 3-4)
+- When you want role-based quotas
+
+**NOT for:**
+- External SSO integration (use Auth Option 3)
+
+---
+
+### Auth Option 3: External JWT (SSO / Keycloak)
+
+**What it is:**
+- JWT tokens issued by **your own identity provider** (Keycloak, Auth0, Okta, etc.)
+- the-M validates the signature against your IDP's public key
+
+**Who uses it:**
+- Enterprise customers with existing SSO infrastructure
+- Canvas apps requiring corporate login (SAML, OAuth2)
+
+**How it works:**
+```bash
+# User logs in to YOUR Keycloak instance
+POST https://your-keycloak.com/auth/realms/{realm}/protocol/openid-connect/token
+{
+  "grant_type": "password",
+  "client_id": "your-app",
+  "client_secret": "secret",
+  "username": "alice@company.com",
+  "password": "user-password"
+}
+
+# Your Keycloak returns JWT
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer"
+}
+
+# the-M validates it against your public key
+Canvas entry point configured with:
+- Keycloak URL
+- Realm name
+- Public key / JWKS endpoint
+```
+
+**Quota tracking:**
+- ✅ Per-user limits (if JWT contains user_id claim)
+- Mapped to the-M's role system
+
+**Best for:**
+- Enterprise SSO integration
+- Compliance requirements (centralized auth)
+- Existing identity infrastructure
+
+---
+
+### Auth Option 4: Gateway Token (Closed Agents Only)
+
+**What it is:**
+- Long-lived bearer token for **closed agent services**
+- Not for individual users — for the service itself
+- Registered in `them.gateway_clients` table
+
+**Who uses it:**
+- **Closed agent operators only** (Slack bots, cron jobs, integrations)
+- NOT for Canvas apps or A2A agents
+
+**How it works:**
+```bash
+# the-M admin creates a Gateway client
+INSERT INTO them.gateway_clients (tenant_id, token_hash, label)
+VALUES ('<tenant-uuid>', 'sha256-hash', 'Company Slack Bot');
+
+# Admin gives you the token
+Gateway Token: slack-bot-token-2024-xyz
+
+# Your bot uses it
+POST /{tenant_slug}/llm/v1/chat/completions
+Authorization: Bearer slack-bot-token-2024-xyz
+```
+
+**Quota tracking:**
+- ✅ Gateway-level limits (shared across all users of this bot)
+- ✅ **Per-user limits (NEW!)** — when combined with User JWT header
+
+**Best for:**
+- Slack/Discord bots
+- Cron jobs calling LLM APIs
+- Internal automation scripts
+- Third-party integrations
+
+**Combine with User JWT:**
+```http
+# Service auth + user identification
+Authorization: Bearer slack-bot-token-2024-xyz
+X-User-JWT: eyJhbGc...  (Alice's JWT from the-M login)
+```
+
+Now the-M knows: "Slack bot made this request on behalf of Alice" → enforces Alice's quota.
+
+---
+
+### Which Auth Should I Use?
+
+**I'm building a Canvas app for end-users:**
+→ Use **User JWT** (Auth Option 2) or **External JWT** (Auth Option 3)
+
+**I have a Slack bot / cron job / automation script:**
+→ Use **Gateway Token** (Auth Option 4)
+
+**I want per-user quotas for my bot's users:**
+→ Use **Gateway Token + User JWT** (Auth Options 4 + 2 combined) ← **This guide!**
+
+**I'm integrating an external agent (A2A):**
+→ Use **Token-Based** (Auth Option 1)
+
+**I have enterprise SSO (Keycloak/Okta):**
+→ Use **External JWT** (Auth Option 3)
 
 ---
 
