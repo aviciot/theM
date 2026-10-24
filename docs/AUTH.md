@@ -1,3 +1,5 @@
+> **Superseded** by `docs/architecture/auth-and-roles.md` (written from code 2026-10-24). This file is legacy and partly wrong; do not rely on it.
+
 # Authentication — the-M
 # Last updated: 2026-09-06
 # Source of truth: go/internal/authserver/, go/internal/auth/

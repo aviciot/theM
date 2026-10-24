@@ -32,3 +32,16 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-15 | L | Docs | `REDIS.md` has Python-era keys, lacks `them:events`, `them:events:dlq`, `them:ep:gate:queue:{slug}` | `docs/REDIS.md` | open |
 | F-16 | L | Config | Root `CLAUDE.md` has Python-era rules and a wrong container map; says 2 dag workers (compose has 4 + debug) | `CLAUDE.md` | open |
 | F-17 | L | Ops | `version:` still in `docker-compose.yml`; many stray status/result files in repo root | repo root | open |
+| F-18 | H | Auth | Logout only blacklists inside `authserver`; bridge/admin/user-mgmt/`user_jwt` EPs never check the blacklist, so a logged-out token works until expiry | `auth/jwt.go`, `auth/middleware.go`, `authserver/service.go` | open |
+| F-19 | H | Auth | SSO upsert `ON CONFLICT (email) DO UPDATE … active=true` has no `password_hash IS NULL` guard: SSO login can take over/re-activate an existing (local or disabled) account; no `email_verified` check | `authserver/oidc_store.go` | open |
+| F-20 | M | Auth | ID token not checked for `iss`, `aud`, `exp`, `nonce` | `authserver/oidc_jwks.go` | open |
+| F-21 | M | Auth | No brute-force/rate limit on `/login` and `/runtime-login` | `authserver/handlers.go` | open |
+| F-22 | M | Auth | Auth cookies have no `Secure` flag | `authserver/handlers.go`, `oidc.go` | open |
+| F-23 | M | Auth | Refresh token not rotated or revoked on use (7d replay); refresh skips the `dashboard_access` check | `authserver/service.go` | open |
+| F-24 | M | Auth | Login without `tenant_slug` uses `LIMIT 1` with no `ORDER BY` (random tenant for multi-tenant users) | `authserver/pgx.go` | open |
+| F-25 | M | Auth | `external_jwt`: `SubClaim` config ignored; empty `Audience` skips aud check | `auth/external_jwt.go` | open |
+| F-26 | M | Auth | Role gate and `AppHasGrants` DB errors fail open (app treated as open) | `roles/roles.go` | open |
+| F-27 | L | Auth | HS256 validation accepts tokens with no `type`; unparsable `sub` becomes user 0 silently | `auth/jwt.go` | open |
+| F-28 | L | Auth | `Cache.Revoke` has no production caller (admin tokens service re-implements it inline) | `auth/token_cache.go`, `admin/service/tokens.go` | open |
+| F-29 | L | Auth | `JWTMiddleware` returns `err.Error()` to client; `RuntimeLogin` and `Login` duplicate logic | `auth/middleware.go`, `authserver/service.go` | open |
+| F-30 | L | Docs | Legacy `docs/AUTH.md` contradicts code (refresh claims, bootstrap tenant fallback) | `docs/AUTH.md` | open |
