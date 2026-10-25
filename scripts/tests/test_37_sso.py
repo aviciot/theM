@@ -78,11 +78,11 @@ def req(method: str, path: str, body=None, token: str = "") -> dict:
 
 
 def main():
+    global BASE_URL
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base-url", default=BASE_URL, help="Base URL (default: http://localhost:8088)")
     args = parser.parse_args()
 
-    global BASE_URL
     BASE_URL = args.base_url.rstrip("/")
 
     print(f"\nStep 37 SSO smoke test — base URL: {BASE_URL}\n")

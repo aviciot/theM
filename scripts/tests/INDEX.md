@@ -28,6 +28,15 @@ Go unit/integration tests are indexed separately in `go/TEST_INDEX.md` (`cd go &
 
 Run one: `python3.12 scripts/tests/test_40_appflow_canvas_e2e.py` (exit code 0 = pass).
 
+## Last run (2026-10-25, local dev stack)
+| Script | Result |
+|---|---|
+| `test_37_sso` | had a SyntaxError (fixed); now 9/11 — `tenant-lookup` by email domain returns 404 (backlog F-93) |
+| `test_38_multitenant --skip-sso` | **64/64 pass**, 1 skipped |
+| `test_38_phase4_external_jwt` | **37/37 pass** |
+| `test_39_appflow_hil` | **pass** |
+| `test_40_appflow_canvas_e2e`, `test_41_appflow_fork_join`, `test_42_appflow_inline_nodes` | **fail** at validate/publish with `component_not_found` for `a2a_echo` (backlog F-92) |
+
 ## Relationship to the docs
 - What each test exercises is described in `docs/architecture/app-canvas-appflow.md`, `auth-and-roles.md` and `multi-tenancy-rls.md`.
 - Known weaknesses these tests would not catch (fork-branch errors, guards in branches, cross-tenant export): `docs/plans/code-findings-backlog.md`.
