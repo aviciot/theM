@@ -2,13 +2,13 @@ package admin
 
 // TenantSystemAgentConfigHandler handles the tenant self-service route for
 // choosing general/custom mode on a system-agent role (classifier,
-// card_synthesizer) — see docs/TENANT_LLM_PROVIDERS_PLAN.md step 5.
+// card_synthesizer) — see docs/_archive/TENANT_LLM_PROVIDERS_PLAN.md step 5.
 //
 // Mounted under /admin/my/system-agents/{role}/config, tenant self-service
 // only (mirrors the /admin/my/llm-providers naming pattern). When a tenant has
 // no row here, resolveSystemAgentRole falls back to the bootstrap tenant's own
 // config for the same role (Platform-as-Tenant Phase 2,
-// docs/PLATFORM_AS_TENANT_PLAN.md) — there is no separate platform-global
+// docs/_archive/PLATFORM_AS_TENANT_PLAN.md) — there is no separate platform-global
 // system-agents screen/route anymore.
 
 import (

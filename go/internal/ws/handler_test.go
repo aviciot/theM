@@ -448,7 +448,7 @@ func TestWS_MessageAndDone(t *testing.T) {
 }
 
 // 3b. AppFlow node trace events (node_start/node_done/node_error) are forwarded
-// to the client, not silently dropped (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+// to the client, not silently dropped (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5).
 func TestWS_NodeTraceEventsForwarded(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	streamMsgs := []string{

@@ -1,5 +1,5 @@
 // Package debugcred stores per-node LLM credential overrides for App Canvas
-// Debug Mode runs (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never through
+// Debug Mode runs (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never through
 // Temporal. Each entry is scoped by tenant + run + node, short-TTL, and
 // intentionally does NOT get consumed/deleted on read: a Temporal activity
 // retry re-runs its whole function body, including any credential lookup, so

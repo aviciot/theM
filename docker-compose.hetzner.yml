@@ -486,7 +486,7 @@ services:
 
   # ── AppFlow Debug Worker ─────────────────────────────────────────────────────
   # Isolated debug worker pool for app-canvas Graph-mode debug sessions
-  # (docs/APP_CANVAS_DEBUG_PLAN.md Phase 1). Same image as them-dag-worker, same
+  # (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 1). Same image as them-dag-worker, same
   # code — isolation is by Temporal task queue only: APPFLOW_TASK_QUEUE_OVERRIDE
   # makes its AppFlow worker poll appflow-dag-debug instead of appflow-dag, so
   # debug traffic never competes with or risks production traffic.

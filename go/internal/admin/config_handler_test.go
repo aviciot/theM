@@ -22,7 +22,7 @@ import (
 // tenant-scoped per-app handler tests below (LogVerbosityHandler,
 // TemporalConfigHandler.AppRoutes) — both handlers now validate {id} as a
 // UUID and read the caller's tenant from context (testTenantID, defined in
-// admin_test.go), per the docs/APP_CANVAS_DEBUG_PLAN.md Phase 4
+// admin_test.go), per the docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4
 // tenant-isolation fix.
 const testAppID = "00000000-0000-0000-0000-0000000000b1"
 
@@ -249,7 +249,7 @@ func TestPutTemporalPlatformConfig_BadJSON_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── LogVerbosityHandler tests (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4) ──────
+// ── LogVerbosityHandler tests (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4) ──────
 
 // LV-1: GET log-verbosity for an owned application with no stored row —
 // returns 200 with the default. The DAL's tenant-scoped join resolves
@@ -348,7 +348,7 @@ func TestGetLogVerbosity_MalformedAppID_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// LV-7 (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4 tenant-isolation fix): GET
+// LV-7 (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4 tenant-isolation fix): GET
 // log-verbosity for an application id that exists but does not belong to the
 // caller's tenant (simulated by the DAL's tenant-scoped join finding no row,
 // i.e. pgx.ErrNoRows) — returns 404, not 200 with a stored/default value.
@@ -388,7 +388,7 @@ func TestPutLogVerbosity_AppNotOwnedByTenant_Returns404(t *testing.T) {
 //
 // TemporalConfigHandler.PlatformRoutes is covered above; AppRoutes shares the
 // same ownership-check pattern added to LogVerbosityHandler in the same fix
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4 tenant-isolation fix) and had no
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4 tenant-isolation fix) and had no
 // dedicated test before this fix.
 
 // ownedAppNoOverrideDB is a QueryRow fake that distinguishes the two SELECTs

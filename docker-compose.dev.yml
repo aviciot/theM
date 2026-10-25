@@ -368,7 +368,7 @@ services:
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - DAG_WORKER_MAX_CONCURRENT_ACTIVITIES=${DAG_WORKER_MAX_CONCURRENT_ACTIVITIES:-25}
       - MCP_SERVICE_URL=http://them-mcp-service:8010
-      # File Guard (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — same
+      # File Guard (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — same
       # MinIO connection cmd/them/main.go already uses. Missing before this
       # phase: dag-worker never constructed a FileGate, so these were never
       # needed here — omitting them means File Guard fails open (scanning
@@ -421,7 +421,7 @@ services:
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - DAG_WORKER_MAX_CONCURRENT_ACTIVITIES=${DAG_WORKER_MAX_CONCURRENT_ACTIVITIES:-25}
       - MCP_SERVICE_URL=http://them-mcp-service:8010
-      # File Guard (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — see
+      # File Guard (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — see
       # them-dag-worker's own copy of this comment above for the full note.
       - THE_M_S3_ENDPOINT=${THE_M_S3_ENDPOINT:-http://them-minio:9000}
       - THE_M_S3_ACCESS_KEY=${THE_M_S3_ACCESS_KEY:-them-minio}
@@ -527,7 +527,7 @@ services:
         max-file: "10"
 
   # Isolated debug worker pool for app-canvas Graph-mode debug sessions
-  # (docs/APP_CANVAS_DEBUG_PLAN.md Phase 1). Same image as them-dag-worker, same
+  # (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 1). Same image as them-dag-worker, same
   # code — isolation is by Temporal task queue only: APPFLOW_TASK_QUEUE_OVERRIDE
   # makes its AppFlow worker poll appflow-dag-debug instead of appflow-dag, so
   # debug traffic never competes with or risks production traffic.
@@ -562,7 +562,7 @@ services:
       - DAG_WORKER_MAX_CONCURRENT_ACTIVITIES=${DAG_WORKER_MAX_CONCURRENT_ACTIVITIES:-25}
       - APPFLOW_TASK_QUEUE_OVERRIDE=appflow-dag-debug
       - MCP_SERVICE_URL=http://them-mcp-service:8010
-      # File Guard (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — see
+      # File Guard (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — see
       # them-dag-worker's own copy of this comment above for the full note.
       - THE_M_S3_ENDPOINT=${THE_M_S3_ENDPOINT:-http://them-minio:9000}
       - THE_M_S3_ACCESS_KEY=${THE_M_S3_ACCESS_KEY:-them-minio}

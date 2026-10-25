@@ -5,7 +5,7 @@ import { C } from '../constants';
 
 // ── CanvasTopBar ──────────────────────────────────────────────────────────────
 // Extracted from CanvasBuilderView.tsx (which was over the 400-line guideline)
-// per docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md's file-size cleanup, done ahead of
+// per docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md's file-size cleanup, done ahead of
 // adding Export/Import JSON buttons here. Pure presentation — all state and
 // handlers are owned by CanvasBuilderView and passed down as props.
 

@@ -3,7 +3,7 @@
  * free-text prompt/expression strings.
  *
  * Shared by the agent builder (agentgen, via nodeVars.ts's re-export) and
- * AppFlow (docs/APPFLOW_NAMED_PORTS_PLAN.md) — both runtimes read variables
+ * AppFlow (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md) — both runtimes read variables
  * out of a flat, shared string-keyed var bag using the same Go text/template
  * `{{.x}}` syntax, so the extraction regex is identical for both.
  */

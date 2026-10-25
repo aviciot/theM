@@ -23,7 +23,7 @@ export interface NodeVars {
 
 // ── Template var extraction ───────────────────────────────────────────────────
 // Moved to src/lib/templateVars.ts (shared with AppFlow, see
-// docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 2) — re-exported here for existing
+// docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md Phase 2) — re-exported here for existing
 // importers (StepNode.tsx) so no call site needs to change.
 export { extractTemplateVars };
 
@@ -123,7 +123,7 @@ export function extractNodeVars(node: Node): NodeVars {
 
 // ── Graph-aware helpers ───────────────────────────────────────────────────────
 // reachablePredecessors/reachableSuccessors moved to src/lib/graphWalk.ts
-// (shared with AppFlow, see docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 2) —
+// (shared with AppFlow, see docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md Phase 2) —
 // re-exported here for existing importers so no call site needs to change.
 export { reachablePredecessors, reachableSuccessors };
 

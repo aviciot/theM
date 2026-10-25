@@ -5,7 +5,7 @@ import type { AppFlowDebugResultSummary } from '@/lib/apiTypes';
 import { C } from '../constants';
 
 // AppFlowDebugLogView — App Canvas Debug Mode "smart debug log" follow-up
-// (docs/APP_CANVAS_DEBUG_PLAN.md). Renders the same structured
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md). Renders the same structured
 // GET .../debug/{run_id}/result summary a future debugging-assistant LLM
 // would read directly — a human-readable timeline here today, no separate
 // UI-only data path to keep in sync later.

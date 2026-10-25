@@ -11,7 +11,7 @@
 -- Fix: widen the unique key to (application_id, node_id, def_id) so a node
 -- can carry one wiring PER GUARD TYPE — re-saving the SAME guard on the same
 -- node still upserts in place (the real, exercised case,
--- docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's CreateMiddlewareWiring), while
+-- docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's CreateMiddlewareWiring), while
 -- two DIFFERENT guards on one node now coexist instead of colliding.
 --
 -- Apply live:

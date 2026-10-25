@@ -83,7 +83,7 @@ func (r *mwRow) Scan(dest ...any) error {
 // wiringRow builds a fake scan row for a MiddlewareWiring — matches
 // GetMiddlewareWiring/ListMiddlewareWirings' current SELECT shape (no
 // application_id column scanned directly; DAL sets it from the appID
-// parameter instead — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4).
+// parameter instead — docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4).
 func wiringRow() []any {
 	return []any{
 		"wiring-uuid-1",            // id
@@ -213,7 +213,7 @@ func TestMiddlewareWirings_List(t *testing.T) {
 
 // TestMiddlewareWirings_Create_MissingBothAgentIDAndNodeID returns 400 — a
 // wiring needs SOME identity to scope to. Renamed from
-// "MissingAgentID" (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4): agent_id
+// "MissingAgentID" (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4): agent_id
 // alone is no longer required, since an llm node has no agent at all and
 // scopes its wiring by node_id only — see the two tests below.
 func TestMiddlewareWirings_Create_MissingBothAgentIDAndNodeID(t *testing.T) {

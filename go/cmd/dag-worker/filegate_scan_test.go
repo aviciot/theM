@@ -10,7 +10,7 @@ import (
 	"github.com/aviciot/them/internal/appflow"
 )
 
-// Tests for scanRawBytesFilePart — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// Tests for scanRawBytesFilePart — docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 // Phase 0. Extracted from pgxAgentA2ACaller.InvokeByID (same reasoning
 // decodeAgentSendMessageResponse was extracted for) specifically so the
 // raw-bytes inline scan + wait logic is unit-testable with fakes —

@@ -1,5 +1,5 @@
 // Package events provides pluggable observability storage (Postgres, ClickHouse, dual).
-// Design: docs/OBSERVABILITY_STORAGE_DESIGN.md
+// Design: docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md
 //
 // Producers emit events via EventSink (non-blocking, buffered).
 // Consumers query via EventStore (tenant-scoped, interface-defined methods).

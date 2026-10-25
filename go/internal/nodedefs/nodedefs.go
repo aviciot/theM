@@ -4,7 +4,7 @@
 //
 // What stays out on purpose: execution (Execute/DeriveInputs/DeriveOutputs),
 // StepType, AppParamDecl and ExecutionPolicy remain in agentgen — they are typed
-// to its interpreter and compiler. See docs/NODE_REGISTRY_PLAN.md Phase 2.
+// to its interpreter and compiler. See docs/_archive/NODE_REGISTRY_PLAN.md Phase 2.
 package nodedefs
 
 // ConfigFieldDoc documents one config JSON key for a node type.

@@ -6,7 +6,7 @@
  * Inlines the pure logic from guardWriteVars.ts (no TypeScript runtime
  * needed). Naming convention MUST stay byte-for-byte identical to
  * go/internal/appflow/workflow.go's guardStatusVarName/writeGuardCategoryVars/
- * writeFileGuardVar (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1/1.5/2) —
+ * writeFileGuardVar (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1/1.5/2) —
  * that's the whole point of this module, so these tests pin the exact
  * strings, not just "some var got produced."
  */

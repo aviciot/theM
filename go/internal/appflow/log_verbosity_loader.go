@@ -9,7 +9,7 @@ import (
 
 // PgxLogVerbosityLoader reads the per-app AppFlow trace log-verbosity setting from
 // PostgreSQL. Used by Lifecycle.StartAppFlow to resolve it at workflow start time
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4).
 type PgxLogVerbosityLoader struct {
 	pools *db.Pools
 }

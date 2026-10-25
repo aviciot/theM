@@ -6,7 +6,7 @@ import (
 )
 
 // Tests for decodeAgentSendMessageResponse — Phase 1 of
-// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md. Before this phase, the response's
+// docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md. Before this phase, the response's
 // parts were decoded into a hand-rolled struct with only a `Text string`
 // field — a file/data/raw part silently decoded to an empty string, no
 // error, nothing logged. These tests confirm all 4 real A2A part kinds

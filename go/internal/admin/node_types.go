@@ -16,7 +16,7 @@ import (
 // the agentgen (agent builder) family, the appflow (app canvas) family, and
 // the middleware (DB-defined guards, e.g. File Guard) family — merged into
 // one array with one shape, sorted by type name for deterministic output.
-// See docs/NODE_REGISTRY_PLAN.md Phases 3-5.
+// See docs/_archive/NODE_REGISTRY_PLAN.md Phases 3-5.
 //
 // Unlike the agentgen/appflow families (static Go registries), middleware
 // defs live in them.middleware_defs and require a DB read — this is the
@@ -86,7 +86,7 @@ func (h NodeTypesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Go-function metadata records, not interpreter-bound step definitions).
 // Executable is always false: "middleware" is a pass-through no-op in the
 // appflow workflow today (internal/appflow/workflow.go's "case middleware") —
-// see docs/NODE_REGISTRY_PLAN.md Phase 5's explicit "does not change what
+// see docs/_archive/NODE_REGISTRY_PLAN.md Phase 5's explicit "does not change what
 // runs" scope note. A row with no seeded edges/config_fields (nil JSON
 // columns) still appears, just with zero-value EdgeRules and no config
 // fields — matches this table's existing nullable-column, fail-open pattern.

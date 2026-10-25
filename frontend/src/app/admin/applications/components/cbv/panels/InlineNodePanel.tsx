@@ -29,7 +29,7 @@ const CONDITION_EXAMPLES = [
   '{{eq .output "APPROVED"}}',
   '{{gt (len .output) 100}}',
   '{{contains .output "error"}}',
-  // Guard var example (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2/3):
+  // Guard var example (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2/3):
   // Phase 2 decided (b) — FlowVars stays flat, so the real template
   // reference is the flat key (nodeID_defSlug_status), not the dotted
   // display form shown in the Writes panel. Drag a var in from an

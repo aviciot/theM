@@ -8,7 +8,7 @@ import (
 )
 
 // TextGate runs pii_redact/prompt_inject synchronously against text produced
-// by an llm or agent node (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1).
+// by an llm or agent node (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1).
 //
 // Deliberately NOT built on FileGate's async quarantine/enqueue path: a
 // redaction guard must change the text BEFORE the workflow continues using
@@ -81,7 +81,7 @@ type TextGateResult struct {
 	Results []Result
 	// ResultsByGuard is the same data as Results, keyed by defSlug
 	// ("pii_redact", "prompt_inject") instead of positional order —
-	// docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5. Each guard's own
+	// docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5. Each guard's own
 	// Result.Detail carries its real per-category match data (e.g.
 	// pii_redact's Detail["categories"] = map[string]int{"email": 1}) —
 	// this was already computed correctly by pii.Detector.Process the whole
@@ -227,7 +227,7 @@ func (g *TextGate) loadTextWiringCfg(ctx context.Context, defSlug, appID, nodeID
 	g.cacheMu.Unlock()
 
 	// LEFT JOIN agents, not JOIN — an llm-node wiring has no agent_id at all
-	// (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4/db/114); an inner join would
+	// (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4/db/114); an inner join would
 	// silently exclude it.
 	const q = `
 SELECT

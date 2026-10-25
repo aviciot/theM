@@ -15,7 +15,7 @@ type PipelineResult struct {
 	// FinalPart is the part after every processor's Modified (if any) has
 	// been applied in sequence — e.g. a pii_redact processor's redacted
 	// text. Equal to the input part when nothing was modified. Added
-	// for TextGate (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1) — a synchronous
+	// for TextGate (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1) — a synchronous
 	// caller needs the redacted text back, unlike av_scan's async path
 	// (cmd/middleware-worker/main.go), which only needed the status.
 	FinalPart Part

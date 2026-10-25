@@ -34,7 +34,7 @@ export function validateConnection(
   sourceHandle?: string | null,
   targetHandle?: string | null,
 ): string | null {
-  // Named data ports (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 4) are visible on
+  // Named data ports (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md Phase 4) are visible on
   // llm/condition nodes but not wired up yet — drag-to-connect lands in Phase
   // 5. Reject here rather than silently creating a plain control edge, which
   // would be wrong (a data port drag is not a "run after" relationship).
@@ -144,7 +144,7 @@ export function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
 }
 
 // ── Styled edges ──────────────────────────────────────────────────────────────
-// App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md) marks an edge as
+// App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md) marks an edge as
 // `data._debugActive` (useAppFlowDebugSession.ts's decorateEdges) when a live
 // debug run has actually walked it — found live, this session, that
 // styledEdges was unconditionally overwriting animated/style on every edge,

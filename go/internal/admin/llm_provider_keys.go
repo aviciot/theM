@@ -19,7 +19,7 @@ import (
 //
 // Every route resolves {name} to the caller's own tenant-scoped them.llm_providers
 // row first — a tenant can only manage keys on a provider row it owns. There is no
-// platform-key fallback anywhere in this file (hard rule, see docs/TENANT_LLM_PROVIDERS_PLAN.md).
+// platform-key fallback anywhere in this file (hard rule, see docs/_archive/TENANT_LLM_PROVIDERS_PLAN.md).
 type LLMProviderKeysHandler struct {
 	keys      *service.LLMProviderKeyService
 	providers *service.LLMProviderService

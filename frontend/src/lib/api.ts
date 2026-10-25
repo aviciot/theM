@@ -587,10 +587,10 @@ export const themApi = {
   publishDefinition: (appId: string, defId: string) =>
     api.post<PublishResult>(`/admin/applications/${appId}/definitions/${defId}/publish`, {}),
 
-  // App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — runs the
+  // App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5) — runs the
   // latest saved draft directly, no publish required. llmOverrides maps
   // canvas node_id -> the per-node LLM credential choice for THIS debug run
-  // only (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's
+  // only (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's
   // saved Runtime settings. stepMode (Phase 6) starts the run paused before
   // every node's tick instead of running straight through — false (default)
   // is today's Run-All behavior, unchanged.
@@ -604,7 +604,7 @@ export const themApi = {
     }),
 
   // Sends one Step signal to a running debug run started with stepMode=true
-  // (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — releases every node currently
+  // (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) — releases every node currently
   // paused (including every node in every active fork branch, in lockstep)
   // by exactly one tick.
   stepAppFlowDebug: (appId: string, runId: string) =>

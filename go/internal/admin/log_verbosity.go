@@ -13,7 +13,7 @@ import (
 )
 
 // LogVerbosityHandler handles the per-app AppFlow trace log-verbosity route
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4).
 type LogVerbosityHandler struct {
 	svc *service.ConfigService
 }

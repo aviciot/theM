@@ -1,5 +1,5 @@
 # the-M — observability events stack (profile: events)
-# Design: docs/OBSERVABILITY_STORAGE_DESIGN.md (Stage A)
+# Design: docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md (Stage A)
 #
 # Purely additive. Nothing in docker-compose.yml depends on these services, and no
 # existing container is changed by this file.
@@ -100,7 +100,7 @@ services:
         max-file: "3"
 
   # Event writer — Redis Streams → ClickHouse consumer
-  # Design: docs/OBSERVABILITY_STORAGE_DESIGN.md Stage A3
+  # Design: docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md Stage A3
   # Consumer group "event-writers" (N replicas for redundancy)
   them-event-writer:
     build:

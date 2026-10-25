@@ -287,7 +287,7 @@ func TestFileGate_WiringOverride_Enabled(t *testing.T) {
 }
 
 // TestFileGate_NodeIDScoping verifies the real bug fixed 2026-09-26
-// (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): before this fix,
+// (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): before this fix,
 // loadWiringCfg only ever looked up by agent.slug, so two canvas instances
 // of the SAME agent would share (or collide on) one wiring — even though
 // them.middleware_wirings already had a real node_id column with its own

@@ -10,7 +10,7 @@ import type { AppFlowDebugSessionState } from './useAppFlowDebugSession';
 // Presets are personal, per-(tenant, user, application), db/111 — save/reload
 // the debug panel's entry point, test message, step mode, and per-node LLM
 // overrides so a user doesn't have to re-type them every time the panel
-// opens. See docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why these are
+// opens. See docs/_archive/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why these are
 // deliberately NOT shared via the tenant Role model.
 export function useAppFlowDebugPresets({
   appId,

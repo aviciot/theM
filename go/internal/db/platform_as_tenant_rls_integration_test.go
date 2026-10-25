@@ -1,6 +1,6 @@
 //go:build integration
 
-// Platform-as-Tenant Phase 3 (docs/PLATFORM_AS_TENANT_PLAN.md): dedicated
+// Platform-as-Tenant Phase 3 (docs/_archive/PLATFORM_AS_TENANT_PLAN.md): dedicated
 // regression tests proving the bootstrap tenant's them.llm_providers /
 // them.llm_provider_keys rows behave exactly as decision 7 specifies, under
 // real RLS enforcement (them_app pool + BeginTenantTx), not the BYPASSRLS

@@ -10,7 +10,7 @@ import (
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
-// Platform-as-Tenant Phase 2 (docs/PLATFORM_AS_TENANT_PLAN.md): the bootstrap
+// Platform-as-Tenant Phase 2 (docs/_archive/PLATFORM_AS_TENANT_PLAN.md): the bootstrap
 // tenant (tenantctx.BootstrapTenantID) now owns what used to be the
 // tenant_id-IS-NULL "platform default" rows. These tests prove
 // ListProvidersForTenant and GetProviderBaseURLs correctly treat the

@@ -188,10 +188,10 @@ if [ "$FAILED" -eq 0 ]; then
       ;;
     "1c")
       echo "   ⚠️  If failures started, worker bottleneck confirmed."
-      echo "   Next: Increase worker concurrency (see docs/GATEWAY_PERF_TEST_QUICKSTART.md Phase B)"
+      echo "   Next: Increase worker concurrency (see docs/_archive/GATEWAY_PERF_TEST_QUICKSTART.md Phase B)"
       ;;
     *)
-      echo "   Continue with test series per docs/GATEWAY_PERF_TEST_QUICKSTART.md"
+      echo "   Continue with test series per docs/_archive/GATEWAY_PERF_TEST_QUICKSTART.md"
       ;;
   esac
 else

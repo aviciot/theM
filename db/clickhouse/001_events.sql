@@ -1,5 +1,5 @@
 -- the-M events store — ClickHouse schema (database: them_events)
--- Design: docs/OBSERVABILITY_STORAGE_DESIGN.md §10
+-- Design: docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md §10
 --
 -- Runs once, on first start of an empty data dir (docker-entrypoint-initdb.d).
 -- Conventions:

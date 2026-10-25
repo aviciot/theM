@@ -22,7 +22,7 @@ metadata:
 
 ## Build phase (2026-06-28)
 Phase 0+1 complete: skeleton, config, database, models, health router, auth_service copy.
-Phases 2-7 pending. See docs/STATUS.md.
+Phases 2-7 pending. See docs/_archive/STATUS.md.
 
 ## Git
 Not yet initialized. Run `git init && git add . && git commit -m "init"` to start.

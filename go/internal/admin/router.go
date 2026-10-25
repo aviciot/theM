@@ -19,7 +19,7 @@ import (
 )
 
 // AppFlowDebugLifecycle is the *execution.Lifecycle surface BuildRouter needs
-// to mount the debug-start route (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+// to mount the debug-start route (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5).
 // Aliased to service.AppFlowDebugStarter so this file doesn't need to import
 // internal/execution directly. Pass nil to disable the debug route (tests only,
 // or when Temporal is not configured).

@@ -18,7 +18,7 @@ import (
 // minimalDraftDoc (appflow_debug_test.go) but with NO "_resolved_agent_ids"
 // stamp — i.e. a draft that has never been published. Before this fix,
 // starting a debug run against this exact shape failed Validate with
-// "unresolved_agent" (docs/APP_CANVAS_DEBUG_PLAN.md's documented "known
+// "unresolved_agent" (docs/_archive/APP_CANVAS_DEBUG_PLAN.md's documented "known
 // limitation"). resolveDraftAgentIDs exists to resolve it live instead.
 const unpublishedAgentDraftDoc = `{
 	"schema_version": 2,
@@ -145,7 +145,7 @@ func TestResolveDraftAgentIDs_AgentExistsCheckErrors_PropagatesError(t *testing.
 // existed, Start on this exact draft (an agent node, never published, no
 // _resolved_agent_ids stamp) failed with "validate: [unresolved_agent] ..."
 // — the real bug hit live during Platform-as-Tenant Phase 6 verification
-// (docs/PLATFORM_AS_TENANT_PLAN.md). With a real registry wired in, Start
+// (docs/_archive/PLATFORM_AS_TENANT_PLAN.md). With a real registry wired in, Start
 // now succeeds without any publish having happened.
 func TestAppFlowDebugService_Start_UnpublishedAgentDraft_NoLongerBlocked(t *testing.T) {
 	d := &fakeAppFlowDebugDAL{

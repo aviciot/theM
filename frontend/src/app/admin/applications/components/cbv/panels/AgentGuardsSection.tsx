@@ -9,8 +9,8 @@ import { themApi, type Agent, type MiddlewareWiring } from '@/lib/api';
 
 // ── AgentGuardsSection — Guards panel for agent + llm nodes ─────────────────
 //
-// Started as Phase 3 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md (File Guard
-// on agent nodes only); generalized in docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// Started as Phase 3 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md (File Guard
+// on agent nodes only); generalized in docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md
 // Phase 4 to render every applicable guard def for a node, and to work for
 // llm nodes too (an llm node has no agents row — middleware_wirings.agent_id
 // is now nullable, db/114 — node_id is the only real identity a wiring
@@ -21,14 +21,14 @@ import { themApi, type Agent, type MiddlewareWiring } from '@/lib/api';
 //   can carry a file or text worth guarding).
 // - llm: pii_redact, prompt_inject only — NOT file-guard. An llm node's
 //   response can never carry a file today (confirmed:
-//   docs/APPFLOW_LLM_FILE_OUTPUT_PLAN.md is a separate, not-yet-started
+//   docs/_archive/APPFLOW_LLM_FILE_OUTPUT_PLAN.md is a separate, not-yet-started
 //   plan) — showing a File Guard toggle that can never trigger would
 //   misrepresent what it does, same principle as PII/Prompt-Injection guard
 //   being excluded before their real detection logic existed.
 //
 // PII/Prompt-Injection guard is deliberately NOT rendered for either node
 // kind until this phase — confirmed pii_redact/prompt_inject now have real
-// detection logic (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1-2/3), so this is
+// detection logic (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1-2/3), so this is
 // no longer the "would silently lie about what it does" case that excluded
 // the old combined guard_default def.
 
@@ -39,7 +39,7 @@ interface Props {
   showToast: (msg: string, ok: boolean) => void;
   // Called after every successful create/update — lets a parent that holds
   // its own app-wide wirings list (e.g. CanvasBuilderView's drag-source
-  // popover, docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2) refetch so a
+  // popover, docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2) refetch so a
   // newly-enabled guard becomes draggable without a full page reload.
   onWiringChanged?: () => void;
 }

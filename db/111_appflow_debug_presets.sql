@@ -1,6 +1,6 @@
 -- db/111_appflow_debug_presets.sql
 -- Per-user, per-application saved presets for the AppFlow debug panel
--- (docs/APP_CANVAS_DEBUG_PLAN.md) — lets a user save the entry point, test
+-- (docs/_archive/APP_CANVAS_DEBUG_PLAN.md) — lets a user save the entry point, test
 -- message, step mode, and per-node LLM overrides they typed into the debug
 -- panel, and reload them next time instead of re-entering everything.
 --

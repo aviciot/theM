@@ -1,4 +1,4 @@
--- 104: Per-app AppFlow trace log-verbosity setting (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+-- 104: Per-app AppFlow trace log-verbosity setting (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4).
 -- Controls how much detail persistTrace (internal/appflow/activities.go) writes to
 -- them.run_steps for Graph-mode runs. No row = default "status". Debug-mode runs
 -- always use "full" regardless of this setting (enforced in Go, not the DB).

@@ -26,7 +26,7 @@ const (
 	// worker pool (them-dag-worker-debug) for AppFlowWorkflow runs started with
 	// debug=true. Same workflow/activity code as AppFlowTaskQueue — isolation is by
 	// queue only, so debug traffic never competes with or risks production traffic.
-	// See docs/APP_CANVAS_DEBUG_PLAN.md Phase 1.
+	// See docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 1.
 	AppFlowDebugTaskQueue = "appflow-dag-debug"
 
 	// AppFlowWorkflowType is the registered workflow type name.
@@ -45,17 +45,17 @@ const (
 	AppFlowInvokeAgentActivityName = "AppFlowInvokeAgentActivity"
 
 	// AppFlowFileGateActivityName is the registered name for the File Guard
-	// scan activity (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
+	// scan activity (Phase 2 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
 	AppFlowFileGateActivityName = "AppFlowFileGateActivity"
 
 	// AppFlowFileGateWaitActivityName is the registered name for the
 	// activity that blocks until File Guard's async scan reaches a real
-	// terminal verdict (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0).
+	// terminal verdict (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0).
 	AppFlowFileGateWaitActivityName = "AppFlowFileGateWaitActivity"
 
 	// AppFlowTextGateActivityName is the registered name for the PII/
 	// prompt-injection text guard activity (Phase 3 of
-	// docs/APPFLOW_TEXT_GUARDS_PLAN.md).
+	// docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md).
 	AppFlowTextGateActivityName = "AppFlowTextGateActivity"
 
 	// AppFlowInlineLLMActivityName is the registered name for the inline LLM node activity.
@@ -66,7 +66,7 @@ const (
 
 	// AppFlowTraceNodeEventActivityName is the registered name for the live
 	// node_start/node_done/node_error trace-publish activity (Phase 2 of
-	// docs/APP_CANVAS_DEBUG_PLAN.md). Used by Condition/Fork/Join, which have
+	// docs/_archive/APP_CANVAS_DEBUG_PLAN.md). Used by Condition/Fork/Join, which have
 	// no activity of their own for their real logic.
 	AppFlowTraceNodeEventActivityName = "AppFlowTraceNodeEventActivity"
 
@@ -84,7 +84,7 @@ const (
 	AppFlowPendingWaitSetActivityName = "AppFlowPendingWaitSetActivity"
 
 	// AppFlowSignalStep is the signal name for the debug "Step" control
-	// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). One signal = one tick: every
+	// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6). One signal = one tick: every
 	// currently-paused node (including every node in every currently-active
 	// fork branch) advances by exactly one node, then pauses again. See
 	// stepGate's doc comment for why this is a shared-counter design rather
@@ -95,7 +95,7 @@ const (
 	appFlowHILTimeout      = 24 * time.Hour // HIL can wait up to 24h before fallback
 
 	// DebugRunMaxLifetime is the enforced ceiling on a debug run's total
-	// wall-clock execution time (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — set as
+	// wall-clock execution time (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) — set as
 	// this workflow's WorkflowRunTimeout for debug runs only (production runs
 	// are unaffected; they use the app's own TemporalCfg.WorkflowTimeoutS or
 	// no limit at all). Sized from the actual worst case, not a round number:
@@ -118,7 +118,7 @@ const (
 	// into the credential-retention math this bound exists to serve (see
 	// debugcred.TTL, which is derived FROM this constant).
 	//
-	// docs/APPFLOW_RUNTIME_PARAMS_PLAN.md's own review corrected an earlier,
+	// docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md's own review corrected an earlier,
 	// wrong assumption that appFlowActivityTimeout was 120s — it is 10m.
 	DebugRunMaxLifetime = 3*time.Hour + 30*time.Minute
 
@@ -152,7 +152,7 @@ func activityTaskQueueFor(debug bool) string {
 
 // traceNode fires a node_start/node_done/node_error event via
 // AppFlowTraceNodeEventActivity. Used only by Condition/Fork/Join, which do no
-// I/O of their own (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). Always emitted,
+// I/O of their own (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2). Always emitted,
 // never persisted, never allowed to fail the node it describes — the .Get
 // error is deliberately discarded, matching TraceNodeEventActivity's own
 // never-fail contract.
@@ -168,7 +168,7 @@ func traceNode(ctx workflow.Context, runID, nodeID, kind, eventType, detail, ver
 }
 
 // guardStatusVarName builds the FlowVar name a condition node reads a
-// guard's outcome from — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.
+// guard's outcome from — docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.
 // One var per (node, guard kind) pair, deliberately not combined across
 // guards on the same node (Open Question 1: a node with both PII Guard and
 // Prompt-Injection Guard enabled must let a condition node branch on EACH
@@ -203,7 +203,7 @@ func writeTextGuardVars(vars FlowVars, nodeID, categories string) {
 }
 
 // writeGuardCategoryVars writes one FlowVar per (guard, category) pair
-// found in details — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5.
+// found in details — docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5.
 // E.g. a pii_redact guard that matched "email" once and "phone" twice on
 // node "agent1" writes agent1_pii_redact_email_status="flagged" and
 // agent1_pii_redact_phone_status="flagged". A guard with Outcome=="clean"
@@ -239,7 +239,7 @@ func writeFileGuardVar(vars FlowVars, nodeID, scanStatus string) {
 }
 
 // stepTick is workflow-local shared state for the debug Step control
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Exactly one instance is created per
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6). Exactly one instance is created per
 // AppFlowWorkflow execution when StepMode is true, and a pointer to it is
 // threaded into every place a node dispatch can pause (the main loop and each
 // fork branch in walkBranch).
@@ -345,7 +345,7 @@ type AppFlowWorkflowInput struct {
 	// workflow function once it's already running.
 	Debug bool `json:"debug,omitempty"`
 	// LogVerbosity is the resolved effective trace-persistence level for this
-	// run: "off"|"status"|"full" (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+	// run: "off"|"status"|"full" (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4).
 	// Resolved once by StartAppFlow from them.app_debug_config before the
 	// workflow starts (fail-open default "status" on load error or no row).
 	// When Debug is true, StartAppFlow always sets this to "full" regardless
@@ -353,7 +353,7 @@ type AppFlowWorkflowInput struct {
 	LogVerbosity string `json:"log_verbosity,omitempty"`
 	// StepMode pauses execution before every node's tick (main path AND every
 	// active fork branch) and waits for an external AppFlowSignalStep signal
-	// before proceeding (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Only
+	// before proceeding (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6). Only
 	// meaningful when Debug is true; Run-All debug sessions leave this false,
 	// in which case stepGate is never called and behavior is identical to
 	// today. Not persisted on the run row — purely an execution-time control.
@@ -521,7 +521,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
-	// Debug Step control (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — only wired
+	// Debug Step control (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) — only wired
 	// up when StepMode is set; every other run pays a single nil check per
 	// node (see stepGate). See stepTick's doc comment for why this is a
 	// shared counter rather than a signal per paused branch.
@@ -617,7 +617,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			// because it happened before InvokeAgentActivity's own trace.
 			var guardNotes []string
 
-			// Text Guards input-phase check (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+			// Text Guards input-phase check (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md
 			// Phase 4's direction field): only a guard wired with
 			// direction:"both" actually does anything here — TextGate.Check
 			// itself decides that per-guard from the resolved config, this
@@ -672,7 +672,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			if agentOut.ResponseText != "" {
 				accumulated = agentOut.ResponseText
 			}
-			// Text Guards check (Phase 3 of docs/APPFLOW_TEXT_GUARDS_PLAN.md):
+			// Text Guards check (Phase 3 of docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md):
 			// only when there's real text to guard — a file/data/raw-only
 			// response has nothing for pii_redact/prompt_inject to scan.
 			// Runs AFTER File Guard's own check below intentionally: PII in a
@@ -722,7 +722,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				traceNode(ctx, input.RunID, node.ID, node.Kind, "node_done",
 					fmt.Sprintf("%s — Text Guard: %s", accumulated, strings.Join(guardNotes, ", ")), input.LogVerbosity)
 			}
-			// File Guard check (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md):
+			// File Guard check (Phase 2 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md):
 			// only when the agent actually returned a recognized file part —
 			// a text-only response (the overwhelmingly common case today) never
 			// even calls this activity. Scoped by this exact canvas node
@@ -749,7 +749,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 					retErr = fmt.Errorf("agent %q: file guard check: %w", node.ID, gateErr)
 					return
 				}
-				// Wait for the REAL scan verdict (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+				// Wait for the REAL scan verdict (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 				// Phase 0) — only when a scan was actually enqueued
 				// (ScanStatus=="pending"; "disabled" means no wiring/no
 				// storage configured, nothing to wait for). Own
@@ -829,7 +829,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			// phases — see the agent case's identical comment for why.
 			var guardNotes []string
 
-			// Text Guards input-phase check (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+			// Text Guards input-phase check (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md
 			// Phase 4's direction field) — same "only a guard wired
 			// direction:'both' does anything" contract as the agent case.
 			// Checked against `accumulated` (the same value about to become
@@ -894,7 +894,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 				retErr = fmt.Errorf("llm %q: %w", node.ID, err)
 				return
 			}
-			// Text Guards check (Phase 3 of docs/APPFLOW_TEXT_GUARDS_PLAN.md) —
+			// Text Guards check (Phase 3 of docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md) —
 			// same call as the agent case, run BEFORE the response is written
 			// into vars/accumulated so a downstream node never sees
 			// unredacted text.
@@ -1009,7 +1009,7 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 			}
 			wg.Wait(ctx)
 			// Sync the main loop's own step cursor up to whatever tick.Gen
-			// reached while the branches ran (docs/APP_CANVAS_DEBUG_PLAN.md
+			// reached while the branches ran (docs/_archive/APP_CANVAS_DEBUG_PLAN.md
 			// Phase 6). Each branch advanced tick.Gen independently via its
 			// own signals while converging on the join — without this sync,
 			// mainLastSeenGen stays frozen at its pre-fork value, so the

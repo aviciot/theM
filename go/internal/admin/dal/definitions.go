@@ -129,7 +129,7 @@ func (d *DB) ListDefinitions(ctx context.Context, tenantID, appID string) ([]App
 }
 
 // GetLatestDraftDefinition returns the highest-revision draft row for the given
-// tenant + application (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5 — debug runs the
+// tenant + application (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5 — debug runs the
 // unpublished draft directly, never the published active_definition_id).
 // Returns pgx.ErrNoRows when no draft row exists (nothing saved yet) or the
 // application belongs to another tenant.

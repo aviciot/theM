@@ -2,10 +2,10 @@ package admin
 
 // AppFlowDebugPresetsHandler lets a user save/load/delete their own named
 // presets (entry point, test message, step mode, per-node LLM overrides) for
-// the AppFlow debug panel (docs/APP_CANVAS_DEBUG_PLAN.md). Presets are
+// the AppFlow debug panel (docs/_archive/APP_CANVAS_DEBUG_PLAN.md). Presets are
 // personal — scoped to (tenant, user, application) — never shared with other
 // users, even within the same tenant/app. See
-// docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why this is deliberately not
+// docs/_archive/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why this is deliberately not
 // folded into the tenant Role model.
 
 import (

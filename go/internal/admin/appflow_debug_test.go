@@ -1,6 +1,6 @@
 package admin_test
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 5: AppFlowDebugHandler.Start.
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5: AppFlowDebugHandler.Start.
 // These are thin HTTP-mechanics tests (bad UUID, missing required field) that
 // fail before the service layer is ever reached — the service's own compile/
 // validate/admit/start behavior is covered by internal/admin/service's

@@ -1,7 +1,7 @@
 // Package pii provides a regex-based PII detector/redactor.
 // It implements middleware.Processor under the name "pii_redact".
 //
-// MVP scope (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 2): pattern-matching
+// MVP scope (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 2): pattern-matching
 // only — email addresses, phone numbers, credit-card-like digit sequences,
 // SSN-like patterns. PIIRedactConfig.LLMAssist is a real field but NOT
 // implemented here — that's a future, separate, slower LLM-judge pass, not

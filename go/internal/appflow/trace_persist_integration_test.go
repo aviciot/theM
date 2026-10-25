@@ -1,6 +1,6 @@
 //go:build integration
 
-// Integration coverage for persistTrace (docs/APP_CANVAS_DEBUG_PLAN.md Phase 3
+// Integration coverage for persistTrace (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 3
 // — durable trace storage). Requires a live Postgres with db/103_run_steps_
 // appflow_trace.sql applied — the (run_id, node_id) partial unique index and
 // node_id/node_kind columns exercised here don't exist without it.
@@ -140,7 +140,7 @@ func TestPersistTrace_EmptyNodeID_NoOp(t *testing.T) {
 	}
 }
 
-// PT-5 (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4): verbosity="off" must skip
+// PT-5 (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4): verbosity="off" must skip
 // persistence entirely — the live Redis publish in emitTrace is unaffected,
 // but persistTrace itself must not write any row.
 func TestPersistTrace_VerbosityOff_NoWrite(t *testing.T) {

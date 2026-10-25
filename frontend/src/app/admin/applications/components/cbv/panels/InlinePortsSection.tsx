@@ -9,7 +9,7 @@ import { PortAliasField } from './PortAliasField';
 
 // ── InlinePortsSection — "READS" panel for llm/condition ─────────────────────
 //
-// Phase 3 of docs/APPFLOW_NAMED_PORTS_PLAN.md built this read-only, mirroring
+// Phase 3 of docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md built this read-only, mirroring
 // the agent builder's StepDataFlowSection. Phase 5 adds rename/delete for any
 // var that's a drag-created `input_aliases` entry — vars typed directly into
 // the prompt/expression text (never dragged in) stay read-only, matching the

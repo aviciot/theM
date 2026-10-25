@@ -14,7 +14,7 @@ import (
 
 // setupAppScopedConfigApp upserts a test tenant and an application owned by
 // it, returning (tenantID, appID), with cleanup registered. Used by the
-// tenant-isolation regression tests below (docs/APP_CANVAS_DEBUG_PLAN.md
+// tenant-isolation regression tests below (docs/_archive/APP_CANVAS_DEBUG_PLAN.md
 // Phase 4 tenant-isolation fix) for both GetAppLogVerbosity/
 // UpsertAppLogVerbosity (them.app_debug_config) and GetTemporalAppConfig/
 // UpsertTemporalAppConfig (them.app_temporal_config) — neither table has its

@@ -10,7 +10,7 @@ import (
 	"github.com/aviciot/them/internal/admin/dal"
 )
 
-// docs/APP_EXPORT_IMPORT_INVESTIGATION.md §5: DeployApplication previously
+// docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md §5: DeployApplication previously
 // copied applications.app_params verbatim, including secret entries (a JSON
 // object carrying a "ct" ciphertext key, db/045_app_global_params.sql) —
 // leaking encrypted secret material into the target tenant on every deploy.

@@ -7,7 +7,7 @@ import { useAppFlowDebugPresets } from './useAppFlowDebugPresets';
 import type { AppFlowDebugNodeState, AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 
-// useAppFlowDebugSession — App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md
+// useAppFlowDebugSession — App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md
 // Phase 5). Unlike the agent builder's useDebugSession.ts (a full client-side
 // simulator), this is a real WS consumer: POST /admin/applications/{id}/debug/start
 // runs the application's saved draft on the debug Temporal worker pool, then this
@@ -20,7 +20,7 @@ export interface AppFlowDebugSessionState {
   running: boolean;
   runId: string | null;
   // ISO-8601 — when this run will be forcibly terminated (enforced
-  // WorkflowRunTimeout, docs/APPFLOW_RUNTIME_PARAMS_PLAN.md). null until a
+  // WorkflowRunTimeout, docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md). null until a
   // run has actually started.
   expiresAt: string | null;
   // Temporal workflow ID ("appflow:{tenant}:{run}") for this run — lets the
@@ -28,14 +28,14 @@ export interface AppFlowDebugSessionState {
   workflowId: string | null;
   entryPointSlug: string;
   userMessage: string;
-  // Step controls (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — set before
+  // Step controls (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) — set before
   // starting a run; the backend pauses before every node's tick instead of
   // running straight through. Locked once a run has started (same pattern
   // as entryPointSlug/userMessage being disabled while debug.running).
   stepMode: boolean;
   // Per-node LLM credential picker values, keyed by specKey
   // (`${nodeId}:${paramKey}`) — never merged/deduped across nodes, per
-  // docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
+  // docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md.
   credentials: Record<string, AppFlowLLMCredentialValue>;
   // Per-node secret overrides (bearer_token / api_key for HTTP nodes), keyed
   // by specKey. Override the permanent Runtime screen value for this run only.
@@ -74,7 +74,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     .map(n => (n.data as unknown as { slug?: string }).slug)
     .filter((slug): slug is string => !!slug);
 
-  // Generic declared-runtime-param scan (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md):
+  // Generic declared-runtime-param scan (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md):
   // walk every canvas node, and for each one declared runtime param (today
   // just the "llm" kind's llm_credential), produce one spec per NODE, never
   // deduped by param key across nodes — two llm nodes are two independent
@@ -145,7 +145,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     }
 
     // Client-side mirror of the server's own required-param validation
-    // (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md: "validate required settings
+    // (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md: "validate required settings
     // server-side before starting the run") — this check is for fast UX
     // feedback only; the server re-validates and is the actual enforcement
     // point, so this must never be treated as sufficient on its own.
@@ -222,7 +222,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
           const nodeId = ev.node_id as string;
           setDebug(prev => ({ ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' } }));
         } else if (evType === 'node_paused') {
-          // Step controls (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — the
+          // Step controls (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) — the
           // backend has genuinely stopped at this node, waiting for the next
           // Step click. Distinct from 'pending': this is an observed state,
           // not a UI guess about what's next.
@@ -265,7 +265,7 @@ export function useAppFlowDebugSession({ appId, nodes }: { appId: string; nodes:
     }
   }, [appId, debug.entryPointSlug, debug.userMessage, debug.stepMode, debug.credentials, debug.secrets, runtimeParamSpecs]);
 
-  // Sends one Step signal (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — releases
+  // Sends one Step signal (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) — releases
   // every node currently paused, in lockstep, by exactly one tick. No local
   // state changes here beyond clearing any stale error: the real state
   // transition arrives asynchronously as node_start/node_done/node_paused

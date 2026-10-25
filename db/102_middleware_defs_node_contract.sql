@@ -1,4 +1,4 @@
--- Phase 5 (docs/NODE_REGISTRY_PLAN.md): middleware_defs adopts the node contract.
+-- Phase 5 (docs/_archive/NODE_REGISTRY_PLAN.md): middleware_defs adopts the node contract.
 -- Adds the same shape code-defined nodes already carry via internal/nodedefs.Meta
 -- (edges/input_ports/output_ports/config_fields), so GET /admin/node-types can
 -- merge in a "middleware" family alongside "agentgen" and "appflow". All columns

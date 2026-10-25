@@ -22,7 +22,7 @@ type AppFlowDebugCredentialDAL interface {
 }
 
 // LLMOverrideInput is one entry of a debug/start request's llm_overrides map
-// (node_id -> override), per docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
+// (node_id -> override), per docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md.
 type LLMOverrideInput struct {
 	Mode     string // "general" | "custom"
 	Provider string // required for both modes

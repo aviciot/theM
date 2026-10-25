@@ -67,7 +67,7 @@ func (d *DB) UpsertProviderBaseURL(ctx context.Context, tenantID, provider, base
 // tenant. Prefers the tenant-scoped row; falls back to the bootstrap tenant's
 // default row (Platform-as-Tenant Phase 1 moved what used to be NULL-tenant
 // "platform default" rows to the bootstrap tenant's real tenant_id — see
-// docs/PLATFORM_AS_TENANT_PLAN.md). The CASE expression orders the caller's
+// docs/_archive/PLATFORM_AS_TENANT_PLAN.md). The CASE expression orders the caller's
 // own tenant row first so it is never overwritten by the bootstrap default
 // below, mirroring the old "tenant_id NULLS LAST" ordering intent.
 func (d *DB) GetProviderBaseURLs(ctx context.Context, tenantID string) (map[string]string, error) {

@@ -20,7 +20,7 @@ func mustJSON(v interface{}) json.RawMessage {
 	return raw
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 2 — full-workflow-execution coverage for
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2 — full-workflow-execution coverage for
 // the traceNode call sites added to AppFlowWorkflow's main loop (workflow.go)
 // and walkBranch (graph.go). The activity-level tests in workflow_test.go
 // cover Router/HIL/Agent/Inline LLM's inline trace emission; this suite
@@ -199,7 +199,7 @@ func (s *AppFlowTraceWorkflowTestSuite) TestForkJoin_EmitsTraceForAllNodes() {
 	s.Equal("branches=2", forkDone["detail"])
 }
 
-// ── Phase 6 — Step controls (docs/APP_CANVAS_DEBUG_PLAN.md) ─────────────────
+// ── Phase 6 — Step controls (docs/_archive/APP_CANVAS_DEBUG_PLAN.md) ─────────────────
 
 // twoConditionChainSpec builds a linear 2-node chain (cond1 -> cond2 -> end)
 // with no fork — used to prove sequential stepGate pausing: one
@@ -495,7 +495,7 @@ func singleAgentSpec() *AppFlowSpec {
 	}
 }
 
-// AF-TR-W10: docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3 — an llm node whose
+// AF-TR-W10: docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3 — an llm node whose
 // response is blocked by TextGate fails the workflow non-retryably, and
 // never writes the unblocked text into vars/accumulated (proven indirectly:
 // the workflow error is the TextGateBlocked one, not some later node
@@ -548,7 +548,7 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_TextGateRedacts_ReplacesAc
 	s.Equal("contact [REDACTED_EMAIL] for details", out.FinalText)
 }
 
-// AF-TR-W12: docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's direction field —
+// AF-TR-W12: docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's direction field —
 // an agent node whose INPUT is blocked (a guard wired direction:"both")
 // fails the workflow before the agent is ever actually invoked. Proven via
 // callCount on the fake AgentInvoker, not just the workflow error — a
@@ -622,7 +622,7 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_TextGateWarnFlag_VisibleIn
 	s.True(found, "expected a node_done trace mentioning the warn-mode flag; dones=%+v", dones)
 }
 
-// AF-TR-W14: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0 — an infected
+// AF-TR-W14: docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0 — an infected
 // scan verdict (returned once the wait activity resolves) fails the
 // workflow non-retryably. Proves the wait activity's result is actually
 // consulted, not just called and ignored.
@@ -680,7 +680,7 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGateDisabled_NeverCall
 
 // agentThenConditionSpec chains a single agent node into a condition node
 // that branches on the agent node's own Text Guard status var — the exact
-// shape docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1 exists to enable.
+// shape docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1 exists to enable.
 // Both branches are real terminal nodes so which one fired is observable
 // from the trace.
 func agentThenConditionSpec(expression string) *AppFlowSpec {
@@ -705,7 +705,7 @@ func agentThenConditionSpec(expression string) *AppFlowSpec {
 	}
 }
 
-// AF-TR-W16: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1 — a Text
+// AF-TR-W16: docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1 — a Text
 // Guard's outcome is written into a real FlowVar (<nodeID>_<defSlug>_status)
 // that a downstream condition node can actually read and branch on, not
 // just a trace-only string. A flagged PII result on agent1 routes to the
@@ -842,7 +842,7 @@ func (s *AppFlowTraceWorkflowTestSuite) TestAgentNode_FileGuardStatusVar_Conditi
 	s.True(foundBranch, "expected cond1 to read agent1_file_guard_status=\"clean\" and take the true branch; dones=%+v", dones)
 }
 
-// AF-TR-W20: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5 — a guard's
+// AF-TR-W20: docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5 — a guard's
 // per-category detail (GuardDetails, carrying which PII category actually
 // matched) is written into its own FlowVar
 // (agent1_pii_redact_email_status) distinct from the guard's own combined

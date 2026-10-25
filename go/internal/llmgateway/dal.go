@@ -7,7 +7,7 @@
 // ceiling, monthly USD budget), calls the LLM, records usage, and returns the
 // response in OpenAI wire format (streaming or non-streaming).
 //
-// Design: docs/LLM_GATEWAY_DESIGN.md §3, §5, §10, §14 (Phases 1–2).
+// Design: docs/_archive/LLM_GATEWAY_DESIGN.md §3, §5, §10, §14 (Phases 1–2).
 package llmgateway
 
 import (

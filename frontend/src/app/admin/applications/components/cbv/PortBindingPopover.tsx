@@ -2,7 +2,7 @@
 import type { NameableField } from './useInlinePortWiring';
 import { ChoicePopover } from './ChoicePopover';
 
-// Small drop-point popover for Phase 5 (docs/APPFLOW_NAMED_PORTS_PLAN.md):
+// Small drop-point popover for Phase 5 (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md):
 // opens when a wire is dropped onto a target with more than one nameable
 // field (today, only `llm`: system prompt + user prompt — `condition` never
 // shows this, it auto-binds since it has exactly one). Positioned at the
@@ -10,7 +10,7 @@ import { ChoicePopover } from './ChoicePopover';
 // on-canvas position, matching the plan's "small popover at the drop point"
 // spec confirmed with the user.
 //
-// Thin typed wrapper over ChoicePopover (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// Thin typed wrapper over ChoicePopover (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 // Phase 2 factored the shared visual shell out so the new source-side
 // popover — SourcePortPopover.tsx — looks and feels identical without
 // duplicating the styling).

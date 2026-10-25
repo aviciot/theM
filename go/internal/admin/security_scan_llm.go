@@ -56,7 +56,7 @@ type securityScanLLMResult struct {
 // llmCardAnalysis resolves tenantID's security_scanner config (general or
 // custom mode, falling back to the bootstrap tenant's own config for the same
 // role — the-M's own operating tenant since Platform-as-Tenant Phase 2,
-// docs/PLATFORM_AS_TENANT_PLAN.md; there is no more separate
+// docs/_archive/PLATFORM_AS_TENANT_PLAN.md; there is no more separate
 // them.config['system_agents'] platform path) and asks it to assess payload
 // for security risk. tenantID must be the caller's own tenant — never resolve
 // another tenant's config here.

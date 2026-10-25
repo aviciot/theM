@@ -7,7 +7,7 @@ package admin
 //   - No row in them.tenant_system_agent_config yet, or mode="custom" with no
 //     custom fields set: falls back to the "platform" fields the caller
 //     passes in (platformProvider/platformModel/platformAPIKey/...). Since
-//     Platform-as-Tenant Phase 2 (docs/PLATFORM_AS_TENANT_PLAN.md), these
+//     Platform-as-Tenant Phase 2 (docs/_archive/PLATFORM_AS_TENANT_PLAN.md), these
 //     fields are themselves produced by resolving the bootstrap tenant's own
 //     them.tenant_system_agent_config row for the same role through this
 //     exact function — there is no more separate NULL-tenant/them.config

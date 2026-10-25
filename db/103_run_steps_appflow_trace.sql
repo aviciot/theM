@@ -1,4 +1,4 @@
--- Phase 3 (docs/APP_CANVAS_DEBUG_PLAN.md): durable per-node trace storage for
+-- Phase 3 (docs/_archive/APP_CANVAS_DEBUG_PLAN.md): durable per-node trace storage for
 -- AppFlow (Graph-mode) runs, reusing them.run_steps instead of a new sibling
 -- table (per the plan's "round 2" decision #3).
 --

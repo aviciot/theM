@@ -6,7 +6,7 @@ import { C } from '../constants';
 
 // ── CanvasPalette ─────────────────────────────────────────────────────────────
 // Extracted from CanvasBuilderView.tsx (which was over the 400-line guideline)
-// per docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md's file-size cleanup. Pure
+// per docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md's file-size cleanup. Pure
 // presentation + drag-start wiring — all state (componentDefs, palette lists,
 // panel width) is owned by CanvasBuilderView and passed down as props.
 

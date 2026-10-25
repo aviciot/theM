@@ -93,7 +93,7 @@ type FinalizeRunActivityInput struct {
 	FinalText string `json:"final_text,omitempty"`
 	ErrMsg    string `json:"err_msg,omitempty"`
 	// Debug gates the debug credential cleanup sweep below — see
-	// AppFlowActivities.DebugCredCleaner and docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
+	// AppFlowActivities.DebugCredCleaner and docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md.
 	// Non-secret flag, safe in Temporal history (same reasoning as
 	// InlineLLMActivityInput.Debug).
 	Debug bool `json:"debug,omitempty"`
@@ -115,7 +115,7 @@ type AgentInvokeActivityInput struct {
 
 // AgentInvokeActivityOutput is returned by AppFlowInvokeAgentActivity.
 //
-// Phase 1 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md: previously this only
+// Phase 1 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md: previously this only
 // ever carried ResponseText, because the caller (pgxAgentA2ACaller) only
 // ever looked for a text part in the agent's A2A response — a file/data/raw
 // part was silently dropped, no error, nothing traced. The new fields let a
@@ -180,7 +180,7 @@ type InlineLLMActivityInput struct {
 	// provider instead of rendering SystemPrompt/UserPrompt templates.
 	GatewayMessages []GatewayMessage `json:"gateway_messages,omitempty"`
 	// Debug marks this run as a debug session — a non-secret flag, safe in
-	// Temporal history (see AF-WF-14 and docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
+	// Temporal history (see AF-WF-14 and docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md).
 	// When true, the credential resolver checks the debugcred.Store override
 	// for (TenantID, RunID, NodeID) first; when absent for a debug run that
 	// declared a required llm_credential param, resolution must fail loudly
@@ -241,7 +241,7 @@ type HTTPActivityOutput struct {
 }
 
 // TraceEventInput is the input to AppFlowTraceActivity — a live, unconditional
-// per-node progress event (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). Emitted for
+// per-node progress event (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2). Emitted for
 // every run, debug or not; not persisted anywhere (Phase 3's job). Kept
 // deliberately small: an event type, which node, and a short kind-specific
 // Detail string — never full prompts/inputs/outputs.
@@ -257,7 +257,7 @@ type TraceEventInput struct {
 	Detail string `json:"detail,omitempty"`
 	// Verbosity is the resolved effective log-verbosity for this run
 	// ("off"|"status"|"full") — see AppFlowWorkflowInput.LogVerbosity
-	// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4). Governs how much persistTrace
+	// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4). Governs how much persistTrace
 	// writes to them.run_steps; the live Redis publish is unaffected.
 	Verbosity string `json:"verbosity,omitempty"`
 }
@@ -280,25 +280,25 @@ type AppFlowActivities struct {
 	// (as opposed to LLMCaller, which is shaped for Router label classification).
 	InlineLLM InlineLLMCaller
 	// DebugCredCleaner deletes a debug run's per-node LLM credential overrides
-	// once the run reaches a terminal state (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
+	// once the run reaches a terminal state (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md).
 	// May be nil — FinalizeRunActivity treats a nil cleaner as a no-op, same as
 	// the other nil-safe dependencies on this struct.
 	DebugCredCleaner DebugCredCleaner
 	// FileGate scans a file part an agent node returned (Phase 2 of
-	// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md) against that node's own
+	// docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md) against that node's own
 	// middleware_wirings File Guard config, if any. May be nil — a node with
 	// a file response then behaves exactly as before this phase (file
 	// recognized and traced, never scanned) when no gate is configured, same
 	// nil-safe convention as every other optional dependency on this struct.
 	FileGate FileGateChecker
 	// TextGate runs PII redaction / prompt-injection detection against text
-	// an llm or agent node produced (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase
+	// an llm or agent node produced (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase
 	// 3), scoped by that node's own middleware_wirings config, if any. May
 	// be nil — a node's text then passes through completely unguarded, same
 	// nil-safe convention as FileGate.
 	TextGate TextGateChecker
 	// FileGateWaiter blocks until File Guard's async scan reaches a real
-	// terminal verdict (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0).
+	// terminal verdict (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0).
 	// May be nil — FileGateActivityWait then fails open immediately
 	// (ScanStatus:"timeout"), same nil-safe convention as FileGate/TextGate.
 	FileGateWaiter FileGateWaiter
@@ -341,7 +341,7 @@ type DebugSecretGetter interface {
 }
 
 // AgentInvokeResult is what AgentInvoker.InvokeByID returns — widened in
-// Phase 1 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md from a bare string so a
+// Phase 1 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md from a bare string so a
 // recognized non-text A2A response part (file/data/raw) can be surfaced
 // instead of silently discarded. Mirrors AgentInvokeActivityOutput's new
 // fields exactly (InvokeAgentActivity copies this 1:1) — kept as a separate
@@ -588,7 +588,7 @@ func (a *AppFlowActivities) InvokeAgentActivity(ctx context.Context, input Agent
 }
 
 // FileGateCheckInput is the input to AppFlowFileGateActivity — Phase 2 of
-// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md. NodeID is the specific canvas
+// docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md. NodeID is the specific canvas
 // node instance that produced the file (not just the agent's slug) so two
 // canvas instances of the same agent can carry independent File Guard
 // wirings — see middleware.FileGate's own doc comment on this.
@@ -637,7 +637,7 @@ type FileGateChecker interface {
 }
 
 // FileGateActivity scans a file an agent node returned against that node's
-// File Guard wiring, if any (Phase 2 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
+// File Guard wiring, if any (Phase 2 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md).
 // Real I/O (downloads the file, writes to object storage, enqueues an async
 // scan) — cannot run inline in deterministic workflow code, same rule
 // documented for renderFlowTemplate/LLM calls. A nil FileGate dependency is
@@ -657,7 +657,7 @@ func (a *AppFlowActivities) FileGateActivity(ctx context.Context, input FileGate
 }
 
 // FileGateWaitInput is the input to AppFlowFileGateWaitActivity — Phase 0 of
-// docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md.
+// docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md.
 type FileGateWaitInput struct {
 	RunID      string `json:"run_id"`
 	ArtifactID string `json:"artifact_id"`
@@ -732,7 +732,7 @@ func (a *AppFlowActivities) FileGateActivityWait(ctx context.Context, input File
 }
 
 // TextGateCheckInput is the input to AppFlowTextGateActivity — Phase 3 of
-// docs/APPFLOW_TEXT_GUARDS_PLAN.md. NodeID scopes the wiring lookup to this
+// docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md. NodeID scopes the wiring lookup to this
 // exact canvas node instance, same precedent as FileGateCheckInput.
 type TextGateCheckInput struct {
 	RunID         string `json:"run_id"`
@@ -763,7 +763,7 @@ type TextGateCheckOutput struct {
 	// or nothing matched.
 	Categories string `json:"categories,omitempty"`
 	// GuardDetails carries one entry per guard that actually ran, with its
-	// real per-category match data — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+	// real per-category match data — docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 	// Phase 1.5. This was already computed correctly by pii.Detector.Process
 	// (Result.Detail["categories"] = map[string]int, e.g. {"email": 1}) but
 	// silently dropped at the appFlowTextGateAdapter boundary before this
@@ -801,7 +801,7 @@ type TextGateChecker interface {
 // TextGateActivity runs PII redaction / prompt-injection detection against
 // text an llm or agent node produced, against that node's own
 // middleware_wirings config, if any (Phase 3 of
-// docs/APPFLOW_TEXT_GUARDS_PLAN.md). Real I/O (a DB config lookup at
+// docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md). Real I/O (a DB config lookup at
 // minimum) — cannot run inline in deterministic workflow code, same rule
 // documented for FileGateActivity/renderFlowTemplate. A nil TextGate
 // dependency is a safe no-op: the node's text passes through completely
@@ -1122,7 +1122,7 @@ func jsonPathGet(obj map[string]any, path string) any {
 }
 
 // TraceNodeEventActivity publishes a live node_start/node_done/node_error event
-// to the run's Redis Stream (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2). It exists
+// to the run's Redis Stream (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2). It exists
 // so Condition/Fork/Join — which execute entirely in workflow code and do no
 // I/O for their real logic — have a determinism-safe way to report what they
 // did. Router/HIL/Agent/Inline LLM emit the same events inline from their own
@@ -1137,7 +1137,7 @@ func (a *AppFlowActivities) TraceNodeEventActivity(ctx context.Context, input Tr
 }
 
 // emitTrace publishes one node_start/node_done/node_error event and persists
-// it to them.run_steps (docs/APP_CANVAS_DEBUG_PLAN.md Phase 3 — durable
+// it to them.run_steps (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 3 — durable
 // storage; Phase 2 added only the live Redis publish below). Shared by
 // TraceNodeEventActivity and the Router/HIL/Agent/Inline LLM activities, which
 // call it inline since they already do I/O in this activity. Never returns an
@@ -1177,7 +1177,7 @@ func (a *AppFlowActivities) emitTrace(ctx context.Context, runID, nodeID, kind, 
 // since a.DB is the BYPASSRLS Admin pool and this must never fail the node
 // execution it describes.
 //
-// verbosity gates how much is written (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4):
+// verbosity gates how much is written (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4):
 //   - "off": no write at all — the live Redis publish in emitTrace is
 //     unaffected, only durable persistence is skipped.
 //   - "status": the row is written/updated, but output/error detail is never

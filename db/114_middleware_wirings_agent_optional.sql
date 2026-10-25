@@ -1,4 +1,4 @@
--- docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4: an llm canvas node has no agent
+-- docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4: an llm canvas node has no agent
 -- at all (its provider/model are configured in the app's Runtime tab, not
 -- tied to a them.agents row) -- but them.middleware_wirings.agent_id was
 -- NOT NULL with a real FK, so an llm node could never get a guard wiring

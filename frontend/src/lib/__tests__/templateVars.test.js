@@ -1,7 +1,7 @@
 /**
  * Tests for templateVars.ts — extractTemplateVars, shared by the agent
  * builder (via nodeVars.ts's re-export) and AppFlow
- * (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 2).
+ * (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md Phase 2).
  *
  * Run with: node src/lib/__tests__/templateVars.test.js
  *

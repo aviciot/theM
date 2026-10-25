@@ -240,7 +240,7 @@ func TestLifecycle_HappyPath(t *testing.T) {
 	assert.True(t, g.releaseCalled, "gate.Release must be called in Release")
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 5: AdmitDebug builds a handle for an
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5: AdmitDebug builds a handle for an
 // admin-triggered debug run — no token, no gate/session slot consumed — but
 // still resolves EPConfig via the real epLoader and creates a real run row.
 func TestLifecycle_AdmitDebug_HappyPath(t *testing.T) {
@@ -1078,7 +1078,7 @@ func TestAllowedPrincipals_Internal_AdmitsUserJWT(t *testing.T) {
 	require.NoError(t, err, "user_jwt token is internal — must be admitted by internal EP")
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 1: StartAppFlow must dispatch to the
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 1: StartAppFlow must dispatch to the
 // production appflow-dag queue when debug=false.
 func TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue(t *testing.T) {
 	g := &fakeGate{}
@@ -1097,7 +1097,7 @@ func TestLifecycle_StartAppFlow_NotDebug_UsesProductionQueue(t *testing.T) {
 	assert.False(t, tmp.lastAppFlowIn.Debug, "workflow input Debug must be false when debug=false")
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 1: StartAppFlow must dispatch to the
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 1: StartAppFlow must dispatch to the
 // isolated appflow-dag-debug queue when debug=true, and the workflow input's
 // Debug field must be set so the workflow's internal activity dispatch also
 // routes to the debug queue.
@@ -1118,7 +1118,7 @@ func TestLifecycle_StartAppFlow_Debug_UsesDebugQueue(t *testing.T) {
 	assert.True(t, tmp.lastAppFlowIn.Debug, "workflow input Debug must be true when debug=true, so the workflow's internal activity dispatch also routes to the debug queue")
 }
 
-// docs/APPFLOW_RUNTIME_PARAMS_PLAN.md review follow-up — a debug run had NO
+// docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md review follow-up — a debug run had NO
 // workflow-level wall-clock bound at all before this fix (only per-activity
 // timeouts/retries, which don't cap total run duration). StartAppFlow must
 // now set WorkflowRunTimeout to appflow.DebugRunMaxLifetime for debug runs,
@@ -1188,7 +1188,7 @@ func (f *fakeLogVerbosityLoader) Load(_ context.Context, _, _ string) (string, e
 	return f.verbosity, f.err
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 4: with no loader attached, StartAppFlow
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4: with no loader attached, StartAppFlow
 // must fall back to dal.DefaultLogVerbosity (fail-open) for a non-debug run.
 func TestLifecycle_StartAppFlow_NoLoader_UsesDefaultVerbosity(t *testing.T) {
 	g := &fakeGate{}

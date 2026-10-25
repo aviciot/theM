@@ -117,7 +117,7 @@ export interface EpNodeData {
   _errorMsg?: string;
 }
 
-// ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5/6) ─────────
+// ── App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5/6) ─────────
 // Real WS/SSE-driven state, not a client-side simulator — see
 // useAppFlowDebugSession.ts. Mirrors the agent builder's DebugNodeState shape
 // so StepNode.tsx's border/glow styling constants can be reused as-is.
@@ -132,7 +132,7 @@ export interface AppFlowNodeDebugInfo {
   error?: string;
 }
 
-// ── AppFlow Runtime Params (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) ────────────
+// ── AppFlow Runtime Params (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) ────────────
 // Generic declared-runtime-param scan: a node kind declares (via GET
 // /admin/node-types' app_params, see lib/nodeRegistry.ts's AppParamDecl) what
 // it needs; the debug panel scans the canvas and renders ONE field set PER
@@ -164,7 +164,7 @@ export type AppFlowLLMCredentialValue =
 
 // node_type is a string, not a literal union — new appflow node kinds
 // (see go/internal/appflow/noderegistry.go) need zero frontend type changes,
-// per docs/NODE_REGISTRY_PLAN.md Phase 4.
+// per docs/_archive/NODE_REGISTRY_PLAN.md Phase 4.
 export interface FlowControlNodeData {
   _kind: 'flow_control';
   instance_id: string;

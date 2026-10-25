@@ -1,5 +1,5 @@
 /**
- * Phase 5 of docs/APPFLOW_NAMED_PORTS_PLAN.md: drag-to-connect named data-port
+ * Phase 5 of docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md: drag-to-connect named data-port
  * wiring for `llm`/`condition` nodes.
  *
  * There is no separate "data" handle — llm/condition nodes have the same 2

@@ -1,4 +1,4 @@
--- docs/APPFLOW_TEXT_GUARDS_PLAN.md: PII Guard's detectable categories
+-- docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md: PII Guard's detectable categories
 -- (email/phone/credit_card/ssn) were hardcoded with no way to configure
 -- which ones actually run -- confirmed with the user 2026-09-27 to add a
 -- real "categories" config field (empty/omitted = scan everything,

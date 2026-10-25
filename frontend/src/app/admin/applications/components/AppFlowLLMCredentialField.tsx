@@ -5,7 +5,7 @@ import { C } from '../constants';
 import type { AppFlowRuntimeParamSpec, AppFlowLLMCredentialValue } from '../types';
 
 // AppFlowLLMCredentialField — one per LLM node declaring a runtime
-// llm_credential param (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md). Compact inline
+// llm_credential param (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md). Compact inline
 // version of TenantRoleCard.tsx's General/Custom picker, scoped to a single
 // canvas node rather than a whole settings card — this is what makes the
 // debug panel's picker per-node instead of one shared selection.

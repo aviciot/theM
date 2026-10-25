@@ -1,7 +1,7 @@
 // Package promptguard provides a heuristic prompt-injection detector.
 // It implements middleware.Processor under the name "prompt_inject".
 //
-// MVP scope (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 2): known-phrase
+// MVP scope (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 2): known-phrase
 // pattern matching only, tuned by Sensitivity. NOT an LLM-judge call — that
 // is a real, separate, slower design decision, flagged in the plan doc as
 // out of scope for this phase; do not add it silently later without

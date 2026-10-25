@@ -298,7 +298,7 @@ ON CONFLICT (definition_id) DO NOTHING`
 // agentIDMap (old UUID → new UUID) is produced by CopyAgentsForDeploy; pass nil
 // when the source app has no agents. provider_keys and app_mcp_credentials are
 // intentionally NOT copied. app_params is copied with every secret entry
-// stripped (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §5): a secret entry is a
+// stripped (docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md §5): a secret entry is a
 // JSON object carrying a "ct" (ciphertext) key (db/045_app_global_params.sql),
 // a non-secret entry is a plain scalar — this was previously copied verbatim,
 // leaking encrypted secret ciphertext into the target tenant. Returns the
@@ -475,7 +475,7 @@ var appScopedConfigTables = []appScopedConfigTable{
 		name:         "middleware_wirings",
 		remapAgentID: true,
 		// node_id is the canvas-JSON instance_id, stable across environments —
-		// no remap needed (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §3). def_id
+		// no remap needed (docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md §3). def_id
 		// is a fixed platform-row FK (File Guard/PII/etc. builtin defs), copied
 		// unchanged since these rows are expected to exist identically in every
 		// environment via migrations, not something a deploy should clone.
@@ -499,7 +499,7 @@ SELECT to_jsonb(t) FROM (
 		name:         "app_agent_bindings",
 		remapAgentID: true,
 		// credential_bindings intentionally excluded (Fernet ciphertext secrets,
-		// docs/APP_EXPORT_IMPORT_INVESTIGATION.md §5) — the target must supply
+		// docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md §5) — the target must supply
 		// its own credentials. config_overrides/agent_params/policies are
 		// configured behavior and travel with the deploy.
 		copySQL: `
@@ -534,7 +534,7 @@ WHERE c.application_id = $1::uuid
   AND EXISTS (SELECT 1 FROM them.mcp_servers ms WHERE ms.id = c.mcp_server_id)`,
 		// mcp_server_id travels as the server's SLUG, not its UUID — a UUID is
 		// only stable within one environment; import must re-resolve by slug
-		// in the target tenant (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §2).
+		// in the target tenant (docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md §2).
 		exportSQL: `
 SELECT to_jsonb(t) FROM (
     SELECT ms.slug AS mcp_server_slug, c.auth_header_name

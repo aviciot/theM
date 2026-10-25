@@ -2,7 +2,7 @@
 import { C, glass } from '../../constants';
 
 // ── ChoicePopover — shared shell for both the target-side ("which field?")
-// and source-side ("which output?", docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// and source-side ("which output?", docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 // Phase 2) drag-to-wire popovers. Same visual card either caller uses; the
 // two callers differ only in WHICH node they inspect and WHAT list of
 // choices they resolve — this component has no opinion on that, it just

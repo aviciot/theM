@@ -10,7 +10,7 @@
 -- profile_id is retained (nullable, existing data untouched) and will be
 -- dropped in a later migration once the transition is complete.
 --
--- Design: docs/LLM_GATEWAY_DESIGN.md §11 — "gateway" entry point type.
+-- Design: docs/_archive/LLM_GATEWAY_DESIGN.md §11 — "gateway" entry point type.
 
 -- 1. Extend the entry_point_type CHECK constraint to allow "gateway".
 ALTER TABLE them.entry_points

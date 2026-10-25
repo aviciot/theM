@@ -23,7 +23,7 @@ type DebugUserInputSignaler interface {
 }
 
 // AppFlowDebugHandler handles starting a debug run of an application's draft
-// canvas (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — a new, dedicated route so
+// canvas (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5) — a new, dedicated route so
 // production run-start traffic (ws/sse) is never touched by debug concerns.
 type AppFlowDebugHandler struct {
 	db          DBQuerier
@@ -34,10 +34,10 @@ type AppFlowDebugHandler struct {
 
 // NewAppFlowDebugHandler creates an AppFlowDebugHandler. credStore persists
 // per-node LLM credential overrides for debug runs
-// (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md); fernetKey decrypts General-mode
+// (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md); fernetKey decrypts General-mode
 // tenant provider keys — pass the same key used elsewhere in this package
 // (e.g. NewAgentsHandler). temporal sends the debug Step signal
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) — same TemporalSignaler
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) — same TemporalSignaler
 // HILApprovalsHandler already uses; nil disables the Step route only (Start
 // still works, since Run-All debug sessions never need a signal). userInput
 // sends a Temporal signal to a paused wait_for_input node; nil disables the
@@ -63,7 +63,7 @@ type debugStartBody struct {
 	EntryPointSlug string `json:"entry_point_slug"`
 	UserMessage    string `json:"user_message"`
 	// LLMOverrides maps canvas node_id -> the per-node LLM credential choice
-	// for THIS debug run only — docs/APPFLOW_RUNTIME_PARAMS_PLAN.md. Every
+	// for THIS debug run only — docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md. Every
 	// llm-kind node in the compiled draft must have an entry here; the
 	// service validates this server-side before admitting the run.
 	LLMOverrides map[string]llmOverrideBody `json:"llm_overrides,omitempty"`
@@ -74,7 +74,7 @@ type debugStartBody struct {
 	SecretOverrides map[string]map[string]string `json:"secret_overrides,omitempty"`
 	// StepMode starts the run paused before every node's tick, releasing one
 	// tick per POST .../debug/{run_id}/step call instead of running straight
-	// through (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). Defaults to false —
+	// through (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6). Defaults to false —
 	// today's Run-All behavior, unchanged.
 	StepMode bool `json:"step_mode,omitempty"`
 }
@@ -96,7 +96,7 @@ type debugStartResponse struct {
 	// timeout error later.
 	ExpiresAt string `json:"expires_at"`
 	// WorkflowID lets the frontend deep-link to this run in the Temporal Web
-	// UI (docs/APP_CANVAS_DEBUG_PLAN.md) without duplicating the ID format
+	// UI (docs/_archive/APP_CANVAS_DEBUG_PLAN.md) without duplicating the ID format
 	// client-side.
 	WorkflowID string `json:"workflow_id"`
 }
@@ -147,7 +147,7 @@ func (h *AppFlowDebugHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 // Step handles POST /admin/applications/{id}/debug/{run_id}/step — sends one
 // AppFlowSignalStep signal to a running debug workflow
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6). One call = one tick: every node
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6). One call = one tick: every node
 // currently paused in this run (including every node in every currently
 // active fork branch) advances by exactly one node, then pauses again — see
 // appflow.stepTick's doc comment for why one signal is sufficient to release
@@ -248,7 +248,7 @@ func (h *AppFlowDebugHandler) Send(w http.ResponseWriter, r *http.Request) {
 // run: an up-front pass/fail verdict plus every node's status/output/error
 // in execution order. Built for a future debugging-assistant LLM to read
 // directly (not just a human clicking through the canvas inspector) — see
-// docs/APP_CANVAS_DEBUG_PLAN.md's "smart debug log" follow-up.
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md's "smart debug log" follow-up.
 func (h *AppFlowDebugHandler) Result(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
 	if _, err := uuid.Parse(runID); err != nil {

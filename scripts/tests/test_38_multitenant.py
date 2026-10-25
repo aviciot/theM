@@ -2,7 +2,7 @@
 """
 test_38_multitenant.py — Multi-Tenant Robustness Automation
 
-Covers Sections 0–11 of docs/MULTITENANT_TEST_PLAN.md:
+Covers Sections 0–11 of docs/_archive/MULTITENANT_TEST_PLAN.md:
   S0  Pre-flight
   S1  Super-admin login & capabilities
   S2  Tenant provisioning (API — mirrors the wizard)
@@ -24,7 +24,7 @@ Note on OIDC (S11):
     - /oidc/start returns a redirect (302) to the Keycloak authorize URL
     - /auth/tenant-lookup reflects idp_configured=true after save
   The actual browser login and callback (testuser@example.com / testpass) must
-  be verified manually — see docs/MULTITENANT_TEST_PLAN.md S11-T11-3.
+  be verified manually — see docs/_archive/MULTITENANT_TEST_PLAN.md S11-T11-3.
 
 Usage:
   python3.12 scripts/tests/test_38_multitenant.py [options]
@@ -887,7 +887,7 @@ def test_s11_sso(skip_sso: bool):
 
         print()
         print("  [INFO] Full browser OIDC login (testuser@example.com / testpass)")
-        print("         must be verified manually — see docs/MULTITENANT_TEST_PLAN.md S11-T11-3.")
+        print("         must be verified manually — see docs/_archive/MULTITENANT_TEST_PLAN.md S11-T11-3.")
     else:
         skip("IdP config tests", "could not get tenant-admin token for SSO test")
 

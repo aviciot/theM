@@ -1,6 +1,6 @@
 /**
  * Tests for validateConnection's data-port rejection guard
- * (docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 4).
+ * (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md Phase 4).
  *
  * Run with: node src/app/admin/applications/components/__tests__/validateConnection.test.js
  *

@@ -20,7 +20,7 @@ type AVScanConfig struct {
 }
 
 // PIIRedactConfig is the config shape for the pii_redact processor.
-// Mode replaces the old BlockOnDetect bool (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// Mode replaces the old BlockOnDetect bool (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md
 // Phase 4, confirmed with the user 2026-09-27) — one field instead of two
 // ways to say the same thing, same lesson as the duplicate "enabled"
 // checkbox found in the File Guard Guards UI this session.

@@ -3,7 +3,7 @@
  * `Node`/`Edge` shapes). No dependency on any node's `data` payload — these
  * only look at `source`/`target` on edges — so they work identically for the
  * agent builder (agentgen, via nodeVars.ts's re-export) and AppFlow
- * (docs/APPFLOW_NAMED_PORTS_PLAN.md).
+ * (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md).
  */
 
 import type { Edge } from '@xyflow/react';

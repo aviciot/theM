@@ -12,7 +12,7 @@ import (
 
 // ClickHouseStore implements EventStore using ClickHouse.
 // Schema: db/clickhouse/001_events.sql
-// Design: docs/OBSERVABILITY_STORAGE_DESIGN.md §10
+// Design: docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md §10
 type ClickHouseStore struct {
 	db *sql.DB
 }

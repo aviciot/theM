@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 
 // Click-to-rename inline field for a drag-created named port alias. Ported
 // from the agent builder's StepDataFlowSection.tsx (same component, same
-// sanitization rule) per docs/APPFLOW_NAMED_PORTS_PLAN.md Phase 5 — the
+// sanitization rule) per docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md Phase 5 — the
 // rename UI is generic, only the commit callback differs (AppFlow rewrites
 // `{{.alias}}` template text instead of agentgen's {from_step, from_port}
 // binding record).

@@ -265,7 +265,7 @@ func TestPutTemporalPlatformConfig_ZeroMaxConcurrent_ReturnsValidationError(t *t
 	}
 }
 
-// ── AppFlow trace log-verbosity (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4) ─────
+// ── AppFlow trace log-verbosity (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4) ─────
 
 // LV-SVC-1: no stored row → default "status".
 func TestGetLogVerbosity_NoRow_ReturnsDefault(t *testing.T) {

@@ -174,7 +174,7 @@ type Dal interface {
 	GetTemporalAppConfig(ctx context.Context, tenantID, appID string) (*dal.TemporalConfig, error)
 	UpsertTemporalAppConfig(ctx context.Context, tenantID, appID string, cfg dal.TemporalConfig) error
 
-	// AppFlow trace log-verbosity — per-app only (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+	// AppFlow trace log-verbosity — per-app only (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4).
 	// Return dal-level pgx.ErrNoRows (via IsNoRows) when appID does not exist or
 	// does not belong to tenantID.
 	GetAppLogVerbosity(ctx context.Context, tenantID, appID string) (string, error)

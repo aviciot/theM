@@ -23,7 +23,7 @@ export interface AppParamDecl {
   key: string;
   label: string;
   description: string;
-  // "llm_credential" (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) renders the tenant-key
+  // "llm_credential" (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) renders the tenant-key
   // General/Custom picker instead of a plain input — see AppFlowLLMCredentialField.
   type: 'secret' | 'string' | 'url' | 'int' | 'bool' | 'llm_credential';
   required: boolean;
@@ -33,7 +33,7 @@ export interface AppParamDecl {
 /**
  * One config field on a node/middleware definition — mirrors Go's
  * nodedefs.ConfigFieldDoc exactly (go/internal/nodedefs/nodedefs.go).
- * Used by docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 3's Guards section
+ * Used by docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 3's Guards section
  * to render File Guard's real config form instead of a hardcoded field
  * list — the field shape is documented server-side, not duplicated here.
  */
@@ -101,7 +101,7 @@ export interface NodeTypeInfo {
   input_field?: string;
   executable: boolean;
   app_params?: AppParamDecl[];
-  /** Config fields declared server-side (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+  /** Config fields declared server-side (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
    * Phase 3) — e.g. file-guard's enabled/mode/max_file_size_mb/etc. Was
    * already returned by GET /admin/node-types but had no frontend type or
    * consumer until this phase. */

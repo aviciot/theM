@@ -31,7 +31,7 @@ import { useAuthStore } from '@/stores/authStore';
 
 // Which RF node component (and canvas palette section) each appflow node_type
 // renders as. This split is a frontend/UI concern, not portable node metadata
-// (agentgen has no equivalent grouping either) — see docs/NODE_REGISTRY_PLAN.md
+// (agentgen has no equivalent grouping either) — see docs/_archive/NODE_REGISTRY_PLAN.md
 // Phase 4. Everything else (label, emoji, color, description, config fields,
 // edge rules, control ports) comes from GET /admin/node-types via
 // lib/nodeRegistry.ts. A new appflow kind needs one line here plus its
@@ -120,7 +120,7 @@ export function CanvasBuilderView({
   const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
   const [mcpExpanded, setMcpExpanded] = useState<Record<string, boolean>>({});
   const [executionBackend, setExecutionBackend] = useState<'local' | 'temporal' | undefined>(undefined);
-  // Phase 5 named data ports (docs/APPFLOW_NAMED_PORTS_PLAN.md): when a drop
+  // Phase 5 named data ports (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md): when a drop
   // lands on a target with >1 nameable field, the binding can't commit inside
   // handleConnect (no field chosen yet) — stash it here and resolve on the
   // subsequent onConnectEnd, which is the only lifecycle point that hands
@@ -135,7 +135,7 @@ export function CanvasBuilderView({
   // gap: handleConnect writes it synchronously, handleConnectEnd always
   // reads the value as of that exact moment.
   //
-  // Extended for docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2: a node can
+  // Extended for docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2: a node can
   // now have >1 output too (its own output_var AND N guard vars), so a
   // pending binding may need to resolve EITHER axis, or both at once —
   // `sources`/`fields` are each `null` when that axis was already `auto`-
@@ -196,7 +196,7 @@ export function CanvasBuilderView({
   useEffect(() => { refreshProviderKeys(); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { themApi.listMCPServers().then(setAvailableMCPServers).catch(() => {}); }, []);
 
-  // Middleware wirings for the whole app — docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+  // Middleware wirings for the whole app — docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
   // Phase 2. Fetched once here (not per-panel) so the drag-source popover
   // can resolve ANY node's guard vars at connect-time, not just the
   // currently-selected one; also threaded down into the Reads/Writes panels
@@ -209,7 +209,7 @@ export function CanvasBuilderView({
 
   // App-canvas node registry (llm/condition/router/hil/fork/join) — fetched
   // once, cached in lib/nodeRegistry.ts, consumed by CanvasNodes.tsx and the
-  // palette below. See docs/NODE_REGISTRY_PLAN.md Phase 4.
+  // palette below. See docs/_archive/NODE_REGISTRY_PLAN.md Phase 4.
   const [appflowNodeTypes, setAppflowNodeTypes] = useState<NodeDef[]>([]);
   useEffect(() => {
     fetchNodeTypes()
@@ -230,7 +230,7 @@ export function CanvasBuilderView({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [layoutDir, setLayoutDir] = useState<'TB' | 'LR'>('TB');
 
-  // App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — real WS
+  // App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5) — real WS
   // consumer, not a simulator. Runs the saved draft directly on the debug
   // Temporal worker pool; node states drive CanvasNodes.tsx's overlay via
   // decorateNodes (see useAppFlowDebugSession.ts).
@@ -445,7 +445,7 @@ export function CanvasBuilderView({
     setIsDirty(true);
     setLogoResult('none');
 
-    // Phase 5 named data ports, extended by docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+    // Phase 5 named data ports, extended by docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
     // Phase 2: a node can now have >1 output (its own output_var AND N guard
     // vars), not just llm's single hardcoded one — resolveDragSource covers
     // any node kind with an enabled guard wiring. Two independent

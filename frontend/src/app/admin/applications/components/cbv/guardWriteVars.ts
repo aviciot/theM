@@ -1,5 +1,5 @@
 /**
- * docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2 — the "Writes" panel's
+ * docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2 — the "Writes" panel's
  * guard-var half. Mirrors go/internal/appflow/workflow.go's naming exactly
  * (guardStatusVarName, writeGuardCategoryVars, writeFileGuardVar) so the
  * flat FlowVar key shown here is byte-for-byte what a condition node must
@@ -37,7 +37,7 @@ const GUARD_SHORT_LABEL: Record<string, string> = {
  * PII Guard's `categories` config field (db/116) restricts which of the 4
  * fixed categories (email/phone/credit_card/ssn — internal/middleware/pii's
  * CategoryNames()) actually run; empty/omitted means all 4 (fail-open
- * convention, confirmed in docs/APPFLOW_TEXT_GUARDS_PLAN.md). This list must
+ * convention, confirmed in docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md). This list must
  * stay in sync with pii.CategoryNames() — there is no live endpoint for it,
  * same tradeoff AgentGuardsSection's config_fields.options already accepts.
  */

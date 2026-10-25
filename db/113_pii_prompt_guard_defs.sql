@@ -1,4 +1,4 @@
--- docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1-2: PII redaction + prompt-injection
+-- docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1-2: PII redaction + prompt-injection
 -- detection get their own middleware_defs rows, matching every other guard's
 -- 1-def-per-processor pattern (av_scan/file-guard) -- confirmed with the
 -- user 2026-09-27 rather than keeping the old combined "guard_default" row
@@ -18,7 +18,7 @@
 
 UPDATE them.middleware_defs
 SET enabled = false,
-    description = 'Superseded by pii_redact + prompt_inject (docs/APPFLOW_TEXT_GUARDS_PLAN.md). Kept for FK history only.'
+    description = 'Superseded by pii_redact + prompt_inject (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md). Kept for FK history only.'
 WHERE slug = 'guard_default';
 
 DO $$

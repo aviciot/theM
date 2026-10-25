@@ -133,7 +133,7 @@ func TestFinalizeRunActivity_NilDeps_NoOp(t *testing.T) {
 	}
 }
 
-// ── App Canvas Debug Mode credential cleanup (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) ──
+// ── App Canvas Debug Mode credential cleanup (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) ──
 // Closes issue #4 from the d941aca3 review: a fixed TTL was the ONLY cleanup
 // mechanism for debug credentials. FinalizeRunActivity now also triggers a
 // proactive delete on run completion, gated on input.Debug.
@@ -260,7 +260,7 @@ func (f *fakeAgentInvoker) InvokeByID(_ context.Context, _, _, _, _, _, _ string
 }
 
 // callCount is a test-only convenience accessor — used by
-// docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's input-blocking test to prove
+// docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's input-blocking test to prove
 // a blocked input never reaches the real agent call at all.
 func (f *fakeAgentInvoker) callCount() int { return f.calls }
 
@@ -335,7 +335,7 @@ func (f *fakeFileGate) InterceptInline(_ context.Context, in FileGateCheckInput,
 }
 
 // AF-WF-18: FileGateActivity with a nil FileGate dependency is a safe no-op
-// (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — a file is still
+// (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2) — a file is still
 // recognized and traced by InvokeAgentActivity (Phase 1); this activity
 // only ever ADDS scanning on top when a gate is actually configured.
 func TestFileGateActivity_NilGate_NoOp(t *testing.T) {
@@ -421,7 +421,7 @@ func (f *fakeTextGate) Check(_ context.Context, in TextGateCheckInput) (TextGate
 }
 
 // AF-WF-21: TextGateActivity with a nil TextGate dependency is a safe
-// no-op (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3) — text passes through
+// no-op (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3) — text passes through
 // completely unguarded when no gate is configured, same nil-safe
 // convention as FileGateActivity (AF-WF-18).
 func TestTextGateActivity_NilGate_NoOp(t *testing.T) {
@@ -770,7 +770,7 @@ func TestInlineLLMActivity_NoKeyInInput(t *testing.T) {
 
 // AF-WF-15: Stream:true publishes exactly one "token" event to the run's
 // stream key, alongside the node_start/node_done trace events every AppFlow
-// activity now emits unconditionally (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2).
+// activity now emits unconditionally (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2).
 func TestInlineLLMActivity_StreamPublishesToken(t *testing.T) {
 	caller := &fakeInlineLLMCaller{response: "streamed response"}
 	streamPub := &fakeStreamPub{}
@@ -856,7 +856,7 @@ func TestFinalizeRunActivityInput_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// ── docs/APP_CANVAS_DEBUG_PLAN.md Phase 2: node_start/node_done/node_error trace events ──
+// ── docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2: node_start/node_done/node_error trace events ──
 
 // tracePayloadsOfType decodes every fakeStreamPub payload and returns only
 // those whose "type" field matches wantType, in publish order.
@@ -877,7 +877,7 @@ func tracePayloadsOfType(t *testing.T, pub *fakeStreamPub, wantType string) []ma
 
 // AF-TR-01: InlineLLMActivity emits node_start then node_done on success,
 // with kind="llm". node_done's detail carries the LLM's real response text
-// (fixed 2026-09-24, docs/PLATFORM_AS_TENANT_PLAN.md Phase 6 — found live:
+// (fixed 2026-09-24, docs/_archive/PLATFORM_AS_TENANT_PLAN.md Phase 6 — found live:
 // the App Canvas Debug Mode inspector showed "No output captured for this
 // node yet." for every LLM node because this activity hardcoded detail=""
 // on node_done, discarding responseText even though it was already computed
@@ -966,7 +966,7 @@ func TestInvokeAgentActivity_EmitsStartAndDoneTrace(t *testing.T) {
 }
 
 // AF-WF-07: InvokeAgentActivity carries a recognized file part through to
-// AgentInvokeActivityOutput's new fields (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// AgentInvokeActivityOutput's new fields (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
 // Phase 1) — previously ResponseText was the only field, and a non-text
 // A2A response was silently indistinguishable from "agent said nothing".
 func TestInvokeAgentActivity_CarriesFilePartThrough(t *testing.T) {
@@ -1122,7 +1122,7 @@ func TestTraceNodeEventActivity_NilStreamPub_NoOp(t *testing.T) {
 	}
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 1: activityTaskQueueFor selects the
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 1: activityTaskQueueFor selects the
 // isolated debug queue when a run is in debug mode, and the production queue
 // otherwise. AppFlowWorkflow uses this for every ActivityOptions.TaskQueue it
 // builds, so a debug run's activities always land on them-dag-worker-debug.

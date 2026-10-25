@@ -1,6 +1,6 @@
 -- db/122_governance_policies.sql
 -- Governance policies: ONE table for limits + logging policy across all scopes.
--- Design: docs/GOVERNANCE_POLICY_DESIGN.md
+-- Design: docs/_archive/GOVERNANCE_POLICY_DESIGN.md
 --
 -- Replaces (functionally) gateway_policies (tenant) and gateway_policy_profiles
 -- (named client bundles). Rows are copied in below; the old tables are left in place,

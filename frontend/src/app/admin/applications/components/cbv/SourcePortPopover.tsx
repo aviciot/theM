@@ -2,7 +2,7 @@
 import type { DragSource } from './useInlinePortWiring';
 import { ChoicePopover } from './ChoicePopover';
 
-// New for docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2 — the SOURCE-side
+// New for docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2 — the SOURCE-side
 // counterpart to PortBindingPopover.tsx's pre-existing target-side "which
 // field?" popover. Opens when a drag's SOURCE node has more than one
 // draggable output (its own primary var AND ≥1 guard var, or ≥2 guard

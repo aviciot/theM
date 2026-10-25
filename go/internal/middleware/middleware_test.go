@@ -276,7 +276,7 @@ func TestPipeline_ModifiedPartPassedToNext(t *testing.T) {
 		[]string{"pii_redact", "audit_capture"}, cfg, nil)
 	// modifyProcessor reports Outcome:"flagged" (not blocking) — FinalStatus
 	// must surface that, not silently collapse it to "clean". Was a real
-	// bug (docs/APPFLOW_TEXT_GUARDS_PLAN.md follow-up, found live testing a
+	// bug (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md follow-up, found live testing a
 	// PII Guard demo app): Run's non-blocking fallthrough only ever checked
 	// hadError, so a genuinely flagged-but-not-blocked result (pii_redact's
 	// warn/redact modes) was silently reported as "clean" — this test's own

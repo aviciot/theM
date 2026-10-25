@@ -7,7 +7,7 @@ import { guardWriteVarsForNode } from '../guardWriteVars';
 
 // ── WritesSection — "WRITES" panel for agent/llm nodes ──────────────────────
 //
-// docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2. Mirrors
+// docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 2. Mirrors
 // InlinePortsSection.tsx's "Reads" section visually, but the data source is
 // different: static writes (llm's own output_var) are known synchronously
 // from node config, but guard-produced vars depend on live middleware_wirings

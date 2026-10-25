@@ -7,11 +7,11 @@ import type { AppFlowDebugPreset } from '@/lib/api';
 import { AppFlowLLMCredentialField } from './AppFlowLLMCredentialField';
 import { AppFlowDebugLogView } from './AppFlowDebugLogView';
 
-// AppFlowDebugPanel — App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md
+// AppFlowDebugPanel — App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md
 // Phase 5). Setup panel + Run All + status bar, mirroring the agent builder's
 // DebugPanel.tsx layout/styling, but for a real WS-driven debug run of the
 // draft canvas (not a client-side simulator) — see useAppFlowDebugSession.ts.
-// Per-node LLM credential pickers (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) render
+// Per-node LLM credential pickers (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) render
 // below the entry-point/message row — one per node that declares a runtime
 // param, never merged into one shared selection.
 
@@ -80,7 +80,7 @@ export function AppFlowDebugPanel({
   const [llmOpen, setLlmOpen] = useState(credentialSpecs.length <= 3);
   // At least one node is genuinely paused, waiting for the next Step click —
   // derived from nodeStates rather than a separate tracked field, since
-  // "paused" is already an observed backend state (docs/APP_CANVAS_DEBUG_PLAN.md
+  // "paused" is already an observed backend state (docs/_archive/APP_CANVAS_DEBUG_PLAN.md
   // Phase 6), not something the UI needs to infer independently.
   const awaitingStep = Object.values(debug.nodeStates).some(s => s === 'paused');
   return (

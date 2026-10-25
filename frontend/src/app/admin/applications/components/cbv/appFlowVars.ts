@@ -9,13 +9,13 @@
  * only `llm`/`condition` touch FlowVars at runtime — every other AppFlow kind
  * (router, hil, fork, join, agent, orchestrator, middleware, entryPoint) only
  * ever reads/writes `accumulated`, never FlowVars, so this module correctly
- * reports empty reads/writes for them (see docs/APPFLOW_NAMED_PORTS_PLAN.md
+ * reports empty reads/writes for them (see docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md
  * scope-narrowing decision).
  *
  * Semantics derived from go/internal/appflow/workflow.go's `case "llm"` /
  * `case "condition"`. Keep in sync when runtime behavior changes.
  *
- * Phase 5 (docs/APPFLOW_NAMED_PORTS_PLAN.md) adds `input_aliases:
+ * Phase 5 (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md) adds `input_aliases:
  * {alias: {source_node_id, source_var}}` inside a node's `config` — a
  * purely cosmetic rename layer, stored as a reference to the source NODE
  * (not a copy of its output_var's name), so a later rename of the source's
@@ -57,7 +57,7 @@ export interface ResolvedBinding {
  * exists (e.g. deleted, or a hand-edited import referencing an unknown id).
  *
  * A bound source_var is either the source's primary output_var (drifts if
- * renamed — the pre-existing case) or a guard var (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+ * renamed — the pre-existing case) or a guard var (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
  * Phase 2 — a fixed naming convention, e.g. `agent1_pii_redact_status`, that
  * never "renames"; only disappears if the guard wiring is deleted/disabled,
  * which is a different kind of staleness than drift and not reported here).

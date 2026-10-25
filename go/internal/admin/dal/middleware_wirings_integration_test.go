@@ -9,7 +9,7 @@ import (
 	"github.com/aviciot/them/internal/admin/dal"
 )
 
-// docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4: an llm canvas node has no agent
+// docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4: an llm canvas node has no agent
 // at all, so middleware_wirings.agent_id had to become nullable (db/114) —
 // these tests prove a wiring with no agent_id can actually be created,
 // listed, and re-saved without a real Postgres constraint rejecting it or

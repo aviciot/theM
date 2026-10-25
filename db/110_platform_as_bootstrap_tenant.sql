@@ -1,5 +1,5 @@
 -- db/110_platform_as_bootstrap_tenant.sql
--- Platform-as-Tenant Phase 1 (docs/PLATFORM_AS_TENANT_PLAN.md) — the-M's own
+-- Platform-as-Tenant Phase 1 (docs/_archive/PLATFORM_AS_TENANT_PLAN.md) — the-M's own
 -- "platform-owned" LLM provider/key rows (tenant_id IS NULL, introduced by
 -- db/057 and mirrored by db/108) become real rows owned by the bootstrap
 -- tenant (them.tenants.id = 00000000-0000-0000-0000-000000000001,
@@ -97,7 +97,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS llm_provider_keys_default_tenant_uq
     ON them.llm_provider_keys (llm_provider_id, tenant_id)
     WHERE is_default;
 
--- ── 5. RLS rewrite — them.llm_providers only (see docs/PLATFORM_AS_TENANT_PLAN.md
+-- ── 5. RLS rewrite — them.llm_providers only (see docs/_archive/PLATFORM_AS_TENANT_PLAN.md
 -- decision 7, confirmed with the user 2026-09-24): every tenant keeps seeing
 -- the bootstrap tenant's rows as "platform defaults" — same UX as today's
 -- `OR tenant_id IS NULL` clause, just naming the bootstrap tenant explicitly

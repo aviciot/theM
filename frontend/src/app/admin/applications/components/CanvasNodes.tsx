@@ -7,7 +7,7 @@ import { useAppLayoutDir } from '../AppLayoutContext';
 import { getNodeDef, resolveOutputPorts } from '@/lib/nodeRegistry';
 import type { AppFlowNodeDebugInfo } from '../types';
 
-// ── App Canvas Debug Mode overlay (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───
+// ── App Canvas Debug Mode overlay (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───
 // Same visual language as the agent builder's StepNode.tsx debug states,
 // applied to InlineNode/FlowControlNode when a real debug run is active —
 // driven by node_start/node_done/node_error events over WS, not a simulator.
@@ -233,7 +233,7 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
 // ── FlowControlNode ───────────────────────────────────────────────────────────
 // Metadata (emoji/color/label) comes from the appflow family of
 // GET /admin/node-types via getNodeDef(type, 'appflow') — see
-// docs/NODE_REGISTRY_PLAN.md Phase 4. No local hardcoded map.
+// docs/_archive/NODE_REGISTRY_PLAN.md Phase 4. No local hardcoded map.
 
 export function FlowControlNode({ id, data, selected }: { id: string; data: FlowControlNodeData; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
@@ -330,7 +330,7 @@ export function FlowControlNode({ id, data, selected }: { id: string; data: Flow
 // Metadata (emoji/color/label) and named control-flow branches (e.g.
 // condition's true/false) come from the appflow family of
 // GET /admin/node-types via getNodeDef(type, 'appflow') +
-// resolveOutputPorts() — see docs/NODE_REGISTRY_PLAN.md Phase 4. A new
+// resolveOutputPorts() — see docs/_archive/NODE_REGISTRY_PLAN.md Phase 4. A new
 // branching kind needs zero frontend changes: it just needs
 // control_output_ports populated in go/internal/appflow/noderegistry.go.
 

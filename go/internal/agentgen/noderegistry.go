@@ -23,7 +23,7 @@ type Meta = nodedefs.Meta
 type NodeDef struct {
 	// Meta is the portable node metadata (label, colors, ports, config field docs)
 	// shared with any other canvas that adopts the node contract — see internal/nodedefs
-	// and docs/NODE_REGISTRY_PLAN.md. Embedded so its JSON fields serialise inline,
+	// and docs/_archive/NODE_REGISTRY_PLAN.md. Embedded so its JSON fields serialise inline,
 	// exactly as if they were declared directly on NodeDef.
 	nodedefs.Meta
 

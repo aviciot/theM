@@ -75,7 +75,7 @@ func (h *MiddlewareWiringsHandler) Create(w http.ResponseWriter, r *http.Request
 	}
 	// A wiring needs SOME identity to scope to — either a real agent (the
 	// classic case) or a canvas node_id (an llm node has no agent at all,
-	// docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4; middleware_wirings.agent_id
+	// docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4; middleware_wirings.agent_id
 	// became nullable for exactly this, db/114). Both empty means the
 	// wiring can never be resolved by anything, so that case alone is
 	// rejected.

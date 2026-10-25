@@ -65,7 +65,7 @@ type GateInput struct {
 	AgentSlug string
 
 	// NodeID identifies the specific canvas node instance that produced the
-	// file (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2). When non-empty,
+	// file (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2). When non-empty,
 	// takes priority over AgentSlug in middleware_wirings resolution — lets
 	// two canvas instances of the same agent have independent wirings
 	// (them.middleware_wirings.node_id + its own unique index,
@@ -261,7 +261,7 @@ func (g *FileGate) resolveSecCfg(ctx context.Context, appID, nodeID, agentSlug s
 }
 
 // resolveSecCfgForDef is the shared config-resolution logic behind
-// FileGate.resolveSecCfg and TextGate.resolveSecCfg (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// FileGate.resolveSecCfg and TextGate.resolveSecCfg (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md
 // Phase 1) — the same per-node-wiring-then-app-fallback precedence applies to
 // every guard, parameterized by which middleware_defs row to look up
 // (defSlug), not just "file-guard". Extracted here rather than duplicated so
@@ -279,7 +279,7 @@ func resolveSecCfgForDef(ctx context.Context, db GateQuerier, cacheMu *sync.Mute
 
 // loadWiringCfg looks up a middleware_wirings row for this application,
 // scoped by the specific canvas node instance (nodeID) when provided —
-// docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2. Before this fix, lookup
+// docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2. Before this fix, lookup
 // was by agent.slug only: them.middleware_wirings already had a real node_id
 // column with its own unique index (uq_mw_wiring_app_node) specifically to
 // let two canvas instances of the same agent carry independent wirings, but
@@ -298,14 +298,14 @@ func (g *FileGate) loadWiringCfg(ctx context.Context, appID, nodeID, agentSlug s
 // loadWiringCfgForDef looks up a middleware_wirings row for this application
 // and this specific middleware_defs slug (defSlug — "file-guard",
 // "pii_redact", "prompt_inject", ...), scoped by the specific canvas node
-// instance (nodeID) when provided — docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// instance (nodeID) when provided — docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
 // Phase 2. Before that fix (file-guard only, at the time), lookup was by
 // agent.slug only: them.middleware_wirings already had a real node_id column
 // with its own unique index (uq_mw_wiring_app_node) specifically to let two
 // canvas instances of the same agent carry independent wirings, but the
 // query never read it — two boxes on one canvas sharing (or colliding on) a
 // single wiring, not the schema's actual intent. Generalized here
-// (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1) to take defSlug as a parameter
+// (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 1) to take defSlug as a parameter
 // instead of hardcoding "file-guard", so pii_redact/prompt_inject reuse the
 // exact same precedence logic rather than a second hand-rolled copy of it.
 //

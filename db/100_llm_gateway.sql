@@ -4,7 +4,7 @@
 --
 -- Prerequisites: db/092_tenant_runtime_config.sql (RLS boilerplate pattern)
 --
--- Design: docs/LLM_GATEWAY_DESIGN.md §12 (tables) and §7 (tenant isolation).
+-- Design: docs/_archive/LLM_GATEWAY_DESIGN.md §12 (tables) and §7 (tenant isolation).
 -- All tables use the standard ENABLE + FORCE RLS + explicit GRANTs pattern;
 -- BYPASSRLS does NOT grant table privileges, so both them_app and them_admin
 -- get explicit GRANTs on every table.

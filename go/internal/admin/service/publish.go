@@ -241,7 +241,7 @@ func (s *DefinitionService) validateDoc(ctx context.Context, tenantID string, ra
 		// root must reference a known instance_id. Previously unchecked: an entry
 		// point with a dangling root (typo, deleted node, hand-edited/imported JSON)
 		// passed validation silently and left its orchestrator unset at publish time
-		// with no error surfaced anywhere — see docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md.
+		// with no error surfaced anywhere — see docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md.
 		if ep.Root != "" {
 			if _, ok := instanceIDs[ep.Root]; !ok {
 				errs = append(errs, ValidationError{

@@ -49,7 +49,7 @@ export function buildGraph(detail: RunDetail, tasks: TaskOut[], artifacts: Artif
 // edges are drawn). This is deliberately the same "one row at a time, or a
 // parallel row for concurrent nodes" model buildOrchestratorGraph already
 // uses for parallel agents, reused rather than replaced, per
-// docs/APP_CANVAS_DEBUG_PLAN.md's "fix the existing Flow tree, don't build a
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md's "fix the existing Flow tree, don't build a
 // second visualizer" direction. Nodes that started within 1 second of each
 // other are grouped into one parallel row — an approximation for fork
 // branches, which the trace data (started_at only, no explicit branch/group

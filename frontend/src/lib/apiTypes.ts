@@ -29,7 +29,7 @@ export interface DiscoverResult {
 }
 
 // Tenant self-service system-agent role config (general/custom mode) — step 5/6
-// of docs/TENANT_LLM_PROVIDERS_PLAN.md.
+// of docs/_archive/TENANT_LLM_PROVIDERS_PLAN.md.
 export interface TenantSystemAgentConfigOut {
   role: string;
   mode: 'general' | 'custom';
@@ -339,7 +339,7 @@ export interface MiddlewareWiring {
   id: string;
   application_id: string;
   // Empty for a wiring scoped to a non-agent node (an llm node has no
-  // agents row at all — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4).
+  // agents row at all — docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4).
   agent_id?: string;
   agent_slug?: string;
   def_id: string;
@@ -588,11 +588,11 @@ export interface PublishResult {
   definition_hash: string;
 }
 
-// ── App Canvas Debug Mode (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───────────
+// ── App Canvas Debug Mode (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5) ───────────
 export interface AppFlowDebugStartResult {
   run_id: string;
   // ISO-8601 timestamp — when this run will be forcibly terminated
-  // (enforced WorkflowRunTimeout, docs/APPFLOW_RUNTIME_PARAMS_PLAN.md).
+  // (enforced WorkflowRunTimeout, docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md).
   expires_at: string;
   // Temporal workflow ID ("appflow:{tenant}:{run}") — lets the debug panel
   // deep-link to this run in the Temporal Web UI.
@@ -620,7 +620,7 @@ export interface AppFlowDebugResultSummary {
 }
 
 // Per-node LLM credential override for a debug run only
-// (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's saved
+// (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) — never persisted to the app's saved
 // Runtime settings. Keyed by canvas node_id in the request body.
 export interface AppFlowLLMOverrideInput {
   mode: 'general' | 'custom';
@@ -635,7 +635,7 @@ export interface AppFlowLLMOverrideInput {
 // Personal, per-(tenant, user, application) saved presets — save/reload the
 // debug panel's entry point, test message, step mode, and per-node LLM
 // overrides. api_key is write-only on save (never returned); a masked hint
-// comes back instead. See docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why
+// comes back instead. See docs/_archive/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why
 // these are deliberately personal, not shared via the tenant Role model.
 export interface AppFlowDebugPresetLLMOverrideOut {
   mode: 'general' | 'custom';
@@ -1212,7 +1212,7 @@ export interface TemporalAppConfigPatch {
   retry_max_attempts?: number | null;
 }
 
-// docs/APP_CANVAS_DEBUG_PLAN.md Phase 4 — per-app AppFlow trace log-verbosity.
+// docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4 — per-app AppFlow trace log-verbosity.
 export type LogVerbosity = 'off' | 'status' | 'full';
 
 export interface LogVerbosityConfig {

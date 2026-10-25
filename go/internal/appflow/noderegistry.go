@@ -1,7 +1,7 @@
 // Node metadata for the app canvas's 6 flow-control/inline node kinds — the
 // portable half of their description (label, colors, edge rules, config field
 // docs), shared via internal/nodedefs so /admin/node-types can return them
-// alongside the agentgen node family. See docs/NODE_REGISTRY_PLAN.md Phase 3.
+// alongside the agentgen node family. See docs/_archive/NODE_REGISTRY_PLAN.md Phase 3.
 //
 // Unlike agentgen, appflow has no interpreter-bound NodeDef — Kind is a bare
 // string switched on directly in compiler.go/workflow.go/validate.go/graph.go.
@@ -17,7 +17,7 @@ import "github.com/aviciot/them/internal/nodedefs"
 // here rather than hoisted into internal/nodedefs, matching that package's
 // own stated boundary: param-declaration types are typed to each runtime's
 // own compiler/resolution model, not shared metadata). Declared statically per
-// node kind (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) — identical for every
+// node kind (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) — identical for every
 // instance of that kind; the App Canvas Debug Mode setup panel
 // (useAppFlowDebugSession.ts) scans for these and renders one field PER NODE
 // INSTANCE that declares one, not merged/deduped across nodes.
@@ -35,7 +35,7 @@ type RuntimeParamDecl struct {
 // AppCanvasNodeInfo is the JSON-serialisable view of one appflow node kind.
 // Field shape matches agentgen.NodeTypeInfo exactly (same field names/JSON
 // tags) so the two families merge into one array with one shape, per
-// docs/NODE_REGISTRY_PLAN.md's "one endpoint, one shape" goal. Fields with no
+// docs/_archive/NODE_REGISTRY_PLAN.md's "one endpoint, one shape" goal. Fields with no
 // structural meaning for a given kind (e.g. output_arity for a pure control
 // node) take a conservative default — see per-kind comments below.
 type AppCanvasNodeInfo struct {

@@ -487,7 +487,7 @@ type importAgentRuntimeSpecRow struct {
 // previously-exported envelope, regenerating every UUID and remapping every
 // reference to it — the same two-ID-family remap (application_id, agent_id)
 // Phase 1's DeployApplication already proved sufficient
-// (docs/APP_EXPORT_IMPORT_INVESTIGATION.md §3), just sourced from decoded
+// (docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md §3), just sourced from decoded
 // JSON instead of a live SELECT. Returns ErrDeployConflict (same sentinel
 // DeployApplication/CopyAgentsForDeploy use) if a bundled agent's identity
 // already exists in the target tenant with different content.

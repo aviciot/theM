@@ -6,7 +6,7 @@ import type { AppFlowNodeDebugInfo } from '../types';
 import { themApi } from '@/lib/api';
 
 // AppFlowDebugInspector — App Canvas Debug Mode Phase 6
-// (docs/APP_CANVAS_DEBUG_PLAN.md). Click-to-inspect: shows the clicked node's
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md). Click-to-inspect: shows the clicked node's
 // captured debug detail (the node_done/node_error/node_paused payload's
 // `detail` string, already captured by useAppFlowDebugSession into
 // nodeDetails/nodeErrors) in a dedicated side panel, mirroring the agent

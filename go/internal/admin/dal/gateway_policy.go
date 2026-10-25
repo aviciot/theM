@@ -11,7 +11,7 @@ import (
 
 // Gateway policy admin endpoints keep their flat REST shape; storage is
 // them.governance_policies (scope 'tenant' and 'profile'). See
-// docs/GOVERNANCE_POLICY_DESIGN.md.
+// docs/_archive/GOVERNANCE_POLICY_DESIGN.md.
 
 const tsFmt = `'YYYY-MM-DD"T"HH24:MI:SS"Z"'`
 

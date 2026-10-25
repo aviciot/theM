@@ -23,7 +23,7 @@ type MiddlewareWiring struct {
 
 // MiddlewareWiringInput is the request body for creating/updating a wiring.
 // AgentID is empty for a wiring scoped to a non-agent node (e.g. an llm
-// node — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4); NodeID is then the
+// node — docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4); NodeID is then the
 // only identity the wiring has.
 type MiddlewareWiringInput struct {
 	AgentID        string          `json:"agent_id,omitempty"`
@@ -119,7 +119,7 @@ WHERE  mw.id = $1::uuid AND mw.application_id = $2::uuid`
 // one in place if a wiring for this (application_id, node_id, def_id)
 // already exists — them.middleware_wirings enforces that triple unique
 // (uq_mw_wiring_app_node_def) whenever node_id is set, which every
-// canvas-created wiring always has (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// canvas-created wiring always has (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
 // Phase 2). A caller can legitimately hit this (e.g. re-saving an existing
 // node's guard config) — that's a real "this wiring already exists, update
 // it" case, not an error condition, so it must not surface as a raw
@@ -135,7 +135,7 @@ WHERE  mw.id = $1::uuid AND mw.application_id = $2::uuid`
 // node now coexist as two separate rows.
 //
 // in.AgentID is empty for a wiring scoped to a non-agent node (an llm node
-// has no agents row at all — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4,
+// has no agents row at all — docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4,
 // db/114 made agent_id nullable for exactly this). node_id+def_id, not
 // agent_id, is the identity ON CONFLICT resolves on.
 func CreateMiddlewareWiring(ctx context.Context, db Querier, appID string, in MiddlewareWiringInput) (MiddlewareWiring, error) {
@@ -277,7 +277,7 @@ type MiddlewareDefSummary struct {
 	Emoji       string          `json:"emoji,omitempty"`
 	Color       string          `json:"color,omitempty"`
 	BgColor     string          `json:"bg_color,omitempty"`
-	// Node-contract fields (Phase 5, docs/NODE_REGISTRY_PLAN.md) — nullable in
+	// Node-contract fields (Phase 5, docs/_archive/NODE_REGISTRY_PLAN.md) — nullable in
 	// the DB; nil until a row is seeded (see db/102_middleware_defs_node_contract.sql).
 	// Raw JSON, not typed as nodedefs.EdgeRules/[]nodedefs.PortDef/etc., because
 	// this package (internal/admin/dal) has no dependency on internal/nodedefs

@@ -1,6 +1,6 @@
 // Package governance defines the multi-scope policy document that controls what a
 // caller may spend / use (limits) and what the platform records about it (logging).
-// See docs/GOVERNANCE_POLICY_DESIGN.md.
+// See docs/_archive/GOVERNANCE_POLICY_DESIGN.md.
 package governance
 
 import (

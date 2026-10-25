@@ -1,5 +1,5 @@
 // Event Writer — Redis Streams → ClickHouse consumer
-// Design: docs/OBSERVABILITY_STORAGE_DESIGN.md Stage A3
+// Design: docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md Stage A3
 //
 // Reads events from Redis Streams (them:events) and writes to ClickHouse in batches.
 // Consumer group: "event-writers" (allows N replicas for redundancy).

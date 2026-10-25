@@ -229,7 +229,7 @@ func (s *LLMProviderService) ListForTenant(ctx context.Context, tenantID string)
 // UpsertForTenant creates or replaces a tenant-scoped LLM provider override.
 // name must match an existing bootstrap-tenant provider name (validates
 // against the bootstrap tenant's own row, which is what "platform default"
-// means post Platform-as-Tenant Phase 1 — see docs/PLATFORM_AS_TENANT_PLAN.md;
+// means post Platform-as-Tenant Phase 1 — see docs/_archive/PLATFORM_AS_TENANT_PLAN.md;
 // the bootstrap tenant IS the platform now, no separate NULL-tenant row exists).
 // Returns ErrNotFound when name has no bootstrap-tenant row.
 // Returns ErrValidation for bad field values.

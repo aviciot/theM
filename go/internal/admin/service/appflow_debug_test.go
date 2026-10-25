@@ -45,7 +45,7 @@ const minimalDraftDoc = `{
 }`
 
 // twoLLMNodesDraftDoc has two independent inline LLM nodes on one entry point
-// — used to prove docs/APPFLOW_RUNTIME_PARAMS_PLAN.md's per-node requirement:
+// — used to prove docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md's per-node requirement:
 // each node needs its own llm_overrides entry, never merged/deduped.
 const twoLLMNodesDraftDoc = `{
 	"schema_version": 2,
@@ -211,7 +211,7 @@ func TestAppFlowDebugService_Start_HappyPath(t *testing.T) {
 	assert.Equal(t, "chat", lc.lastInput.Spec.EntryPoints[0].Slug)
 }
 
-// StepMode=true (docs/APP_CANVAS_DEBUG_PLAN.md Phase 6) must propagate
+// StepMode=true (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6) must propagate
 // through to AppFlowWorkflowInput.StepMode unchanged — this is the only
 // thing distinguishing a Step-controlled debug session from a Run-All one at
 // the point the workflow is started.
@@ -312,7 +312,7 @@ func TestAppFlowDebugService_Start_EPMissingFromCompiledDraft(t *testing.T) {
 	assert.False(t, lc.admitCalled)
 }
 
-// ── AppFlow Runtime Params (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md) ────────────
+// ── AppFlow Runtime Params (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md) ────────────
 
 func twoLLMDraftDAL() *fakeAppFlowDebugDAL {
 	return &fakeAppFlowDebugDAL{

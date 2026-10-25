@@ -495,7 +495,7 @@ func (f *fakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLM
 }
 // GetProviderByNameForTenant is used for two distinct call sites in the real
 // code: a tenant's own row lookup (GetOwnProviderRow) and, since
-// Platform-as-Tenant Phase 2 (docs/PLATFORM_AS_TENANT_PLAN.md), the bootstrap
+// Platform-as-Tenant Phase 2 (docs/_archive/PLATFORM_AS_TENANT_PLAN.md), the bootstrap
 // tenant's row used as a template in UpsertForTenant (formerly
 // GetProviderByNamePlatform). Dispatch on the tenantID argument so both call
 // sites can be faked independently in the same test via

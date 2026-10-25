@@ -441,7 +441,7 @@ func (h *Handler) startAppFlow(ctx context.Context, handle *execution.ExecutionH
 		LLMModel:        llmCfg.Model,
 	}
 	// debug=false: no debug-session entry point exists yet on this transport —
-	// see docs/APP_CANVAS_DEBUG_PLAN.md Phase 5/6.
+	// see docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5/6.
 	return h.lc.StartAppFlow(ctx, handle, input, false)
 }
 
@@ -596,7 +596,7 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 			"url":          downloadURL,
 		}
 	case "node_start", "node_done", "node_error", "node_paused":
-		// AppFlow per-node trace events (docs/APP_CANVAS_DEBUG_PLAN.md Phase 2/5/6).
+		// AppFlow per-node trace events (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 2/5/6).
 		// Wire shape from emitTrace: {type, run_id, node_id, kind, detail?}.
 		var runID, nodeID, kind, detail string
 		if raw, ok := payload["run_id"]; ok {

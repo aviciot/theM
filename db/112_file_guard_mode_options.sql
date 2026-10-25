@@ -1,4 +1,4 @@
--- Fix (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md follow-up): file-guard's "mode"
+-- Fix (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md follow-up): file-guard's "mode"
 -- config field was declared type "string" with no fixed value set, so the
 -- App Canvas Guards section (frontend/.../AgentGuardsSection.tsx) rendered it
 -- as free text -- a user could type "blockk" and silently misconfigure the

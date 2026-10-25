@@ -1,6 +1,6 @@
 /**
  * Tests for useInlinePortWiring.ts — Phase 5 drag-to-connect named data-port
- * wiring (docs/APPFLOW_NAMED_PORTS_PLAN.md).
+ * wiring (docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md).
  *
  * Run with: node src/app/admin/applications/components/cbv/__tests__/useInlinePortWiring.test.js
  *
@@ -61,7 +61,7 @@ function guardWriteVarsForNode(nodeId, wirings) {
   return out;
 }
 
-// ── resolveDragSource / isBindableSource (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// ── resolveDragSource / isBindableSource (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 // Phase 2 — extends the pre-existing llm-only source resolution to any node
 // kind with an enabled guard wiring) ──
 

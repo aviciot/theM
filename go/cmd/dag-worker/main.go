@@ -177,7 +177,7 @@ func run() error {
 	}
 	statusUpdater := &pgxRunStatusUpdater{pool: rlsPools.Admin}
 	streamPub := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
-	// File Guard (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): same
+	// File Guard (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md Phase 2): same
 	// construction pattern cmd/them/main.go already uses — nil storage
 	// client (S3 not configured) means FileGate.Intercept fails open
 	// (scanning disabled), never blocks agent responses. dag-worker never
@@ -201,7 +201,7 @@ func run() error {
 		log.Warn("THE_M_S3_ENDPOINT not set — File Guard will fail-open for all apps")
 	}
 	fileGate := &appFlowFileGateAdapter{gate: middleware.NewFileGate(middleware.NewPgxQuerier(rlsPools.Admin), fileGateStore)}
-	// File Guard synchronous wait (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+	// File Guard synchronous wait (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 	// Phase 0): reuses the classic Orchestrator's existing, working
 	// Redis-pub/sub scan-completion mechanism (RedisScanSubscriber) rather
 	// than inventing a new wait pattern — dag-worker never constructed one
@@ -216,7 +216,7 @@ func run() error {
 		fileGate:       fileGate,
 		fileGateWaiter: fileGateWaiter,
 	}
-	// Text Guards (docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3): pii/promptguard
+	// Text Guards (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 3): pii/promptguard
 	// processors run synchronously, in-process, inside dag-worker itself —
 	// NOT inside them-middleware-worker (that binary only ever runs av_scan's
 	// async file-scanning path; see textgate.go's own doc comment on why
@@ -579,7 +579,7 @@ func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, api
 
 // NewProviderWithBaseURL is NewProvider but with an explicit baseURL that
 // overrides f.baseURLs' static per-provider map — used for App Canvas Debug
-// Mode's per-node credential override (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md),
+// Mode's per-node credential override (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md),
 // where a debug run may point a node at a different endpoint than the one
 // configured in them.llm_providers.base_url. An empty baseURL falls back to
 // the static map, same as NewProvider.
@@ -762,7 +762,7 @@ type debugCredentialGetter interface {
 //
 // For debug runs (req.Debug == true, InlineLLMCaller.Complete only —
 // ClassifyIntent/the Router node has no debug-override concept), Complete
-// checks debugStore first — see docs/APPFLOW_RUNTIME_PARAMS_PLAN.md. debugStore
+// checks debugStore first — see docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md. debugStore
 // may be nil (debug credential overrides not configured); a nil store and a
 // non-debug call both skip the override check identically.
 type dbLLMCaller struct {
@@ -869,7 +869,7 @@ func (c *dbLLMCaller) resolveKey(ctx context.Context, providerName, tenantID, ap
 // parameter, so there is nowhere to thread it through without changing the
 // shared LLMProvider interface (used by the agent builder's interpreter and
 // its whole test suite). That's out of scope for this slice — see plan
-// docs/INLINE_NODES_PLAN.md §11 item 3 for the Phase 2 deferral.
+// docs/_archive/INLINE_NODES_PLAN.md §11 item 3 for the Phase 2 deferral.
 func (c *dbLLMCaller) Complete(ctx context.Context, req appflow.InlineLLMRequest) (string, int, int, error) {
 	providerName := req.ProviderName
 	if providerName == "" {
@@ -1028,7 +1028,7 @@ type pgxAgentA2ACaller struct {
 	// nil-safety convention as AppFlowActivities.FileGate.
 	fileGate *appFlowFileGateAdapter
 	// fileGateWaiter blocks for the REAL scan verdict on a raw-bytes file's
-	// enqueued scan (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0) —
+	// enqueued scan (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0) —
 	// same real-verdict wait the URL-based file path gets via
 	// AppFlowFileGateWaitActivity in workflow.go, but called inline here
 	// since this whole method already IS a Temporal activity (InvokeByID is
@@ -1042,7 +1042,7 @@ type pgxAgentA2ACaller struct {
 // Uses protobuf-JSON wire format with "ROLE_USER" enum string and A2A-Version: 1.0
 // header required by the A2A SDK v1.1 version validator.
 //
-// Phase 1 of docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md: the response's parts
+// Phase 1 of docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md: the response's parts
 // used to be decoded into a hand-rolled struct with only a `Text string`
 // field — a file/data/raw part (all 3 are real, valid A2A response shapes;
 // confirmed via the vendored SDK, go/vendor/github.com/a2aproject/a2a-go/v2/a2a/core.go)
@@ -1151,7 +1151,7 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 
 // scanRawBytesFilePart scans a raw-bytes file part (docu_writer's PDF,
 // a2a-stream's zip) inline and waits for the real scan verdict
-// (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0) — extracted from
+// (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 0) — extracted from
 // InvokeByID as a standalone function taking the two gate interfaces
 // directly (not the concrete adapter types) specifically so it's
 // unit-testable with fakes, same reasoning
@@ -1215,7 +1215,7 @@ func scanRawBytesFilePart(
 // Parts decode as real a2a.Part values (the SDK's own Part.UnmarshalJSON),
 // not a hand-rolled struct with only a `Text string` field — the previous
 // version of this code silently decoded a file/data/raw part to an empty
-// string, no error, nothing logged (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// string, no error, nothing logged (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
 // Phase 1).
 //
 // REVISED after live testing against a2a-stream (a real multi-artifact
@@ -1313,7 +1313,7 @@ func decodeAgentSendMessageResponse(body io.Reader) (appflow.AgentInvokeResult, 
 var _ appflow.AgentInvoker = (*pgxAgentA2ACaller)(nil)
 
 // appFlowFileGateAdapter bridges middleware.FileGate to the
-// appflow.FileGateChecker interface (docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
+// appflow.FileGateChecker interface (docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md
 // Phase 2) — same bridging pattern cmd/them/main.go's fileGateAdapter
 // already uses for the a2a.FileInterceptor interface.
 type appFlowFileGateAdapter struct {
@@ -1356,7 +1356,7 @@ func toGateInput(in appflow.FileGateCheckInput) middleware.GateInput {
 }
 
 // appFlowTextGateAdapter bridges middleware.TextGate to the
-// appflow.TextGateChecker interface (docs/APPFLOW_TEXT_GUARDS_PLAN.md
+// appflow.TextGateChecker interface (docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md
 // Phase 3) — same bridging pattern appFlowFileGateAdapter already uses.
 type appFlowTextGateAdapter struct {
 	gate *middleware.TextGate
@@ -1414,7 +1414,7 @@ var _ appflow.TextGateChecker = (*appFlowTextGateAdapter)(nil)
 var _ appflow.FileGateChecker = (*appFlowFileGateAdapter)(nil)
 
 // appFlowFileGateWaitAdapter bridges orchestrator.RedisScanSubscriber to the
-// appflow.FileGateWaiter interface (docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
+// appflow.FileGateWaiter interface (docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md
 // Phase 0) — same bridging pattern appFlowFileGateAdapter/appFlowTextGateAdapter
 // already use.
 type appFlowFileGateWaitAdapter struct {

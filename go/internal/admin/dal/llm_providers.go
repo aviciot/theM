@@ -31,7 +31,7 @@ func scanProvider(r RowScanner) (LLMProvider, error) {
 }
 
 // ListProviders returns the bootstrap tenant's own LLM providers — the-M's own
-// "platform-default" rows post-Platform-as-Tenant (see docs/PLATFORM_AS_TENANT_PLAN.md).
+// "platform-default" rows post-Platform-as-Tenant (see docs/_archive/PLATFORM_AS_TENANT_PLAN.md).
 // Ordered by id ASC.
 func (d *DB) ListProviders(ctx context.Context) ([]LLMProvider, error) {
 	rows, err := d.q.Query(ctx, llmProviderSelectCols+" WHERE tenant_id = $1::uuid ORDER BY id ASC", tenantctx.BootstrapTenantID)
@@ -55,7 +55,7 @@ func (d *DB) ListProviders(ctx context.Context) ([]LLMProvider, error) {
 // tenant overrides for this tenantID, plus the bootstrap tenant's provider
 // defaults not overridden (Platform-as-Tenant Phase 1 moved what used to be
 // NULL-tenant "platform default" rows to the bootstrap tenant's real
-// tenant_id — see docs/PLATFORM_AS_TENANT_PLAN.md). Tenant rows win when name
+// tenant_id — see docs/_archive/PLATFORM_AS_TENANT_PLAN.md). Tenant rows win when name
 // matches. Results are ordered by name ASC.
 func (d *DB) ListProvidersForTenant(ctx context.Context, tenantID string) ([]LLMProvider, error) {
 	const q = `
@@ -99,7 +99,7 @@ func (d *DB) GetProviderByNameForTenant(ctx context.Context, name, tenantID stri
 
 // CreateProvider inserts a new LLM provider row owned by the bootstrap tenant
 // — the-M's own "platform-default" provider post-Platform-as-Tenant (see
-// docs/PLATFORM_AS_TENANT_PLAN.md). Returns a unique-violation error
+// docs/_archive/PLATFORM_AS_TENANT_PLAN.md). Returns a unique-violation error
 // (SQLSTATE 23505) when a bootstrap-tenant row with this name already exists.
 func (d *DB) CreateProvider(ctx context.Context, in LLMProviderInput) (LLMProvider, error) {
 	const q = `

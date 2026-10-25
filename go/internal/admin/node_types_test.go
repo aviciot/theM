@@ -26,7 +26,7 @@ func TestNodeTypesHandler_ReturnsAllTypes(t *testing.T) {
 	}
 
 	// The endpoint merges the agentgen (agent builder) family with the appflow
-	// (app canvas) family — see docs/NODE_REGISTRY_PLAN.md Phase 3.
+	// (app canvas) family — see docs/_archive/NODE_REGISTRY_PLAN.md Phase 3.
 	wantTotal := len(agentgen.KnownStepTypes()) + len(appflow.AllAppCanvasNodeInfos())
 	if len(infos) != wantTotal {
 		t.Errorf("expected %d node types (agentgen + appflow), got %d", wantTotal, len(infos))
@@ -163,7 +163,7 @@ func TestNodeTypesHandler_VersionDefaultsToOne(t *testing.T) {
 
 // TestNodeTypesHandler_MergesMiddlewareFamily verifies a them.middleware_defs
 // row with seeded node-contract columns (edges/config_fields — Phase 5,
-// docs/NODE_REGISTRY_PLAN.md) appears in the merged response tagged
+// docs/_archive/NODE_REGISTRY_PLAN.md) appears in the merged response tagged
 // family="middleware", with its edges and config_fields decoded correctly.
 func TestNodeTypesHandler_MergesMiddlewareFamily(t *testing.T) {
 	db := &mwDB{listRows: [][]any{

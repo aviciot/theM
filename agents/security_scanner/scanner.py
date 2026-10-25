@@ -7,7 +7,7 @@ calling Anthropic directly with a single hardcoded ANTHROPIC_API_KEY shared
 by every tenant). It now runs in go-bridge instead
 (internal/admin/security_scan_llm.go, llmCardAnalysis) so a tenant's own
 "security_scanner" general/custom mode config (see
-docs/TENANT_LLM_PROVIDERS_PLAN.md) can be used instead of one shared
+docs/_archive/TENANT_LLM_PROVIDERS_PLAN.md) can be used instead of one shared
 platform key. This scanner is now HTTP-probes-only; go-bridge's
 runScanJob merges this result with its own LLM analysis before persisting.
 """

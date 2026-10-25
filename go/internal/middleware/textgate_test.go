@@ -97,7 +97,7 @@ func TestTextGate_PIIWiringEnabled_RedactsText(t *testing.T) {
 	}
 }
 
-// TG-2b: docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5 — ResultsByGuard
+// TG-2b: docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md Phase 1.5 — ResultsByGuard
 // keys the same result by defSlug, and its Detail carries the real
 // per-category match data pii.Detector.Process already computes
 // (Detail["categories"] = map[string]int) — this was previously discarded
@@ -218,7 +218,7 @@ func TestTextGate_DBErrorResolvingWiring_PropagatesError(t *testing.T) {
 }
 
 // TG-7: a guard configured direction:"output" (the default) does NOT run
-// on an input-phase check — docs/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's
+// on an input-phase check — docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md Phase 4's
 // direction field, confirmed with the user this session: "output"-only
 // guards must not silently also scan input just because the workflow now
 // always calls Check twice (input then output).

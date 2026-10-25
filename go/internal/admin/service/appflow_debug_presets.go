@@ -69,9 +69,9 @@ type AppFlowDebugPresetIn struct {
 }
 
 // AppFlowDebugPresetService owns save/load/delete for a user's saved debug
-// panel presets (docs/APP_CANVAS_DEBUG_PLAN.md). Presets are personal — scoped
+// panel presets (docs/_archive/APP_CANVAS_DEBUG_PLAN.md). Presets are personal — scoped
 // to (tenant, user, application) — never shared across users, even within the
-// same tenant/app (see docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why this is
+// same tenant/app (see docs/_archive/UNIFIED_ROLE_GOVERNANCE_DESIGN.md for why this is
 // deliberately NOT folded into the tenant Role model).
 type AppFlowDebugPresetService struct {
 	dal       Dal

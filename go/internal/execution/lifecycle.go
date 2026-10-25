@@ -229,7 +229,7 @@ func (lc *Lifecycle) WithAppFlowLLMOverrideLoader(l AppFlowLLMOverrideLoader) *L
 }
 
 // LogVerbosityLoader resolves the per-app AppFlow trace log-verbosity setting
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4). If nil or if Load returns an error,
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4). If nil or if Load returns an error,
 // StartAppFlow falls back to dal.DefaultLogVerbosity (fail-open).
 type LogVerbosityLoader interface {
 	// Load returns the effective log-verbosity ("off"|"status"|"full") for the given
@@ -687,7 +687,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 }
 
 // AdmitDebug builds a minimal ExecutionHandle for an admin-triggered debug run
-// (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5) — no live end-user connection exists,
+// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5) — no live end-user connection exists,
 // so there is no token to validate and no gate/session slot to reserve. Debug
 // runs must never compete with production traffic for admission capacity, so
 // gate.Check/Confirm and session.Register are deliberately skipped entirely
@@ -860,7 +860,7 @@ func (lc *Lifecycle) StartAppFlow(ctx context.Context, h *ExecutionHandle, input
 		}
 	}
 
-	// Resolve AppFlow trace log-verbosity (docs/APP_CANVAS_DEBUG_PLAN.md Phase 4).
+	// Resolve AppFlow trace log-verbosity (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 4).
 	// Debug mode always forces "full" regardless of the app's configured
 	// setting — a debug session needs full detail to be useful, independent
 	// of what the app owner set for production traffic.

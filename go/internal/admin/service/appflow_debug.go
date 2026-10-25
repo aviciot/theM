@@ -17,7 +17,7 @@ import (
 
 // AppFlowDebugStarter is the minimal execution.Lifecycle surface this service
 // needs — defined here so tests can inject a fake without a live Temporal
-// client (docs/APP_CANVAS_DEBUG_PLAN.md Phase 5).
+// client (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 5).
 type AppFlowDebugStarter interface {
 	AdmitDebug(ctx context.Context, tenantID, appSlug, epSlug string, userID int64) (*execution.ExecutionHandle, error)
 	StartAppFlow(ctx context.Context, h *execution.ExecutionHandle, input appflow.AppFlowWorkflowInput, debug bool) (temporalclient.WorkflowRun, error)
@@ -98,7 +98,7 @@ type DebugStartResult struct {
 // seed input for the flow's entry point (mirrors the agent builder's
 // "__test_input" debug param). llmOverrides maps canvas node_id -> the
 // per-node LLM credential choice for THIS debug run only (never persisted to
-// the app's saved Runtime settings) — see docs/APPFLOW_RUNTIME_PARAMS_PLAN.md.
+// the app's saved Runtime settings) — see docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md.
 // Returns ErrNotFound when the application has no draft saved yet, or the
 // entry point slug doesn't exist on it.
 func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug, userMessage string, userID int64, llmOverrides map[string]LLMOverrideInput, secretOverrides map[string]map[string]string, stepMode bool) (DebugStartResult, error) {
@@ -136,7 +136,7 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 	// A draft that has never been published has no _resolved_agent_ids stamp
 	// (that's only written by PublishDefinition) — resolve any agent-kind
 	// component live, the same server-side registry lookup publish uses, so
-	// debug never requires publishing first (docs/APP_CANVAS_DEBUG_PLAN.md's
+	// debug never requires publishing first (docs/_archive/APP_CANVAS_DEBUG_PLAN.md's
 	// "known limitation, found while writing Phase 5's service-layer tests").
 	if err := s.resolveDraftAgentIDs(ctx, tenantID, draft.Definition, agentByInstanceID); err != nil {
 		return DebugStartResult{}, unprocessable(fmt.Sprintf("resolve agents: %v", err))
@@ -166,7 +166,7 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 
 	// Validate + resolve every node's llm_credential requirement BEFORE
 	// admitting a run — a validation failure here must never consume a debug
-	// run slot or start a Temporal workflow (docs/APPFLOW_RUNTIME_PARAMS_PLAN.md
+	// run slot or start a Temporal workflow (docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md
 	// requirement: "validate required settings server-side before starting
 	// the run"). Every llm-kind node needs an entry in llmOverrides — there is
 	// no "fall through to the app's Runtime settings" default for a required
@@ -241,7 +241,7 @@ func (s *AppFlowDebugService) Start(ctx context.Context, tenantID, appID, epSlug
 // the building block of DebugResultSummary.NodeResults. Deliberately a flat,
 // self-describing shape (no nested run_steps SQL types) so it reads the same
 // whether the consumer is a human-facing UI or an LLM assistant helping a
-// user debug their own app (docs/PLATFORM_AS_TENANT_PLAN.md Phase 6 —
+// user debug their own app (docs/_archive/PLATFORM_AS_TENANT_PLAN.md Phase 6 —
 // "smart debug log" request): a coding agent building an AppFlow app via a
 // future MCP tool needs to read exactly this — which node, what it did,
 // what it produced or failed with — without inferring anything from a

@@ -12,7 +12,7 @@ package admin
 // Configuration is resolved through them.tenant_system_agent_config for the
 // "card_synthesizer" role — first for the bootstrap tenant (the-M's own
 // operating tenant since Platform-as-Tenant Phase 2,
-// docs/PLATFORM_AS_TENANT_PLAN.md), whose resolved config is fed in as the
+// docs/_archive/PLATFORM_AS_TENANT_PLAN.md), whose resolved config is fed in as the
 // fallback for the real tenant's own resolution. There is no more separate
 // them.config['system_agents'] platform path.
 
@@ -65,7 +65,7 @@ Return ONLY valid JSON in this exact shape (no markdown, no explanation):
 // synthesizeAppCard calls the card_synthesizer LLM role and returns the
 // synthesized card as a raw JSON object. Returns nil on any failure so callers
 // can degrade gracefully. tenantID selects the caller's own general/custom
-// mode via resolveSystemAgentRole — see docs/TENANT_LLM_PROVIDERS_PLAN.md step
+// mode via resolveSystemAgentRole — see docs/_archive/TENANT_LLM_PROVIDERS_PLAN.md step
 // 5. No platform-key fallback is ever used for a tenant's "general" mode
 // resolution.
 func synthesizeAppCard(

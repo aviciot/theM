@@ -1,6 +1,6 @@
 -- db/110_platform_as_bootstrap_tenant_DOWN.sql
 -- Rollback for db/110_platform_as_bootstrap_tenant.sql
--- (docs/PLATFORM_AS_TENANT_PLAN.md Phase 1 rollback section).
+-- (docs/_archive/PLATFORM_AS_TENANT_PLAN.md Phase 1 rollback section).
 --
 -- IMPORTANT: this only reverses db/110's DATA + RLS changes. If Phase 2 has
 -- already shipped (deleted GetProviderByNamePlatform, resolvePlatformSystemAgentRole,

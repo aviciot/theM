@@ -101,7 +101,7 @@ case "${1:-all}" in
         echo -e "${YELLOW}Next steps:${NC}"
         echo -e "  1. Verify body capture: psql -U them -d them -f scripts/verify-logging-levels.sql"
         echo -e "  2. View results in UI: http://localhost:3210/scenarios"
-        echo -e "  3. See testing plan: docs/LOGGING_LEVEL_TESTING_PLAN.md"
+        echo -e "  3. See testing plan: docs/_archive/LOGGING_LEVEL_TESTING_PLAN.md"
         ;;
     *)
         echo -e "${RED}Unknown scenario: $1${NC}"
