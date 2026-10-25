@@ -23,6 +23,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [ADR-003 Redis Streams for Durable Run Event Delivery](decisions/003-redis-streams-event-delivery.md) | decision | current | 2026-10-25 |  |
 | [ADR-004 Run Identity and Event Channel (Go-only; supersedes ADR-001)](decisions/004-run-identity-and-event-channel.md) | decision | current | 2026-10-25 |  |
 | [A2A Test Agents (a2a-echo, a2a-slow, a2a-stream)](guides/a2a-test-agents.md) | guide | current | 2026-10-25 |  |
+| [Database Migrations (how they work today and how to add one)](guides/database-migrations.md) | guide | current | 2026-10-25 |  |
 | [Production Deploy (Hetzner) and Environment Variables](guides/deploy-and-env.md) | guide | current | 2026-10-25 |  |
 | [Exposing the-M externally (them.avico78.com)](guides/expose-externally.md) | guide | draft | unverified |  |
 | [Local Dev, Docker Compose & Deploy](guides/local-dev-and-deploy.md) | guide | current | 2026-10-25 |  |
