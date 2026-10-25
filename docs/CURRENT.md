@@ -13,9 +13,9 @@ Last updated: 2026-10-25 · Branch: `main` · HEAD: see `git log --oneline -1` (
 - Enforcement: pre-commit hook **blocks** owned-code commits without the owner doc (`DOCS_UNCHANGED_OK=1` + reason for genuine no-doc changes); CI job `docs-lint` (written, never run on GitHub). Clones: `git config core.hooksPath .githooks`.
 - Generated reference: `scripts/gen_reference.py` (routes, schema, node-types, redis) → `docs/reference/*-generated.md`; lint: `scripts/docs_lint.py check|index|stale|stray|links`.
 - Cleaned 2026-10-25: dead Python-era tests/config/clutter deleted; `scripts/tests/INDEX.md` lists the 7 live E2E scripts.
-- Open doc follow-ups: stray `.md` files outside `docs/` (`docs_lint.py stray`), 12 remaining source refs to old doc paths (F-87, mostly fixed), coverage gaps (frontend, deploy/Hetzner, migrations, env vars, security scanning, voice, dashboard/metrics, `test-runner/` app), `.claude/memory/*.md` unreviewed.
+- Open doc follow-ups: stray `.md` files outside `docs/` (`docs_lint.py stray`), 12 remaining source refs to old doc paths (F-87, mostly fixed), coverage gaps (voice, dashboard/metrics, `test-runner/` app), `.claude/memory/*.md` unreviewed.
 
-## Known problems — `docs/plans/code-findings-backlog.md` (96 items, none fixed)
+## Known problems — `docs/plans/code-findings-backlog.md` (109 items, none fixed)
 Highest severity to fix first: F-56 MCP internal API unauthenticated · F-67 agent-runtime unauthenticated · F-68 A2A task access not tenant-checked · F-78 tenant export cross-tenant · F-79 agent-param secrets copied · F-70/F-57/F-48 SSRF · F-01/F-02 fork-branch guards/errors · F-18 logout not honoured · F-19 SSO account takeover · F-31 gate keys not tenant-scoped · F-32 superuser DB creds in services · F-88 non-rebuildable state in an LRU Redis · F-94/F-91 committed tokens (revoke and rotate; the `origin` remote URL embeds a GitHub token).
 
 ## Tests
