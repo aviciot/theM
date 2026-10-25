@@ -3,10 +3,10 @@
 // # Ownership
 //
 // Gate is the SOLE owner of Set membership at admission time:
-//   - them:ep:{slug}:sessions   — Set of admitted session IDs
-//   - them:app:{id}:sessions    — Set of admitted session IDs per app
-//   - them:ep:{slug}:shadow:{sid}  — shadow TTL key (controls ghost pruning)
-//   - them:app:{id}:shadow:{sid}   — shadow TTL key per app
+//   - them:ep:{appID}:{slug}:sessions   — Set of admitted session IDs per EP (app-scoped)
+//   - them:app:{appID}:sessions         — Set of admitted session IDs per app
+//   - them:ep:{appID}:{slug}:shadow:{sid}  — shadow TTL key per EP (app-scoped)
+//   - them:app:{appID}:shadow:{sid}        — shadow TTL key per app
 //
 // SessionManager (internal/session) owns ONLY the Hash (them:sess:{id}).
 //
@@ -30,7 +30,7 @@
 // # Queue protocol
 //
 // When ep_max_concurrent is reached and QueueTimeout > 0, the session waits in
-// a Redis list. The list key is them:ep:gate:queue:{slug}. Waiters block with
+// a Redis list. The list key is them:ep:gate:queue:{appID}:{slug}. Waiters block with
 // BLPOP on this key. When a slot opens, the departing session calls Gate.Release
 // which does LPush("1") to wake exactly one waiter.
 //
@@ -63,7 +63,7 @@ const (
 	defaultShadowTTL = 90 * time.Second
 
 	// queueKeyPrefix is the prefix for the BLPOP wait-list key.
-	// Full key: them:ep:gate:queue:{ep_slug}
+	// Full key: them:ep:gate:queue:{appID}:{ep_slug}
 	queueKeyPrefix = "them:ep:gate:queue:"
 )
 
@@ -129,8 +129,19 @@ func (c *Config) shadowTTL() time.Duration {
 	return defaultShadowTTL
 }
 
-func (c *Config) epSet() string    { return "them:ep:" + c.EPSlug + ":sessions" }
-func (c *Config) epShadow() string { return "them:ep:" + c.EPSlug + ":shadow:" }
+func (c *Config) epSet() string {
+	if c.AppID == "" {
+		// Fallback for tests or legacy paths without AppID; still scoped by TenantID.
+		return "them:ep:" + c.TenantID + ":" + c.EPSlug + ":sessions"
+	}
+	return "them:ep:" + c.AppID + ":" + c.EPSlug + ":sessions"
+}
+func (c *Config) epShadow() string {
+	if c.AppID == "" {
+		return "them:ep:" + c.TenantID + ":" + c.EPSlug + ":shadow:"
+	}
+	return "them:ep:" + c.AppID + ":" + c.EPSlug + ":shadow:"
+}
 func (c *Config) appSet() string {
 	if c.AppID == "" {
 		return ""
@@ -150,7 +161,13 @@ func (c *Config) rlKey() string {
 	minute := time.Now().UTC().Format("200601021504")
 	return "rl:them:" + c.TenantID + ":token:" + c.TokenHash + ":" + minute
 }
-func (c *Config) queueKey() string { return queueKeyPrefix + c.EPSlug }
+func (c *Config) queueKey() string {
+	if c.AppID == "" {
+		// Fallback for tests or legacy paths without AppID; still scoped by TenantID.
+		return queueKeyPrefix + c.TenantID + ":" + c.EPSlug
+	}
+	return queueKeyPrefix + c.AppID + ":" + c.EPSlug
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // RedisClient interface
@@ -205,11 +222,11 @@ func New(redis RedisClient) *Gate {
 //  8. SADD session into app Set + SET shadow EX reservation_ttl (if provided).
 //  9. Return new live EP count (>= 1) on success.
 //
-// KEYS[1]  = EP membership Set             (them:ep:{slug}:sessions)
-// KEYS[2]  = EP shadow prefix ending in :  (them:ep:{slug}:shadow:)
-// KEYS[3]  = app membership Set            (them:app:{id}:sessions  — "" if unused)
-// KEYS[4]  = app shadow prefix             (them:app:{id}:shadow:   — "" if unused)
-// KEYS[5]  = rate limit key                (rl:them:token:{hash}:{minute} — "" if unused)
+// KEYS[1]  = EP membership Set             (them:ep:{appID}:{slug}:sessions)
+// KEYS[2]  = EP shadow prefix ending in :  (them:ep:{appID}:{slug}:shadow:)
+// KEYS[3]  = app membership Set            (them:app:{appID}:sessions  — "" if unused)
+// KEYS[4]  = app shadow prefix             (them:app:{appID}:shadow:   — "" if unused)
+// KEYS[5]  = rate limit key                (rl:them:{tenantID}:token:{hash}:{minute} — "" if unused)
 // ARGV[1]  = session_id
 // ARGV[2]  = ep_max_concurrent  (0 = unlimited)
 // ARGV[3]  = app_max_concurrent (0 = unlimited)

@@ -18,7 +18,7 @@ owns:
   - go/internal/temporal/client.go
   - go/internal/temporal/signaler.go
   - go/cmd/worker/
-last_verified: 2026-10-24   # by reading code; nothing run live this session
+last_verified: 2026-10-25   # F-31 fixed (gate key tenant isolation); tests pending (Go not installed)
 ---
 
 # Run Lifecycle
@@ -75,8 +75,8 @@ deferred Lifecycle.Release: if Start never succeeded mark run `failed`; session.
 Error → HTTP: 401 unauthorized · 402 daily user cost · 403 forbidden · 404 not found · 429 caps/rate/quotas · 501 not implemented · 503 queue full / DB down · 500 otherwise. `AdmitError.Error()` is a static string; causes are only logged.
 
 ### Admission gate (`gate/gate.go`)
-One Lua script (`luaAdmit`) atomically: prunes ghosts (set members with no shadow key), checks EP cap then app cap, increments the per-token minute counter, then `SADD` + shadow key with a **10s reservation TTL**. `Confirm` extends the shadow to 90s. `Rollback` removes it. When the EP cap is full and `QueueTimeout>0`, the caller `BLPOP`s `them:ep:gate:queue:{slug}`; `Release` pushes a token. A wake is a re-compete, never a guarantee, and a loser is not re-queued.
-Redis keys: `them:ep:{slug}:sessions|shadow:{sid}`, `them:app:{id}:sessions|shadow:{sid}`, `rl:them:{tenant}:token:{hash}:{minute}`, `them:ep:gate:queue:{slug}`. Session Hash: `them:sess:{sid}` (90s).
+One Lua script (`luaAdmit`) atomically: prunes ghosts (set members with no shadow key), checks EP cap then app cap, increments the per-token minute counter, then `SADD` + shadow key with a **10s reservation TTL**. `Confirm` extends the shadow to 90s. `Rollback` removes it. When the EP cap is full and `QueueTimeout>0`, the caller `BLPOP`s `them:ep:gate:queue:{appID}:{slug}`; `Release` pushes a token. A wake is a re-compete, never a guarantee, and a loser is not re-queued.
+Redis keys (all app-scoped for tenant isolation): `them:ep:{appID}:{slug}:sessions|shadow:{sid}`, `them:app:{appID}:sessions|shadow:{sid}`, `rl:them:{tenantID}:token:{hash}:{minute}`, `them:ep:gate:queue:{appID}:{slug}`. Session Hash: `them:sess:{sid}` (90s).
 
 ### Events and terminal states
 - Wire types forwarded: `token`, `tool_call`, `tool_result` (WS only), `done`, `error`, `replay_unavailable`, AppFlow `node_start|node_done|node_error|node_paused`; SSE also maps `file` → `artifact-update`.
