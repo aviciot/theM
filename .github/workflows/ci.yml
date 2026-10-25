@@ -47,8 +47,10 @@ jobs:
           python3 scripts/docs_lint.py index
           git diff --exit-code docs/INDEX.md
 
-      - name: Generated route reference is up to date
-        run: python3 scripts/gen_reference.py routes --check
+      - name: Generated route and Redis references are up to date
+        run: |
+          python3 scripts/gen_reference.py routes --check
+          python3 scripts/gen_reference.py redis --check
 
       - name: Changed code has its owning doc updated (pull requests only)
         if: github.event_name == 'pull_request'

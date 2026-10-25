@@ -14,7 +14,7 @@ metadata:
 
 ## Redis
 - DB index 1 ALWAYS. Never DB 0 (Omni's).
-- New key → add to docs/reference/redis.md immediately
+- New key → add to docs/reference/redis-generated.md immediately
 
 ## Copy vs adapt from Omni
 - COPY verbatim: providers/, crypto.py, ws_connection_manager.py, rate_limiter.py

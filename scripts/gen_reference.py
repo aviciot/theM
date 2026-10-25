@@ -4,6 +4,8 @@
   gen_reference.py routes [--check]       static scan of Go chi route registrations (no stack needed)
   gen_reference.py schema [--check]       live Postgres catalog via `docker exec them-postgres psql` (needs the stack)
   gen_reference.py node-types [--check]   GET /api/v1/admin/node-types (needs the stack + ADMIN_USER/ADMIN_PASSWORD)
+  gen_reference.py redis [--check]        static scan of Go for Redis key/channel literals (no stack needed)
+  gen_reference.py redis-live             report-only: key patterns seen in the running Redis that the static scan did not find
 
 --check regenerates in memory and exits 1 when the committed file differs (CI uses it for `routes`).
 Generated files carry `generated: true` and must never be edited by hand.
@@ -115,8 +117,74 @@ def node_types(check):
     return write("node-types-generated.md", "node-types", "Canvas Node Types (generated)", "\n".join(body), check)
 
 
+# ── redis (static + live drift report) ───────────────────────────────────────
+KEYLIT = re.compile(r'"((?:them|rl):[A-Za-z0-9_:{}%.<>\-]*)"')
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+HEX = re.compile(r"\b[0-9a-f]{16,}\b")
+
+
+def redis(check):
+    found = {}
+    for f in sorted((ROOT / "go").rglob("*.go")):
+        rel = f.relative_to(ROOT).as_posix()
+        if "/vendor/" in rel or rel.endswith("_test.go"):
+            continue
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("//"):
+                continue
+            for m in KEYLIT.finditer(line):
+                found.setdefault(m.group(1), set()).add(rel)
+    groups = {}
+    for lit in sorted(found):
+        parts = lit.split(":")
+        top = ":".join(parts[:2]) if parts[0] == "them" and len(parts) > 1 else parts[0]
+        groups.setdefault(top, []).append(lit)
+    body = ["# Redis keys and channels (generated)", "",
+            "Static scan of string literals starting with `them:` or `rl:` in non-test Go code. A literal is often only the "
+            "**prefix** of a key built by concatenation (e.g. `them:ep:` + slug + `:sessions`) or a `fmt` pattern "
+            "(`%s` = the variable part). Treat this as the authoritative list of *where* keys are defined; read the "
+            "listed file for the full shape, TTL and owner. Narrative: `docs/architecture/*.md` (gate/session in "
+            "`run-lifecycle.md`, MCP keys in `mcp-service.md`, auth cache in `auth-and-roles.md`). "
+            "Drift against the running Redis: `python3.12 scripts/gen_reference.py redis-live`.", "",
+            f"{len(found)} literals in {len(groups)} groups.", ""]
+    for top in sorted(groups):
+        body += [f"## `{top}`", "", "| Literal | Defined in |", "|---|---|"]
+        for lit in groups[top]:
+            body.append(f"| `{lit}` | {', '.join('`' + x + '`' for x in sorted(found[lit]))} |")
+        body.append("")
+    return write("redis-generated.md", "redis", "Redis Keys and Channels (generated)", "\n".join(body), check)
+
+
+def redis_live():
+    r = subprocess.run(["docker", "exec", "them-redis", "redis-cli", "--scan", "--count", "1000"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("redis-cli failed: " + r.stderr.strip())
+    static = set()
+    for f in (ROOT / "go").rglob("*.go"):
+        if "/vendor/" in f.as_posix() or f.name.endswith("_test.go"):
+            continue
+        static.update(KEYLIT.findall(f.read_text(encoding="utf-8")))
+    seen = {}
+    for k in r.stdout.split("\n"):
+        if not k:
+            continue
+        pat = HEX.sub("{hex}", UUID.sub("{uuid}", k))
+        pat = re.sub(r":\d{6,}", ":{n}", pat)
+        seen[pat] = seen.get(pat, 0) + 1
+    unknown = []
+    for pat, n in sorted(seen.items()):
+        if not any(pat.startswith(s.split("%")[0].split("{")[0]) for s in static if len(s) > 4):
+            unknown.append((pat, n))
+    print(f"{len(seen)} live key patterns; {len(unknown)} not matched by any literal prefix in the Go code:")
+    for pat, n in unknown:
+        print(f"  {pat}  (x{n})")
+    return 0
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     chk = "--check" in sys.argv
-    fn = {"routes": routes, "schema": schema, "node-types": node_types}.get(cmd)
+    if cmd == "redis-live":
+        sys.exit(redis_live())
+    fn = {"routes": routes, "schema": schema, "node-types": node_types, "redis": redis}.get(cmd)
     sys.exit(fn(chk) if fn else __doc__)

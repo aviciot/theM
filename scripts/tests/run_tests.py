@@ -1025,7 +1025,7 @@ def test_17_memory():
 
     # REDIS.md
     try:
-        s = src("docs/reference/redis.md")
+        s = src("docs/_archive/REDIS.md")
         check("them:ctx: summary key documented", "them:ctx:" in s and ":summary" in s)
         check("memory_service.py listed as owner", "memory_service" in s)
     except Exception as exc:
@@ -2773,7 +2773,7 @@ def test_34_app_runtime():
 
     # ── REDIS.md updated ──────────────────────────────────────────────────────
     try:
-        rd = src("docs/reference/redis.md")
+        rd = src("docs/_archive/REDIS.md")
         check("rl:them:app: key documented in REDIS.md", "rl:them:app:" in rd)
     except Exception as exc:
         check("REDIS.md app rate limit key", False, str(exc))

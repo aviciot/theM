@@ -123,7 +123,7 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 |---|---|
 | New test | `TEST_INDEX.md` (same commit) |
 | New package | `TEST_INDEX.md` + the owning `docs/architecture/` doc (`owns:` list) + package map above |
-| New Redis key | `docs/reference/redis.md` (key + TTL + purpose) |
+| New Redis key | `docs/reference/redis-generated.md` (key + TTL + purpose) |
 | Bug fix or non-obvious behavior | `docs/lessons/<area>.md` |
 | New route | the owning `docs/architecture/` doc |
 | Architectural decision | owning `docs/architecture/` doc; trade-offs → ADR in `docs/decisions/` |

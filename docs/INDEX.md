@@ -38,7 +38,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [Code Findings Backlog (from the docs reboot)](plans/code-findings-backlog.md) | plan | current | 2026-10-24 |  |
 | [Docs Reboot Plan and Progress Tracker](plans/docs-reboot-plan.md) | plan | current | unverified |  |
 | [Canvas Node Types (generated)](reference/node-types-generated.md) | reference | current | generated |  |
-| [Redis Key Space (legacy reference)](reference/redis.md) | reference | draft | unverified |  |
+| [Redis Keys and Channels (generated)](reference/redis-generated.md) | reference | current | generated |  |
 | [HTTP Route Registrations (generated)](reference/routes-generated.md) | reference | current | generated |  |
 | [Database Schema (generated from live catalog)](reference/schema-generated.md) | reference | current | generated |  |
 | [Database Schema (legacy reference)](reference/schema.md) | reference | draft | unverified |  |

@@ -30,4 +30,4 @@ redis/
 | `them:bridge:*:heartbeat` | Replica heartbeat, TTL 30s |
 | `rl:them:*` | Rate limiter INCR counters |
 
-See `docs/reference/redis.md` for full key space reference with TTLs and owners.
+See `docs/reference/redis-generated.md` for full key space reference with TTLs and owners.

@@ -118,7 +118,7 @@ The admin run-signal endpoint calls `RunService.Signal`, which looks up the run'
 4. **Failures before `orchestrator.Run` are silent to the client.** Config-load/build errors in `RunOrchestratorActivity` return without publishing an `error` event or updating the run row. WS/SSE just end; the run stays `running` (see gap 2).
 5. **WS/SSE are not at parity.** WS drops `file` events and `canceled/terminated/timed_out` frames (the stream closes without telling the client); SSE drops the same three terminal types; only WS supports follow-up messages; SSE waits on the workflow with the request context, WS with a background one.
 6. **Stale comments:** WS/SSE package docs mention the in-process bus and a "Python platform"; the live path is Redis Streams. `Handler.bus` is still carried but events do not flow through it. `RunService.Signal` doc mentions Python's workflow.
-7. `docs/reference/redis.md` still documents Python-era session/gate keys (`runtime_manager.py`, `session_manager.py`) and lacks `them:ep:gate:queue:{slug}` (fix in tracker item #11).
+7. (fixed) The old hand-written `REDIS.md` had Python-era session/gate keys; it is archived (`docs/_archive/REDIS.md`) and replaced by the generated `docs/reference/redis-generated.md`.
 8. `Lifecycle.Admit` per-user daily cost uses `GetUserDailySpend` (canvas `run_usage`) only; `GetUserDailySpendFromGateway` exists but is not called here.
 9. `go/CLAUDE.md` package map has no rows for `execution/`, `epconfig/`, `runstream/`, `reconciler/` (they only appear in its trigger map). Root `CLAUDE.md` still has Python-era rules (item #5).
 
@@ -139,4 +139,4 @@ Tests: `go test ./internal/ws/... ./internal/sse/... ./internal/execution/... ./
 - `platform-overview.md` — containers, routes, startup order
 - `events-pipeline.md` — separate observability stream (`them:events`), not the run stream
 - `docs/decisions/002-reconciler-status-mapping.md` — Temporal→DB status mapping
-- `docs/decisions/001-canonical-run-id.md`, `docs/reference/redis.md`
+- `docs/decisions/001-canonical-run-id.md`, `docs/reference/redis-generated.md`

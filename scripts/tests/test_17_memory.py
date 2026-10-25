@@ -85,7 +85,7 @@ except Exception as exc:
 
 # 5. Redis key documented
 try:
-    s = src("docs/reference/redis.md")
+    s = src("docs/_archive/REDIS.md")
     check("them:ctx: key documented in REDIS.md", "them:ctx:" in s)
     check("memory_service.py listed as owner", "memory_service" in s)
 except Exception as exc:
