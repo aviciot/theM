@@ -10,6 +10,17 @@ jobs:
   go-test:
     name: Go test suite
     runs-on: ubuntu-latest
+    # event-writer recovery tests are integration tests: they need Redis on localhost:6379
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     defaults:
       run:
         working-directory: go
