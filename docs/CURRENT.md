@@ -32,7 +32,8 @@ Start/rebuild/recovery commands: `docs/guides/local-dev-and-deploy.md`.
 2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.
 3. Fix top-severity backlog items (list above), each with a Go test and an architecture-doc update (the hook enforces the doc).
 4. Diagnose E2E failures F-92 and shared test helpers (`scripts/tests/lib/`) + nightly CI run.
-5. Run-usage/steps event producers for dual mode (`go/internal/events/`) — deferred from the earlier session.
+5. Role/quota feature completion (backend done, admin API + deploy copy + UI missing): `docs/plans/role-based-auth-completion-plan.md`.
+6. Run-usage/steps event producers for dual mode (`go/internal/events/`) — deferred from the earlier session.
 
 ## Hard constraints
 Brand: UI/docs say **the-M**; code uses `them` / `THE_M_`. DB `them`, never `odin`. Never commit/print secrets. Root `CLAUDE.md` and `go/CLAUDE.md` rules apply.
