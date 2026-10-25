@@ -114,11 +114,12 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// NewHandler creates a RequestHandler backed by the SDK's local task manager.
-	// WithTaskStore connects rt.taskStore so task state persists across in-process
-	// handler instances and survives pod restarts (reads from Redis).
+	// WithTaskStore connects rt.taskStore scoped to this application for tenant isolation.
+	// The ScopedA2ATaskStore automatically injects ic.ApplicationID into all task operations.
+	scopedTaskStore := agentgen.NewScopedA2ATaskStore(rt.taskStore, ic.ApplicationID)
 	inner := a2asrv.NewHandler(executor,
 		a2asrv.WithLogger(rt.logger),
-		a2asrv.WithTaskStore(rt.taskStore),
+		a2asrv.WithTaskStore(scopedTaskStore),
 	)
 
 	// HITLRequestHandler wraps the inner handler to intercept GetTask, SubscribeToTask,

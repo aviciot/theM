@@ -254,16 +254,39 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For non-message methods (GetTask, CancelTask, unknown methods, etc.),
-	// skip pre-admission and delegate directly to the SDK for proper routing.
-	// The SDK will return -32601 for unknown methods and handle known methods.
+	// we still run admission to resolve the application ID (required for task store isolation).
+	// The SDK routes these methods without calling the executor.
 	if !isMessageMethod {
+		// Resolve entry point config for application ID (needed for task store scoping).
+		admitReq := execution.ExecutionRequest{
+			AppSlug:     appSlug,
+			EPSlug:      epSlug,
+			TenantID:    tenantID,
+			RawToken:    rawToken,
+			ContextID:   contextID,
+			InstanceID:  s.instanceID,
+			UserMessage: domain.TextMessage(domain.RoleUser, "(task operation)"),
+		}
+		h, admitErr := s.lc.Admit(r.Context(), admitReq)
+		if admitErr != nil {
+			s.mapAdmitError(w, rpcID, admitErr)
+			return
+		}
+		defer s.lc.Release(h)
+
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		// Use a no-op executor — the SDK will route non-SendMessage/SendStreamingMessage
 		// methods without calling the executor.
 		noopExec := a2asrv.AgentExecutorFunc(func(_ context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 			return func(yield func(a2a.Event, error) bool) {}
 		})
-		inner := a2asrv.NewHandler(noopExec, a2asrv.WithLogger(s.logger))
+		handlerOpts := []a2asrv.RequestHandlerOption{a2asrv.WithLogger(s.logger)}
+		if s.taskStore != nil {
+			// Scope the task store to this application for tenant isolation.
+			scopedTaskStore := agentgen.NewScopedA2ATaskStore(s.taskStore, h.EPConfig.AppID)
+			handlerOpts = append(handlerOpts, a2asrv.WithTaskStore(scopedTaskStore))
+		}
+		inner := a2asrv.NewHandler(noopExec, handlerOpts...)
 		a2asrv.NewJSONRPCHandler(inner).ServeHTTP(w, r)
 		return
 	}
@@ -314,7 +337,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		a2asrv.WithLogger(s.logger),
 	}
 	if s.taskStore != nil {
-		handlerOpts = append(handlerOpts, a2asrv.WithTaskStore(s.taskStore))
+		// Scope the task store to this application for tenant isolation.
+		scopedTaskStore := agentgen.NewScopedA2ATaskStore(s.taskStore, h.EPConfig.AppID)
+		handlerOpts = append(handlerOpts, a2asrv.WithTaskStore(scopedTaskStore))
 	}
 
 	inner := a2asrv.NewHandler(executor, handlerOpts...)

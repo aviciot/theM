@@ -12,7 +12,7 @@ owns:
   - go/internal/temporal/temporal_executor.go
   - go/internal/admin/canvas_tasks.go
   - go/internal/admin/service/agent_definitions_publish.go
-last_verified: 2026-10-24   # by reading code; nothing run live this session
+last_verified: 2026-10-25   # F-68 fixed (task store tenant isolation); tests pending (Go not installed)
 ---
 
 # A2A Agents & Agent Builder
@@ -59,13 +59,13 @@ Canvas JSON `{agent_root, skills[]}` is validated and compiled (`Validate`, `Com
 - **Human-in-the-loop**: a plan with `human_wait` is submitted asynchronously (detached 24 h context). Redis `them:hitl:{taskID}` stores workflow handle + wait token; `HITLRequestHandler` polls the workflow query `hitl_status` to emit `input-required`/`completed` on `GetTask`/`SubscribeToTask`. Humans answer through `POST /admin/canvas-tasks/{task_id}/signal` (tenant admin; tenant checked against the handle, optional `wait_token`, compare-and-set before signalling signal `human_input:{stepID}`).
 
 ### Runtime details (`cmd/agent-runtime`)
-Routes: `GET /healthz`, `GET /agents/{slug}/.well-known/agent-card.json`, `POST /agents/{slug}` (SDK handler: message/send, message/stream, tasks/get|cancel|resubscribe, push-config methods). `message` parts: first `text` → `vars.input`; each key of a `data` part → a var. Skill chosen by `message.metadata.skill_id` else the first skill; binding policy `AllowedSkillIDs` is enforced. Output is a single text artifact. Tasks stored in Redis (`them:agent:a2atask:{id}`, 24 h); spec cache 60 s.
+Routes: `GET /healthz`, `GET /agents/{slug}/.well-known/agent-card.json`, `POST /agents/{slug}` (SDK handler: message/send, message/stream, tasks/get|cancel|resubscribe, push-config methods). `message` parts: first `text` → `vars.input`; each key of a `data` part → a var. Skill chosen by `message.metadata.skill_id` else the first skill; binding policy `AllowedSkillIDs` is enforced. Output is a single text artifact. Tasks stored in Redis with application-scoped keys (`them:agent:a2atask:{applicationID}:{taskID}`, 24 h, enforced via `ScopedA2ATaskStore`); spec cache 60 s.
 
 ### Outbound registry (`agentregistry`)
 Per-tenant L1 (in-process) + L2 Redis `them:agents:registry:{tenant}` (10 min), invalidated by `them:agents:changed`. Transports: `a2a_async`/`canvas_a2a` (A2A over HTTP, 3 min timeout; streaming agents use `SendStreamingMessage`), `http`, `mock`. For canvas agents it adds the `X-Them-*` headers from the app's binding.
 
 ### Inbound A2A (`internal/a2a`)
-`POST /{tenant}/a2a/{app}/{ep}` and `GET …/.well-known/agent.json`. For `SendMessage`/`SendStreamingMessage`: buffer body (1 MiB), run the full `Lifecycle.Admit` (see `run-lifecycle.md`), then the SDK handler with an executor that starts the orchestration workflow and maps run-stream events to A2A task events. Task state is the shared Redis A2A task store.
+`POST /{tenant}/a2a/{app}/{ep}` and `GET …/.well-known/agent.json`. All methods (including `GetTask`/`CancelTask`) run the full `Lifecycle.Admit` to resolve authentication and application ID for tenant isolation. For `SendMessage`/`SendStreamingMessage`: buffer body (1 MiB), complete admission, then the SDK handler with an executor that starts the orchestration workflow and maps run-stream events to A2A task events. Task state is stored in a `ScopedA2ATaskStore` that enforces application-scoped keys (`them:agent:a2atask:{appID}:{taskID}`) and rejects cross-application access.
 
 ## Key invariants
 - Credentials never live in `AgentSpec`/definition JSON (slot/param **names** only); values are decrypted per request from `app_agent_bindings`/`applications`, never logged (`InvocationContext.String()` masks).
@@ -73,6 +73,7 @@ Per-tenant L1 (in-process) + L2 Redis `them:agents:registry:{tenant}` (10 min), 
 - URL slug must equal the spec's slug for the identity in the headers (prevents slug squatting).
 - Canvas workflow activities carry only credential-free input; secrets are re-loaded inside the activity.
 - Every DB lookup in the runtime carries `tenant_id` explicitly (the runtime uses the Admin pool, so RLS does not help).
+- **Task store isolation:** All A2A task operations (Create/Get/Update) require an application ID in context. Redis keys are `them:agent:a2atask:{applicationID}:{taskID}` and ownership is verified on every access. Cross-application task access returns `ErrA2ATaskForbidden`.
 
 ## Failure modes
 | What fails | Effect |
@@ -87,7 +88,7 @@ Per-tenant L1 (in-process) + L2 Redis `them:agents:registry:{tenant}` (10 min), 
 ## Known gaps (found while writing, 2026-10-24; from reading code; none reproduced live)
 See `docs/plans/code-findings-backlog.md` F-67…F-77. Highlights:
 1. **agent-runtime has no real authentication.** Identity is just the `X-Them-*` headers (comment: "Phase 3 will sign them"); any `Authorization` header is ignored. Anyone on `them-network` can run any tenant's agent with that app's stored credentials.
-2. **Task access is not tenant-checked.** The live task store (`RedisA2ATaskStore`) keys by task ID only and never checks tenant/app/user; the inbound A2A server skips admission entirely for `GetTask`/`CancelTask`/push-config calls, so those need no token. The ownership-checking `RedisTaskStore` the older docs describe is not the one in use. HITL handles also carry a tenant that the runtime never compares.
+2. ~~**Task access is not tenant-checked.**~~ **FIXED (F-68):** Task store now enforces application-scoped keys and ownership checks. Inbound A2A runs full admission for all methods including GetTask/CancelTask.
 3. **HTTP step SSRF and credential exfiltration:** URL templates can include caller data, there is no URL allow-list, redirects are followed, and the app credential is injected into whatever URL results.
 4. Agent card endpoint on the runtime is unauthenticated and looks up the spec by slug only (not by tenant).
 5. Inbound A2A: the bearer token's tenant silently overrides the URL slug's tenant (WS/SSE do the opposite); card path is `agent.json` while the runtime uses `agent-card.json`.
