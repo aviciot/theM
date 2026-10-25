@@ -1,5 +1,5 @@
 # THEM Go Gateway — Claude Session Guide
-# Last updated: 2026-07-25
+# Last updated: 2026-10-25
 
 ---
 
@@ -66,6 +66,36 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/admin/dal/` | Admin Data Access Layer — all SQL query strings + row-scan helpers; handlers call these | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
 | `internal/transport/` | Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, TemporalClientExecutor) + TokenHash used by both ws and sse | `transport.go` |
 | `internal/ratelimit/` | Redis INCR rate limiter per-token + per-app | `limiter.go` |
+| `cmd/worker/` | Temporal worker for orchestrator runs (queue `them-orchestration-go`); publishes run events to Redis Streams | `main.go` |
+| `cmd/dag-worker/` | Temporal worker: canvas agent DAG (`canvas-dag-nodes`) and AppFlow (`appflow-dag`, `appflow-dag-debug`) — see `docs/architecture/app-canvas-appflow.md` | `main.go` |
+| `cmd/agent-runtime/` | Generic A2A server for canvas-built agents (reads AgentSpec from Postgres) — `docs/architecture/a2a-agents-agentgen.md` | `main.go`, `runtime.go`, `hitl.go` |
+| `cmd/mcp-service/` | MCP server supervisor + tool executor — `docs/architecture/mcp-service.md` | `main.go` |
+| `cmd/middleware-worker/` | Artifact scan jobs (ClamAV) from `them.middleware_jobs` | `main.go` |
+| `internal/execution/` | Shared admission → start → release pipeline for WS/SSE/A2A (auth modes, quotas, gate, session, CreateRun) — `docs/architecture/run-lifecycle.md` | `lifecycle.go`, `roles.go`, `errors.go` |
+| `internal/epconfig/` | Entry-point/app runtime config loader (30 s cache, pub/sub invalidation) and access checks | `epconfig.go`, `pgx.go` |
+| `internal/runstream/` | Run events over Redis Streams: publisher (workers) + replaying reader (bridge) | `publisher.go`, `streamer.go` |
+| `internal/reconciler/` | Sweeps stuck `running` runs against Temporal (dry-run by default; see backlog F-08) | `reconciler.go` |
+| `internal/appflow/` | App Canvas compiler, validator, `AppFlowWorkflow` and activities | `compiler.go`, `validate.go`, `workflow.go`, `activities.go` |
+| `internal/agentgen/` | Canvas agent builder: AgentSpec compiler, node registry, interpreter, local executor, HITL/task stores | `compiler.go`, `interpreter.go`, `noderegistry.go` |
+| `internal/nodedefs/` | Portable node-type metadata shared by agentgen and appflow (served by `/admin/node-types`) | `nodedefs.go` |
+| `internal/debugcred/` | Per-run Debug Mode credential store in Redis | `store.go` |
+| `internal/roles/` | Tenant role gate (claim/header → role → app grants) | `roles.go`, `service.go` |
+| `internal/quota/` | Per-tenant run/API/token quota enforcement | `enforcer.go` |
+| `internal/jwks/` | RS256 verification against a JWKS endpoint (SSO and external JWT) | `jwks.go` |
+| `internal/idpcrypto/` | AES-256-GCM for stored IdP client secrets | `idpcrypto.go` |
+| `internal/tenantctx/` | Tenant identity in request context + slug→tenant resolver | `tenantctx.go`, `resolver.go` |
+| `internal/dbtype/` | Typed query interfaces (`TenantQuerier` vs `AdminQuerier`) | `querier.go` |
+| `internal/dashboard/` | `/ws/dashboard` live monitoring WebSocket (tails run streams, tenant-checked) | `handler.go` |
+| `internal/appliveness/` | Probes entry points every 30 s and publishes app status | `liveness.go` |
+| `internal/middleware/` | A2A artifact middleware pipeline: File Guard, text guards (PII, prompt-injection), job queue | `gate.go`, `textgate.go` |
+| `internal/artifacts/` | HTTP download of run file artifacts | `handler.go` |
+| `internal/storage/` | S3-compatible object store client (MinIO) | `storage.go` |
+| `internal/crypto/` | Fernet-compatible encryption for stored secrets | `fernet.go` |
+| `internal/history/` | Persistent conversation history in Postgres | `pgx.go` |
+| `internal/summarizer/` | LLM conversation summarizer for memory | `summarizer.go` |
+| `internal/voice/` | STT/TTS for voice entry points | `handler.go`, `service.go` |
+| `internal/registry/` | Design-time component-definition resolver (publish) | `resolver.go` |
+| `internal/metrics/` | Prometheus metrics + Redis daily usage counters | `recorder.go` |
 
 ---
 
@@ -192,9 +222,9 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/appflow/` (any file) | `go test ./internal/appflow/...` |
 | `internal/appflow/validate.go` | `go test ./internal/appflow/...` — Validate must stay pure (no DB, no I/O); a new node kind needs its rules here plus AF-* tests |
 | `internal/appflow/workflow.go`, `nodes.go`, `graph.go` | `go test ./internal/appflow/...` — workflow code: must stay deterministic across replays (no I/O, no wall clock, no randomness) |
-| `internal/appflow/activities.go` | `go test ./internal/appflow/...` + **restart them-dag-worker AND them-dag-worker-2** (two replicas, activities register at startup on each) — and no credential may be added to an activity INPUT type (persisted in Temporal history; guarded by AF-WF-14) |
+| `internal/appflow/activities.go` | `go test ./internal/appflow/...` + **rebuild and restart ALL dag workers** (`them-dag-worker`, `-2`, `-3`, `-4`, `-debug`; activities register at startup on each) — and no credential may be added to an activity INPUT type (persisted in Temporal history; guarded by AF-WF-14) |
 | `internal/appflow/inline.go` | `go test ./internal/appflow/...` — and if a condition-expression example was added to the canvas properties panel, add a matching AF-IN-02b case |
-| `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` + **rebuild ALL 3 images (`docker compose build them-dag-worker them-dag-worker-2 them-dag-worker-debug`), then restart all 3.** They share one Dockerfile but each compose service builds its own separate image tag — rebuilding only `them-dag-worker` does NOT update `them-dag-worker-debug`'s image, so debug-mode runs (task queue `appflow-dag-debug`) silently keep running the old binary. Found live: a trace-detail fix compiled and passed tests, but debug runs kept showing stale output until all 3 images were rebuilt explicitly. |
+| `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` + **rebuild ALL dag-worker images (`docker compose build them-dag-worker them-dag-worker-2 them-dag-worker-3 them-dag-worker-4 them-dag-worker-debug`), then recreate all with `up -d`.** They share one Dockerfile but each compose service builds its own separate image tag — rebuilding only `them-dag-worker` does NOT update `them-dag-worker-debug`'s image, so debug-mode runs (task queue `appflow-dag-debug`) silently keep running the old binary. Found live: a trace-detail fix compiled and passed tests, but debug runs kept showing stale output until all 3 images were rebuilt explicitly. |
 | `internal/middleware/gate.go` (FileGate — scans A2A file artifacts against `middleware_wirings`) | `go test ./internal/middleware/...` — if the `resolveSecCfg`/`loadWiringCfg` scoping precedence changes, also `go test ./internal/appflow/...` (its `FileGateActivity` depends on this behavior) |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |
 | `internal/admin/dal/` (any file) | `go test ./internal/admin/...` |

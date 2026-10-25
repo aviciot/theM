@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-08-15
+# Last updated: 2026-10-25
 
 ---
 
@@ -13,6 +13,24 @@ Docs were reset 2026-10-24 (plan: `docs/plans/docs-reboot-plan.md`). Old docs ar
 3. Reference docs when relevant: `docs/reference/schema.md` (DB), `docs/reference/redis-generated.md` (Redis), `docs/guides/a2a-test-agents.md`, `docs/architecture/auth-and-roles.md`, `docs/lessons/` (one file per area — read the matching one before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/guides/local-test-environment-runbook.md` (Docker/deploy/containers).
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
+
+**Which doc for what** (all in `docs/architecture/`; each has Purpose, How it works, Invariants, Failure modes, Known gaps, Where to change things):
+
+| If you work on… | Read |
+|---|---|
+| containers, routes, startup | `platform-overview.md` |
+| WS/SSE, admission, gate, Temporal runs, orchestrator | `run-lifecycle.md` |
+| App Canvas / AppFlow, publish, Debug Mode | `app-canvas-appflow.md` |
+| login, JWT, SSO, roles | `auth-and-roles.md` |
+| tenants, RLS, DB pools | `multi-tenancy-rls.md` |
+| LLM gateway, governance, provider keys | `llm-gateway.md` |
+| MCP servers/tools | `mcp-service.md` |
+| canvas agents, agent-runtime, A2A | `a2a-agents-agentgen.md` |
+| export/import, deploy to tenant | `app-export-import-deploy.md` |
+| Redis keys and usage | `redis-usage.md` (+ `docs/reference/redis-generated.md`) |
+| events / ClickHouse | `events-pipeline.md` |
+
+Known bugs and risks found while documenting: `docs/plans/code-findings-backlog.md` — check it before changing an area, and add new ones there.
 
 **Before Docker, deployment, environment, or container recreation work, read `docs/guides/local-test-environment-runbook.md`. Never commit or print real secrets.**
 
@@ -54,34 +72,11 @@ Every task follows this order:
 
 ---
 
-## Session Lifecycle — Mandatory
+## Session Lifecycle
 
-Do not wait until context quality has already degraded.
-
-**Prepare a handover when any of these triggers occur:**
-- the current focused task is complete and tested
-- a new subsystem or migration wave is about to begin
-- roughly 5–8 meaningful commits have been created in the session
-- context reliability is uncertain (re-reading the same files, conflicting statements, forgetting constraints)
-- a major architecture decision is next
-
-**Handover procedure:**
-1. Stop implementation.
-2. Finish and test the current focused task only — do not widen scope.
-3. Commit all safe changes.
-4. Push if credentials are available (`git push origin main`).
-5. Update `docs/CURRENT.md` with:
-   - current HEAD (`git log --oneline -1`)
-   - deployment state
-   - current migration slice and what was completed
-   - next recommended task
-   - known blockers
-   - any new hard constraints
-   Do NOT create a new `NEXT_SESSION_*.md` file — always update CURRENT.md.
-6. Recommend closing the current Claude session and opening a new one.
-7. Return the exact startup commands and first prompt for the next session.
-
-**Do not begin the next subsystem in the same session.**
+- Work in small committed steps; update `docs/CURRENT.md` (HEAD, state, next task, blockers) when a task or tracker item finishes. Do NOT create `NEXT_SESSION_*.md` / `HANDOVER_*` files.
+- Keep going from one task to the next in the same session. Hand over to a new session **only when context is almost full** (or the user asks): stop, commit safe changes, update `docs/CURRENT.md`, and give the user a short paste-ready prompt for the next session (template: `docs/plans/docs-reboot-plan.md` section 10).
+- Push only when credentials are already available (`git push origin main`).
 
 ---
 
@@ -105,7 +100,7 @@ git push origin main
 - Secrets are derived via HMAC-SHA256 from `secrets.local` — re-run `./generate-env.sh` (Linux/Mac) or `.\generate-env.ps1` (Windows) to regenerate `.env`
 - Never commit `.env` or `secrets.local`
 - DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
-- All Redis on DB index 0. Key prefixes: `them:session:`, `rl:them:`, `them:agents:`, `them:orchestrators:`, `them:bridge:`, `them:dash:`
+- All Redis on DB index 0 (main `them-redis`; events go to `them-redis-events`). Key families, TTLs and owners: `docs/architecture/redis-usage.md`; every key definition: `docs/reference/redis-generated.md`.
 - Never use DB name `odin` or schema `odin`
 
 ---
@@ -147,10 +142,10 @@ Quick version of the rule (see the plan doc for the full reasoning):
 
 ## Rules — Code
 
-- **Never** query `auth_service.*` tables directly — use `app/services/auth_client.py` (HTTP to 8701) from Python, or `internal/auth/` from Go
+- **Never** query `auth_service.*` tables from feature code — go through `internal/auth/` (token/JWT validation) or the auth service (`them-auth-go`, `internal/authserver/`); only the auth service and a few explicit role/quota lookups (`execution/roles.go`) read those tables. See `docs/architecture/auth-and-roles.md`.
 - **Never** use DB name `odin` or schema `odin` — everything is `them`
-- New agent transport → new file in `app/adapters/` + register in `factory.py` + document it in the owning `docs/architecture/` doc
-- **A2A work** (canvas agent builder, agentgen, agent cards, typed parts, wire format) → invoke `/a2a` skill first — it loads the Go A2A ground truth (wire format, AgentSpec, interpreter, security invariants, Phase D checklist)
+- New agent transport → implement it in `go/internal/agentregistry/` (outbound calls) and document it in `docs/architecture/a2a-agents-agentgen.md`
+- **A2A work** (canvas agent builder, agentgen, agent cards, typed parts, wire format) → read `docs/architecture/a2a-agents-agentgen.md` first; the `/a2a` skill (`.claude/skills/a2a.md`) is partly stale (see its banner) — code wins
 - **App Canvas work** (building/debugging an application: entry points, appflow nodes — llm/condition/fork/join/router/hil — connections, Debug Mode API sequence) → invoke `/app-canvas` skill first — node-type rules are live-queryable via `GET /admin/node-types`, but the app-JSON envelope, entry-point creation gotcha, and the full build+debug API sequence are NOT exposed by any endpoint and only documented in that skill. **If the Skill tool returns "Unknown skill", fall back immediately to `Read /opt/docker/them/.claude/skills/app-canvas.md`** — the file is the skill; reading it directly is equivalent.
 - Work under `go/` must also follow `go/CLAUDE.md`
 
@@ -171,8 +166,8 @@ Quick version of the rule (see the plan doc for the full reasoning):
 
 - Every code change: find the owning doc (`python3.12 scripts/docs_lint.py owners <paths>`), update it in the same commit, bump `last_verified`. Use `/docs-update` (`.claude/skills/docs-update.md`).
 - **No new top-level docs.** New doc = one of `docs/{architecture,reference,guides,decisions,plans,lessons}/` with front matter (`docs/_templates/`). No `*_STATUS`, `*_RESULTS`, `HANDOVER_*` files — state goes in `docs/CURRENT.md`, results in commit messages.
-- New Redis key → `docs/reference/redis-generated.md`. New DB table/column → `docs/reference/schema.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/lessons/<area>.md`.
-- Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index` (CI runs both, plus `scripts/gen_reference.py routes --check`). Generated reference lives in `docs/reference/*-generated.md` — regenerate, never hand-edit. The pre-commit hook (`.githooks/`) warns if owned code changed without its doc.
+- New Redis key → use a `them:`/`rl:` literal with a TTL, run `python3.12 scripts/gen_reference.py redis`, update `docs/architecture/redis-usage.md`. New DB table/column → a new `db/NNN_*.sql` migration (RLS + FORCE + policy + GRANTs to `them_app` and `them_admin` + sequence GRANT, see `docs/architecture/multi-tenancy-rls.md`), then `gen_reference.py schema` (`db/001_schema.sql` is NOT the source of truth; the live database is). New/changed flow → the owning architecture doc and `docs/CURRENT.md`. Non-obvious bug → `docs/lessons/<area>.md`. Found a bug you are not fixing → `docs/plans/code-findings-backlog.md`.
+- Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index` (CI runs both, plus `scripts/gen_reference.py routes --check`). Generated reference lives in `docs/reference/*-generated.md` — regenerate, never hand-edit. The pre-commit hook (`.githooks/`) **blocks** if owned code is staged without its doc (see Git Rules).
 - Trust code over docs; update the doc when they diverge.
 
 ---
@@ -195,22 +190,22 @@ cd go && go test ./...   # full suite — must be zero failures before every com
 
 | Changed | Run tests |
 |---|---|
-| `db/001_schema.sql` | `go test ./internal/admin/...` (schema-dependent DAL tests) |
+| `db/NNN_*.sql` (schema/RLS migrations) | `go test ./internal/admin/...` (+ `go test -tags=integration ./internal/db/...` against a TEST database) |
 | `go/internal/authserver/`, `go/cmd/auth-server/`, `Dockerfile.auth-go`, `docker-compose.yml` (them-auth-go) | `go test ./internal/authserver/...` + live login/me/refresh/logout smoke |
 | `go/internal/mcp/` (any file), `go/cmd/mcp-service/main.go`, `Dockerfile.mcp-service` | `go test ./internal/mcp/...` |
 | `go/internal/admin/mcp_servers.go`, `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go` | `go test ./internal/admin/...` |
 | `go/internal/events/` (any file), `go/cmd/event-writer/main.go`, `Dockerfile.event-writer`, `docker-compose.events.yml` | `go test ./internal/events/... ./cmd/event-writer/...` + **rebuild + restart them-event-writer** (Redis Streams consumer, must restart to pick up RecoverPending/retention fixes) |
 | `go/internal/agentgen/` | `go test ./internal/agentgen/...` |
-| `go/internal/temporal/` or `go/cmd/dag-worker/` | `go test ./internal/temporal/...` + **restart them-dag-worker AND them-dag-worker-2** (two replicas of the same image, same Temporal task queues) |
+| `go/internal/temporal/`, `go/internal/appflow/` activities, or `go/cmd/dag-worker/` | `go test ./internal/temporal/... ./internal/appflow/...` + **rebuild and restart ALL dag workers** (`them-dag-worker`, `-2`, `-3`, `-4` and `them-dag-worker-debug` — each service has its own image tag). Orchestrator code (`go/cmd/worker/`): restart `them-go-worker` and `them-go-worker-2`. |
 | `go/cmd/agent-runtime/` | `go test ./...` + **rebuild + restart them-agent-runtime** |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | compose health smoke (bring up stack, check all containers healthy) |
 | Before a release / PR merge | `go test ./...` + live E2E smoke |
 
-### E2E test (14) — needs a JWT
+### E2E test (14) — needs a JWT (`scripts/tests/` is partly Python-era source-grepping; see `scripts/tests/INDEX.md`; verify a test still means something before trusting it)
 
 ```bash
-# Get a token first:
-curl -s -X POST http://localhost:8701/auth/login -H "Content-Type: application/json" \
+# Get a token first (auth service via Traefik; use your local admin login):
+curl -s -X POST http://localhost:8088/auth/api/v1/auth/login -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}' | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
 
 # Then run:
@@ -220,8 +215,9 @@ ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
 ### Temporal worker restart — REQUIRED after editing Go worker files
 
 ```bash
-# Go Temporal worker registers activities at startup. If you edit go/internal/temporal/ or go/cmd/dag-worker/:
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-go-worker them-dag-worker them-dag-worker-2
+# Workers register workflows/activities at startup. After editing go/internal/temporal/, go/internal/appflow/ or go/cmd/dag-worker/ (see docs/lessons/temporal-workers.md, docs/lessons/infra-docker.md):
+# Rebuild first if code changed (each service builds its own image), then recreate — `restart` alone does NOT pick up a new image:
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d --build them-go-worker them-go-worker-2 them-dag-worker them-dag-worker-2 them-dag-worker-3 them-dag-worker-4 them-dag-worker-debug
 docker logs them-go-worker --tail 5   # confirm polling
 ```
 
@@ -237,8 +233,7 @@ See `docs/architecture/platform-overview.md` (all containers, profiles, routes, 
 
 | Concern | Location |
 |---|---|
-| DB schema source of truth | `db/001_schema.sql` |
-| Auth schema source of truth | `auth_service/SCHEMA.sql` |
+| DB schema | the live database (generated: `docs/reference/schema-generated.md`); migrations are `db/NNN_*.sql` applied by hand — `db/001_schema.sql` is stale (backlog F-35) |
 | Frontend proxy route | `frontend/src/app/api/them/[...path]/route.ts` |
 | Frontend auth cookies | `frontend/src/app/api/auth/` |
 | Go source root | `go/` — see `go/CLAUDE.md` for full package map |
@@ -274,15 +269,10 @@ docker logs them-event-writer --tail 50
 ./scripts/deploy.sh status      # container states
 ./scripts/deploy.sh logs [svc]  # tail logs
 
-# DB init (run once after first up, or after wiping data/)
-docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
-docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
-docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
-docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
-docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
-# Apply remaining migrations in order: 003 through latest (see docs/CURRENT.md for full list)
+# DB schema changes: add db/NNN_*.sql, then apply to the running DB by hand, e.g.
+#   docker cp db/NNN_x.sql them-postgres:/tmp/x.sql && docker exec them-postgres psql -U them -d them -f /tmp/x.sql
+# There is NO reliable fresh-install script today (db/001 + scripts/init_db.sh are stale and reference a removed
+# auth_service/ folder — backlog F-35/F-36). Never re-run db/001 against a live database.
 
 # DB access
 docker exec -it them-postgres psql -U them -d them
@@ -297,13 +287,10 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 
 ---
 
-## Database Schemas — Quick Reference
+## Database — Quick Reference
 
-**`auth_service` schema** — owned by `them-auth-service` (port 8701). Never access directly from bridge.
-Tables: `roles`, `users`, `teams`, `team_members`, `user_overrides`, `auth_audit`, `user_sessions`, `blacklisted_tokens`
+Postgres DB and schema are both **them**; a second schema `auth_service` holds users/roles/memberships (owned by `them-auth-go`).
+Full, current table list with RLS state and policies: `docs/reference/schema-generated.md` (generated from the live catalog).
+Isolation model and the three DB roles (`them_app`, `them_admin`, superuser `them`): `docs/architecture/multi-tenancy-rls.md`.
 
-**`them` schema** — owned by `them-go-bridge`.
-Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `runs` (has `entry_point_slug`), `run_steps`, `run_usage`, `audit_logs`, `tasks`, `artifacts`, `task_messages`, `applications` (parent), `entry_points` (child of applications — one row per WS/SSE/WebRTC door)
-
-**Credentials:** derived via HMAC-SHA256 from `secrets.local`. Re-run `.\generate-env.ps1` to regenerate `.env`.
-DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
+**Credentials:** derived via HMAC-SHA256 from `secrets.local`; re-run `./generate-env.sh` (Linux/Mac) or `.\generate-env.ps1` (Windows) to regenerate `.env`. DB host (internal): `them-postgres:5432`. Never commit or print real secrets.
