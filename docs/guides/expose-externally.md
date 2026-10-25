@@ -1,3 +1,12 @@
+---
+title: Exposing the-M externally (them.avico78.com)
+type: guide
+status: draft
+last_verified: unverified
+---
+
+> Legacy ops note from 2026-08-03, host-specific; not re-verified. Compare with `traefik/`, `docker-compose.hetzner.yml` and `docs/guides/local-dev-and-deploy.md` before relying on it.
+
 # Exposing the-M externally at them.avico78.com
 
 ## Architecture

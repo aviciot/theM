@@ -53,6 +53,7 @@ def all_docs():
 
 REF = re.compile(r"docs/[A-Za-z0-9_./<>{}-]+\.md")
 DOC_SCOPES = ("CLAUDE.md", "go/CLAUDE.md", "README.md")
+STRAY_PREFIXES = ("agents/", "test-runner/", "frontend/")  # component-local READMEs/skills live with their component
 STRAY_OK = {"CLAUDE.md", "README.md", "INSTALL.md", "go/CLAUDE.md", "go/TEST_INDEX.md",
             "scripts/tests/INDEX.md", "db/README.md", "postgres/README.md", "redis/README.md"}
 
@@ -112,7 +113,7 @@ def stale(days=90):
 def stray():
     n = 0
     for f in tracked():
-        if f.endswith(".md") and not f.startswith(("docs/", ".claude/")) and f not in STRAY_OK and "/node_modules/" not in f:
+        if f.endswith(".md") and not f.startswith(("docs/", ".claude/")) and f not in STRAY_OK and not f.startswith(STRAY_PREFIXES) and "/node_modules/" not in f:
             print("STRAY", f); n += 1
     print(f"{n} markdown file(s) outside docs/ and not on the allow-list (triage: move into docs/<folder>/ or archive)")
     return 0
