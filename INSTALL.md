@@ -390,7 +390,8 @@ Once an admin user exists, subsequent users can be created via the auth service 
 ./scripts/deploy.sh status
 
 # Quick sanity test (DB, Redis, auth service, bridge, containers)
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+# (old run_tests.py removed) — see scripts/tests/INDEX.md for the live E2E scripts
+docker compose ps   # all core containers should be healthy
 # Expected: ~55 passed, 0 failed
 ```
 
@@ -665,7 +666,7 @@ req = urllib.request.Request('http://them-auth-service:8701/api/v1/auth/login',
 with urllib.request.urlopen(req, timeout=10) as r:
   print(json.loads(r.read())['access_token'])
 ")
-ADMIN_JWT=$ADMIN_JWT python3.12 scripts/tests/run_tests.py
+python3.12 scripts/tests/test_40_appflow_canvas_e2e.py   # see scripts/tests/INDEX.md
 # Expected: 985 passed, 0 failed, 6 skipped
 ```
 

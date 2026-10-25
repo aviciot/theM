@@ -201,15 +201,12 @@ cd go && go test ./...   # full suite — must be zero failures before every com
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | compose health smoke (bring up stack, check all containers healthy) |
 | Before a release / PR merge | `go test ./...` + live E2E smoke |
 
-### E2E test (14) — needs a JWT (`scripts/tests/` is partly Python-era source-grepping; see `scripts/tests/INDEX.md`; verify a test still means something before trusting it)
+### Live E2E tests (`scripts/tests/`, index: `scripts/tests/INDEX.md`)
+
+Standalone scripts that hit a running dev stack and create/delete real rows (apps, tenants, tokens). Each fetches its own JWT via `/auth/api/v1/auth/login` (or reads `ADMIN_JWT`). Example:
 
 ```bash
-# Get a token first (auth service via Traefik; use your local admin login):
-curl -s -X POST http://localhost:8088/auth/api/v1/auth/login -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
-
-# Then run:
-ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
+python3.12 scripts/tests/test_40_appflow_canvas_e2e.py   # needs --profile temporal and the a2a-echo agent
 ```
 
 ### Temporal worker restart — REQUIRED after editing Go worker files
@@ -271,8 +268,7 @@ docker logs them-event-writer --tail 50
 
 # DB schema changes: add db/NNN_*.sql, then apply to the running DB by hand, e.g.
 #   docker cp db/NNN_x.sql them-postgres:/tmp/x.sql && docker exec them-postgres psql -U them -d them -f /tmp/x.sql
-# There is NO reliable fresh-install script today (db/001 + scripts/init_db.sh are stale and reference a removed
-# auth_service/ folder — backlog F-35/F-36). Never re-run db/001 against a live database.
+# There is NO reliable fresh-install script today (db/001 is stale and the old init script was removed — backlog F-35/F-36). Never re-run db/001 against a live database.
 
 # DB access
 docker exec -it them-postgres psql -U them -d them

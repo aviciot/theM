@@ -674,7 +674,7 @@ curl -s -X PATCH http://localhost:8088/api/v1/admin/tenants/00000000-0000-0000-0
 
 ```bash
 # Requires Keycloak to be running (--profile sso)
-ADMIN_JWT=$TOKEN python3 scripts/tests/run_tests.py 37
+python3 scripts/tests/test_37_sso.py
 ```
 
 ### Stop Keycloak (optional)

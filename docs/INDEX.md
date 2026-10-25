@@ -31,7 +31,6 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [Lessons — Guards, Middleware & File Scanning](lessons/guards-middleware.md) | lessons | current | unverified |  |
 | [Lessons — Docker, Compose & Traefik](lessons/infra-docker.md) | lessons | current | unverified |  |
 | [Lessons — Orchestrator & LLM](lessons/orchestrator-llm.md) | lessons | current | unverified |  |
-| [Lessons — Python-era (historical, platform is Go now)](lessons/python-legacy.md) | lessons | superseded | unverified |  |
 | [Lessons — Temporal & Workers](lessons/temporal-workers.md) | lessons | current | unverified |  |
 | [Lessons — Testing & CI](lessons/testing-ci.md) | lessons | current | unverified |  |
 | [Current State](CURRENT.md) | plan | current | unverified |  |

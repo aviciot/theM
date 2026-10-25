@@ -207,7 +207,7 @@ asyncio.run(main())
 ## Structural Test (CI)
 
 ```powershell
-python scripts/tests/run_tests.py 16
+# (old structural test removed) check the agents with: docker compose --profile test-agents ps
 ```
 
 Checks file existence, AST structure, docker-compose profile, seed SQL slugs, and `A2aAsyncAdapter` importability. No containers required.
