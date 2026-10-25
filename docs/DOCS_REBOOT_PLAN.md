@@ -108,7 +108,7 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 | 6 | Multi-tenancy & RLS | `go/internal/db/`, `db/0*_*.sql` | done (see git log) |
 | 7 | LLM Gateway (policy, quotas, tracing) | `go/internal/llmgateway/`, `governance/`, `llmresolve/` | done (see git log) |
 | 8 | MCP service | `go/internal/mcp/`, `go/cmd/mcp-service/` | done (see git log) |
-| 9 | A2A agents & agentgen | `go/cmd/agent-runtime/`, `go/internal/agentgen/`, `a2a/` | todo |
+| 9 | A2A agents & agentgen | `go/cmd/agent-runtime/`, `go/internal/agentgen/`, `a2a/` | done (see git log) |
 | 10 | App export/import & Deploy-to-Tenant | `go/internal/admin/dal/app_deploy.go` | todo |
 | 11 | Give kept docs front matter + move into folders (`SCHEMA`, `REDIS` → `reference/`; ADRs → `decisions/`; runbook → `guides/`; `AUTH` merges into #5) | — | todo |
 | 12 | Split `LESSONS.md` per area into `docs/lessons/` | — | todo |

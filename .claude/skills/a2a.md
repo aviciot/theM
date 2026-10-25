@@ -3,6 +3,8 @@ name: a2a
 description: A2A expert guide for the-M platform — Go implementation. Loads ground-truth reference for the hand-rolled JSON-RPC server, AgentSpec/SkillSpec/StepSpec contracts, interpreter pipeline, part types, wire format, and anti-patterns. Invoke before any A2A or canvas agent builder work.
 ---
 
+> **STALE (2026-10-24):** parts of this file no longer match the code (SDK is adopted; more step types are implemented; live task store has no ownership check; transport is `canvas_a2a`). Ground truth: `docs/architecture/a2a-agents-agentgen.md` and the code. See backlog F-73.
+
 # A2A Go Reference — the-M Platform
 # Ground truth: actual code in go/cmd/agent-runtime/ and go/internal/agentgen/
 # Python is permanently OFF — every A2A reference here is Go only.

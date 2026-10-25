@@ -81,3 +81,14 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-64 | L | MCP | Leader renew is GET-then-PEXPIRE (not atomic, no fencing); probe auth always `Authorization` (per-server header name not stored) | `mcp/leader.go`, `mcp/health.go` | open |
 | F-65 | L | MCP | Upstream error bodies (≤512B) are forwarded into LLM context and `tool_result` events seen by end users | `mcp/client.go`, `orchestrator/tools.go` | open |
 | F-66 | L | MCP | `tool_call` events only emitted in dual mode (no Postgres table); `ToolsManifest` ignores `outputSchema`/annotations | `cmd/mcp-service/main.go` | open |
+| F-67 | H | A2A | agent-runtime identity = plain `X-Them-*` headers, `Authorization` ignored; anyone on the network can run any tenant's agent with that app's credentials | `cmd/agent-runtime/runtime.go` | open |
+| F-68 | H | A2A | Task store keys by task ID only (no tenant/app/user check); inbound A2A skips admission for GetTask/CancelTask/push-config (no auth); ownership-checking store is unused | `agentgen/a2a_task_store.go`, `a2a/server.go` | open |
+| F-69 | M | A2A | HITL handle has TenantID but runtime GetTask/Subscribe/Cancel never compare it with the caller | `cmd/agent-runtime/hitl.go` | open |
+| F-70 | H | A2A | HTTP step: URL/body templated from caller data, no allow-list (SSRF), redirects followed, app credential injected into rendered URL (exfil), unbounded response, non-JSON replies silently ignored | `agentgen/interpreter.go` `execHTTP` | open |
+| F-71 | M | A2A | Runtime agent-card endpoint unauthenticated; spec looked up by slug only (duplicate slugs across tenants pick one arbitrarily) | `cmd/agent-runtime/spec.go` | open |
+| F-72 | M | A2A | Inbound A2A: bearer token tenant overrides URL slug tenant (opposite of WS/SSE); card `agent.json` vs runtime `agent-card.json`; card URL from untrusted `X-Forwarded-*` when `publicURL` unset | `a2a/server.go`, `a2a/card.go` | open |
+| F-73 | L | Docs | `.claude/skills/a2a.md` is stale (hand-rolled dispatch, SDK "not adopted", unimplemented step types, `a2a_async`, ownership-checked store) | `.claude/skills/a2a.md` | open |
+| F-74 | L | A2A | HITL `TrySignal` is GET-then-SET (not atomic); `hitlStore.Store` failure only warns, leaving a running workflow with no reconnect handle | `agentgen/hitl_store.go`, `runtime.go` | open |
+| F-75 | L | A2A | Outbound A2A/registry: unbounded response reads, streaming client `Timeout: 0`, depth guard relies on caller-supplied header | `agentregistry/registry.go`, `agentgen/a2a_caller.go` | open |
+| F-76 | L | A2A | 60 s spec cache delays unpublish/disable; legacy plaintext `provider_keys` and `plain:` prefixed secrets still accepted | `cmd/agent-runtime/spec.go` | open |
+| F-77 | L | A2A | Runtime output is one text artifact only (no file/data parts) while AppFlow expects file parts from A2A agents | `cmd/agent-runtime/runtime.go` | open |
