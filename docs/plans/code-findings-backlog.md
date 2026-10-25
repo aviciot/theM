@@ -70,3 +70,14 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-53 | L | Gateway | Policy errors fail open on direct path but closed on profile-app path; nil policy never cached (DB hit per request) | `llmgateway/service.go`, `dal.go` | open |
 | F-54 | L | Gateway | `modelToProvider` has no gemini (providers seeded in db/107); profile-app "streaming" is one chunk | `llmgateway/service.go` | open |
 | F-55 | L | Docs | `llmresolve` header claims platform-default fallback (code never uses it); `them:gateway:policy:v2:*` missing from `REDIS.md` | `llmresolve/llmresolve.go`, `docs/REDIS.md` | open |
+| F-56 | H | MCP | `/internal/execute` and `/internal/probe` have no auth; body-supplied `application_id`/`test_credential` trusted; any container on the network can use any app's MCP credentials | `mcp/server.go`, `mcp/executor.go` | open |
+| F-57 | H | MCP | MCP server `url` not validated (any scheme/host/internal IP) → SSRF; `MCP_ALLOW_HTTP`/`MCP_ALLOW_STDIO` never enforced | `admin/service/mcp_servers.go`, `mcp/config.go` | open |
+| F-58 | H | MCP | Admin `POST /mcp-servers/{id}/probe` skips tenant ownership check (IDOR by UUID) and service loads by ID only | `admin/mcp_servers.go`, `mcp/dal.go` | open |
+| F-59 | M | MCP | Orchestrator `tools` allowlist / attachment not enforced at execution (only filters what LLM sees) | `orchestrator/tools.go`, `mcp/executor.go` | open |
+| F-60 | M | MCP | Workers keep the Server struct they started with; URL/probe-token edits are ignored until disable/enable or restart | `mcp/supervisor.go` | open |
+| F-61 | M | MCP | Tool-count-drop (>20%) marks `degraded` and never updates the manifest → stale tools after legit removal | `mcp/health.go` | open |
+| F-62 | M | MCP | Client: unbounded response read, only first SSE `data:` line read, fixed 10s tool timeout, redirects keep auth header, full `initialize` on every call | `mcp/client.go`, `mcp/executor.go` | open |
+| F-63 | L | MCP | Admin transport error text wrong (stdio); `sse` accepted but unsupported by client; slug unvalidated (`__` breaks tool-name parsing) | `admin/service/mcp_servers.go`, `orchestrator/mcp.go` | open |
+| F-64 | L | MCP | Leader renew is GET-then-PEXPIRE (not atomic, no fencing); probe auth always `Authorization` (per-server header name not stored) | `mcp/leader.go`, `mcp/health.go` | open |
+| F-65 | L | MCP | Upstream error bodies (≤512B) are forwarded into LLM context and `tool_result` events seen by end users | `mcp/client.go`, `orchestrator/tools.go` | open |
+| F-66 | L | MCP | `tool_call` events only emitted in dual mode (no Postgres table); `ToolsManifest` ignores `outputSchema`/annotations | `cmd/mcp-service/main.go` | open |
