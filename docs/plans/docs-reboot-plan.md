@@ -120,7 +120,7 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 | 9 | A2A agents & agentgen | `go/cmd/agent-runtime/`, `go/internal/agentgen/`, `a2a/` | done (see git log) |
 | 10 | App export/import & Deploy-to-Tenant | `go/internal/admin/dal/app_deploy.go` | done (see git log) |
 | 11 | Give kept docs front matter + move into folders (`SCHEMA`, `REDIS` → `reference/`; ADRs → `decisions/`; runbook → `guides/`; `AUTH` merges into #5) | — | done (see git log) |
-| 12 | Split `LESSONS.md` per area into `docs/lessons/` | — | todo |
+| 12 | Split `LESSONS.md` per area into `docs/lessons/` | — | done (see git log) |
 | 13 | Generated reference (schema, routes, node types) + CI `docs-lint` | — | todo |
 | 14 | Switch hook from warn to block (once 2–10 are done and stable) | — | todo |
 
@@ -145,3 +145,5 @@ Hand over **only when context is almost full** (or the user asks). At that point
 > Continue the docs reboot. Read `docs/CURRENT.md` and `docs/plans/docs-reboot-plan.md` section 9, then do item #N (<name>) using `/docs-update` and `docs/_templates/architecture.md`. Write from the code, not the archive. Update the tracker and commit.
 
 Done in #11: moved to `reference/schema.md`, `reference/redis.md`, `decisions/00N-*.md`, `guides/local-test-environment-runbook.md`, `guides/a2a-test-agents.md`, `lessons/general.md` (split in #12), `plans/app-canvas-config-completeness-plan.md`, `plans/docs-reboot-plan.md`; archived `AUTH.md`, `A2A_REFERENCE.md`. All references updated in docs, CLAUDE.md files, skills, hooks and scripts (the test scripts read `docs/reference/redis.md`). Legacy docs carry `last_verified: unverified` and `status: draft` until re-verified. Source-code comments that point at archived plan docs are tracked as backlog F-87. No Go toolchain on this host: Go/TS edits were comment-only (checked by diff), not compiled.
+
+Done in #12: 100 lesson entries split verbatim into 12 area files under `docs/lessons/` (content size conserved apart from added front matter); `lessons/general.md` removed. Python-era entries (asyncpg, SQLAlchemy, pytest, …) are in `python-legacy.md` (`status: superseded`). References to the old file now point at `docs/lessons/<area>.md`.

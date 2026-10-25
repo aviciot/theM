@@ -21,7 +21,18 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [ADR-003 Redis Streams for Durable Run Event Delivery](decisions/003-redis-streams-event-delivery.md) | decision | current | unverified |  |
 | [A2A Test Agents (a2a-echo, a2a-slow, a2a-stream)](guides/a2a-test-agents.md) | guide | draft | unverified |  |
 | [Local / Test Environment Runbook](guides/local-test-environment-runbook.md) | guide | draft | unverified |  |
-| [Lessons Learned (all areas, to be split)](lessons/general.md) | lessons | draft | unverified |  |
+| [Lessons — A2A & Agents](lessons/a2a-agents.md) | lessons | current | unverified |  |
+| [Lessons — App Canvas / AppFlow & Frontend](lessons/appflow-canvas.md) | lessons | current | unverified |  |
+| [Lessons — Auth, Tenancy & RLS](lessons/auth-tenancy-rls.md) | lessons | current | unverified |  |
+| [Lessons — Database & Schema](lessons/database-schema.md) | lessons | current | unverified |  |
+| [Lessons — Events, Streams & WebSockets](lessons/events-streams-ws.md) | lessons | current | unverified |  |
+| [Lessons — Export / Import & Deploy](lessons/export-import-deploy.md) | lessons | current | unverified |  |
+| [Lessons — Guards, Middleware & File Scanning](lessons/guards-middleware.md) | lessons | current | unverified |  |
+| [Lessons — Docker, Compose & Traefik](lessons/infra-docker.md) | lessons | current | unverified |  |
+| [Lessons — Orchestrator & LLM](lessons/orchestrator-llm.md) | lessons | current | unverified |  |
+| [Lessons — Python-era (historical, platform is Go now)](lessons/python-legacy.md) | lessons | superseded | unverified |  |
+| [Lessons — Temporal & Workers](lessons/temporal-workers.md) | lessons | current | unverified |  |
+| [Lessons — Testing & CI](lessons/testing-ci.md) | lessons | current | unverified |  |
 | [Current State](CURRENT.md) | plan | current | unverified |  |
 | [App Canvas Configuration Completeness Plan](plans/app-canvas-config-completeness-plan.md) | plan | current | unverified |  |
 | [Code Findings Backlog (from the docs reboot)](plans/code-findings-backlog.md) | plan | current | 2026-10-24 |  |

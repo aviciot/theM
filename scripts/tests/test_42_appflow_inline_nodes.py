@@ -39,7 +39,7 @@ Requires:
   - Stack running with --profile temporal
   - them-dag-worker REBUILT since the inline-node commits and force-recreated
     (activities register at startup; `build` + `restart` is NOT enough — see
-    docs/lessons/general.md). Without this the run fails with UnknownNodeKind or a
+    docs/lessons/<area>.md). Without this the run fails with UnknownNodeKind or a
     missing-activity error.
   - a2a-echo container healthy
   - ADMIN_JWT env var (auto-fetched via /auth/login if absent)

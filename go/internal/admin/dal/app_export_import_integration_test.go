@@ -167,7 +167,7 @@ func TestDAL_ExportImportApplication_RoundTrip(t *testing.T) {
 	// the target tenant, since it has no matching agent to reuse — that new
 	// agent's id is captured here (not just agentIDsToClean, which only holds
 	// the ORIGINAL seeded source-side agent) so cleanup doesn't leak it, same
-	// LIFO-ordering fix as docs/lessons/general.md's 2026-09-28 "t.Cleanup" entry:
+	// LIFO-ordering fix as docs/lessons/<area>.md's 2026-09-28 "t.Cleanup" entry:
 	// delete the referencing application row(s) FIRST, then the agents.
 	var importedAgentIDs []string
 	rows, err := pool.Query(ctx, `SELECT id::text FROM them.agents WHERE tenant_id = $1::uuid`, targetTenantID)

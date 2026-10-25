@@ -16,7 +16,7 @@ Before touching any Go code, read:
 |---|---|
 | `TEST_INDEX.md` | Before adding or changing any test |
 | `../docs/INDEX.md` | Find the architecture doc that owns the package you are changing |
-| `../docs/lessons/general.md` | Before any judgment call — what burned us before |
+| `../docs/lessons/` | Before any judgment call — one file per area (`auth-tenancy-rls`, `appflow-canvas`, `temporal-workers`, `infra-docker`, …) |
 | `../docs/CURRENT.md` | Current state, next task, hard constraints |
 
 ---
@@ -124,7 +124,7 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | New test | `TEST_INDEX.md` (same commit) |
 | New package | `TEST_INDEX.md` + the owning `docs/architecture/` doc (`owns:` list) + package map above |
 | New Redis key | `docs/reference/redis.md` (key + TTL + purpose) |
-| Bug fix or non-obvious behavior | `docs/lessons/general.md` |
+| Bug fix or non-obvious behavior | `docs/lessons/<area>.md` |
 | New route | the owning `docs/architecture/` doc |
 | Architectural decision | owning `docs/architecture/` doc; trade-offs → ADR in `docs/decisions/` |
 
@@ -226,7 +226,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | Message format | Canonical domain types in DB | `internal/domain/domain.go` |
 | Tenant boundary | Application is the tenant | `docs/_archive/implementation-status.md` (history only) |
 | Bus subscribe timing | Subscribe BEFORE StartWorkflow | `internal/ws/handler.go` line ~154 |
-| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/_archive/lessons-learned.md` (history only; new entries go in `docs/lessons/general.md`) |
+| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/_archive/lessons-learned.md` (history only; new entries go in `docs/lessons/<area>.md`) |
 | AT TIME ZONE parsing | PG `AT TIME ZONE 'UTC'` on timestamptz returns timestamp without tz suffix — parseTS must handle both formats | `go/internal/admin/dal/tokens.go` |
 
 ---

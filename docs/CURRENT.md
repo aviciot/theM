@@ -17,7 +17,7 @@ last_verified: unverified
 Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
 - Plan + **progress tracker (section 9)**: `docs/plans/docs-reboot-plan.md`
 - Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`, `architecture/app-canvas-appflow.md`, `architecture/auth-and-roles.md`, `architecture/multi-tenancy-rls.md`, `architecture/llm-gateway.md`, `architecture/mcp-service.md`, `architecture/a2a-agents-agentgen.md`, `architecture/app-export-import-deploy.md`
-- Next: item #12 in the tracker (split `lessons/general.md` per area). Doc paths changed in #11: see `docs/plans/docs-reboot-plan.md`
+- Next: item #13 in the tracker (generated reference + CI docs-lint, incl. a link check — see backlog F-87). Doc paths changed in #11/#12: see `docs/plans/docs-reboot-plan.md`
 - Open code bugs found by #3/#4 (not fixed, docs only; #4: fork-branch errors swallowed, guards skipped in branches): reconciler workflow-ID mismatch, `session.Touch` never called, silent pre-orchestrator failures — see `run-lifecycle.md` Known gaps
 - Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
 - Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet

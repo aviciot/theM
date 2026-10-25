@@ -10,7 +10,7 @@ Docs were reset 2026-10-24 (plan: `docs/plans/docs-reboot-plan.md`). Old docs ar
 
 1. `docs/INDEX.md` — generated; find the doc that `owns` the code you are touching.
 2. `docs/CURRENT.md` — current state, next task, blockers. Open code bugs found while documenting: `docs/plans/code-findings-backlog.md` (add new ones there).
-3. Reference docs when relevant: `docs/reference/schema.md` (DB), `docs/reference/redis.md` (Redis), `docs/guides/a2a-test-agents.md`, `docs/architecture/auth-and-roles.md`, `docs/lessons/general.md` (before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/guides/local-test-environment-runbook.md` (Docker/deploy/containers).
+3. Reference docs when relevant: `docs/reference/schema.md` (DB), `docs/reference/redis.md` (Redis), `docs/guides/a2a-test-agents.md`, `docs/architecture/auth-and-roles.md`, `docs/lessons/` (one file per area — read the matching one before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/guides/local-test-environment-runbook.md` (Docker/deploy/containers).
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
 
@@ -171,7 +171,7 @@ Quick version of the rule (see the plan doc for the full reasoning):
 
 - Every code change: find the owning doc (`python3.12 scripts/docs_lint.py owners <paths>`), update it in the same commit, bump `last_verified`. Use `/docs-update` (`.claude/skills/docs-update.md`).
 - **No new top-level docs.** New doc = one of `docs/{architecture,reference,guides,decisions,plans,lessons}/` with front matter (`docs/_templates/`). No `*_STATUS`, `*_RESULTS`, `HANDOVER_*` files — state goes in `docs/CURRENT.md`, results in commit messages.
-- New Redis key → `docs/reference/redis.md`. New DB table/column → `docs/reference/schema.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/lessons/general.md`.
+- New Redis key → `docs/reference/redis.md`. New DB table/column → `docs/reference/schema.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/lessons/<area>.md`.
 - Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index`. The pre-commit hook (`.githooks/`) warns if owned code changed without its doc.
 - Trust code over docs; update the doc when they diverge.
 
