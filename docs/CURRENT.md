@@ -9,8 +9,8 @@
 
 Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
 - Plan + **progress tracker (section 9)**: `docs/DOCS_REBOOT_PLAN.md`
-- Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`, `architecture/app-canvas-appflow.md`, `architecture/auth-and-roles.md`, `architecture/multi-tenancy-rls.md`, `architecture/llm-gateway.md`, `architecture/mcp-service.md`, `architecture/a2a-agents-agentgen.md`
-- Next: item #10 in the tracker (App export/import & Deploy-to-Tenant)
+- Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`, `architecture/app-canvas-appflow.md`, `architecture/auth-and-roles.md`, `architecture/multi-tenancy-rls.md`, `architecture/llm-gateway.md`, `architecture/mcp-service.md`, `architecture/a2a-agents-agentgen.md`, `architecture/app-export-import-deploy.md`
+- Next: item #11 in the tracker (front matter + move kept docs into folders)
 - Open code bugs found by #3/#4 (not fixed, docs only; #4: fork-branch errors swallowed, guards skipped in branches): reconciler workflow-ID mismatch, `session.Touch` never called, silent pre-orchestrator failures — see `run-lifecycle.md` Known gaps
 - Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
 - Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
