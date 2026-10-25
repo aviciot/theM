@@ -121,8 +121,7 @@ All core + events containers running:
 - `scripts/verify_delivery_timing.sh` - Delivery timing test
 
 ### Data Files
-- `perf_focused_results_raw.json` - Raw measurements (6 runs)
-- `perf_focused_summary.json` - Aggregated results
+- Raw/summary result files were deleted in the repo cleanup (regenerate with `scripts/perf_focused_test.py`).
 
 ---
 
@@ -210,11 +209,7 @@ All core + events containers running:
 - `scripts/perf_comparison.py` - Multi-scenario runner (unused)
 
 ### Data Files
-- `perf_focused_results_raw.json` - Raw test data
-- `perf_focused_summary.json` - Aggregated summary
-- `perf_comparison_log.txt` - Old test log
-- `perf_test_results_raw.json` - Old test data (invalid)
-- `perf_test_summary.json` - Old test summary (invalid)
+- Raw/summary result files were deleted in the repo cleanup (regenerate with `scripts/perf_focused_test.py`).
 
 ---
 
