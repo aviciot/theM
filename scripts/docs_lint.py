@@ -3,7 +3,9 @@
 
   docs_lint.py check            validate front matter, folders, owns: paths (exit 1 on errors)
   docs_lint.py index            regenerate docs/INDEX.md from front matter
-  docs_lint.py staged           warn-only: staged code whose owning doc is not staged (exit 0)
+  docs_lint.py staged [--warn]  pre-commit: staged code whose owning doc is not staged -> exit 1 (blocks). --warn = exit 0.
+                                escape hatch: DOCS_UNCHANGED_OK=1 (state why in the commit message)
+  docs_lint.py changed BASE     CI: code changed vs BASE whose owning doc is not changed -> exit 1
   docs_lint.py links            dead docs/*.md references (errors in docs, CLAUDE.md files and skills; counts in source comments)
   docs_lint.py stale [DAYS]     report-only: docs unverified or last_verified older than DAYS (default 90)
   docs_lint.py stray            report-only: *.md files outside docs/ that are not on the allow-list
@@ -11,7 +13,7 @@
 
 Front matter spec: docs/plans/docs-reboot-plan.md section 4.
 """
-import datetime, re, subprocess, sys
+import datetime, os, re, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -179,27 +181,60 @@ def owners_of(path, m):
     return sorted({d for o, d in m.items() if path == o.rstrip("/") or path.startswith(o.rstrip("/") + "/")})
 
 
-def staged():
-    files = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=ROOT,
-                           capture_output=True, text=True).stdout.split()
+NO_DOC_NEEDED = ("_test.go", "_test.py", "go.sum", "go.mod")
+
+
+def needs_doc(f):
+    """Code changes only: docs, markdown, tests and dependency locks never require an owner-doc update."""
+    return not (f.startswith("docs/") or f.endswith(".md") or f.endswith(NO_DOC_NEEDED) or "/testdata/" in f)
+
+
+def missing_docs(files):
     m, missing = owner_map(), {}
     for f in files:
-        if f.startswith("docs/"):
+        if not needs_doc(f):
             continue
         for d in owners_of(f, m):
             if d not in files:
                 missing.setdefault(d, []).append(f)
-    for d, fs in missing.items():
-        print(f"DOCS WARNING: {len(fs)} staged file(s) are owned by {d}, which is not staged "
-              f"(e.g. {fs[0]}). Update it and bump last_verified, or confirm no doc change is needed.")
-    return 0
+    return missing
+
+
+def report(missing, block):
+    label = "DOCS BLOCKED" if block else "DOCS WARNING"
+    for d, fs in sorted(missing.items()):
+        print(f"{label}: {len(fs)} changed file(s) are owned by {d}, which is not changed "
+              f"(e.g. {fs[0]}). Update it and bump last_verified.")
+    if missing and block:
+        print("If the change genuinely needs no doc update (formatting, comment-only, test-only), "
+              "re-run with DOCS_UNCHANGED_OK=1 and say why in the commit message.")
+
+
+def staged(block=True):
+    """Pre-commit: staged code whose owning doc is not also staged. Blocks unless --warn or DOCS_UNCHANGED_OK=1."""
+    files = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=ROOT,
+                           capture_output=True, text=True).stdout.split()
+    missing = missing_docs(files)
+    skip = os.environ.get("DOCS_UNCHANGED_OK") == "1"
+    report(missing, block and not skip)
+    return 1 if (missing and block and not skip) else 0
+
+
+def changed(base):
+    """CI on pull requests: files changed vs BASE whose owning doc is not also changed (fails)."""
+    files = subprocess.run(["git", "diff", "--name-only", f"{base}...HEAD"], cwd=ROOT,
+                           capture_output=True, text=True).stdout.split()
+    missing = missing_docs(files)
+    report(missing, True)
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
     if cmd == "check": sys.exit(check())
     elif cmd == "index": index()
-    elif cmd == "staged": sys.exit(staged())
+    elif cmd == "staged": sys.exit(staged(block="--warn" not in sys.argv))
+    elif cmd == "changed": sys.exit(changed(sys.argv[2]))
     elif cmd == "links": sys.exit(links())
     elif cmd == "stale": sys.exit(stale(int(sys.argv[2]) if len(sys.argv) > 2 else 90))
     elif cmd == "stray": sys.exit(stray())

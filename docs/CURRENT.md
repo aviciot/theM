@@ -17,10 +17,10 @@ last_verified: unverified
 Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
 - Plan + **progress tracker (section 9)**: `docs/plans/docs-reboot-plan.md`
 - Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`, `architecture/app-canvas-appflow.md`, `architecture/auth-and-roles.md`, `architecture/multi-tenancy-rls.md`, `architecture/llm-gateway.md`, `architecture/mcp-service.md`, `architecture/a2a-agents-agentgen.md`, `architecture/app-export-import-deploy.md`
-- Next: item #14 in the tracker (switch hook from warn to block) — then triage strays/unverified docs listed in the tracker's #13 note. Doc paths changed in #11/#12: see `docs/plans/docs-reboot-plan.md`
+- All 14 reboot tracker items are DONE. Follow-ups (not blocking): triage the 22 stray `.md` files outside `docs/`, re-verify the 22 `unverified` docs (start with `reference/schema.md`/`redis.md` → fold into generated reference), fix the 215 source comments with dead doc refs (F-87), and fix the code bugs in `docs/plans/code-findings-backlog.md` (F-01…F-87). Doc paths changed in #11/#12: see `docs/plans/docs-reboot-plan.md`
 - Open code bugs found by #3/#4 (not fixed, docs only; #4: fork-branch errors swallowed, guards skipped in branches): reconciler workflow-ID mismatch, `session.Touch` never called, silent pre-orchestrator failures — see `run-lifecycle.md` Known gaps
 - Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
-- Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
+- Pre-commit hook now BLOCKS owned-code commits without the owner doc (`.githooks/`, `core.hooksPath` set locally; tested end-to-end in a scratch repo). Escape hatch: `DOCS_UNCHANGED_OK=1` + reason in the commit message. Clones must run `git config core.hooksPath .githooks`
 - Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item
 - **Handover rule:** do NOT hand over per item; keep going to the next item. Hand over only when context is almost full (or user asks), with a short paste-ready prompt (template in `docs/plans/docs-reboot-plan.md` section 10)
 - **Findings backlog:** `docs/plans/code-findings-backlog.md` — add every bug/risk found while documenting; must be kept updated

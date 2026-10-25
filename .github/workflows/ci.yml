@@ -32,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -48,3 +50,6 @@ jobs:
       - name: Generated route reference is up to date
         run: python3 scripts/gen_reference.py routes --check
 
+      - name: Changed code has its owning doc updated (pull requests only)
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/docs_lint.py changed "origin/${{ github.base_ref }}"

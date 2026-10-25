@@ -96,7 +96,7 @@ git push origin main
 - Commit only files relevant to the current task — do not use `git add .` or `git add -A`
 - Do not push unless credentials are already available
 - Do not amend previous commits — create a new commit
-- Do not skip hooks (`--no-verify`)
+- Do not skip hooks (`--no-verify`). The pre-commit hook **blocks** a commit when staged code is owned by a doc (`owns:` front matter) that is not also staged. Fix it by updating the doc (`/docs-update`). For genuine no-doc changes (formatting, comment-only, test-only) use `DOCS_UNCHANGED_OK=1 git commit …` and say why in the message — tests, markdown and `go.sum` never need a doc.
 
 ---
 

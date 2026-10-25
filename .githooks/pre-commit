@@ -1,4 +1,6 @@
 #!/bin/sh
-# Docs freshness: warn-only for now (see docs/plans/docs-reboot-plan.md). Never blocks a commit.
-python3.12 scripts/docs_lint.py staged || true
-exit 0
+# Docs freshness: BLOCKS a commit when staged code is owned by a doc (front-matter `owns:`) that is not also staged.
+# Docs/markdown/tests/go.sum never require an update. Escape hatch for genuine no-doc changes (formatting,
+# comment-only, test-only): DOCS_UNCHANGED_OK=1 git commit ...  — and say why in the commit message.
+# Never use --no-verify. See docs/plans/docs-reboot-plan.md and .claude/skills/docs-update.md.
+exec python3.12 scripts/docs_lint.py staged
