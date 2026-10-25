@@ -96,6 +96,8 @@ def stale(days=90):
     today, n = datetime.date.today(), 0
     for p, rel in all_docs():
         fm = parse(p) or {}
+        if fm.get("generated") == "true" or fm.get("type") == "lessons":
+            continue  # generated files are regenerated; lessons are append-only history, not claims about current code
         lv = fm.get("last_verified", "")
         try:
             age = (today - datetime.date.fromisoformat(lv)).days

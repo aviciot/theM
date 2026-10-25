@@ -2,8 +2,10 @@
 title: ADR-002 Reconciler Temporal Status Mapping
 type: decision
 status: current
-last_verified: unverified
+last_verified: 2026-10-25
 ---
+
+> Verified 2026-10-25: the mapping below matches `reconciler.mapTemporalStatus` (TERMINATED→`stopped`, TIMED_OUT→`failed`, CONTINUED_AS_NEW→no update, NotFound→no update) and the live `runs.status` CHECK constraint (`running, completed, failed, canceled, cancelled, stopped`). Caveats: the "Python-native run" rationale is obsolete, and because the reconciler looks up workflows by run ID (which is no longer the workflow ID, ADR-004) the NotFound case is currently the *normal* outcome (backlog F-08).
 
 # ADR-002 — Reconciler: Temporal status mapping decisions
 

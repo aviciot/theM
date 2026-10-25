@@ -2,10 +2,12 @@
 title: App Canvas Configuration Completeness Plan
 type: plan
 status: current
-last_verified: unverified
+last_verified: 2026-10-25
 ---
 
 > Active rule + phase plan; referenced by root CLAUDE.md hard rule.
+>
+> **Status check 2026-10-25 (against code):** Phase 0 (app_params secret strip), Phase 1 (table registry `appScopedConfigTables`, now **7** tables incl. `app_flow_http_params`) and Phase 2 (export/import file, super-admin and tenant-scoped variants) are **implemented**. Phase 3 not started (by design). The goal "1:1, 100% of the app flow" is **not met yet**: see `docs/architecture/app-export-import-deploy.md` and backlog F-78…F-86 (agent-param secrets still copied, entry-point settings such as access mode lost, `_resolved_agent_ids` not remapped, tenant-scoped export has no tenant check, tenant-scoped import not transactional, `appflow_debug_presets`/role grants missing from the registry).
 
 # App Canvas — Configuration Completeness Plan
 # Status: PLANNING — no code changes yet. Written 2026-09-28 after a live investigation

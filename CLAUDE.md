@@ -10,7 +10,7 @@ Docs were reset 2026-10-24 (plan: `docs/plans/docs-reboot-plan.md`). Old docs ar
 
 1. `docs/INDEX.md` — generated; find the doc that `owns` the code you are touching.
 2. `docs/CURRENT.md` — current state, next task, blockers. Open code bugs found while documenting: `docs/plans/code-findings-backlog.md` (add new ones there).
-3. Reference docs when relevant: `docs/reference/schema.md` (DB), `docs/reference/redis-generated.md` (Redis), `docs/guides/a2a-test-agents.md`, `docs/architecture/auth-and-roles.md`, `docs/lessons/` (one file per area — read the matching one before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/guides/local-test-environment-runbook.md` (Docker/deploy/containers).
+3. Reference docs when relevant: `docs/reference/schema-generated.md` (DB), `docs/reference/redis-generated.md` (Redis), `docs/guides/a2a-test-agents.md`, `docs/architecture/auth-and-roles.md`, `docs/lessons/` (one file per area — read the matching one before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/guides/local-dev-and-deploy.md` (Docker/deploy/containers).
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
 
@@ -32,7 +32,7 @@ For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
 
 Known bugs and risks found while documenting: `docs/plans/code-findings-backlog.md` — check it before changing an area, and add new ones there.
 
-**Before Docker, deployment, environment, or container recreation work, read `docs/guides/local-test-environment-runbook.md`. Never commit or print real secrets.**
+**Before Docker, deployment, environment, or container recreation work, read `docs/guides/local-dev-and-deploy.md`. Never commit or print real secrets.**
 
 ---
 

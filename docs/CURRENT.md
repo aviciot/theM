@@ -2,272 +2,37 @@
 title: Current State
 type: plan
 status: current
-last_verified: unverified
+last_verified: 2026-10-25
 ---
 
 # Current State — the-M
-# Last Updated: 2026-10-25
-# Branch: main
-# HEAD: 6b8abdef (docs reboot complete; code unchanged apart from comment-only edits)
-
----
-
-## DOCS REBOOT IN PROGRESS (read this first)
-
-Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
-- Plan + **progress tracker (section 9)**: `docs/plans/docs-reboot-plan.md`
-- Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`, `architecture/app-canvas-appflow.md`, `architecture/auth-and-roles.md`, `architecture/multi-tenancy-rls.md`, `architecture/llm-gateway.md`, `architecture/mcp-service.md`, `architecture/a2a-agents-agentgen.md`, `architecture/app-export-import-deploy.md`
-- All 14 reboot tracker items are DONE. Follow-ups (not blocking): triage the 22 stray `.md` files outside `docs/`, re-verify the 22 `unverified` docs (start with `reference/schema.md`/`redis.md` → fold into generated reference), fix the 215 source comments with dead doc refs (F-87), and fix the code bugs in `docs/plans/code-findings-backlog.md` (F-01…F-87). Doc paths changed in #11/#12: see `docs/plans/docs-reboot-plan.md`
-- Open code bugs found by #3/#4 (not fixed, docs only; #4: fork-branch errors swallowed, guards skipped in branches): reconciler workflow-ID mismatch, `session.Touch` never called, silent pre-orchestrator failures — see `run-lifecycle.md` Known gaps
-- Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
-- Pre-commit hook now BLOCKS owned-code commits without the owner doc (`.githooks/`, `core.hooksPath` set locally; tested end-to-end in a scratch repo). Escape hatch: `DOCS_UNCHANGED_OK=1` + reason in the commit message. Clones must run `git config core.hooksPath .githooks`
-- Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item
-- **Handover rule:** do NOT hand over per item; keep going to the next item. Hand over only when context is almost full (or user asks), with a short paste-ready prompt (template in `docs/plans/docs-reboot-plan.md` section 10)
-- **Findings backlog:** `docs/plans/code-findings-backlog.md` — add every bug/risk found while documenting; must be kept updated
-- Unrelated work below (performance/delivery testing) is the previous session's state
-
----
-
-## Quick Status
-
-✅ **Performance Testing Complete**  
-✅ **Delivery Verification Complete**  
-✅ **Dual mode functional (delivery proven)**  
-🔄 **Next**: Performance cost evaluation (optional) or Run producer implementation
-
----
-
-## Latest Work (2026-10-21)
-
-### Performance Testing & Delivery Verification - COMPLETE
-
-**Session Duration**: 12:40 - 17:14 UTC (4.5 hours)  
-**Commits**: 80ab9842, 3e60cff3, bf8c5a76, 9c8ceb5f
-
-**What Was Accomplished**:
-
-1. ✅ **Gateway performance benchmark executed** (corrected methodology)
-   - Fixed FLUSHDB issue (preserved consumer groups)
-   - Fixed RPS calculation (actual completed / elapsed time)
-   - Scenario 40: 3 runs per mode (postgres, dual)
-   - Results: +13% median latency preliminary (needs more runs for confidence)
-
-2. ✅ **Schema fully documented** (`docs/_archive/SCHEMA_GATEWAY_EVENTS.md`)
-   - PostgreSQL `gateway_requests` (17 columns)
-   - ClickHouse `events_gateway_request` (22 columns)
-   - ID mapping: PG `id` (UUID) → CH `request_id` (String)
-   - Verification methodology documented
-
-3. ✅ **Delivery question resolved** (`docs/_archive/DELIVERY_VERIFICATION_CONCLUSION.md`)
-   - **Finding**: Events deliver successfully in dual mode
-   - "10+ minute delay" was verification timing error, not failure
-   - Event-writer healthy, 300/300 events delivered
-   - Actual delivery: 5-30s typical, up to 2 min under load
-
-**Key Findings**:
-- **Delivery**: ✅ VERIFIED FUNCTIONAL - all events reach ClickHouse
-- **Performance**: ⚠️ PRELIMINARY - +13% median latency (+18ms absolute)
-- **RPS**: No throughput degradation (300 req/sec both modes)
-- **Resources**: Negligible (CPU +0.03%, RAM -1.5MB)
-
----
-
-## Current HEAD
-
-```
-9c8ceb5f docs: delivery verification conclusion - events deliver successfully
-bf8c5a76 docs: schema documentation + ID verification script fixed
-3e60cff3 docs: performance test next steps - verification methodology needed
-80ab9842 perf: corrected Gateway benchmark - scenario 40, postgres vs dual
-90a817aa docs: prepare performance testing handover
-```
-
----
-
-## Deployment State
-
-### Infrastructure Status
-- **Gateway mode**: `dual` (THE_M_EVENTS_GATEWAY=dual)
-- **Event-writer**: Healthy (processing batches, no errors)
-- **ClickHouse**: Running, receiving events (delivery verified)
-- **Redis events**: Consumer group healthy (lag=0, pending=0)
-- **Branch**: main (clean, pushed)
-
-### Container Health
-All core + events containers running:
-- ✅ them-traefik (reverse proxy)
-- ✅ them-postgres (DB)
-- ✅ them-redis (cache)
-- ✅ them-clickhouse (events store, profile: events)
-- ✅ them-redis-events (event queue, profile: events)
-- ✅ them-event-writer (consumer, profile: events)
-- ✅ them-auth-go (UI auth)
-- ✅ them-go-bridge (API gateway)
-- ✅ them-frontend (Next.js dashboard)
-
----
-
-## Performance Testing Results
-
-### Documentation
-- `docs/_archive/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Full test results
-- `docs/_archive/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan (optional)
-- `docs/_archive/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery verification closed
-- `docs/_archive/SCHEMA_GATEWAY_EVENTS.md` - Schema reference
-
-### Scripts
-- `scripts/perf_focused_test.py` - Corrected benchmark runner
-- `scripts/verify_delivery_by_id.py` - ID-based verification tool
-- `scripts/verify_delivery_timing.sh` - Delivery timing test
-
-### Data Files
-- Raw/summary result files were deleted in the repo cleanup (regenerate with `scripts/perf_focused_test.py`).
-
----
-
-## Dual Mode Status
-
-### Delivery (Production-Ready)
-- ✅ Event-writer functional
-- ✅ Consumer groups stable
-- ✅ All events delivered (verified)
-- ✅ Timing acceptable (5-30s typical, 2min max)
-- ✅ No errors or failures
-
-### Performance (Needs Decision)
-- ⚠️ +13.4% median latency (+18ms: 132ms → 149ms)
-- ✅ No throughput impact (RPS unchanged)
-- ✅ Negligible resource overhead
-- ⚠️ Small sample size (only 3 runs per mode)
-- ⚠️ Statistical significance not confirmed
-
-**Trade-off Decision Required**:
-- Is +18ms median latency acceptable for ClickHouse observability?
-- Current finding is PRELIMINARY (needs 5-10 runs for confidence)
-
----
-
-## Next Tasks (Priority Order)
-
-### 1. Performance Cost Evaluation (OPTIONAL)
-
-**If dual mode deployment is being considered**:
-- Run 5-10 iterations of scenario 40 per mode
-- Calculate 95% confidence intervals
-- Run t-test for statistical significance
-- Decide if +13% latency is acceptable
-
-**If staying in postgres mode**:
-- Skip additional testing
-- Document decision rationale
-- Move to next priority task
-
-### 2. Run Usage/Steps Producer (DEFERRED FROM PREVIOUS)
-
-**Status**: BLOCKED until performance testing complete (NOW UNBLOCKED)  
-**Location**: `go/internal/events/` (Run/RunStep event producers)  
-**Requirement**: Implement Run and RunStep event emission in dual mode
-
-### 3. Optional Test Improvements
-
-**Low Priority** - only if needed:
-- Fix test script for real Gateway endpoint (not mock)
-- Test additional scenarios (11, 12) with corrected methodology
-- Implement request-ID tracking in production
-
----
-
-## Known Issues
-
-### 1. Performance Test Sample Size
-**Issue**: Only 3 runs per mode (low statistical confidence)  
-**Impact**: +13% latency finding is preliminary  
-**Status**: Documented in next steps, additional testing optional
-
-### 2. Test Scenario Compatibility
-**Issue**: Scenario 40 uses mock provider, doesn't write to `gateway_requests`  
-**Impact**: ID-based verification couldn't be tested end-to-end  
-**Status**: Verification script ready, needs production scenario  
-**Priority**: Low (delivery already verified via count + event-writer health)
-
----
-
-## Files Changed (since 90a817aa)
-
-### New Documentation
-- `docs/_archive/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Test results and analysis
-- `docs/_archive/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan
-- `docs/_archive/SCHEMA_GATEWAY_EVENTS.md` - Complete schema reference
-- `docs/_archive/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery question closed
-- `docs/_archive/PERFORMANCE_TEST_IN_PROGRESS.md` - Test execution log
-
-### New Scripts
-- `scripts/perf_focused_test.py` - Performance benchmark runner (Python)
-- `scripts/verify_delivery_by_id.py` - ID-based verification (Python)
-- `scripts/verify_delivery_timing.sh` - Timing verification (Bash)
-- `scripts/check_perf_progress.sh` - Progress monitor
-- `scripts/perf_comparison.py` - Multi-scenario runner (unused)
-
-### Data Files
-- Raw/summary result files were deleted in the repo cleanup (regenerate with `scripts/perf_focused_test.py`).
-
----
-
-## Context for Next Session
-
-**What was accomplished**:
-- Performance testing complete (corrected methodology)
-- Delivery verification complete (events deliver successfully)
-- Schema documented
-- Verification tools created
-
-**What's next**:
-1. **Decision**: Evaluate +13% latency cost for dual mode (optional)
-2. **OR**: Move to Run usage/steps producer (main priority)
-3. **Optional**: Additional performance testing for confidence
-
-**Current mode**: `dual` (delivery verified, performance cost documented)
-
----
-
-## Startup Commands (for next session)
-
-### Start Infrastructure
-```bash
-cd /opt/docker/them
-
-# Core + Events (current production setup)
-docker compose --project-name them_gateway \
-  -f docker-compose.yml \
-  -f docker-compose.dev.yml \
-  -f docker-compose.events.yml \
-  --profile events up -d
-
-# Verify Gateway mode
-docker exec them-go-bridge env | grep THE_M_EVENTS_GATEWAY
-# Expected: THE_M_EVENTS_GATEWAY=dual
-
-# Check event-writer health
-docker logs them-event-writer --tail 10
-# Expected: "batch written" messages, no errors
-```
-
-### Health Check
-```bash
-# All containers
-docker compose --project-name them_gateway \
-  -f docker-compose.yml \
-  -f docker-compose.dev.yml \
-  -f docker-compose.events.yml \
-  --profile events ps
-
-# Event system specifically
-docker exec them-clickhouse clickhouse-client --query "SELECT count() FROM them_events.events_gateway_request WHERE ts > now() - INTERVAL 1 HOUR;"
-docker exec them-redis-events redis-cli XINFO GROUPS them:events:gateway
-```
-
----
-
-**Updated**: 2026-10-22 00:00 UTC  
-**Session**: Performance testing complete  
-**Next**: Performance cost decision or Run producer implementation
+Last updated: 2026-10-25 · Branch: `main` · HEAD: see `git log --oneline -1` (27+ local commits are **not pushed** to GitHub yet)
+
+## Docs (the 2026-10 reboot) — complete
+- Plan + tracker (all 15 items done): `docs/plans/docs-reboot-plan.md`. Find docs via `docs/INDEX.md`; 10 architecture docs + `redis-usage.md` in `docs/architecture/`.
+- Enforcement: pre-commit hook **blocks** owned-code commits without the owner doc (`DOCS_UNCHANGED_OK=1` + reason for genuine no-doc changes); CI job `docs-lint` (written, never run on GitHub). Clones: `git config core.hooksPath .githooks`.
+- Generated reference: `scripts/gen_reference.py` (routes, schema, node-types, redis) → `docs/reference/*-generated.md`; lint: `scripts/docs_lint.py check|index|stale|stray|links`.
+- Cleaned 2026-10-25: dead Python-era tests/config/clutter deleted; `scripts/tests/INDEX.md` lists the 7 live E2E scripts.
+- Open doc follow-ups: stray `.md` files outside `docs/` (`docs_lint.py stray`), ~208 source comments pointing at archived doc paths (F-87), coverage gaps (frontend, deploy/Hetzner, migrations, env vars, security scanning, voice, dashboard/metrics, `test-runner/` app), `.claude/memory/*.md` unreviewed.
+
+## Known problems — `docs/plans/code-findings-backlog.md` (96 items, none fixed)
+Highest severity to fix first: F-56 MCP internal API unauthenticated · F-67 agent-runtime unauthenticated · F-68 A2A task access not tenant-checked · F-78 tenant export cross-tenant · F-79 agent-param secrets copied · F-70/F-57/F-48 SSRF · F-01/F-02 fork-branch guards/errors · F-18 logout not honoured · F-19 SSO account takeover · F-31 gate keys not tenant-scoped · F-32 superuser DB creds in services · F-88 non-rebuildable state in an LRU Redis · F-94/F-91 committed tokens (revoke and rotate; the `origin` remote URL embeds a GitHub token).
+
+## Tests
+- Go: `cd go && go test ./...` (index `go/TEST_INDEX.md`). Live E2E (dev stack only, creates/deletes rows): `scripts/tests/INDEX.md`.
+- Last live run (2026-10-25): `test_38_multitenant` 64/64, `test_38_phase4_external_jwt` 37/37, `test_39_appflow_hil` pass; `test_37_sso` 9/11; `test_40/41/42` fail with `component_not_found` for `a2a_echo` (F-92, undiagnosed).
+
+## Running stack (verified 2026-10-25)
+Core + temporal + events profiles up (43 healthy containers). `THE_M_EVENTS_GATEWAY=dual` (Postgres authoritative + ClickHouse mirror); event-writer and ClickHouse running.
+Dual-mode cost is **preliminary**: +13% median gateway latency (132→149 ms) from 3 runs per mode, no throughput change — decision on whether to keep `dual` is still open (more runs needed: `scripts/perf_focused_test.py`).
+Start/rebuild/recovery commands: `docs/guides/local-dev-and-deploy.md`.
+
+## Next tasks (suggested order)
+1. Revoke/rotate exposed tokens (F-94, F-91); decide push to GitHub (then check the Actions tab).
+2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.
+3. Fix top-severity backlog items (list above), each with a Go test and an architecture-doc update (the hook enforces the doc).
+4. Diagnose E2E failures F-92 and shared test helpers (`scripts/tests/lib/`) + nightly CI run.
+5. Run-usage/steps event producers for dual mode (`go/internal/events/`) — deferred from the earlier session.
+
+## Hard constraints
+Brand: UI/docs say **the-M**; code uses `them` / `THE_M_`. DB `them`, never `odin`. Never commit/print secrets. Root `CLAUDE.md` and `go/CLAUDE.md` rules apply.

@@ -2,8 +2,10 @@
 title: ADR-003 Redis Streams for Durable Run Event Delivery
 type: decision
 status: current
-last_verified: unverified
+last_verified: 2026-10-25
 ---
+
+> Verified 2026-10-25 against `go/internal/runstream/`: Streams with `XRANGE` replay, a continuous cursor into `XREAD BLOCK`, `replay_unavailable` on trim, `MAXLEN ~5000` and terminal events (done/error/canceled/terminated/timed_out) are implemented. **Not implemented in Go:** the 48 h safety / 24 h final TTL and the Python Lua publisher (D6–D8) — streams currently have no TTL (backlog F-95); the `events_transport` mode flag: Go always writes `streams`.
 
 # ADR-003: Redis Streams for Durable Run Event Delivery
 

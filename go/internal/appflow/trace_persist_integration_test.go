@@ -16,7 +16,7 @@ import (
 )
 
 // integrationDSN returns the test Postgres DSN from env or the standard
-// host-exposed port for them-postgres (see docs/guides/local-test-environment-runbook.md).
+// host-exposed port for them-postgres (see docs/guides/local-dev-and-deploy.md).
 func integrationDSN() string {
 	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
 		return dsn

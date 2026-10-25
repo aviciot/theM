@@ -124,4 +124,4 @@ admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful dra
 
 Verify a route is live by checking bridge logs for real hits, not only labels (`go/CLAUDE.md` route-ownership rule).
 Tests: see `go/TEST_INDEX.md`; compose label changes → bring stack up and check all containers healthy.
-Runbook: `docs/guides/local-test-environment-runbook.md`.
+Runbook: `docs/guides/local-dev-and-deploy.md`.

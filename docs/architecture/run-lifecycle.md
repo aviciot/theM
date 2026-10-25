@@ -39,7 +39,7 @@ client ──WS /{tenant}/apps/{app}/{ep}/ws  or  SSE .../sse   (also legacy /ws
   ▼
 execution.Lifecycle.Admit            ← BEFORE the WS upgrade / SSE headers: errors are plain HTTP
   │  auth → epconfig.Load → access-mode JWT checks → CheckAccess/CheckPrincipal → role gate
-  │  → tenant quotas → gate.Check → session.Register → gate.Confirm → CreateRun(status=admitted)
+  │  → tenant quotas → gate.Check → session.Register → gate.Confirm → CreateRun (row inserted as `running`)
   ▼
 upgrade (WS) / write headers (SSE)
   │  WS: wait ≤30s for first {"type":"message"}   SSE: message comes from ?message= or POST body
@@ -50,7 +50,7 @@ dispatch
   │      queue `appflow-dag` (`appflow-dag-debug` for debug), workflow ID `appflow:{tenant}:{runID}`
   └─ else → Lifecycle.Start → OrchestrationWorkflow
          queue `them-orchestration-go`, workflow ID `{tenant}:ctx-{contextID}`
-  │  Start marks run admitted→running (3 tries, then metric `RunStatusUpdateFailed`)
+  │  Start calls UpdateRunStatus(running) — a no-op in practice, see invariants — (3 tries, then metric `RunStatusUpdateFailed`)
   ▼
 send `ready` {run_id, context_id}; WS pings every 15s
   ▼
@@ -96,7 +96,7 @@ The admin run-signal endpoint calls `RunService.Signal`, which looks up the run'
 - **Admit before upgrade; subscribe before start.** Otherwise early events are lost or errors become WS frames.
 - **Billing tenant** = the caller's tenant (`req.TenantID`); owning tenant = `EPConfig.TenantID`. Quotas and the run row use the billing tenant.
 - `Release` must run exactly once and uses its own 5s context (the request context is already cancelled). `Release(nil)` is safe.
-- Run status: `admitted` → `running` (on workflow start) → terminal. An `admitted` run whose `Start` never succeeded is marked `failed` by `Release`.
+- Run status: `Lifecycle` models `admitted` → `running` → terminal, but `runrecorder.CreateRun` **always inserts `running`** (it ignores the handle's `admitted` status, and the `runs.status` CHECK constraint does not allow `admitted`). So the DB never holds `admitted`; a run whose `Start` never succeeded goes `running` → `failed` via `Release`. (Verified against code and live constraint 2026-10-25; backlog F-96.)
 - Orchestrator unbound to the EP (`OrchestratorName==""`) is a config error, not a fallback to the URL slug (SEC-04).
 - Cancelling the client context cancels `Start`'s context; the Temporal workflow is **not** cancelled on disconnect (WS watches completion on a background context).
 
