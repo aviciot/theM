@@ -93,7 +93,7 @@ See `docs/plans/code-findings-backlog.md` F-31…F-41. Highlights:
 ## Where to change things
 | To… | Edit |
 |---|---|
-| Add a tenant-scoped table | new `db/NNN_*.sql` (RLS + FORCE + policy + both GRANTs + sequence GRANT), `docs/SCHEMA.md`, `app_deploy.go` if per-app |
+| Add a tenant-scoped table | new `db/NNN_*.sql` (RLS + FORCE + policy + both GRANTs + sequence GRANT), `docs/reference/schema.md`, `app_deploy.go` if per-app |
 | Query a tenant table from a handler | use `pools.BeginTenantTx` (see `admin/tenant_runtime_idp.go` `withRIDPTx` as the pattern) |
 | Change pool wiring | `internal/db/db.go`, `cmd/them/main.go` |
 | Change tenant resolution | `internal/tenantctx/`, `admin/middleware.go`, `ws|sse` `AppsWSRoute` |
@@ -104,4 +104,4 @@ Tests: `go test ./internal/db/...`; with a live DB: `go test -tags=integration .
 - `auth-and-roles.md` — where the tenant claim comes from
 - `run-lifecycle.md` — gate/session keys (gap 1)
 - `platform-overview.md` — containers and the three pools
-- `docs/SCHEMA.md`, `docs/plans/code-findings-backlog.md`
+- `docs/reference/schema.md`, `docs/plans/code-findings-backlog.md`

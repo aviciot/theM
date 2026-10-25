@@ -1,3 +1,10 @@
+---
+title: ADR-002 Reconciler Temporal Status Mapping
+type: decision
+status: current
+last_verified: unverified
+---
+
 # ADR-002 — Reconciler: Temporal status mapping decisions
 
 **Status:** Accepted  

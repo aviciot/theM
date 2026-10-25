@@ -451,7 +451,7 @@ LEFT JOIN them.application_definitions d ON d.id = sd.active_definition_id`
 // (Phase 1, DB-to-DB deploy) and exportScopedConfig (Phase 2, file export) both
 // walk. Adding a future application_id-scoped table to a deploy/export means
 // adding one entry here — not writing a new bespoke CTE clause — per
-// docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md's Phase 1 ("Option C").
+// docs/plans/app-canvas-config-completeness-plan.md's Phase 1 ("Option C").
 //
 // copySQL must be parameterized as: $1=sourceAppID, $2=newAppID. None of the
 // 6 tables below carry their own tenant_id column — ownership is entirely via
@@ -609,7 +609,7 @@ SELECT to_jsonb(t) FROM (
 // application_id-scoped table's rows from sourceAppID into newAppID, remapping
 // agent_id where the table carries one. This is the extension point for future
 // canvas-configurable features that use their own DB table instead of the app
-// JSON — see docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md.
+// JSON — see docs/plans/app-canvas-config-completeness-plan.md.
 func (d *DB) copyAppScopedConfigForDeploy(ctx context.Context, sourceAppID, newAppID string, agentIDMap map[string]string) error {
 	for _, tbl := range appScopedConfigTables {
 		if !tbl.remapAgentID {

@@ -80,7 +80,7 @@ Unknown values fail startup.
   production callers; only tests use them. `ToolCallsForRun`/`UserActivity` on `PostgresStore` are unimplemented.
 - **`Audit` kind has no producer** (sink writes it, nothing emits it). `ValidateEvent` does not check the audit payload.
 - Producer drop/fail counters exist but nothing exports them (no metric/log surfaced from `main.go`).
-- `them:events` / `them:events:dlq` are **not listed in `docs/REDIS.md`**.
+- `them:events` / `them:events:dlq` are **not listed in `docs/reference/redis.md`**.
 - The ClickHouse sink inserts one row per event (the "batch" is a loop, not a bulk insert).
 - `retention_test.go.disabled` — retention has no active unit test.
 - `GatewayRequestEvent.UserID/ApplicationID` are not set by `llmgateway/dal.go`'s `WriteRequest`.

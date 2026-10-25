@@ -33,4 +33,4 @@ docker exec -it them-postgres psql -U them -d them
 | `001_schema.sql` | Full `them` schema DDL — source of truth |
 | `002_seed.sql` | Default LLM providers, agents, orchestrators |
 
-See `docs/SCHEMA.md` for full table reference.
+See `docs/reference/schema.md` for full table reference.

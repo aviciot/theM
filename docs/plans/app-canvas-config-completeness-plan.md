@@ -1,3 +1,12 @@
+---
+title: App Canvas Configuration Completeness Plan
+type: plan
+status: current
+last_verified: unverified
+---
+
+> Active rule + phase plan; referenced by root CLAUDE.md hard rule.
+
 # App Canvas — Configuration Completeness Plan
 # Status: PLANNING — no code changes yet. Written 2026-09-28 after a live investigation
 # found File Guard/PII config is invisible to export/import, plus a real secret-leak bug
@@ -25,7 +34,7 @@ etc."* — used for moving an app between teams and full app backup/restore.
 
 ## The three existing pieces already in play — read this before touching anything
 
-### 1. Canvas JSON export/import (frontend-only) — `docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`
+### 1. Canvas JSON export/import (frontend-only) — `docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md`
 
 Built 2026-09-22, still live (`CanvasBuilderView.tsx`'s `handleExport`/`handleImportJSON`).
 Downloads/uploads the `AppDefinitionDoc` JSON (`schema_version`, `components`, `entry_points`,
@@ -47,11 +56,11 @@ extend, not replace.
 A backend feature that clones an app's *database rows* (not just canvas JSON) into another
 tenant, with real UUID remapping for the two ID families that need it (`application_id`,
 `agent_id`+dependents — confirmed shallow, not deep, in
-`docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §3). This is the mechanism that actually has a path to
+`docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md` §3). This is the mechanism that actually has a path to
 including Guards/MCP bindings/etc., because it already operates at the DB level, not the JSON
 level. **Currently also incomplete** — doesn't copy `middleware_wirings`, `app_agent_bindings`,
 `app_mcp_credentials`, `app_flow_llm_overrides`, `app_temporal_config`, `app_debug_config`, or
-`applications.canvas` (full gap list: `docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §4).
+`applications.canvas` (full gap list: `docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md` §4).
 
 **A real secret-leak bug was found and fixed in this feature already** (2026-09-28,
 `go/TEST_INDEX.md` S1-178): `app_params` was copied verbatim, including inline encrypted secret
@@ -154,7 +163,7 @@ Extend `app_deploy.go`'s CTE (or a follow-up pass after it, same transaction) to
 Structure this as a small, explicit **list of `application_id`-scoped tables to copy** (a Go
 slice/struct, not one growing raw-SQL CTE) — adding a future table means adding one entry with
 its own ID-remap rule (most need none beyond `application_id` itself, per
-`docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §3), not hand-writing new CTE clauses each time. This
+`docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md` §3), not hand-writing new CTE clauses each time. This
 is "Option C" from the earlier discussion — most of the simplicity of a quick bolt-on fix,
 without the "someone forgot to add the new feature's table" risk repeating.
 
@@ -174,7 +183,7 @@ list and 2 real bugs found while building it (an `edges` column type mismatch, a
 
 **Not yet done, deferred to a future session:** the frontend UI (Export/Import buttons wired to
 these 2 routes) — the backend is complete and tested, but nothing in `frontend/` calls these
-routes yet. The existing canvas-only export (`docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`) is
+routes yet. The existing canvas-only export (`docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md`) is
 unaffected and still works as its own smaller convenience.
 
 **Design note, written before implementation (2026-09-28) — the "thin wrapper" framing above
@@ -274,7 +283,7 @@ mis-map old fields into new columns.
    (multipart file upload or raw JSON body — decide at implementation time based on what's
    simpler for the frontend to wire up).
 4. Frontend: an Export button next to (or replacing/subsuming) the existing canvas-only export
-   (`docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`'s `handleExport`) — **decide whether the canvas-only
+   (`docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md`'s `handleExport`) — **decide whether the canvas-only
    export stays as a separate, smaller "just the canvas JSON" convenience, or is retired in
    favor of this strictly-more-complete one.** Leaning toward keeping both: the canvas-only one
    is useful for quick within-tenant canvas backup/sharing without touching Guards/MCP/etc.,
@@ -311,5 +320,5 @@ currently working as designed for both paths.
 - **Do not build a second, parallel export mechanism.** Three pieces already exist (above); the
   plan is to complete and connect them, not add a fourth.
 - **Do not attempt UUID/logical-ID schema refactor.** Investigated and rejected — the rewrite
-  chain is shallow (two ID families), per `docs/APP_EXPORT_IMPORT_INVESTIGATION.md` §3/§6. Not
+  chain is shallow (two ID families), per `docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md` §3/§6. Not
   justified by the stated use cases (one-time move, backup/restore).

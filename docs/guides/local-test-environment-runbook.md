@@ -1,3 +1,12 @@
+---
+title: Local / Test Environment Runbook
+type: guide
+status: draft
+last_verified: unverified
+---
+
+> Legacy runbook; not re-verified in the docs reboot.
+
 # Local / Test Environment Runbook
 
 **the-M — multi-agent orchestration platform**  
@@ -523,7 +532,7 @@ Common causes and fixes:
 | Secret derivation logic | `generate-env.sh` / `generate-env.ps1` |
 | Variable name template (safe to commit) | `.env.example` |
 | Master passphrase template | `secrets.local.example` |
-| This runbook | `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` |
+| This runbook | `docs/guides/local-test-environment-runbook.md` |
 
 **Future Claude sessions:** Read this file before any Docker, deployment, environment, or container recreation work. Read `go/internal/config/config.go` to verify Go variable names before touching compose environment blocks. Use `scripts/deploy.sh` for all Compose operations — it is path-independent and safe.
 
@@ -689,7 +698,7 @@ docker compose --project-name them_gateway \
 ## 10. Observability Events Stack (profile: events)
 
 Additive stack for logs / chat / tool-call / activity storage. Design:
-`docs/OBSERVABILITY_STORAGE_DESIGN.md`. **Not part of the normal stack** — nothing in
+`docs/_archive/OBSERVABILITY_STORAGE_DESIGN.md`. **Not part of the normal stack** — nothing in
 `docker-compose.yml` depends on it, and a normal `up` does not start it.
 
 | Container | Role | Port | Data |

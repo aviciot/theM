@@ -11,7 +11,7 @@ import (
 	"github.com/aviciot/them/internal/admin/dal"
 )
 
-// Phase 2 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md — ExportApplication/
+// Phase 2 of docs/plans/app-canvas-config-completeness-plan.md — ExportApplication/
 // ImportApplication round-trip: export a fully-populated source app to an
 // in-memory envelope (the same shape that would be written to a JSON file),
 // then import that envelope into a DIFFERENT tenant with no live source app
@@ -167,7 +167,7 @@ func TestDAL_ExportImportApplication_RoundTrip(t *testing.T) {
 	// the target tenant, since it has no matching agent to reuse — that new
 	// agent's id is captured here (not just agentIDsToClean, which only holds
 	// the ORIGINAL seeded source-side agent) so cleanup doesn't leak it, same
-	// LIFO-ordering fix as docs/LESSONS.md's 2026-09-28 "t.Cleanup" entry:
+	// LIFO-ordering fix as docs/lessons/general.md's 2026-09-28 "t.Cleanup" entry:
 	// delete the referencing application row(s) FIRST, then the agents.
 	var importedAgentIDs []string
 	rows, err := pool.Query(ctx, `SELECT id::text FROM them.agents WHERE tenant_id = $1::uuid`, targetTenantID)

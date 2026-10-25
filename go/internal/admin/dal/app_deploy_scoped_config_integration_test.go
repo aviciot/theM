@@ -9,7 +9,7 @@ import (
 	"github.com/aviciot/them/internal/admin/dal"
 )
 
-// Phase 1 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md — DeployApplication
+// Phase 1 of docs/plans/app-canvas-config-completeness-plan.md — DeployApplication
 // previously silently dropped middleware_wirings (File Guard/PII/prompt-inject
 // config), app_agent_bindings, app_mcp_credentials, app_flow_llm_overrides,
 // app_temporal_config, and app_debug_config on every cross-tenant deploy.

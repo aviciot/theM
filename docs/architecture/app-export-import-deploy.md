@@ -13,7 +13,7 @@ last_verified: 2026-10-24   # code read + live read-only catalog queries; no exp
 
 ## Purpose
 Move an application between tenants/environments or back it up, **without secrets**. The project's hard
-rule (root `CLAUDE.md`, `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md`): everything configurable in the
+rule (root `CLAUDE.md`, `docs/plans/app-canvas-config-completeness-plan.md`): everything configurable in the
 App Canvas must have a working path through export/import and deploy, and the result must be
 functionally identical. This doc records what actually travels today.
 
@@ -78,4 +78,4 @@ Tests: `go test ./internal/admin/...` (+ integration tests in `internal/admin/da
 ## Related
 - `app-canvas-appflow.md` — publish projection and `_resolved_agent_ids`
 - `multi-tenancy-rls.md` — Admin pool vs RLS; `auth-and-roles.md`
-- `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md` — the rule and phase plan (legacy doc)
+- `docs/plans/app-canvas-config-completeness-plan.md` — the rule and phase plan (legacy doc)

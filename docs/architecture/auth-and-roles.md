@@ -19,7 +19,7 @@ last_verified: 2026-10-24   # by reading code; nothing run live this session
 ## Purpose
 Who can call what. Four separate credential types, one auth service (`them-auth-go`) that issues
 dashboard tokens, and the checks the bridge runs on every request. Supersedes the legacy
-`docs/AUTH.md` (parts of it contradict the code; see Known gaps).
+`docs/_archive/AUTH.md` (parts of it contradict the code; see Known gaps).
 
 ## The four credentials
 
@@ -91,7 +91,7 @@ See `docs/plans/code-findings-backlog.md` F-18…F-30. Highlights:
 5. **Refresh doesn't rotate** (old refresh token stays valid for 7d) and doesn't re-check `dashboard_access`.
 6. Login without `tenant_slug` picks `LIMIT 1` with no `ORDER BY` — non-deterministic for multi-tenant users.
 7. `external_jwt`: `SubClaim` config is ignored (always `sub`); empty `Audience` silently skips the audience check.
-8. Legacy `docs/AUTH.md` is wrong on: refresh tokens (they do carry `tenant_id`), and `AdminTenantMiddleware` (no bootstrap fallback any more).
+8. The retired `docs/_archive/AUTH.md` was wrong on: refresh tokens (they do carry `tenant_id`), and `AdminTenantMiddleware` (no bootstrap fallback any more).
 
 ## Where to change things
 | To… | Edit |
@@ -109,4 +109,4 @@ Tests: `go test ./internal/auth/... ./internal/authserver/... ./internal/roles/.
 - `run-lifecycle.md` — where runtime auth is enforced
 - `platform-overview.md` — `them-auth-go` container and routes
 - `docs/plans/code-findings-backlog.md` — F-18…F-30
-- `docs/AUTH.md` — legacy; superseded by this doc
+- `docs/_archive/AUTH.md` — retired; superseded by this doc

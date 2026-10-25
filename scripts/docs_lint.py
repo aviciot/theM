@@ -6,7 +6,7 @@
   docs_lint.py staged           warn-only: staged code whose owning doc is not staged (exit 0)
   docs_lint.py owners PATH...   print the docs that own each path
 
-Front matter spec: docs/DOCS_REBOOT_PLAN.md section 4.
+Front matter spec: docs/plans/docs-reboot-plan.md section 4.
 """
 import subprocess, sys
 from pathlib import Path

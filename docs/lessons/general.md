@@ -1,3 +1,12 @@
+---
+title: Lessons Learned (all areas, to be split)
+type: lessons
+status: draft
+last_verified: unverified
+---
+
+> Append-only. To be split per area in tracker item #12.
+
 # Lessons Learned
 # Append-only. Format: symptom → root cause → fix → watch for next time.
 
@@ -152,7 +161,7 @@ still be running stale code if it was rebuilt from the wrong service name.
 
 ## 2026-09-26 — A dotted default value silently breaks Go text/template, caught only by reading the runtime source
 
-**Symptom:** none in production — caught before shipping, during Phase 5 of `docs/APPFLOW_NAMED_PORTS_PLAN.md` (AppFlow named data-port wiring). A first-cut fix generated default port-binding alias names like `LLM2.output` (readable, traces back to the source node).
+**Symptom:** none in production — caught before shipping, during Phase 5 of `docs/_archive/APPFLOW_NAMED_PORTS_PLAN.md` (AppFlow named data-port wiring). A first-cut fix generated default port-binding alias names like `LLM2.output` (readable, traces back to the source node).
 **Root cause:** `{{.aliasName}}` in AppFlow's `llm`/`condition` node text is executed by real Go `text/template` (`go/internal/appflow/inline.go`'s `renderFlowTemplate`) against `FlowVars`, a flat `map[string]string`. A literal `.` inside the alias is NOT "the map key that happens to contain a dot" — Go's template dotted-field syntax parses `{{.A.B}}` as chained field access ("field `B` of field `A`"), which does not resolve against a flat string map. A dotted alias would have silently mis-resolved (or errored) the first time a user actually used it, not at write time.
 **Fix:** the alias-name sanitizer (both the auto-generated default in `useInlinePortWiring.ts` and the manual rename field in `PortAliasField.tsx`) folds a literal `.` to `_` alongside whitespace/braces/quotes. Default alias naming uses `<SourceDisplayName>_<var>` (underscore joiner), never dotted. A dedicated regression test (`generated alias never contains a literal dot...`) pins this down so it can't silently regress.
 **Watch for:** any time a frontend feature generates a string that gets interpolated into a Go `text/template` string (here: AppFlow's `{{.x}}` FlowVars templates; also true of agentgen's equivalent), **read the actual template-execution code** (`Parse`/`Execute` call site + the data type it executes against) before assuming a "just a string key" model — don't reason about Go template syntax from the `{{.x}}` shape alone. A `map[string]string` and a nested struct look identical in `{{.x}}` prose but behave completely differently the moment the key contains a `.`.
@@ -225,7 +234,7 @@ still be running stale code if it was rebuilt from the wrong service name.
 **Symptom:** Login returns 200, but the page immediately shows "Failed to load user". Auth-go logs show no `/me` request ever arriving.
 **Root cause:** The Next.js login route sets auth cookies with `Secure=true` when `NODE_ENV=production`. Browsers silently discard `Secure` cookies on plain HTTP — so the cookie set by `/api/auth/login` is never sent on the immediately following `/api/auth/me` call, which returns 401.
 **Fix:** Added `COOKIE_SECURE` env var to the frontend. When set to `"false"`, cookies are issued without the `Secure` flag. `docker-compose.yml` sets `COOKIE_SECURE=false` for local/HTTP deployments. Remove it (or set to `"true"`) for HTTPS production (Hetzner with TLS).
-**Watch for:** Any new environment that serves over plain HTTP — must have `COOKIE_SECURE=false` set. Any environment that moves to HTTPS must remove it. See `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` for the full variable table.
+**Watch for:** Any new environment that serves over plain HTTP — must have `COOKIE_SECURE=false` set. Any environment that moves to HTTPS must remove it. See `docs/guides/local-test-environment-runbook.md` for the full variable table.
 
 ---
 
@@ -1142,7 +1151,7 @@ sequence in the same migration as the table, and verify with a real INSERT via a
 
 ## `/ws/dashboard`'s `run:*` channels never delivered live events, only a one-shot snapshot (found 2026-09-23)
 
-While building App Canvas Debug Mode Phase 5's frontend (`docs/APP_CANVAS_DEBUG_PLAN.md`), a real
+While building App Canvas Debug Mode Phase 5's frontend (`docs/_archive/APP_CANVAS_DEBUG_PLAN.md`), a real
 debug run against the live stack consistently produced `{"type":"subscribed",...}` and then
 **nothing** over `/ws/dashboard` for a `run:{id}` channel — despite the run completing successfully
 and its Redis Stream (`them:dash:run:{id}:stream`) containing the full, correct
@@ -1316,7 +1325,7 @@ component actually read it at runtime."
 ## A TTL was sized against a remembered constant instead of the constant's actual current value (found 2026-09-23)
 
 While re-deriving `debugcred.TTL` for a bounded debug-run lifetime
-(`docs/APPFLOW_RUNTIME_PARAMS_PLAN.md`), the previous round's 30-minute TTL turned out to have been
+(`docs/_archive/APPFLOW_RUNTIME_PARAMS_PLAN.md`), the previous round's 30-minute TTL turned out to have been
 sized against an assumption that `appFlowActivityTimeout` (`go/internal/appflow/workflow.go`) was
 120 seconds. Re-reading the actual constant mid-implementation this round found it is
 `10 * time.Minute` — a 5x discrepancy. The true worst case for even one node exhausting all retries
@@ -1382,7 +1391,7 @@ specific container being tested first, even if it "was already rebuilt earlier t
 ## `docker compose restart` does NOT pick up a freshly built image — only `up -d` does (found 2026-09-28)
 
 **Symptom:** File Guard's raw-bytes synchronous-wait fix (Phase 0 of
-`docs/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md`) kept showing the pre-fix `"pending"` trace on live runs,
+`docs/_archive/APPFLOW_GUARD_OUTPUT_PORTS_PLAN.md`) kept showing the pre-fix `"pending"` trace on live runs,
 across two separate rebuild+restart cycles, even though `docker inspect <container> --format
 '{{.Image}}'` and `docker images ... --format '{{.ID}}'` appeared consistent enough at a glance to
 look like the fix was deployed. Only surfaced clearly once a temporary debug log line was added,
@@ -1417,7 +1426,7 @@ Found while live-verifying `go/TEST_INDEX.md`'s S1-177 (File Guard Phase 0).
 
 **Symptom:** `stage2-graph-llm-condition-v2`'s Debug button failed with `validate: [unresolved_agent]
 agent node has no resolved agent_id` — already a documented "known limitation" in
-`docs/APP_CANVAS_DEBUG_PLAN.md` (an agent-kind canvas node's real `agents.id` is only stamped into
+`docs/_archive/APP_CANVAS_DEBUG_PLAN.md` (an agent-kind canvas node's real `agents.id` is only stamped into
 the definition JSON's `_resolved_agent_ids` map by `PublishDefinition`, at publish time). The
 existing framing treated this as an acceptable, if annoying, side effect of "debug runs the draft
 directly, no publish required" being the Phase 5 design decision. The user pushed back hard on
@@ -1611,7 +1620,7 @@ that a future copy path could miss the same way?
 
 ## `t.Cleanup`'s LIFO order silently leaked test fixture rows on every single run (found 2026-09-28)
 
-**Found while:** writing integration tests for Phase 1 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md
+**Found while:** writing integration tests for Phase 1 of docs/plans/app-canvas-config-completeness-plan.md
 (`app_deploy_scoped_config_integration_test.go`) — a fixed-slug agent seed collided with
 `component_definitions_tenant_unique` on the SECOND run, even though the first run reported
 `--- PASS`. Confirmed live: the passing run's own `t.Cleanup` for the seeded agent silently never
@@ -1660,7 +1669,7 @@ twice in a row and noticing the second run collided.
 ## `to_jsonb`/import round-trip: a real array column is not the same as a JSONB column (found 2026-09-28)
 
 **Found while:** building Phase 2's file-based app export/import
-(docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md) — `TestDAL_ExportImportApplication_RoundTrip`
+(docs/plans/app-canvas-config-completeness-plan.md) — `TestDAL_ExportImportApplication_RoundTrip`
 failed on `ImportApplication`'s very first orchestrator insert: `column "edges" is of type
 text[] but expression is of type jsonb`.
 
@@ -1721,13 +1730,13 @@ that doesn't exist yet at the time cleanups are normally registered.
 **What happened:** while building the new full-app export/import (docs/
 APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md Phase 2), a much older, narrower canvas-only Export/Import
 feature already existed in the App Canvas builder (`CanvasBuilderView.tsx`'s `handleExport`/
-`handleImportJSON`, per `docs/APP_CANVAS_EXPORT_IMPORT_PLAN.md`, built 2026-09-22) — pure
+`handleImportJSON`, per `docs/_archive/APP_CANVAS_EXPORT_IMPORT_PLAN.md`, built 2026-09-22) — pure
 frontend, canvas JSON only (nodes/edges), no guards/agents/cross-tenant support. Adding the new
 Runtime-tab Export/Import next to it, without first checking whether the old one should be
 removed, meant the user ended up looking at two buttons both labeled "Export"/"Import" with no
 way to tell from the UI alone that they did completely different things.
 
-**Root cause:** the earlier investigation (docs/APP_EXPORT_IMPORT_INVESTIGATION.md) inventoried
+**Root cause:** the earlier investigation (docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md) inventoried
 every *table* an app touches, but never checked what *frontend features* already claimed to
 solve export/import — so the new work was designed and half-built before the collision was
 noticed, by the user, not by the person building it.

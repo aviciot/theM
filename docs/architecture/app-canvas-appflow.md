@@ -134,5 +134,5 @@ Tests: `go test ./internal/appflow/... ./internal/admin/... ./internal/debugcred
 ## Related
 - `run-lifecycle.md` — admission, `Start`/`StartAppFlow`, run stream
 - `platform-overview.md` — worker containers and queues
-- `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md` — export/import completeness rule
+- `docs/plans/app-canvas-config-completeness-plan.md` — export/import completeness rule
 - `docs/_archive/` plan docs referenced in code comments (`APP_CANVAS_DEBUG_PLAN`, `APPFLOW_TEXT_GUARDS_PLAN`, …) are history only

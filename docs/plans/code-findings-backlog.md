@@ -29,7 +29,7 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-12 | M | Run lifecycle | WS drops `file` + `canceled/terminated/timed_out`; SSE drops the 3 terminal types; only WS supports follow-up messages | `ws/handler.go`, `sse/handler.go` | open |
 | F-13 | L | Run lifecycle | Per-user daily cost ignores gateway spend (`GetUserDailySpendFromGateway` unused) | `execution/lifecycle.go` | open |
 | F-14 | L | Docs/code | Stale comments (Python-era, in-process bus, "agents rejected", `local` = goroutine loop) | ws, sse, appflow, publish | open |
-| F-15 | L | Docs | `REDIS.md` has Python-era keys, lacks `them:events`, `them:events:dlq`, `them:ep:gate:queue:{slug}` | `docs/REDIS.md` | open |
+| F-15 | L | Docs | `REDIS.md` has Python-era keys, lacks `them:events`, `them:events:dlq`, `them:ep:gate:queue:{slug}` | `docs/reference/redis.md` | open |
 | F-16 | L | Config | Root `CLAUDE.md` has Python-era rules and a wrong container map; says 2 dag workers (compose has 4 + debug) | `CLAUDE.md` | open |
 | F-17 | L | Ops | `version:` still in `docker-compose.yml`; many stray status/result files in repo root | repo root | open |
 | F-18 | H | Auth | Logout only blacklists inside `authserver`; bridge/admin/user-mgmt/`user_jwt` EPs never check the blacklist, so a logged-out token works until expiry | `auth/jwt.go`, `auth/middleware.go`, `authserver/service.go` | open |
@@ -44,7 +44,7 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-27 | L | Auth | HS256 validation accepts tokens with no `type`; unparsable `sub` becomes user 0 silently | `auth/jwt.go` | open |
 | F-28 | L | Auth | `Cache.Revoke` has no production caller (admin tokens service re-implements it inline) | `auth/token_cache.go`, `admin/service/tokens.go` | open |
 | F-29 | L | Auth | `JWTMiddleware` returns `err.Error()` to client; `RuntimeLogin` and `Login` duplicate logic | `auth/middleware.go`, `authserver/service.go` | open |
-| F-30 | L | Docs | Legacy `docs/AUTH.md` contradicts code (refresh claims, bootstrap tenant fallback) | `docs/AUTH.md` | open |
+| F-30 | L | Docs | Legacy `AUTH.md` contradicted code (refresh claims, bootstrap tenant fallback) | `docs/_archive/AUTH.md` | fixed (archived in docs reboot #11; replaced by architecture/auth-and-roles.md) |
 | F-31 | H | Tenancy | Gate/session Redis keys use only the EP slug (`them:ep:{slug}:*`, queue key): tenants with same EP slug share one cap and queue | `gate/gate.go`, `session/session.go` | open |
 | F-32 | H | Tenancy | Superuser `them` is the DB user for auth-go, mcp-service, middleware-worker, agent-runtime and the bridge's legacy pool (bypasses RLS/FORCE) | compose env, `cmd/*/main.go` | open |
 | F-33 | M | Tenancy | Only ~8 admin handlers use `BeginTenantTx`; ~36 Admin-pool (BYPASSRLS) sites rely on hand-written `WHERE tenant_id` | `internal/admin`, workers | open |
@@ -69,7 +69,7 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-52 | L | Gateway | `gateway_clients` has no expiry/revoked/enabled; `last_seen` never updated; no throttling of bad tokens | `llmgateway/dal.go`, `db/100_*.sql` | open |
 | F-53 | L | Gateway | Policy errors fail open on direct path but closed on profile-app path; nil policy never cached (DB hit per request) | `llmgateway/service.go`, `dal.go` | open |
 | F-54 | L | Gateway | `modelToProvider` has no gemini (providers seeded in db/107); profile-app "streaming" is one chunk | `llmgateway/service.go` | open |
-| F-55 | L | Docs | `llmresolve` header claims platform-default fallback (code never uses it); `them:gateway:policy:v2:*` missing from `REDIS.md` | `llmresolve/llmresolve.go`, `docs/REDIS.md` | open |
+| F-55 | L | Docs | `llmresolve` header claims platform-default fallback (code never uses it); `them:gateway:policy:v2:*` missing from `REDIS.md` | `llmresolve/llmresolve.go`, `docs/reference/redis.md` | open |
 | F-56 | H | MCP | `/internal/execute` and `/internal/probe` have no auth; body-supplied `application_id`/`test_credential` trusted; any container on the network can use any app's MCP credentials | `mcp/server.go`, `mcp/executor.go` | open |
 | F-57 | H | MCP | MCP server `url` not validated (any scheme/host/internal IP) → SSRF; `MCP_ALLOW_HTTP`/`MCP_ALLOW_STDIO` never enforced | `admin/service/mcp_servers.go`, `mcp/config.go` | open |
 | F-58 | H | MCP | Admin `POST /mcp-servers/{id}/probe` skips tenant ownership check (IDOR by UUID) and service loads by ID only | `admin/mcp_servers.go`, `mcp/dal.go` | open |
@@ -101,3 +101,4 @@ Severity: **H** security / data loss / silent wrong result · **M** wrong behavi
 | F-84 | M | Export | Import trusts file contents (agent `endpoint_url`, spec, definition, `content_hash`); only `export_version` validated | `dal/app_export.go` | open |
 | F-85 | L | Export | `appflow_debug_presets` and `tenant_role_grants` have `application_id` but are not in `appScopedConfigTables` (rule in CLAUDE.md) | `dal/app_deploy.go` | open |
 | F-86 | L | Export | No audit entries visible for deploy/export/import; deploy slug suffix is random so repeat deploys create duplicates | `admin/applications.go` | open |
+| F-87 | L | Docs | ~206 comments/strings in ~135 source files (Go, TS, scripts, compose) point at old `docs/<NAME>.md` paths that were archived to `docs/_archive/`; comment-only fix, plus a link check in docs-lint (tracker #13) | repo-wide | open |

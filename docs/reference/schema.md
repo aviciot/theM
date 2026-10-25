@@ -1,3 +1,12 @@
+---
+title: Database Schema (legacy reference)
+type: reference
+status: draft
+last_verified: unverified
+---
+
+> Legacy; written 2026-09-04 from db/001..077; known stale (see backlog F-35). Regenerate from live DB (tracker #13).
+
 # the-M Database Schema
 # Last updated: 2026-09-04
 # Source of truth: db/001_schema.sql + migrations db/003 through db/077
@@ -78,7 +87,7 @@ card_synthesizer/security_scanner config — see `them.tenant_system_agent_confi
 per-tenant override). Each role in `system_agents.roles` now also carries `mode` ("" or "custom" =
 today's provider/model/api_key_encrypted/base_url/system_prompt fields; "general" = `provider` +
 `key_id` resolved against the-M's own platform-owned `them.llm_provider_keys` rows, mirroring the
-per-tenant general/custom pattern — see `docs/TENANT_LLM_PROVIDERS_PLAN.md`'s "the-M admin gets the
+per-tenant general/custom pattern — see `docs/_archive/TENANT_LLM_PROVIDERS_PLAN.md`'s "the-M admin gets the
 same General/Custom parity" section).
 
 | Column | Type | Purpose |
@@ -132,7 +141,7 @@ point, test message, step mode, and per-node LLM overrides they typed into the d
 reload them next time instead of re-entering everything. Presets are personal: scoped to
 `(tenant_id, user_id, application_id)`, never visible to other users even within the same
 tenant/app (deliberately not folded into the tenant Role model — see
-`docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md`).
+`docs/_archive/UNIFIED_ROLE_GOVERNANCE_DESIGN.md`).
 
 `llm_overrides` is a JSONB map keyed by canvas `node_id`, mirroring `debugStartBody.LLMOverrides`
 plus one change: any Custom-mode `api_key` is Fernet-encrypted (`api_key_encrypted`, same scheme as
@@ -320,7 +329,7 @@ One row per orchestrator invocation (user goal → final answer).
 ## them.run_steps
 One row per agent (tool) invocation within an orchestrator-mode run, OR one row
 per DAG node execution within an AppFlow (Graph-mode) run (migration 103 —
-App Canvas Debug Mode Phase 3, `docs/APP_CANVAS_DEBUG_PLAN.md`). The two shapes
+App Canvas Debug Mode Phase 3, `docs/_archive/APP_CANVAS_DEBUG_PLAN.md`). The two shapes
 never mix within one run: orchestrator-mode rows populate `agent_slug`/
 `iteration`; AppFlow rows populate `node_id`/`node_kind` instead and use
 `iteration=0` as a not-applicable sentinel. Kept for backward compatibility;
@@ -714,13 +723,13 @@ Registry of middleware component types (builtin and tenant-scoped). Migration: `
 
 Attaches one guard (`middleware_defs` row) to one canvas node instance within
 one application. Migration: `db/013_agentic_middleware.sql`; `node_id` added
-by `docs/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md` Phase 2.
+by `docs/_archive/APPFLOW_A2A_RESPONSE_KINDS_PLAN.md` Phase 2.
 
 | Column | Type | Purpose |
 |---|---|---|
 | id | UUID PK | |
 | application_id | UUID FK→applications | ON DELETE CASCADE |
-| agent_id | UUID FK→agents, **nullable** | Made nullable by `db/114` (`docs/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 4) — an `llm` canvas node has no `agents` row at all (its provider/model come from the app's Runtime tab, not an agent record), so a wiring scoped to an `llm` node has `agent_id IS NULL` and is identified by `node_id` alone. Every query joining `agents` must use `LEFT JOIN`, never inner `JOIN` — an inner join silently excludes every llm-node wiring. |
+| agent_id | UUID FK→agents, **nullable** | Made nullable by `db/114` (`docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 4) — an `llm` canvas node has no `agents` row at all (its provider/model come from the app's Runtime tab, not an agent record), so a wiring scoped to an `llm` node has `agent_id IS NULL` and is identified by `node_id` alone. Every query joining `agents` must use `LEFT JOIN`, never inner `JOIN` — an inner join silently excludes every llm-node wiring. |
 | def_id | UUID FK→middleware_defs | ON DELETE RESTRICT |
 | position | INT | Legacy per-agent ordering slot; `uq_mw_wiring_app_agent_pos UNIQUE(application_id, agent_id, position)` still protects pre-`node_id` wirings, but is not the real identity for anything created after `node_id` existed |
 | node_id | TEXT, nullable | The real identity for every wiring created via App Canvas's Guards UI — scopes a guard to one specific canvas node instance, not just an agent globally (two boxes using the same agent get independent configs). `uq_mw_wiring_app_node UNIQUE(application_id, node_id) WHERE node_id IS NOT NULL AND node_id <> ''` — a **partial unique index**, not a named constraint (`ON CONFLICT ON CONSTRAINT` does not work against it; use the inference-target form `ON CONFLICT (application_id, node_id) WHERE ...` instead — confirmed live, `ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_node` fails with "constraint does not exist") |
@@ -896,8 +905,8 @@ Key relationships:
 | `db/101_app_flow_llm_overrides.sql` | Node Registry Phase 1: `them.app_flow_llm_overrides` table — per-app, per-node provider+model override for app-canvas inline LLM nodes, applied at workflow start ahead of the canvas-compiled value. |
 | `db/103_run_steps_appflow_trace.sql` | App Canvas Debug Mode Phase 3: `them.run_steps` gains `node_id`/`node_kind` (nullable) for AppFlow DAG node traces + a partial unique index on `(run_id, node_id) WHERE node_id IS NOT NULL`. Also drops the broken `tool_call_id TEXT NOT NULL` column (never populated by its writer — every insert should have been failing). |
 | `db/112_file_guard_mode_options.sql` | UX fix found live-testing the Guards section (App Canvas): file-guard's `mode` config field was free text with only 2 valid runtime values (`block`/`warn`), letting a user silently misconfigure it with a typo. Adds `"options": ["block", "warn"]` to that one field inside `them.middleware_defs.config_fields` — new generic `options` sub-key (`internal/nodedefs.ConfigFieldDoc.Options`), frontend renders a `<select>` when present instead of an `<input>`. |
-| `db/113_pii_prompt_guard_defs.sql` | `docs/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 2: 2 new `middleware_defs`/`component_definitions` row pairs (`pii_redact`, `prompt_inject`), splitting the old combined `guard_default` row (disabled, not deleted) to match `av_scan`/`file-guard`'s existing one-def-per-processor pattern. Each new `middleware_defs.config` is a flat processor config (not `file-guard`'s nested `SecurityConfig` shape) — see the `them.middleware_wirings` section above. |
-| `db/114_middleware_wirings_agent_optional.sql` | `docs/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 4: `them.middleware_wirings.agent_id` becomes nullable — an `llm` canvas node has no `agents` row at all, so it could never get any guard wiring before this. `node_id` is the real identity going forward for both agent and llm-node wirings; `uq_mw_wiring_app_agent_pos` is left in place (still protects pre-`node_id` wirings) but is no longer the meaningful uniqueness guarantee for new wirings. |
+| `db/113_pii_prompt_guard_defs.sql` | `docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 2: 2 new `middleware_defs`/`component_definitions` row pairs (`pii_redact`, `prompt_inject`), splitting the old combined `guard_default` row (disabled, not deleted) to match `av_scan`/`file-guard`'s existing one-def-per-processor pattern. Each new `middleware_defs.config` is a flat processor config (not `file-guard`'s nested `SecurityConfig` shape) — see the `them.middleware_wirings` section above. |
+| `db/114_middleware_wirings_agent_optional.sql` | `docs/_archive/APPFLOW_TEXT_GUARDS_PLAN.md` Phase 4: `them.middleware_wirings.agent_id` becomes nullable — an `llm` canvas node has no `agents` row at all, so it could never get any guard wiring before this. `node_id` is the real identity going forward for both agent and llm-node wirings; `uq_mw_wiring_app_agent_pos` is left in place (still protects pre-`node_id` wirings) but is no longer the meaningful uniqueness guarantee for new wirings. |
 | `db/115_pii_llm_assist_placeholder.sql` | Marks `pii_redact`'s `llm_assist` config field `"placeholder": true` (new `internal/nodedefs.ConfigFieldDoc.Placeholder`) — the field is stored/round-tripped but has no real detection logic behind it yet; the Guards UI labels it "(placeholder)" instead of implying it works. |
 | `db/116_pii_categories_field.sql` | New `categories` config field on `pii_redact` — `type: "array"`, `options: ["email","phone","credit_card","ssn"]` (matches `internal/middleware/pii.CategoryNames()` exactly). Empty/omitted means all categories are scanned (fail-open). Frontend renders this as a real checkbox list, not comma-separated free text, since `options` is now honored for `array`-typed fields too, not just `string` dropdowns. |
 
@@ -952,7 +961,7 @@ All `them.*` tables are protected by Postgres RLS. Three DB roles are in use:
 
 ## `them.governance_policies` (db/122_governance_policies.sql)
 
-One row per (tenant, scope). Holds the governance policy document (limits + logging) — see `docs/GOVERNANCE_POLICY_DESIGN.md`.
+One row per (tenant, scope). Holds the governance policy document (limits + logging) — see `docs/_archive/GOVERNANCE_POLICY_DESIGN.md`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -965,4 +974,4 @@ One row per (tenant, scope). Holds the governance policy document (limits + logg
 | version, updated_at, updated_by | | |
 
 UNIQUE `(tenant_id, scope_type, scope_id)`. `gateway_clients.governance_profile_id` (UUID FK, ON DELETE SET NULL) points a client at a `profile` row.
-Data copied from `gateway_policies` (-> `tenant`) and `gateway_policy_profiles` (-> `profile`). Those two tables are legacy: **to be dropped once stable** (see docs/STATUS.md).
+Data copied from `gateway_policies` (-> `tenant`) and `gateway_policy_profiles` (-> `profile`). Those two tables are legacy: **to be dropped once stable** (see docs/_archive/STATUS.md).

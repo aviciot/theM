@@ -1,3 +1,10 @@
+---
+title: Current State
+type: plan
+status: current
+last_verified: unverified
+---
+
 # Current State — the-M
 # Last Updated: 2026-10-22 00:00 UTC
 # Branch: main
@@ -8,14 +15,14 @@
 ## DOCS REBOOT IN PROGRESS (read this first)
 
 Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints only).
-- Plan + **progress tracker (section 9)**: `docs/DOCS_REBOOT_PLAN.md`
+- Plan + **progress tracker (section 9)**: `docs/plans/docs-reboot-plan.md`
 - Done: archive + skeleton (`6cbf4cd9`), `architecture/events-pipeline.md`, `architecture/platform-overview.md`, `architecture/run-lifecycle.md`, `architecture/app-canvas-appflow.md`, `architecture/auth-and-roles.md`, `architecture/multi-tenancy-rls.md`, `architecture/llm-gateway.md`, `architecture/mcp-service.md`, `architecture/a2a-agents-agentgen.md`, `architecture/app-export-import-deploy.md`
-- Next: item #11 in the tracker (front matter + move kept docs into folders)
+- Next: item #12 in the tracker (split `lessons/general.md` per area). Doc paths changed in #11: see `docs/plans/docs-reboot-plan.md`
 - Open code bugs found by #3/#4 (not fixed, docs only; #4: fork-branch errors swallowed, guards skipped in branches): reconciler workflow-ID mismatch, `session.Touch` never called, silent pre-orchestrator failures — see `run-lifecycle.md` Known gaps
 - Workflow per doc: `/docs-update` skill; template `docs/_templates/architecture.md`; verify with `python3.12 scripts/docs_lint.py check && ... index`
 - Hook is warn-only (`.githooks/`, `core.hooksPath` set locally); the `staged` warning has NOT been tested end-to-end yet
 - Rules: write from code/tests, never copy from archive; no new top-level docs; update the tracker + this section when you finish an item
-- **Handover rule:** do NOT hand over per item; keep going to the next item. Hand over only when context is almost full (or user asks), with a short paste-ready prompt (template in `docs/DOCS_REBOOT_PLAN.md` section 10)
+- **Handover rule:** do NOT hand over per item; keep going to the next item. Hand over only when context is almost full (or user asks), with a short paste-ready prompt (template in `docs/plans/docs-reboot-plan.md` section 10)
 - **Findings backlog:** `docs/plans/code-findings-backlog.md` — add every bug/risk found while documenting; must be kept updated
 - Unrelated work below (performance/delivery testing) is the previous session's state
 
@@ -45,13 +52,13 @@ Docs are being rebuilt from the code. Old docs are in `docs/_archive/` (hints on
    - Scenario 40: 3 runs per mode (postgres, dual)
    - Results: +13% median latency preliminary (needs more runs for confidence)
 
-2. ✅ **Schema fully documented** (`docs/SCHEMA_GATEWAY_EVENTS.md`)
+2. ✅ **Schema fully documented** (`docs/_archive/SCHEMA_GATEWAY_EVENTS.md`)
    - PostgreSQL `gateway_requests` (17 columns)
    - ClickHouse `events_gateway_request` (22 columns)
    - ID mapping: PG `id` (UUID) → CH `request_id` (String)
    - Verification methodology documented
 
-3. ✅ **Delivery question resolved** (`docs/DELIVERY_VERIFICATION_CONCLUSION.md`)
+3. ✅ **Delivery question resolved** (`docs/_archive/DELIVERY_VERIFICATION_CONCLUSION.md`)
    - **Finding**: Events deliver successfully in dual mode
    - "10+ minute delay" was verification timing error, not failure
    - Event-writer healthy, 300/300 events delivered
@@ -103,10 +110,10 @@ All core + events containers running:
 ## Performance Testing Results
 
 ### Documentation
-- `docs/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Full test results
-- `docs/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan (optional)
-- `docs/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery verification closed
-- `docs/SCHEMA_GATEWAY_EVENTS.md` - Schema reference
+- `docs/_archive/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Full test results
+- `docs/_archive/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan (optional)
+- `docs/_archive/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery verification closed
+- `docs/_archive/SCHEMA_GATEWAY_EVENTS.md` - Schema reference
 
 ### Scripts
 - `scripts/perf_focused_test.py` - Corrected benchmark runner
@@ -189,11 +196,11 @@ All core + events containers running:
 ## Files Changed (since 90a817aa)
 
 ### New Documentation
-- `docs/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Test results and analysis
-- `docs/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan
-- `docs/SCHEMA_GATEWAY_EVENTS.md` - Complete schema reference
-- `docs/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery question closed
-- `docs/PERFORMANCE_TEST_IN_PROGRESS.md` - Test execution log
+- `docs/_archive/PERFORMANCE_TEST_RESULTS_FOCUSED.md` - Test results and analysis
+- `docs/_archive/PERFORMANCE_TEST_NEXT_STEPS.md` - Further testing plan
+- `docs/_archive/SCHEMA_GATEWAY_EVENTS.md` - Complete schema reference
+- `docs/_archive/DELIVERY_VERIFICATION_CONCLUSION.md` - Delivery question closed
+- `docs/_archive/PERFORMANCE_TEST_IN_PROGRESS.md` - Test execution log
 
 ### New Scripts
 - `scripts/perf_focused_test.py` - Performance benchmark runner (Python)

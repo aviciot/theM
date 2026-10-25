@@ -1,3 +1,12 @@
+---
+title: A2A Test Agents (a2a-echo, a2a-slow, a2a-stream)
+type: guide
+status: draft
+last_verified: unverified
+---
+
+> Legacy; written 2026-07-05; not re-verified.
+
 # A2A Test Agents
 # Last updated: 2026-07-05
 
@@ -219,4 +228,4 @@ All three agents implement A2A v1.0 JSON-RPC 2.0. Key wire details:
 | Terminal states | `TASK_STATE_COMPLETED` etc. | Proto enum names from SDK v1.1 |
 
 See `docs/ADAPTERS.md` for the full `A2aAsyncAdapter` constructor and event sequence.
-See `docs/LESSONS.md` for the full list of SDK v1.1 gotchas discovered during live testing.
+See `docs/lessons/general.md` for the full list of SDK v1.1 gotchas discovered during live testing.

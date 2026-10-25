@@ -1,3 +1,12 @@
+---
+title: Docs Reboot Plan and Progress Tracker
+type: plan
+status: current
+last_verified: unverified
+---
+
+> Section 9 is the progress tracker; update every session.
+
 # Docs Reboot Plan
 
 Status: PROPOSAL (2026-10-24) — nothing moved or deleted yet.
@@ -110,7 +119,7 @@ Status: `todo` → `done` (written from code, verified, committed). Method per d
 | 8 | MCP service | `go/internal/mcp/`, `go/cmd/mcp-service/` | done (see git log) |
 | 9 | A2A agents & agentgen | `go/cmd/agent-runtime/`, `go/internal/agentgen/`, `a2a/` | done (see git log) |
 | 10 | App export/import & Deploy-to-Tenant | `go/internal/admin/dal/app_deploy.go` | done (see git log) |
-| 11 | Give kept docs front matter + move into folders (`SCHEMA`, `REDIS` → `reference/`; ADRs → `decisions/`; runbook → `guides/`; `AUTH` merges into #5) | — | todo |
+| 11 | Give kept docs front matter + move into folders (`SCHEMA`, `REDIS` → `reference/`; ADRs → `decisions/`; runbook → `guides/`; `AUTH` merges into #5) | — | done (see git log) |
 | 12 | Split `LESSONS.md` per area into `docs/lessons/` | — | todo |
 | 13 | Generated reference (schema, routes, node types) + CI `docs-lint` | — | todo |
 | 14 | Switch hook from warn to block (once 2–10 are done and stable) | — | todo |
@@ -133,4 +142,6 @@ Hand over **only when context is almost full** (or the user asks). At that point
 1. Commit the work and make sure the tracker and `docs/CURRENT.md` (next item number, HEAD) are current.
 2. **Send the user a short handover prompt in chat** (3–4 lines) they can paste into a fresh session. Template:
 
-> Continue the docs reboot. Read `docs/CURRENT.md` and `docs/DOCS_REBOOT_PLAN.md` section 9, then do item #N (<name>) using `/docs-update` and `docs/_templates/architecture.md`. Write from the code, not the archive. Update the tracker and commit.
+> Continue the docs reboot. Read `docs/CURRENT.md` and `docs/plans/docs-reboot-plan.md` section 9, then do item #N (<name>) using `/docs-update` and `docs/_templates/architecture.md`. Write from the code, not the archive. Update the tracker and commit.
+
+Done in #11: moved to `reference/schema.md`, `reference/redis.md`, `decisions/00N-*.md`, `guides/local-test-environment-runbook.md`, `guides/a2a-test-agents.md`, `lessons/general.md` (split in #12), `plans/app-canvas-config-completeness-plan.md`, `plans/docs-reboot-plan.md`; archived `AUTH.md`, `A2A_REFERENCE.md`. All references updated in docs, CLAUDE.md files, skills, hooks and scripts (the test scripts read `docs/reference/redis.md`). Legacy docs carry `last_verified: unverified` and `status: draft` until re-verified. Source-code comments that point at archived plan docs are tracked as backlog F-87. No Go toolchain on this host: Go/TS edits were comment-only (checked by diff), not compiled.

@@ -9,7 +9,7 @@ import (
 
 // ExportFileFormatVersion is the current envelope schema version. A future
 // change to the envelope shape must bump this and either migrate or reject
-// an older file at import time — see docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md
+// an older file at import time — see docs/plans/app-canvas-config-completeness-plan.md
 // Phase 2.
 const ExportFileFormatVersion = 1
 
@@ -305,7 +305,7 @@ func scanRawMessages(rows RowScanner) ([]json.RawMessage, error) {
 // combined, but every INSERT's values come from a decoded envelope instead of
 // a live SELECT ... FROM them.applications WHERE id = $1" — same target
 // shape, same agentIDMap/conflict-detection logic, different source of truth.
-// See docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md Phase 2.
+// See docs/plans/app-canvas-config-completeness-plan.md Phase 2.
 
 // importApplicationRow/importOrchestratorRow/etc. decode exactly the JSON
 // shape ExportApplication's to_jsonb SELECTs produce (keys = column/alias

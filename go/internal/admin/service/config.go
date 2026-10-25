@@ -15,7 +15,7 @@ const monitoringConfigKey = "monitoring"
 // MonitoringConfig controls the App Monitor topology view's heatmap glow and
 // edge-thickness thresholds. Fields removed 2026-09-23 (heatmap_low,
 // panel_max_sessions, stats_window_seconds) were never read by any consumer —
-// see docs/LESSONS.md.
+// see docs/lessons/general.md.
 type MonitoringConfig struct {
 	HeatmapMedium int `json:"heatmap_medium"`
 	HeatmapHigh   int `json:"heatmap_high"`

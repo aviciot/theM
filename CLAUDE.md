@@ -6,15 +6,15 @@
 
 ## Read These First
 
-Docs were reset 2026-10-24 (plan: `docs/DOCS_REBOOT_PLAN.md`). Old docs are in `docs/_archive/` — hints only, never ground truth.
+Docs were reset 2026-10-24 (plan: `docs/plans/docs-reboot-plan.md`). Old docs are in `docs/_archive/` — hints only, never ground truth.
 
 1. `docs/INDEX.md` — generated; find the doc that `owns` the code you are touching.
-2. `docs/CURRENT.md` — current state, next task, blockers.
-3. Reference docs when relevant: `docs/SCHEMA.md` (DB), `docs/REDIS.md` (Redis), `docs/A2A_AGENTS.md`, `docs/AUTH.md`, `docs/LESSONS.md` (before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` (Docker/deploy/containers).
+2. `docs/CURRENT.md` — current state, next task, blockers. Open code bugs found while documenting: `docs/plans/code-findings-backlog.md` (add new ones there).
+3. Reference docs when relevant: `docs/reference/schema.md` (DB), `docs/reference/redis.md` (Redis), `docs/guides/a2a-test-agents.md`, `docs/architecture/auth-and-roles.md`, `docs/lessons/general.md` (before any judgment call), `scripts/tests/INDEX.md` (tests), `docs/guides/local-test-environment-runbook.md` (Docker/deploy/containers).
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
 
-**Before Docker, deployment, environment, or container recreation work, read `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md`. Never commit or print real secrets.**
+**Before Docker, deployment, environment, or container recreation work, read `docs/guides/local-test-environment-runbook.md`. Never commit or print real secrets.**
 
 ---
 
@@ -128,7 +128,7 @@ working path into export/import.** Export an app, import it (or deploy it to ano
 tenant/team), and the result must be functionally identical — no setting silently missing,
 nothing left requiring a manual re-click to restore.
 
-**Full plan, rules, and current gap list: `docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md`.
+**Full plan, rules, and current gap list: `docs/plans/app-canvas-config-completeness-plan.md`.
 Read it before adding any new canvas-configurable feature or touching export/import.**
 
 Quick version of the rule (see the plan doc for the full reasoning):
@@ -139,7 +139,7 @@ Quick version of the rule (see the plan doc for the full reasoning):
 - Choosing (b) is fine, not automatically a gap — File Guard/PII's instant-toggle-without-publish
   behavior is a real, deliberate reason to use (b). The actual failure mode is picking (b) and
   **not** registering the table — that's what happened to `middleware_wirings`, found live
-  2026-09-28 (see `docs/APP_EXPORT_IMPORT_INVESTIGATION.md` and the completeness plan's Phase 1).
+  2026-09-28 (see `docs/_archive/APP_EXPORT_IMPORT_INVESTIGATION.md` and the completeness plan's Phase 1).
 - Do NOT default to a new DB table just because it's easier — check the plan doc's (a)-vs-(b)
   checklist first.
 
@@ -171,7 +171,7 @@ Quick version of the rule (see the plan doc for the full reasoning):
 
 - Every code change: find the owning doc (`python3.12 scripts/docs_lint.py owners <paths>`), update it in the same commit, bump `last_verified`. Use `/docs-update` (`.claude/skills/docs-update.md`).
 - **No new top-level docs.** New doc = one of `docs/{architecture,reference,guides,decisions,plans,lessons}/` with front matter (`docs/_templates/`). No `*_STATUS`, `*_RESULTS`, `HANDOVER_*` files — state goes in `docs/CURRENT.md`, results in commit messages.
-- New Redis key → `docs/REDIS.md`. New DB table/column → `docs/SCHEMA.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/LESSONS.md`.
+- New Redis key → `docs/reference/redis.md`. New DB table/column → `docs/reference/schema.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/lessons/general.md`.
 - Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index`. The pre-commit hook (`.githooks/`) warns if owned code changed without its doc.
 - Trust code over docs; update the doc when they diverge.
 

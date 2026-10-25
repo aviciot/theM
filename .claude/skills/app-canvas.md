@@ -439,7 +439,7 @@ first.**
    don't try to detect "done" cleverly, there's nothing to detect it with.
 
 All of the above was run for real against the live stack this session (not
-assumed) — see `docs/APP_CANVAS_VERIFICATION_PLAN.md` for the actual apps
+assumed) — see `docs/_archive/APP_CANVAS_VERIFICATION_PLAN.md` for the actual apps
 built and their results.
 
 ---

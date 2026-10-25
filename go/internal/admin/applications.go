@@ -966,7 +966,7 @@ func (h *ApplicationsHandler) DeployApplication(w http.ResponseWriter, r *http.R
 }
 
 // ExportApplication handles GET /api/v1/admin/applications/{id}/export —
-// Phase 2 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md. Returns the full,
+// Phase 2 of docs/plans/app-canvas-config-completeness-plan.md. Returns the full,
 // secrets-redacted envelope (application + entry points + orchestrators +
 // the 6 Phase-1 scoped-config tables + every referenced agent bundled by
 // value) as a downloadable JSON file. Platform-global route, RequireSuperAdmin
@@ -1048,7 +1048,7 @@ type importInput struct {
 }
 
 // ImportApplication handles POST /api/v1/admin/applications/import — Phase 2
-// of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md. Creates a brand-new
+// of docs/plans/app-canvas-config-completeness-plan.md. Creates a brand-new
 // application in target_tenant_id from a previously-exported envelope, with
 // no live source application required. Platform-global route,
 // RequireSuperAdmin — target_tenant_id can be ANY tenant. For a tenant admin

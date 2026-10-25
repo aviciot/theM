@@ -1,3 +1,10 @@
+---
+title: ADR-003 Redis Streams for Durable Run Event Delivery
+type: decision
+status: current
+last_verified: unverified
+---
+
 # ADR-003: Redis Streams for Durable Run Event Delivery
 
 **Status:** Accepted — Phase 11c-A implemented 2026-07-21
@@ -194,4 +201,4 @@ No shared state makes any rollback risky.
 
 - `archive/migrations/phase-11c-design.md` — full design with all implementation details (historical)
 - `archive/reports/runbook-reconciler.md` — Phase 11b reconciler (preceding phase)
-- `docs/REDIS.md` — Redis key registry (stream keys added on implementation)
+- `docs/reference/redis.md` — Redis key registry (stream keys added on implementation)

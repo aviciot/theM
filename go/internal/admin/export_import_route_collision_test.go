@@ -1,6 +1,6 @@
 package admin_test
 
-// Phase 2 follow-up (docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md) — a real
+// Phase 2 follow-up (docs/plans/app-canvas-config-completeness-plan.md) — a real
 // route-collision risk: the tenant-scoped and platform-global export/import
 // routes are registered via two SIBLING chi Group() calls sharing one
 // routing tree under /admin, not two separately mounted sub-routers.

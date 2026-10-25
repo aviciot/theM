@@ -16,7 +16,7 @@ import (
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
-// Phase 2 of docs/APP_CANVAS_CONFIG_COMPLETENESS_PLAN.md — ExportApplication/
+// Phase 2 of docs/plans/app-canvas-config-completeness-plan.md — ExportApplication/
 // ImportApplication HTTP handler wiring. The real to_jsonb-based logic is
 // proven against live Postgres in go/internal/admin/dal (see
 // app_export_import_integration_test.go) — a fake DBQuerier can't execute

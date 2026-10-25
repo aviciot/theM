@@ -586,7 +586,7 @@ Use `/test-runner-guide` or reference this skill when:
 
 ## See Also
 
-- `docs/SCHEMA.md` — Database schema for gateway_clients, governance_policies
-- `docs/REDIS.md` — Redis keys for rate limiting
+- `docs/reference/schema.md` — Database schema for gateway_clients, governance_policies
+- `docs/reference/redis.md` — Redis keys for rate limiting
 - `test-runner/data/scenarios/README.md` — Scenario organization guide
 - `test-results/EXTENDED_TEST_RESULTS.md` — Performance test findings

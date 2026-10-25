@@ -284,12 +284,12 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
 |---|---|
 | `docs/INDEX.md` | Find the right doc fast |
 | `docs/CURRENT.md` | Current state and next steps |
-| `docs/LLM_GATEWAY_DESIGN.md` | LLM Gateway design |
-| `docs/MCP_CONTROL_PLANE_DESIGN.md` | MCP gateway design (roadmap) |
-| `docs/UNIFIED_ROLE_GOVERNANCE_DESIGN.md` | Unified roles design (roadmap) |
-| `docs/TENANT_IDENTITY_AND_SSO.md` | Tenants, SSO, user management |
-| `docs/SCHEMA.md` · `docs/REDIS.md` | Data model and Redis keys |
-| `docs/LESSONS.md` | Hard-won lessons |
+| `docs/_archive/LLM_GATEWAY_DESIGN.md` | LLM Gateway design |
+| `docs/_archive/MCP_CONTROL_PLANE_DESIGN.md` | MCP gateway design (roadmap) |
+| `docs/_archive/UNIFIED_ROLE_GOVERNANCE_DESIGN.md` | Unified roles design (roadmap) |
+| `docs/_archive/TENANT_IDENTITY_AND_SSO.md` | Tenants, SSO, user management |
+| `docs/reference/schema.md` · `docs/reference/redis.md` | Data model and Redis keys |
+| `docs/lessons/general.md` | Hard-won lessons |
 | `go/CLAUDE.md` | Go package map and conventions |
 
 ---

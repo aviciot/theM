@@ -16,7 +16,7 @@ Before touching any Go code, read:
 |---|---|
 | `TEST_INDEX.md` | Before adding or changing any test |
 | `../docs/INDEX.md` | Find the architecture doc that owns the package you are changing |
-| `../docs/LESSONS.md` | Before any judgment call — what burned us before |
+| `../docs/lessons/general.md` | Before any judgment call — what burned us before |
 | `../docs/CURRENT.md` | Current state, next task, hard constraints |
 
 ---
@@ -55,7 +55,7 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/llm/` | Provider interface, AnthropicProvider, MockProvider | `provider.go`, `anthropic.go`, `mock.go` |
 | `internal/llmresolve/` | Shared LLM provider key/base_url/pricing resolution (app → tenant → platform precedence); used by `workerconfig`, `cmd/dag-worker`, and `internal/llmgateway` | `llmresolve.go` |
 | `internal/llmgateway/` | LLM Gateway Phase 1 — OpenAI-compatible proxy for closed agents; observe + meter. POST /{tenant_slug}/llm/v1/chat/completions | `handler.go`, `service.go`, `dal.go` |
-| `internal/governance/` | Multi-scope governance policy (limits + logging): `Policy` doc, `Validate`, `Resolve` across tenant/app/client/user. Pure logic; design in `docs/GOVERNANCE_POLICY_DESIGN.md` | `policy.go`, `resolve.go` |
+| `internal/governance/` | Multi-scope governance policy (limits + logging): `Policy` doc, `Validate`, `Resolve` across tenant/app/client/user. Pure logic; design in `docs/_archive/GOVERNANCE_POLICY_DESIGN.md` | `policy.go`, `resolve.go` |
 | `internal/orchestrator/` | Agentic loop, DB-level history LIMIT, cost estimation (default rate card + optional DB-sourced `CostEstimator`) | `orchestrator.go`, `pricing.go` |
 | `internal/temporal/` | Workflow, activity, HITL signal, client | `workflow.go`, `activities.go`, `client.go`, `signaler.go` |
 | `internal/ws/` | WebSocket handler | `handler.go` |
@@ -123,8 +123,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 |---|---|
 | New test | `TEST_INDEX.md` (same commit) |
 | New package | `TEST_INDEX.md` + the owning `docs/architecture/` doc (`owns:` list) + package map above |
-| New Redis key | `docs/REDIS.md` (key + TTL + purpose) |
-| Bug fix or non-obvious behavior | `docs/LESSONS.md` |
+| New Redis key | `docs/reference/redis.md` (key + TTL + purpose) |
+| Bug fix or non-obvious behavior | `docs/lessons/general.md` |
 | New route | the owning `docs/architecture/` doc |
 | Architectural decision | owning `docs/architecture/` doc; trade-offs → ADR in `docs/decisions/` |
 
@@ -226,7 +226,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | Message format | Canonical domain types in DB | `internal/domain/domain.go` |
 | Tenant boundary | Application is the tenant | `docs/_archive/implementation-status.md` (history only) |
 | Bus subscribe timing | Subscribe BEFORE StartWorkflow | `internal/ws/handler.go` line ~154 |
-| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/_archive/lessons-learned.md` (history only; new entries go in `docs/LESSONS.md`) |
+| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/_archive/lessons-learned.md` (history only; new entries go in `docs/lessons/general.md`) |
 | AT TIME ZONE parsing | PG `AT TIME ZONE 'UTC'` on timestamptz returns timestamp without tz suffix — parseTS must handle both formats | `go/internal/admin/dal/tokens.go` |
 
 ---
