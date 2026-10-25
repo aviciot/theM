@@ -6,9 +6,9 @@ last_verified: unverified
 ---
 
 # Current State — the-M
-# Last Updated: 2026-10-22 00:00 UTC
+# Last Updated: 2026-10-25
 # Branch: main
-# HEAD: 9c8ceb5f
+# HEAD: 6b8abdef (docs reboot complete; code unchanged apart from comment-only edits)
 
 ---
 
