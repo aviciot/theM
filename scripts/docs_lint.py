@@ -4,7 +4,7 @@
   docs_lint.py check            validate front matter, folders, owns: paths (exit 1 on errors)
   docs_lint.py index            regenerate docs/INDEX.md from front matter
   docs_lint.py staged           warn-only: staged code whose owning doc is not staged (exit 0)
-  docs_lint.py links            dead docs/*.md references (errors in docs/CLAUDE.md/skills; counts in source comments)
+  docs_lint.py links            dead docs/*.md references (errors in docs, CLAUDE.md files and skills; counts in source comments)
   docs_lint.py stale [DAYS]     report-only: docs unverified or last_verified older than DAYS (default 90)
   docs_lint.py stray            report-only: *.md files outside docs/ that are not on the allow-list
   docs_lint.py owners PATH...   print the docs that own each path
