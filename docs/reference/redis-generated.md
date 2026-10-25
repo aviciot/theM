@@ -10,7 +10,7 @@ generated: true
 
 # Redis keys and channels (generated)
 
-Static scan of string literals starting with `them:` or `rl:` in non-test Go code. A literal is often only the **prefix** of a key built by concatenation (e.g. `them:ep:` + slug + `:sessions`) or a `fmt` pattern (`%s` = the variable part). Treat this as the authoritative list of *where* keys are defined; read the listed file for the full shape, TTL and owner. Narrative: `docs/architecture/*.md` (gate/session in `run-lifecycle.md`, MCP keys in `mcp-service.md`, auth cache in `auth-and-roles.md`). Drift against the running Redis: `python3.12 scripts/gen_reference.py redis-live`.
+Static scan of string literals starting with `them:` or `rl:` in non-test Go code. A literal is often only the **prefix** of a key built by concatenation (e.g. `them:ep:` + slug + `:sessions`) or a `fmt` pattern (`%s` = the variable part). Treat this as the authoritative list of *where* keys are defined; read the listed file for the full shape, TTL and owner. Narrative: `docs/architecture/redis-usage.md` (start here) and `docs/architecture/*.md` (gate/session in `run-lifecycle.md`, MCP keys in `mcp-service.md`, auth cache in `auth-and-roles.md`). Drift against the running Redis: `python3.12 scripts/gen_reference.py redis-live`.
 
 53 literals in 26 groups.
 
