@@ -4,11 +4,14 @@
   docs_lint.py check            validate front matter, folders, owns: paths (exit 1 on errors)
   docs_lint.py index            regenerate docs/INDEX.md from front matter
   docs_lint.py staged           warn-only: staged code whose owning doc is not staged (exit 0)
+  docs_lint.py links            dead docs/*.md references (errors in docs/CLAUDE.md/skills; counts in source comments)
+  docs_lint.py stale [DAYS]     report-only: docs unverified or last_verified older than DAYS (default 90)
+  docs_lint.py stray            report-only: *.md files outside docs/ that are not on the allow-list
   docs_lint.py owners PATH...   print the docs that own each path
 
 Front matter spec: docs/plans/docs-reboot-plan.md section 4.
 """
-import subprocess, sys
+import datetime, re, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +49,71 @@ def all_docs():
         yield p, rel
 
 
+REF = re.compile(r"docs/[A-Za-z0-9_./<>{}-]+\.md")
+DOC_SCOPES = ("CLAUDE.md", "go/CLAUDE.md", "README.md")
+STRAY_OK = {"CLAUDE.md", "README.md", "INSTALL.md", "go/CLAUDE.md", "go/TEST_INDEX.md",
+            "scripts/tests/INDEX.md", "db/README.md", "postgres/README.md", "redis/README.md"}
+
+
+def tracked():
+    out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split("\n")
+    return [f for f in out if f and not f.startswith((".claude/worktrees", "go/vendor", "frontend/node_modules", "docs/_archive/"))]
+
+
+def dead_refs():
+    """Return (errors, source_count): dead refs inside docs/CLAUDE.md/skills vs inside source comments."""
+    errors, src = [], 0
+    for f in tracked():
+        p = ROOT / f
+        in_docs = f.startswith("docs/") or f in DOC_SCOPES or f.startswith(".claude/skills/")
+        if f == "docs/INDEX.md" or (in_docs and p.suffix != ".md") or p.suffix in {".png", ".jpg", ".ico", ".woff", ".woff2", ".pdf", ".gz", ".zip", ".sum"}:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in sorted(set(REF.findall(text))):
+            if any(c in m for c in "<>{}*") or (ROOT / m).exists():
+                continue
+            if in_docs:
+                errors.append(f"{f}: dead doc reference {m}")
+            else:
+                src += 1
+    return errors, src
+
+
+def links():
+    errors, src = dead_refs()
+    for e in errors:
+        print("ERROR", e)
+    print(f"{len(errors)} dead references in docs/CLAUDE.md/skills; {src} in source comments (report-only, backlog F-87)")
+    return 1 if errors else 0
+
+
+def stale(days=90):
+    today, n = datetime.date.today(), 0
+    for p, rel in all_docs():
+        fm = parse(p) or {}
+        lv = fm.get("last_verified", "")
+        try:
+            age = (today - datetime.date.fromisoformat(lv)).days
+        except ValueError:
+            print(f"UNVERIFIED {rel} ({fm.get('status')})"); n += 1; continue
+        if age > days:
+            print(f"STALE {rel}: last_verified {lv} ({age} days)"); n += 1
+    print(f"{n} doc(s) unverified or older than {days} days")
+    return 0
+
+
+def stray():
+    n = 0
+    for f in tracked():
+        if f.endswith(".md") and not f.startswith(("docs/", ".claude/")) and f not in STRAY_OK and "/node_modules/" not in f:
+            print("STRAY", f); n += 1
+    print(f"{n} markdown file(s) outside docs/ and not on the allow-list (triage: move into docs/<folder>/ or archive)")
+    return 0
+
+
 def check():
     errors, legacy = [], []
     for p, rel in all_docs():
@@ -67,11 +135,13 @@ def check():
         for o in fm.get("owns", []):
             if not (ROOT / o).exists():
                 errors.append(f"{rel}: owns path does not exist: {o}")
+    link_errors, src = dead_refs()
+    errors += link_errors
     for e in errors:
         print("ERROR", e)
     for l in legacy:
         print("legacy (no front matter):", l)
-    print(f"{len(errors)} errors, {len(legacy)} legacy docs")
+    print(f"{len(errors)} errors, {len(legacy)} legacy docs, {src} dead refs in source comments (report-only)")
     return 1 if errors else 0
 
 
@@ -130,6 +200,9 @@ if __name__ == "__main__":
     if cmd == "check": sys.exit(check())
     elif cmd == "index": index()
     elif cmd == "staged": sys.exit(staged())
+    elif cmd == "links": sys.exit(links())
+    elif cmd == "stale": sys.exit(stale(int(sys.argv[2]) if len(sys.argv) > 2 else 90))
+    elif cmd == "stray": sys.exit(stray())
     elif cmd == "owners":
         m = owner_map()
         for a in sys.argv[2:]:

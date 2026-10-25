@@ -172,7 +172,7 @@ Quick version of the rule (see the plan doc for the full reasoning):
 - Every code change: find the owning doc (`python3.12 scripts/docs_lint.py owners <paths>`), update it in the same commit, bump `last_verified`. Use `/docs-update` (`.claude/skills/docs-update.md`).
 - **No new top-level docs.** New doc = one of `docs/{architecture,reference,guides,decisions,plans,lessons}/` with front matter (`docs/_templates/`). No `*_STATUS`, `*_RESULTS`, `HANDOVER_*` files — state goes in `docs/CURRENT.md`, results in commit messages.
 - New Redis key → `docs/reference/redis.md`. New DB table/column → `docs/reference/schema.md` + `db/001_schema.sql`. New/changed flow → `docs/CURRENT.md`. Non-obvious bug → `docs/lessons/<area>.md`.
-- Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index`. The pre-commit hook (`.githooks/`) warns if owned code changed without its doc.
+- Before commit: `python3.12 scripts/docs_lint.py check && python3.12 scripts/docs_lint.py index` (CI runs both, plus `scripts/gen_reference.py routes --check`). Generated reference lives in `docs/reference/*-generated.md` — regenerate, never hand-edit. The pre-commit hook (`.githooks/`) warns if owned code changed without its doc.
 - Trust code over docs; update the doc when they diverge.
 
 ---

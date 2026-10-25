@@ -444,5 +444,5 @@ Well-known card path constant: `a2asrv.WellKnownAgentCardPath == "/.well-known/a
 | InvocationContext, AppAgentBinding | `go/internal/agentgen/context.go`, `binding.go` |
 | Redis task store | `go/internal/agentgen/redistaskstore.go` |
 | Tests | `go/internal/agentgen/agentgen_test.go` |
-| Design doc (full architecture) | `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION.md` |
+| Design doc (full architecture) | `docs/_archive/CANVAS_A2A_AGENT_GENERATION_FULL.md` (history only); current: `docs/architecture/a2a-agents-agentgen.md` |
 | Wire format reference (Python-era, avoid) | `docs/_archive/A2A_REFERENCE.md` |

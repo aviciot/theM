@@ -227,5 +227,5 @@ All three agents implement A2A v1.0 JSON-RPC 2.0. Key wire details:
 | Config field | `returnImmediately: true` | Not `blocking` |
 | Terminal states | `TASK_STATE_COMPLETED` etc. | Proto enum names from SDK v1.1 |
 
-See `docs/ADAPTERS.md` for the full `A2aAsyncAdapter` constructor and event sequence.
+The Python `A2aAsyncAdapter` this referred to is gone; outbound A2A calls are now `go/internal/agentregistry/` — see `docs/architecture/a2a-agents-agentgen.md`.
 See `docs/lessons/<area>.md` for the full list of SDK v1.1 gotchas discovered during live testing.

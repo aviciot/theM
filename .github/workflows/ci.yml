@@ -26,3 +26,25 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+  docs-lint:
+    name: Docs lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Front matter, owns paths, dead doc links
+        run: python3 scripts/docs_lint.py check
+
+      - name: INDEX.md is up to date
+        run: |
+          python3 scripts/docs_lint.py index
+          git diff --exit-code docs/INDEX.md
+
+      - name: Generated route reference is up to date
+        run: python3 scripts/gen_reference.py routes --check
+
