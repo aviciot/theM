@@ -6,7 +6,7 @@ last_verified: 2026-10-25
 ---
 
 # Current State — the-M
-Last updated: 2026-10-25 · Branch: `main` · HEAD: see `git log --oneline -1` (27+ local commits are **not pushed** to GitHub yet)
+Last updated: 2026-10-25 · Branch: `main` · HEAD: see `git log --oneline -1` (pushed to origin/main 2026-10-25; CI result not yet checked)
 
 ## Docs (the 2026-10 reboot) — complete
 - Plan + tracker (all 15 items done): `docs/plans/docs-reboot-plan.md`. Find docs via `docs/INDEX.md`; 10 architecture docs + `redis-usage.md` in `docs/architecture/`.
@@ -28,7 +28,7 @@ Dual-mode cost is **preliminary**: +13% median gateway latency (132→149 ms) fr
 Start/rebuild/recovery commands: `docs/guides/local-dev-and-deploy.md`.
 
 ## Next tasks (suggested order)
-1. Revoke/rotate exposed tokens (F-94, F-91); decide push to GitHub (then check the Actions tab).
+1. Check the GitHub Actions tab for the `docs-lint` job. Exposed tokens (F-94, F-91, F-110): user decided not to rotate.
 2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.
 3. Fix top-severity backlog items (list above), each with a Go test and an architecture-doc update (the hook enforces the doc).
 4. Diagnose E2E failures F-92 and shared test helpers (`scripts/tests/lib/`) + nightly CI run.
