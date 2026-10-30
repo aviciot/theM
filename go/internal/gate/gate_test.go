@@ -234,9 +234,9 @@ func TestAdmitNoLimits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, gate.StatusAdmitted, res.Status)
 
-	assert.True(t, r.inSet("them:ep:ep1:sessions", "sess-1"), "EP Set membership")
+	assert.True(t, r.inSet("them:ep:app1:ep1:sessions", "sess-1"), "EP Set membership")
 	assert.True(t, r.inSet("them:app:app1:sessions", "sess-1"), "app Set membership")
-	assert.True(t, r.hasShadow("them:ep:ep1:shadow:sess-1"), "EP shadow key")
+	assert.True(t, r.hasShadow("them:ep:app1:ep1:shadow:sess-1"), "EP shadow key")
 	assert.True(t, r.hasShadow("them:app:app1:shadow:sess-1"), "app shadow key")
 }
 
@@ -303,7 +303,7 @@ func TestNoAppID(t *testing.T) {
 	_, err := g.Check(context.Background(), cfg)
 	require.NoError(t, err)
 
-	assert.True(t, r.inSet("them:ep:ep1:sessions", "sess-1"))
+	assert.True(t, r.inSet("them:ep:app1:ep1:sessions", "sess-1"))
 	assert.False(t, r.inSet("them:app::sessions", "sess-1"))
 }
 
@@ -312,7 +312,7 @@ func TestNoAppID(t *testing.T) {
 func TestGhostPruning(t *testing.T) {
 	r := newFakeRedis()
 	// Plant a ghost: in Set but no shadow key.
-	r.sets["them:ep:ep1:sessions"] = map[string]bool{"ghost-sess": true}
+	r.sets["them:ep:app1:ep1:sessions"] = map[string]bool{"ghost-sess": true}
 
 	g := gate.New(r)
 	cfg := baseConfig()
@@ -321,8 +321,8 @@ func TestGhostPruning(t *testing.T) {
 	_, err := g.Check(context.Background(), cfg)
 	require.NoError(t, err, "ghost should be pruned, cap=1 should admit new session")
 
-	assert.False(t, r.inSet("them:ep:ep1:sessions", "ghost-sess"), "ghost removed")
-	assert.True(t, r.inSet("them:ep:ep1:sessions", "sess-1"), "new session admitted")
+	assert.False(t, r.inSet("them:ep:app1:ep1:sessions", "ghost-sess"), "ghost removed")
+	assert.True(t, r.inSet("them:ep:app1:ep1:sessions", "sess-1"), "new session admitted")
 }
 
 // ── G-07: Queue disabled → ErrCapExceeded immediately ────────────────────────
@@ -376,11 +376,11 @@ func TestConfirmExtendsShadow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Shadow key exists with reservation value.
-	assert.True(t, r.hasShadow("them:ep:ep1:shadow:sess-1"))
+	assert.True(t, r.hasShadow("them:ep:app1:ep1:shadow:sess-1"))
 
 	// Confirm must not error and must keep shadow key present.
 	require.NoError(t, g.Confirm(context.Background(), cfg))
-	assert.True(t, r.hasShadow("them:ep:ep1:shadow:sess-1"), "shadow still present after Confirm")
+	assert.True(t, r.hasShadow("them:ep:app1:ep1:shadow:sess-1"), "shadow still present after Confirm")
 	assert.True(t, r.hasShadow("them:app:app1:shadow:sess-1"), "app shadow still present after Confirm")
 }
 
@@ -404,9 +404,9 @@ func TestRollbackRemovesAdmission(t *testing.T) {
 	require.NoError(t, g.Rollback(context.Background(), cfg))
 
 	// Set membership must be gone.
-	assert.False(t, r.inSet("them:ep:ep1:sessions", "sess-1"), "EP Set cleared by Rollback")
+	assert.False(t, r.inSet("them:ep:app1:ep1:sessions", "sess-1"), "EP Set cleared by Rollback")
 	assert.False(t, r.inSet("them:app:app1:sessions", "sess-1"), "app Set cleared by Rollback")
-	assert.False(t, r.hasShadow("them:ep:ep1:shadow:sess-1"), "EP shadow deleted by Rollback")
+	assert.False(t, r.hasShadow("them:ep:app1:ep1:shadow:sess-1"), "EP shadow deleted by Rollback")
 
 	// After rollback, a new session B can be admitted (slot is free again).
 	cfg.SessionID = "sess-2"
@@ -432,7 +432,7 @@ func TestReservationExpiryAutoCleanup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Simulate ReservationTTL expiry: delete the shadow key.
-	r.deleteShadow("them:ep:ep1:shadow:sess-1")
+	r.deleteShadow("them:ep:app1:ep1:shadow:sess-1")
 	r.deleteShadow("them:app:app1:shadow:sess-1")
 
 	// sess-1 is now a ghost (in Set, no shadow). sess-2 admission must succeed.
@@ -440,8 +440,8 @@ func TestReservationExpiryAutoCleanup(t *testing.T) {
 	_, err = g.Check(context.Background(), cfg)
 	require.NoError(t, err, "ghost pruned on next admission, sess-2 should be admitted")
 
-	assert.False(t, r.inSet("them:ep:ep1:sessions", "sess-1"), "ghost sess-1 pruned")
-	assert.True(t, r.inSet("them:ep:ep1:sessions", "sess-2"), "sess-2 admitted")
+	assert.False(t, r.inSet("them:ep:app1:ep1:sessions", "sess-1"), "ghost sess-1 pruned")
+	assert.True(t, r.inSet("them:ep:app1:ep1:sessions", "sess-2"), "sess-2 admitted")
 }
 
 // ── G-12: Queue wake-up is a compete, not a guarantee ────────────────────────
@@ -476,7 +476,7 @@ func TestQueueWakeUpIsACompete(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 
 	// Simulate A ending: remove A's shadow so the slot appears free.
-	r.deleteShadow("them:ep:ep1:shadow:sess-a")
+	r.deleteShadow("them:ep:app1:ep1:shadow:sess-a")
 	r.deleteShadow("them:app:app1:shadow:sess-a")
 
 	// C sneaks in and takes the slot before B's re-check.
@@ -541,7 +541,7 @@ func TestMultipleWaitersCompete(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// A ends: remove A's shadow so the slot appears free.
-	r.deleteShadow("them:ep:ep1:shadow:sess-a")
+	r.deleteShadow("them:ep:app1:ep1:shadow:sess-a")
 	r.deleteShadow("them:app:app1:shadow:sess-a")
 
 	// Release TWO signals — one to wake B, one to wake C. Both will compete.
