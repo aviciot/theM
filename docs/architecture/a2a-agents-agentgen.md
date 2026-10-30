@@ -12,7 +12,7 @@ owns:
   - go/internal/temporal/temporal_executor.go
   - go/internal/admin/canvas_tasks.go
   - go/internal/admin/service/agent_definitions_publish.go
-last_verified: 2026-10-25   # F-68 fixed (task store tenant isolation); tests pending (Go not installed)
+last_verified: 2026-10-30   # F-68 fixed + test failure fixed (malformed JSON handling)
 ---
 
 # A2A Agents & Agent Builder
@@ -65,7 +65,7 @@ Routes: `GET /healthz`, `GET /agents/{slug}/.well-known/agent-card.json`, `POST 
 Per-tenant L1 (in-process) + L2 Redis `them:agents:registry:{tenant}` (10 min), invalidated by `them:agents:changed`. Transports: `a2a_async`/`canvas_a2a` (A2A over HTTP, 3 min timeout; streaming agents use `SendStreamingMessage`), `http`, `mock`. For canvas agents it adds the `X-Them-*` headers from the app's binding.
 
 ### Inbound A2A (`internal/a2a`)
-`POST /{tenant}/a2a/{app}/{ep}` and `GET …/.well-known/agent.json`. All methods (including `GetTask`/`CancelTask`) run the full `Lifecycle.Admit` to resolve authentication and application ID for tenant isolation. For `SendMessage`/`SendStreamingMessage`: buffer body (1 MiB), complete admission, then the SDK handler with an executor that starts the orchestration workflow and maps run-stream events to A2A task events. Task state is stored in a `ScopedA2ATaskStore` that enforces application-scoped keys (`them:agent:a2atask:{appID}:{taskID}`) and rejects cross-application access.
+`POST /{tenant}/a2a/{app}/{ep}` and `GET …/.well-known/agent.json`. Malformed JSON or missing method → delegated to SDK immediately for proper parse error (-32700). Valid non-message methods (`GetTask`/`CancelTask`) run full `Lifecycle.Admit` to resolve authentication and application ID for tenant isolation. For `SendMessage`/`SendStreamingMessage`: buffer body (1 MiB), complete admission, then the SDK handler with an executor that starts the orchestration workflow and maps run-stream events to A2A task events. Task state is stored in a `ScopedA2ATaskStore` that enforces application-scoped keys (`them:agent:a2atask:{appID}:{taskID}`) and rejects cross-application access.
 
 ## Key invariants
 - Credentials never live in `AgentSpec`/definition JSON (slot/param **names** only); values are decrypted per request from `app_agent_bindings`/`applications`, never logged (`InvocationContext.String()` masks).

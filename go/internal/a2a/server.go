@@ -218,7 +218,18 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		} `json:"params"`
 		ID json.RawMessage `json:"id"`
 	}
-	_ = json.Unmarshal(bodyBytes, &envelope)
+	parseErr := json.Unmarshal(bodyBytes, &envelope)
+	// If JSON is malformed or method is missing, delegate to SDK for proper error handling.
+	// SDK will return -32700 parse error or -32600 invalid request.
+	if parseErr != nil || envelope.Method == "" {
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		noopExec := a2asrv.AgentExecutorFunc(func(_ context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+			return func(yield func(a2a.Event, error) bool) {}
+		})
+		inner := a2asrv.NewHandler(noopExec, a2asrv.WithLogger(s.logger))
+		a2asrv.NewJSONRPCHandler(inner).ServeHTTP(w, r)
+		return
+	}
 
 	var userText string
 	for _, part := range envelope.Params.Message.Parts {
