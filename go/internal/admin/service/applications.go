@@ -223,6 +223,21 @@ func (s *AppService) SetEntryPointEnabled(ctx context.Context, tenantID, appID, 
 	return nil
 }
 
+// SetEntryPointRequiredRole updates only the required_role column and publishes cache invalidation.
+// role can be nil (no role requirement) or one of: super_admin, developer, analyst, viewer, end_user.
+func (s *AppService) SetEntryPointRequiredRole(ctx context.Context, tenantID, appID, epID string, role *string) error {
+	ts := s.dal.GetEntryPointTenantAndSlug(ctx, epID, appID)
+	effectiveTenantID := ts.TenantID
+	if effectiveTenantID == "" {
+		effectiveTenantID = tenantID
+	}
+	if err := s.dal.SetEntryPointRequiredRole(ctx, epID, appID, role); err != nil {
+		return ErrNotFound
+	}
+	s.publishEP(ctx, effectiveTenantID, ts.Slug)
+	return nil
+}
+
 // validateReadiness checks whether an application has all mandatory LLM runtime
 // configuration in place. It uses the same resolution logic the Temporal worker
 // uses (loader.go): EP-level override → orchestrator-level → tenant key → app key.

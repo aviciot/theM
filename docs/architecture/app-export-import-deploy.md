@@ -6,7 +6,7 @@ owns:
   - go/internal/admin/dal/app_deploy.go
   - go/internal/admin/dal/app_export.go
   - go/internal/admin/applications.go
-last_verified: 2026-10-24   # code read + live read-only catalog queries; no export/import/deploy executed
+last_verified: 2026-10-30   # code read + admin API additions; required_role added to entry_points travel list
 ---
 
 # App Export / Import & Deploy-to-Tenant
@@ -30,7 +30,7 @@ functionally identical. This doc records what actually travels today.
 - **application**: `name, enabled, runtime_config, canvas, app_params` (secret entries — objects with a `ct` key — are stripped; scalars kept); export/import also `conversation_token_limit`, `security_config`. `provider_keys` is never copied. New slug = old slug (or sanitized name) + random 6-hex suffix.
 - **active definition** (`application_definitions` row, its JSON as-is) and `active_definition_id` re-linked.
 - **app_orchestrators**: prompts, limits, memory, voice, `edges`, `mcp_servers`, `allowed_agent_ids` (remapped to new agent IDs); all `*_api_key_encrypted` set NULL.
-- **entry_points**: `slug, type, enabled, memory/summarizer/history, llm_provider/model, allowed_principals`, link to the new orchestrator by `node_id`.
+- **entry_points**: `slug, type, enabled, memory/summarizer/history, llm_provider/model, allowed_principals, required_role`, link to the new orchestrator by `node_id`.
 - **agents** referenced by orchestrators or bindings: `component_definitions` + `agents`; canvas agents also `agent_definitions` + `agent_runtime_specs`. Reuse by `(kind, namespace, name, version)` in the target tenant; **content-hash mismatch aborts** (`ErrDeployConflict`, HTTP 409). Agent auth tokens/keys are not copied.
 - **Scoped config** — one registry, `appScopedConfigTables` in `app_deploy.go` (adding a table = one entry; export has a matching `exportSQL` and a `switch` case in `exportScopedConfig`): `middleware_wirings` (Guards; export carries `def_slug`), `app_agent_bindings` (without `credential_bindings`), `app_mcp_credentials` (binding by server slug, **no credential**), `app_flow_llm_overrides`, `app_temporal_config`, `app_debug_config`, `app_flow_http_params` (without `value_encrypted`).
 - Deploy returns a checklist (LLM keys required, MCP server names, agents copied/reused/conflict). Import returns only the application.

@@ -118,6 +118,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 			ep.Patch("/", h.UpdateEntryPoint) // Python sends PATCH
 			ep.Delete("/", h.DeleteEntryPoint)
 			ep.Patch("/enabled", h.PatchEntryPointEnabled)
+			ep.Patch("/required-role", h.PatchEntryPointRequiredRole)
 			ep.Patch("/summarizer", h.PatchEntryPointSummarizer)
 			ep.Patch("/llm", h.PatchEntryPointLLM)
 			ep.Post("/discover", h.DiscoverEP)
@@ -473,6 +474,45 @@ func (h *ApplicationsHandler) PatchEntryPointEnabled(w http.ResponseWriter, r *h
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "enabled": body.Enabled})
+}
+
+// PatchEntryPointRequiredRole handles PATCH /api/v1/admin/applications/{id}/entry-points/{ep_id}/required-role.
+// Body: {"required_role": "developer"} or {"required_role": null}
+func (h *ApplicationsHandler) PatchEntryPointRequiredRole(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	epID := chi.URLParam(r, "ep_id")
+	if appID == "" || epID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or entry point id")
+		return
+	}
+
+	var body struct {
+		RequiredRole *string `json:"required_role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetEntryPointRequiredRole(r.Context(), tenantID, appID, epID, body.RequiredRole); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "required_role": body.RequiredRole})
 }
 
 // PutRuntime handles PUT /api/v1/admin/applications/{id}/runtime.

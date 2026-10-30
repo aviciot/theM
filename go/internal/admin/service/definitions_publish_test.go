@@ -219,7 +219,10 @@ func (f *publishFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, 
 func (f *publishFakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
-func (f *publishFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error  { return nil }
+func (f *publishFakeDal) SetEntryPointRequiredRole(_ context.Context, _, _ string, _ *string) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return nil }
 func (f *publishFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return nil }
 func (f *publishFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug {
 	return nil

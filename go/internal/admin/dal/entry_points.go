@@ -22,7 +22,8 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 		       ep.summarizer_provider, ep.summarizer_model,
 		       ep.llm_provider, ep.llm_model,
 		       COALESCE(t.slug, ''),
-		       COALESCE(ep.allowed_principals, 'internal')
+		       COALESCE(ep.allowed_principals, 'internal'),
+		       ep.required_role
 		FROM them.entry_points ep
 		JOIN them.applications a ON a.id = ep.application_id
 		JOIN them.tenants t      ON t.id = a.tenant_id
@@ -45,6 +46,7 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 			&ep.LLMProvider, &ep.LLMModel,
 			&ep.TenantSlug,
 			&ep.AllowedPrincipals,
+			&ep.RequiredRole,
 		); err != nil {
 			break
 		}
@@ -160,6 +162,15 @@ func (d *DB) SetEntryPointEnabled(ctx context.Context, epID, appID string, enabl
 		SET enabled=$3, updated_at=now()
 		WHERE id=$1::uuid AND application_id=$2::uuid`
 	return d.q.Exec(ctx, q, epID, appID, enabled)
+}
+
+// SetEntryPointRequiredRole updates only the required_role column.
+func (d *DB) SetEntryPointRequiredRole(ctx context.Context, epID, appID string, role *string) error {
+	const q = `
+		UPDATE them.entry_points
+		SET required_role=$3, updated_at=now()
+		WHERE id=$1::uuid AND application_id=$2::uuid`
+	return d.q.Exec(ctx, q, epID, appID, role)
 }
 
 // DeleteEntryPoint soft-deletes an entry point by setting enabled=false.

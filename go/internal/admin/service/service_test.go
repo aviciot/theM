@@ -264,7 +264,10 @@ func (f *fakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool)
 	return f.updateEPErr
 }
 func (f *fakeDal) SetEntryPointEnabled(_ context.Context, _, _ string, _ bool) error { return nil }
-func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error             { return f.deleteEPErr }
+func (f *fakeDal) SetEntryPointRequiredRole(_ context.Context, _, _ string, _ *string) error {
+	return nil
+}
+func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return f.deleteEPErr }
 func (f *fakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string            { return f.epSlugs }
 func (f *fakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug {
 	return f.epTenantSlug
