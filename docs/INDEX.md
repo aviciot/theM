@@ -42,7 +42,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [Lessons — Orchestrator & LLM](lessons/orchestrator-llm.md) | lessons | current | unverified |  |
 | [Lessons — Temporal & Workers](lessons/temporal-workers.md) | lessons | current | unverified |  |
 | [Lessons — Testing & CI](lessons/testing-ci.md) | lessons | current | unverified |  |
-| [Current State](CURRENT.md) | plan | current | 2026-10-25 |  |
+| [Current State](CURRENT.md) | plan | current | 2026-10-31 |  |
 | [App Canvas Configuration Completeness Plan](plans/app-canvas-config-completeness-plan.md) | plan | current | 2026-10-25 |  |
 | [Code Findings Backlog (from the docs reboot)](plans/code-findings-backlog.md) | plan | current | 2026-10-24 |  |
 | [Docs Reboot Plan and Progress Tracker](plans/docs-reboot-plan.md) | plan | current | 2026-10-25 |  |
