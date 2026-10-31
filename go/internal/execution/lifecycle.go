@@ -356,27 +356,23 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 		// Store the-M user ID for history isolation and run attribution.
 		req.UserID = claims.UserID
-	}
 
-	// ── 3.7. Required role enforcement ───────────────────────────────────────
-	// If EP has a required_role, check the authenticated user's platform role.
-	// Only applies to AccessModeUser (user_jwt) — token/public modes skip this.
-	if resolvedCfg.AccessMode == epconfig.AccessModeUser && resolvedCfg.RequiredRole != "" {
-		if lc.platformRoleChecker == nil {
-			lc.logger.Warn("execution: EP requires role but no PlatformRoleChecker configured",
-				"ep_slug", req.EPSlug, "required_role", resolvedCfg.RequiredRole)
-			return nil, admitErr(AdmitErrInternal)
-		}
-		userRole, roleErr := lc.platformRoleChecker.GetUserRole(ctx, req.UserID)
-		if roleErr != nil {
-			lc.logger.Warn("execution: platform role lookup failed",
-				"user_id", req.UserID, "error", roleErr)
-			return nil, admitErr(AdmitErrInternal)
-		}
-		if userRole != resolvedCfg.RequiredRole {
-			lc.logger.Debug("execution: user platform role insufficient",
-				"user_id", req.UserID, "user_role", userRole, "required_role", resolvedCfg.RequiredRole)
-			return nil, admitErr(AdmitErrForbidden)
+		// ── 3.7. Required role enforcement ───────────────────────────────────────
+		// If EP has a required_role, check the authenticated user's tenant role from JWT.
+		if resolvedCfg.RequiredRole != "" {
+			// Check if user has the required tenant role in their JWT claims
+			hasRole := false
+			for _, role := range claims.Roles {
+				if role == resolvedCfg.RequiredRole {
+					hasRole = true
+					break
+				}
+			}
+			if !hasRole {
+				lc.logger.Debug("execution: user tenant role insufficient",
+					"user_id", req.UserID, "user_roles", claims.Roles, "required_role", resolvedCfg.RequiredRole)
+				return nil, admitErr(AdmitErrForbidden)
+			}
 		}
 	}
 
