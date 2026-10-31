@@ -1,0 +1,101 @@
+site_name: the-M Documentation
+site_description: Multi-agent orchestration platform documentation
+site_author: the-M Team
+repo_url: https://github.com/aviciot/theM
+repo_name: aviciot/theM
+
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Home: INDEX.md
+  - Current State: CURRENT.md
+  - Architecture:
+      - Platform Overview: architecture/platform-overview.md
+      - Run Lifecycle: architecture/run-lifecycle.md
+      - A2A Agents & AgentGen: architecture/a2a-agents-agentgen.md
+      - App Canvas / AppFlow: architecture/app-canvas-appflow.md
+      - App Export / Import: architecture/app-export-import-deploy.md
+      - Auth & Roles: architecture/auth-and-roles.md
+      - Dashboard & Metrics: architecture/dashboard-and-metrics.md
+      - Events Pipeline: architecture/events-pipeline.md
+      - Frontend: architecture/frontend.md
+      - LLM Gateway: architecture/llm-gateway.md
+      - MCP Service: architecture/mcp-service.md
+      - Multi-tenancy & RLS: architecture/multi-tenancy-rls.md
+      - Redis Usage: architecture/redis-usage.md
+      - Security Scanning: architecture/security-scanning-guards.md
+      - Test Runner: architecture/test-runner.md
+      - Voice: architecture/voice.md
+  - Guides:
+      - A2A Test Agents: guides/a2a-test-agents.md
+      - Database Migrations: guides/database-migrations.md
+      - Local Dev & Deploy: guides/local-dev-and-deploy.md
+      - Production Deploy: guides/production-deploy-env-vars.md
+  - Reference:
+      - Schema (Generated): reference/schema-generated.md
+      - Routes (Generated): reference/routes-generated.md
+      - Redis Keys (Generated): reference/redis-generated.md
+      - Node Types (Generated): reference/node-types-generated.md
+  - Plans:
+      - App Canvas Config Completeness: plans/app-canvas-config-completeness-plan.md
+      - Code Findings Backlog: plans/code-findings-backlog.md
+      - Docs Reboot Plan: plans/docs-reboot-plan.md
+  - Lessons Learned:
+      - App Canvas: lessons/appflow-canvas.md
+      - Auth, Tenancy & RLS: lessons/auth-tenancy-rls.md
+      - Infrastructure & Docker: lessons/infra-docker.md
+      - Temporal Workers: lessons/temporal-workers.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/aviciot/theM
