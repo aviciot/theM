@@ -175,6 +175,28 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           </div>
         );
       })()}
+      {d.accessMode === 'user_jwt' && (
+        <div style={fieldWrap}>
+          <label style={labelStyle}>Required Role <span style={{ fontSize: 10, color: '#64748b' }}>blank = any authenticated user</span></label>
+          <select
+            style={inputStyle}
+            value={d.requiredRole ?? ''}
+            onChange={e => onUpdateNode(selectedNode.id, { requiredRole: e.target.value || null })}
+          >
+            <option value="">No role requirement</option>
+            <option value="super_admin">Super Admin</option>
+            <option value="developer">Developer</option>
+            <option value="analyst">Analyst</option>
+            <option value="viewer">Viewer</option>
+            <option value="end_user">End User</option>
+          </select>
+          {d.requiredRole && (
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
+              Only users with role <strong>{d.requiredRole}</strong> (or higher) can access this entry point.
+            </div>
+          )}
+        </div>
+      )}
       <div style={fieldWrap}>
         <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
           Slug
