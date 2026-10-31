@@ -11,7 +11,7 @@ owns:
   - go/internal/metrics/
   - go/internal/appliveness/
   - go/internal/debugcred/
-last_verified: 2026-10-25   # code read + live `config get` / `info keyspace`; exact key list is generated, see reference/redis-generated.md
+last_verified: 2026-10-31   # code read + gen_reference.py redis; per-user rate limit key documented
 ---
 
 # Redis Usage
@@ -60,7 +60,8 @@ WS/SSE with replay from `last_event_id` (capped ≈5000 entries, no time TTL). A
 
 ### 4. Rate limits and quotas — `rl:*`
 Per-tenant API/run counters and monthly run counter (`rl:them:{tenant}:api|runs|runs:monthly:*`, `internal/quota`), per-app
-and per-token counters (`internal/ratelimit`), per-user per-minute counter `rl:user:{id}:minute:{n}`.
+and per-token counters (`internal/ratelimit`), per-user per-minute rate limit `rl:user:{id}:minute:{ts}` (90 s TTL, platform
+role-based quotas — `internal/ratelimit/user_limiter.go`, `internal/execution/quotas.go`).
 
 ### 5. Coordination and invalidation (pub/sub channels and locks)
 `them:mcp:leader` (30 s lock, MCP supervisor election), `them:token:revoked`, `them:ep:config:changed`, `them:agents:changed`,
