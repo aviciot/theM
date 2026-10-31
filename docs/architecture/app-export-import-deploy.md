@@ -6,7 +6,7 @@ owns:
   - go/internal/admin/dal/app_deploy.go
   - go/internal/admin/dal/app_export.go
   - go/internal/admin/applications.go
-last_verified: 2026-10-30   # code read + admin API additions; required_role added to entry_points travel list
+last_verified: 2026-10-31   # deploy/export/import SQL updated; required_role now actually travels (code + tests pass)
 ---
 
 # App Export / Import & Deploy-to-Tenant

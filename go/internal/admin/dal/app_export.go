@@ -107,7 +107,7 @@ SELECT to_jsonb(t) FROM (
     SELECT ep.slug, ep.entry_point_type, ep.enabled,
         ep.memory_enabled, ep.summarize_every_n_calls, ep.memory_raw_fallback_n, ep.history_window,
         ep.summarizer_provider, ep.summarizer_model, ep.llm_provider, ep.llm_model,
-        ep.allowed_principals,
+        ep.allowed_principals, ep.required_role,
         (SELECT ao.node_id FROM them.app_orchestrators ao WHERE ao.id = ep.app_orchestrator_id) AS app_orchestrator_node_id
     FROM them.entry_points ep
     WHERE ep.application_id = $1::uuid
@@ -343,6 +343,7 @@ type importEntryPointRow struct {
 	LLMProvider           *string `json:"llm_provider"`
 	LLMModel              *string `json:"llm_model"`
 	AllowedPrincipals     string  `json:"allowed_principals"`
+	RequiredRole          *string `json:"required_role"`
 	AppOrchestratorNodeID *string `json:"app_orchestrator_node_id"`
 }
 
@@ -614,13 +615,13 @@ INSERT INTO them.entry_points
     (id, application_id, tenant_id, slug, entry_point_type, enabled,
      memory_enabled, summarize_every_n_calls, memory_raw_fallback_n, history_window,
      summarizer_provider, summarizer_model, llm_provider, llm_model,
-     allowed_principals, app_orchestrator_id, created_at, updated_at)
-VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, now(), now())`
+     allowed_principals, required_role, app_orchestrator_id, created_at, updated_at)
+VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::uuid, now(), now())`
 		if err := d.q.Exec(ctx, insertEPQ,
 			newAppID, targetTenantID, ep.Slug, ep.EntryPointType, ep.Enabled,
 			ep.MemoryEnabled, ep.SummarizeEveryNCalls, ep.MemoryRawFallbackN, ep.HistoryWindow,
 			ep.SummarizerProvider, ep.SummarizerModel, ep.LLMProvider, ep.LLMModel,
-			ep.AllowedPrincipals, newOrchID,
+			ep.AllowedPrincipals, ep.RequiredRole, newOrchID,
 		); err != nil {
 			return Application{}, fmt.Errorf("import: insert entry_point %q: %w", ep.Slug, err)
 		}

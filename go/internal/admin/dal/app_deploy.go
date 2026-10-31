@@ -378,7 +378,7 @@ new_eps AS (
         (id, application_id, tenant_id, slug, entry_point_type, enabled,
          memory_enabled, summarize_every_n_calls, memory_raw_fallback_n, history_window,
          summarizer_provider, summarizer_model, llm_provider, llm_model,
-         allowed_principals, app_orchestrator_id, created_at, updated_at)
+         allowed_principals, required_role, app_orchestrator_id, created_at, updated_at)
     SELECT
         gen_random_uuid(), (SELECT id FROM new_app), $2::uuid,
         ep.slug, ep.entry_point_type, ep.enabled,
@@ -389,6 +389,7 @@ new_eps AS (
         ep.summarizer_provider, ep.summarizer_model,
         ep.llm_provider, ep.llm_model,
         COALESCE(ep.allowed_principals, 'internal'),
+        ep.required_role,
         (SELECT no.id FROM new_orchs no WHERE no.node_id = (
             SELECT ao.node_id FROM them.app_orchestrators ao WHERE ao.id = ep.app_orchestrator_id
         )),
