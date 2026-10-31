@@ -299,11 +299,12 @@ func TestNoAppID(t *testing.T) {
 
 	cfg := baseConfig()
 	cfg.AppID = ""
+	cfg.TenantID = "tenant1" // Fallback uses TenantID when AppID is empty
 
 	_, err := g.Check(context.Background(), cfg)
 	require.NoError(t, err)
 
-	assert.True(t, r.inSet("them:ep:app1:ep1:sessions", "sess-1"))
+	assert.True(t, r.inSet("them:ep:tenant1:ep1:sessions", "sess-1"))
 	assert.False(t, r.inSet("them:app::sessions", "sess-1"))
 }
 
