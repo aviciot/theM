@@ -12,7 +12,7 @@ generated: true
 
 Static scan of chi registrations in `go/` (non-test). Paths are **relative to the router they are registered on**; `Mount`/`Route` rows show where a sub-router is attached. Use `docs/architecture/platform-overview.md` for external prefixes. Not a substitute for hitting the live route (see the route-ownership rule in `go/CLAUDE.md`).
 
-288 registrations.
+289 registrations.
 
 | File | Verb | Path |
 |---|---|---|
@@ -72,6 +72,7 @@ Static scan of chi registrations in `go/` (non-test). Paths are **relative to th
 | `go/internal/admin/applications.go` | PATCH | `/orchestrators/{orch_id}/llm` |
 | `go/internal/admin/applications.go` | PATCH | `/orchestrators/{orch_id}/mcp-servers` |
 | `go/internal/admin/applications.go` | PATCH | `/orchestrators/{orch_id}/voice` |
+| `go/internal/admin/applications.go` | PATCH | `/required-role` |
 | `go/internal/admin/applications.go` | PATCH | `/spec` |
 | `go/internal/admin/applications.go` | PATCH | `/summarizer` |
 | `go/internal/admin/applications.go` | POST | `/applications` |
