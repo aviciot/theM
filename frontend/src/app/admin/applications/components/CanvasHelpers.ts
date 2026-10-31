@@ -237,8 +237,21 @@ export function canvasToDoc(nodes: Node[], edges: Edge[], name?: string, executi
         },
       });
     } else if (n.type === 'entryPoint') {
+      // Entry point nodes can have either EpNodeData (from canvas JSON) or EntryPointData (from backend)
       const d = n.data as unknown as EpNodeData;
-      entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '', config: d.config ?? {} });
+      const epData = n.data as unknown as EntryPointData;
+      const config = {
+        ...(d.config ?? {}),
+        // Map EntryPointData fields to config
+        ...(epData.accessMode ? { accessMode: epData.accessMode } : {}),
+        ...(epData.allowedPrincipals ? { allowedPrincipals: epData.allowedPrincipals } : {}),
+        ...(epData.requiredRole !== undefined ? { requiredRole: epData.requiredRole } : {}),
+        ...(epData.convTokenLimit ? { convTokenLimit: epData.convTokenLimit } : {}),
+        ...(epData.maxConcurrentSessions ? { maxConcurrentSessions: epData.maxConcurrentSessions } : {}),
+        ...(epData.queueTimeout ? { queueTimeout: epData.queueTimeout } : {}),
+        ...(epData.queueMessage ? { queueMessage: epData.queueMessage } : {}),
+      };
+      entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '', config });
     }
   });
   edges.forEach(e => {
@@ -326,7 +339,28 @@ export function docToCanvas(
   });
   (doc.entry_points ?? []).forEach(ep => {
     const pos = layout[ep.instance_id] ?? { x: 0, y: 0 };
-    nodes.push({ id: ep.instance_id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: ep.instance_id, slug: ep.slug, protocol: ep.protocol, label: EP_META[ep.protocol]?.title ?? ep.protocol, config: ep.config ?? {} } as unknown as Record<string, unknown> });
+    const cfg = ep.config ?? {};
+    nodes.push({
+      id: ep.instance_id,
+      type: 'entryPoint',
+      position: pos,
+      data: {
+        _kind: 'ep',
+        instance_id: ep.instance_id,
+        slug: ep.slug,
+        protocol: ep.protocol,
+        label: EP_META[ep.protocol]?.title ?? ep.protocol,
+        config: cfg,
+        // Extract EntryPointData fields from config
+        accessMode: cfg.accessMode as 'token' | 'public' | 'user_jwt' | 'external_jwt' | undefined,
+        allowedPrincipals: cfg.allowedPrincipals as 'internal' | 'external' | 'both' | undefined,
+        requiredRole: cfg.requiredRole as string | null | undefined,
+        convTokenLimit: cfg.convTokenLimit as string | undefined,
+        maxConcurrentSessions: cfg.maxConcurrentSessions as string | undefined,
+        queueTimeout: cfg.queueTimeout as string | undefined,
+        queueMessage: cfg.queueMessage as string | undefined,
+      } as unknown as Record<string, unknown>,
+    });
     if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default',
       ...(flowCtrlNodeTypeById.get(ep.root) === 'cycle' ? { targetHandle: 'cycle-flow-in' } : {}),
     });
@@ -397,6 +431,7 @@ export function buildNodesFromApp(
         epType: (ep.entry_point_type as EntryPointType) ?? 'websocket',
         accessMode: ((ep.access_policy as any)?.mode ?? 'token') as 'token' | 'public' | 'user_jwt' | 'external_jwt',
         allowedPrincipals: (ep.allowed_principals ?? 'internal') as 'internal' | 'external' | 'both',
+        requiredRole: (ep as any).required_role ?? null,
         slug: ep.slug,
         appName: app.name,
         convTokenLimit: ep.conversation_token_limit != null ? String(ep.conversation_token_limit) : '',
