@@ -50,7 +50,7 @@ SELECT
     COALESCE(ao.llm_model, ''),
     COALESCE(ep.allowed_principals, 'internal'),
     COALESCE(ad.definition::text, '{}'),
-    COALESCE(ep.required_role, '')
+    COALESCE(a.runtime_config->>'required_role', COALESCE(ep.required_role, ''))
 FROM them.entry_points ep
 JOIN them.applications a ON a.id = ep.application_id
 LEFT JOIN them.app_orchestrators ao

@@ -18,7 +18,8 @@ owns:
   - go/internal/temporal/client.go
   - go/internal/temporal/signaler.go
   - go/cmd/worker/
-last_verified: 2026-10-25   # F-31 fixed (gate key tenant isolation); tests pending (Go not installed)
+last_verified: 2026-10-31   # required_role now read from runtime_config instead of entry_points column
+prev_verified: 2026-10-25   # F-31 fixed (gate key tenant isolation); tests pending (Go not installed)
 ---
 
 # Run Lifecycle
@@ -67,7 +68,7 @@ deferred Lifecycle.Release: if Start never succeeded mark run `failed`; session.
 ### Admission order (`execution/lifecycle.go` `Admit`)
 1. Validate token if present (failure is not fatal here; step 4 decides).
 2. `epLoader.Load(tenantID, appSlug, epSlug)` — cached in-process 30s, evicted on Redis channel `them:ep:config:changed`. Not found → 404, DB error → 503.
-3. Access mode: `user_jwt` (HS256 dashboard JWT, tenant must match the EP's tenant; then optional `required_role`, per-user rpm and daily-cost limits) · `external_jwt` (RS256 via tenant JWKS; sets `ExternalUserID` from `sub`) · `token` (opaque bearer, required) · `public`.
+3. Access mode: `user_jwt` (HS256 dashboard JWT, tenant must match the EP's tenant; then optional app-level `required_role` from `runtime_config`, per-user rpm and daily-cost limits) · `external_jwt` (RS256 via tenant JWKS; sets `ExternalUserID` from `sub`) · `token` (opaque bearer, required) · `public`.
 4. `CheckAccess` (EP/app enabled, blocked tokens/users), `CheckPrincipal` (backend vs end-user tokens), role gate (external_jwt only).
 5. `quota.CheckQuota(billingTenantID)` — concurrent runs, runs/min, monthly runs, API rpm, monthly LLM tokens. Fail-open if no enforcer is wired.
 6. Generate run/context/session UUIDs. `gate.Check` → `session.Register` → `gate.Confirm` → `CreateRun`. Any failure after `Check` rolls the gate/session back.

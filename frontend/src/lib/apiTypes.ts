@@ -233,6 +233,7 @@ export interface AppRuntimeConfig {
   blocked_tokens: string[];
   blocked_user_ids: number[];
   session_timeout_minutes: number | null;
+  required_role: string | null;
 }
 
 export interface AppOrchestratorSummary {
