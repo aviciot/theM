@@ -1,3 +1,10 @@
+---
+title: Home
+type: guide
+status: current
+last_verified: 2026-10-31
+---
+
 # the-M Documentation
 
 **the-M** is a multi-agent orchestration platform that lets you build, deploy, and run AI agent workflows.
