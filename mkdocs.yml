@@ -72,14 +72,14 @@ nav:
       - MCP Service: architecture/mcp-service.md
       - Multi-tenancy & RLS: architecture/multi-tenancy-rls.md
       - Redis Usage: architecture/redis-usage.md
-      - Security Scanning: architecture/security-scanning-guards.md
+      - Security Guards: architecture/security-guards.md
       - Test Runner: architecture/test-runner.md
       - Voice: architecture/voice.md
   - Guides:
       - A2A Test Agents: guides/a2a-test-agents.md
       - Database Migrations: guides/database-migrations.md
       - Local Dev & Deploy: guides/local-dev-and-deploy.md
-      - Production Deploy: guides/production-deploy-env-vars.md
+      - Deploy & Environment: guides/deploy-and-env.md
   - Reference:
       - Schema (Generated): reference/schema-generated.md
       - Routes (Generated): reference/routes-generated.md
