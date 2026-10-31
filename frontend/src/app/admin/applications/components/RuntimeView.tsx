@@ -403,18 +403,6 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
 
         <Section title="Access Control" icon="block" accent="#f59e0b" defaultOpen={false}>
           <div>
-            <label style={l}>Required Role (user_jwt mode only)</label>
-            <select value={cfg.required_role ?? ''} style={f} onChange={e => setCfg(c => ({ ...c, required_role: e.target.value === '' ? null : e.target.value }))}>
-              <option value="">No role requirement</option>
-              <option value="super_admin">Super Admin</option>
-              <option value="developer">Developer</option>
-              <option value="analyst">Analyst</option>
-              <option value="viewer">Viewer</option>
-              <option value="end_user">End User</option>
-            </select>
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Only users with this platform role (or higher) can access this app. Applies only to entry points using user_jwt authentication.</div>
-          </div>
-          <div>
             <label style={l}>Blocked User IDs (comma-separated)</label>
             <input type="text" placeholder="e.g. 42, 107, 889" value={usersInput} style={f} onChange={e => setUsersInput(e.target.value)} />
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected immediately.</div>
