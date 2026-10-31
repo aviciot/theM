@@ -175,7 +175,7 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           </div>
         );
       })()}
-      {d.accessMode === 'user_jwt' && (
+      {((selectedNode.data as EntryPointData).accessMode === 'user_jwt') && (
         <div style={fieldWrap}>
           <label style={labelStyle}>Required Role <span style={{ fontSize: 10, color: '#64748b' }}>blank = any authenticated user</span></label>
           <select
