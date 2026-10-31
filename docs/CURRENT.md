@@ -2,7 +2,7 @@
 title: Current State
 type: plan
 status: current
-last_verified: 2026-10-25
+last_verified: 2026-10-31
 ---
 
 # Current State — the-M
@@ -27,13 +27,21 @@ Core + temporal + events profiles up (43 healthy containers). `THE_M_EVENTS_GATE
 Dual-mode cost is **preliminary**: +13% median gateway latency (132→149 ms) from 3 runs per mode, no throughput change — decision on whether to keep `dual` is still open (more runs needed: `scripts/perf_focused_test.py`).
 Start/rebuild/recovery commands: `docs/guides/local-dev-and-deploy.md`.
 
+## Recent work (2026-10-31)
+Role-based auth gaps 1, 2, 6, 7 complete (commits 823aeb37, 1454e5bb, 19925b3f, 0eab7c94, e061950e):
+- Admin API: `PATCH /admin/applications/{id}/entry-points/{ep_id}/required-role`
+- Deploy/export/import preserves `required_role`
+- UI: Required Role dropdown in Entry Point panel (user_jwt mode only)
+- Canvas JSON round-trip (EPInstance config ↔ node data)
+- Redis key `rl:user:{id}:minute:{ts}` documented
+Backend enforcement already done (Phase 1, commits 6761602b + bbfcd68a). Still needed: E2E test, profile display, admin role mgmt UI (optional).
+
 ## Next tasks (suggested order)
 1. Check the GitHub Actions tab for the `docs-lint` job. Exposed tokens (F-94, F-91, F-110): user decided not to rotate.
 2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.
 3. Fix top-severity backlog items (list above), each with a Go test and an architecture-doc update (the hook enforces the doc).
 4. Diagnose E2E failures F-92 and shared test helpers (`scripts/tests/lib/`) + nightly CI run.
-5. Role/quota feature completion (backend done, admin API + deploy copy + UI missing): `docs/plans/role-based-auth-completion-plan.md`.
-6. Run-usage/steps event producers for dual mode (`go/internal/events/`) — deferred from the earlier session.
+5. Run-usage/steps event producers for dual mode (`go/internal/events/`) — deferred from the earlier session.
 
 ## Hard constraints
 Brand: UI/docs say **the-M**; code uses `them` / `THE_M_`. DB `them`, never `odin`. Never commit/print secrets. Root `CLAUDE.md` and `go/CLAUDE.md` rules apply.
