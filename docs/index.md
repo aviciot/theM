@@ -1,76 +1,196 @@
 # the-M Documentation
 
-Welcome to **the-M** - a multi-agent orchestration platform.
+**the-M** is a multi-agent orchestration platform that lets you build, deploy, and run AI agent workflows.
 
-## Quick Links
+---
 
-- **[Current State](CURRENT.md)** - Latest status, next tasks, blockers
-- **[Architecture](INDEX.md)** - Full documentation index
-- **[Code Findings Backlog](plans/code-findings-backlog.md)** - Known issues (121 items)
+## What is the-M?
 
-## Getting Started
+Think of the-M as a **platform for building AI applications**:
 
-### For Developers
-1. **[Local Dev & Deploy](guides/local-dev-and-deploy.md)** - Setup and run locally
-2. **[Database Migrations](guides/database-migrations.md)** - Schema changes
-3. **[A2A Test Agents](guides/a2a-test-agents.md)** - Testing agent-to-agent calls
+- 🎨 **Visual Agent Builder** - Draw workflows in a canvas instead of writing code
+- 🤖 **Multi-Agent System** - Agents can call other agents (Agent-to-Agent / A2A)
+- 🔗 **LLM Gateway** - Unified access to Claude, GPT, and other LLMs
+- 🔐 **Multi-Tenant** - Isolated workspaces for different teams/customers
+- 📊 **Built-in Observability** - Track costs, usage, and performance
 
-### Architecture Overview
-- **[Platform Overview](architecture/platform-overview.md)** - All services, containers, routes
-- **[Run Lifecycle](architecture/run-lifecycle.md)** - WS/SSE → admission → Temporal → agents
-- **[Multi-tenancy & RLS](architecture/multi-tenancy-rls.md)** - Tenant isolation, database roles
+---
+
+## Quick Start
+
+### I want to...
+
+**Build an AI agent workflow**
+→ Read [App Canvas / AppFlow](architecture/app-canvas-appflow.md) - Visual workflow builder
+
+**Run the platform locally**
+→ Read [Local Dev & Deploy](guides/local-dev-and-deploy.md) - Docker setup guide
+
+**Understand the architecture**
+→ Read [Platform Overview](architecture/platform-overview.md) - All services explained
+
+**See what's broken**
+→ Read [Code Findings Backlog](plans/code-findings-backlog.md) - 121 known issues
+
+**Check current status**
+→ Read [Current State](CURRENT.md) - Latest work, next tasks
+
+---
+
+## Core Concepts
+
+### 1. **Applications & Entry Points**
+- **Application** = One AI workflow/product (e.g., "Customer Support Bot")
+- **Entry Point** = How users access it (WebSocket, SSE, API, Voice)
+
+### 2. **Agents**
+Three types:
+- **Canvas Agents** - Built visually, no code required
+- **Orchestrator Agents** - Traditional LLM + tools loop
+- **External Agents** - Call via A2A protocol (Agent-to-Agent)
+
+### 3. **AppFlow (Visual Workflows)**
+Drag-and-drop nodes:
+- **LLM** - Call Claude/GPT
+- **Condition** - If/else branching
+- **HTTP** - Call external APIs
+- **MCP Tool** - Execute tools (file ops, database, etc.)
+- **Human-in-Loop** - Wait for human approval
+- **Agent Call** - Call another agent
+
+### 4. **Multi-Tenancy**
+Every resource is isolated by tenant:
+- ✅ Row-Level Security (RLS) enforced in database
+- ✅ Separate Redis keys per application
+- ✅ Rate limits per tenant
+- ✅ Cost tracking per tenant
+
+---
+
+## How It Works (Simple Flow)
+
+```
+User → WebSocket/API → Authentication → Rate Limit Check
+  ↓
+Entry Point Config Loaded
+  ↓
+Workflow Starts (Temporal/Local)
+  ↓
+Agent Executes (LLM calls, tool use, sub-agents)
+  ↓
+Events Stream Back → User sees results
+```
+
+**Real example:**
+1. User sends "Book me a flight to NYC"
+2. Entry point authenticates, checks quota
+3. Workflow starts: LLM node → understands intent
+4. Condition node → checks if dates provided
+5. HTTP node → calls airline API
+6. Human-in-Loop → waits for approval
+7. Response sent back to user
+
+---
 
 ## Key Features
 
-### Multi-Agent System
-- **Canvas agents** built visually, served by `them-agent-runtime`
-- **A2A protocol** (Agent-to-Agent) with JSON-RPC 2.0
-- **MCP integration** for tool execution
+### 🔒 **Security & Governance**
+- **PII Detection** - Scan for credit cards, SSNs
+- **Prompt Injection Guards** - Block jailbreak attempts
+- **File Scanning** - ClamAV antivirus for uploaded files
+- **Rate Limiting** - Per token, per user, per tenant
 
-### Orchestration
-- **Temporal workflows** for reliable execution
-- **AppFlow** for visual workflow building
-- **LLM Gateway** with governance and rate limiting
+### 🎯 **Production Ready**
+- **Temporal Workflows** - Reliable execution, survives crashes
+- **Event Streaming** - Real-time updates via WebSocket/SSE
+- **Cost Tracking** - LLM usage per request
+- **Observability** - ClickHouse events, Prometheus metrics
 
-### Security & Isolation
-- **Row-Level Security (RLS)** for tenant isolation
-- **Role-based access** with external JWT support
-- **Rate limiting** per token and per user
+### 🔌 **Extensible**
+- **MCP (Model Context Protocol)** - Add tools via MCP servers
+- **A2A Protocol** - Agents can call each other
+- **Custom LLM Providers** - Bring your own API keys
 
-## Recent Updates
+---
 
-### Security Fixes (2026-10-31)
-- ✅ **F-68**: A2A task store tenant isolation - keys now scoped by application ID
-- ✅ **F-31**: Gate/session keys tenant isolation - includes application ID
+## Documentation Structure
 
-See [Code Findings Backlog](plans/code-findings-backlog.md) for remaining issues.
+| Section | What's Inside |
+|---------|--------------|
+| **[Architecture](INDEX.md#architecture)** | How the system works (15 docs) |
+| **[Guides](INDEX.md#guides)** | Step-by-step how-tos (4 docs) |
+| **[Reference](INDEX.md#reference)** | Generated API/schema docs |
+| **[Plans](INDEX.md#plans)** | Implementation plans, backlog |
+| **[Lessons](INDEX.md#lessons)** | Lessons learned per area |
+
+---
+
+## Common Questions
+
+**Q: Is this production-ready?**  
+A: Partially. Core features work, but [121 known issues](plans/code-findings-backlog.md) exist (including security gaps).
+
+**Q: What LLMs does it support?**  
+A: Claude (Anthropic), GPT (OpenAI), and any OpenAI-compatible API.
+
+**Q: Can I self-host?**  
+A: Yes. Docker Compose setup in [Local Dev & Deploy](guides/local-dev-and-deploy.md).
+
+**Q: How do I add a new agent?**  
+A: Use the Agent Builder UI (canvas) or call A2A agents via HTTP.
+
+**Q: Where's the API documentation?**  
+A: See [Routes Reference](reference/routes-generated.md) (auto-generated from code).
+
+---
 
 ## Technology Stack
 
-- **Backend**: Go 1.25, Temporal, PostgreSQL, Redis
-- **Frontend**: Next.js, React
-- **Observability**: ClickHouse (events), Prometheus (metrics)
-- **Infrastructure**: Docker Compose, Traefik
+**Backend:**
+- Go 1.25 (main services)
+- Temporal (workflow orchestration)
+- PostgreSQL (primary database)
+- Redis (sessions, rate limits, queues)
 
-## Repository Structure
+**Frontend:**
+- Next.js + React
+- Agent Canvas (visual builder)
 
-```
-├── docs/              # Documentation (you are here)
-│   ├── architecture/  # System design docs
-│   ├── guides/       # How-to guides
-│   ├── reference/    # Generated references
-│   ├── plans/        # Implementation plans
-│   └── lessons/      # Lessons learned
-├── go/               # Go services
-├── frontend/         # Next.js frontend
-├── db/               # Database migrations
-└── scripts/          # Utility scripts
-```
+**Infrastructure:**
+- Docker Compose
+- Traefik (reverse proxy)
+- ClickHouse (events)
+- MinIO (file storage)
+
+---
+
+## Recent Updates
+
+**2026-10-31:** Security fixes
+- ✅ F-68: A2A task store now isolated by application
+- ✅ F-31: Gate/session keys scoped by tenant
+
+**2026-10-25:** Documentation reboot
+- 15 architecture docs written
+- Pre-commit hook enforces doc updates
+- Generated references (schema, routes, Redis keys)
+
+See [Current State](CURRENT.md) for latest.
+
+---
+
+## Need Help?
+
+- **Bug/Question:** Check [Code Findings](plans/code-findings-backlog.md) first
+- **Architecture question:** See [Architecture docs](INDEX.md#architecture)
+- **Setup issue:** See [Local Dev Guide](guides/local-dev-and-deploy.md)
+- **GitHub:** [aviciot/theM](https://github.com/aviciot/theM)
+
+---
 
 ## Contributing
 
-- **Code changes** require doc updates (enforced by pre-commit hook)
-- **Tests** must pass before commit (`go test ./...`)
-- **Architecture docs** must be updated when changing owned files
-
-See `CLAUDE.md` for full development guidelines.
+1. Read `CLAUDE.md` in repo root (development rules)
+2. Code changes **require** doc updates (enforced by git hook)
+3. Tests must pass: `go test ./...`
+4. Every doc lists the code it `owns:` - update both together
