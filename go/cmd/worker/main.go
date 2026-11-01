@@ -38,6 +38,7 @@ import (
 	"syscall"
 
 	temporalactivity "go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/interceptor"
 	temporalworker "go.temporal.io/sdk/worker"
 
 	"github.com/aviciot/them/internal/agentregistry"
@@ -55,6 +56,7 @@ import (
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/summarizer"
 	"github.com/aviciot/them/internal/telemetry"
+	"github.com/aviciot/them/internal/activitylog"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/temporal/workerconfig"
 )
@@ -210,7 +212,9 @@ func run() error {
 
 	// ── 14. Create and register Go Temporal worker ────────────────────────────
 	taskQueue := cfg.WorkerTaskQueue
-	goWorker := temporalworker.New(temporalCli, taskQueue, temporalworker.Options{})
+	goWorker := temporalworker.New(temporalCli, taskQueue, temporalworker.Options{
+		Interceptors: []interceptor.WorkerInterceptor{activitylog.New(log)},
+	})
 	goWorker.RegisterWorkflow(temporal.OrchestrationWorkflow)
 	acts := &temporal.Activities{
 		Runner:       factory.buildFallback(), // static fallback for legacy/test paths

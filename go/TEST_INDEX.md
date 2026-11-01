@@ -3967,3 +3967,14 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestGatewayRequestEvent_NoUserNoApp` | token auth / direct path leave user and app empty |
 | `TestWriteRequest_RealDB_EmitsAfterInsertOnly` (integration) | row stored and event emitted with the same request id and attribution; a failed insert emits nothing |
 
+## Activity logging interceptor (F-132, plan P4)
+**Purpose:** `internal/activitylog` is a Temporal worker interceptor (wired in `cmd/dag-worker` and `cmd/worker`): one log line per activity with name, workflow id (carries the run id), attempt, duration and error.
+**Trigger:** any change to `internal/activitylog/` or the `Interceptors` option in the worker mains (`go.temporal.io/sdk/interceptor` is vendored)
+**Run:** `go test ./internal/activitylog/`
+| Test | Covers |
+|---|---|
+| `TestSuccessIsLoggedAtInfoWithNameAndDuration` | done line has activity, workflow_id, attempt, duration_ms |
+| `TestFailureIsLoggedAsWarnWithError` | failure is a WARN carrying the error text |
+| `TestCancellationIsNotAWarning` | cancellation is an info `activity canceled` |
+| `TestQuietActivitiesAreDebugOnly` | quiet activities log at debug only; others unaffected |
+

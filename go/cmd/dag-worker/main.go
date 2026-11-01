@@ -39,11 +39,13 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/jackc/pgx/v5/pgxpool"
 	temporalactivity "go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/interceptor"
 	temporalworker "go.temporal.io/sdk/worker"
 
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/activitylog"
 	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
@@ -153,6 +155,7 @@ func run() error {
 	// ── 10. Create and register Temporal worker on canvas-dag-nodes ───────────
 	dagWorker := temporalworker.New(temporalCli, temporal.CanvasDAGTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
+		Interceptors:                       []interceptor.WorkerInterceptor{activitylog.New(log)},
 	})
 	dagWorker.RegisterWorkflow(temporal.CanvasAgentWorkflow)
 	dagWorker.RegisterActivityWithOptions(acts.ExecuteStepActivity, temporalactivity.RegisterOptions{
@@ -247,6 +250,8 @@ func run() error {
 	}
 	appFlowWorker := temporalworker.New(temporalCli, appFlowTaskQueue, temporalworker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.DAGWorkerMaxConcurrentActivities,
+		// One info line per activity (name, workflow id, attempt, duration, error); per-node trace events stay at debug.
+		Interceptors: []interceptor.WorkerInterceptor{activitylog.New(log, appflow.AppFlowTraceNodeEventActivityName)},
 	})
 	appFlowWorker.RegisterWorkflow(appflow.AppFlowWorkflow)
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.ExecuteRouterActivity, temporalactivity.RegisterOptions{

@@ -48,12 +48,12 @@ Tests: L2 delete a run with artifacts/tasks/approvals, assert nothing left; L2 `
 Order: expired `auth_service.user_sessions`, expired `access_tokens` (fix Admin Playground to delete its token on close, F-131), then `runs`/`run_steps`/`tasks`/`task_messages` older than N days (config, default off), `gateway_requests`, `audit_logs`, `blacklisted_tokens`. A small scheduled job (in-process, advisory-locked like the reconciler) with per-table retention env vars, dry-run first.
 Tests: L1 on the retention SQL builders; L2 seed old and new rows, assert only old removed; never touches rows of running runs.
 
-## P4 - events, ClickHouse, observability (F-127..F-130, F-129, F-132)
+## P4 - events, ClickHouse, observability (F-127..F-130, F-129, F-132) — **done 2026-11-01** (open leftovers listed in the backlog entries)
 - F-130 **(done 2026-11-01)**: `clickhouse/system-logs.xml` (TTL 7 d, quieter `text_log`) mounted in `docker-compose.events.yml` + one-off `ALTER TABLE system.<t> MODIFY TTL`. Test: query `system.tables` TTL after restart; size stays flat over a day.
 - F-128 **(done 2026-11-01)**: DLQ keeps the payload; pending message no longer blocks trimming; MAXLEN on producers. Tests: L1/L2 in `cmd/event-writer` (needs the P0 decision).
 - F-127 **(partly done 2026-11-01: IDs and ordering; audit/bodies producers need a product decision)**: decide which events must exist (audit, bodies, run events), add `ApplicationID`/`UserID`/`RunID`, emit after the PG insert. Test: L3 gateway call then assert the ClickHouse row has non-zero IDs.
 - F-129 **(done 2026-11-01)**: delete the stale `them:events` stream and old gate queue keys; give run streams a TTL. Test: L3 run then `TTL` on its stream key.
-- F-132: per-activity start/finish/error logs with `run_id` (INFO). Test: L1 captures `slog`; L3 `docker logs` shows a run's lifecycle.
+- F-132 **(done 2026-11-01)**: per-activity start/finish/error logs with `run_id` (INFO). Test: L1 captures `slog`; L3 `docker logs` shows a run's lifecycle.
 
 ## Order and cadence
 P0 -> P1.1 -> P1.4 -> P1.3 -> P1.2 -> P1.5 -> P2 -> P3 -> P4. One item per commit; after each: full `go test ./...` (zero failures expected), L3 for that item, L4, then update `docs/CURRENT.md`.
