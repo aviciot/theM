@@ -28,7 +28,7 @@ Every item also gets `go/TEST_INDEX.md`, the owning architecture doc, and the ba
 ## P0 - unblock deploys (blocker)
 `them-dag-worker*` images run `go test ./...` during build; `cmd/event-writer/recovery_test.go` (3 tests) needs Redis on `localhost:6379` and has no `integration` tag, so the build fails and workers cannot be rebuilt. Resolved 2026-11-01: tagged `integration` (repo convention), run with `-tags=integration` when event-writer/events code changes. Done when `up -d --build` for all five dag workers succeeds.
 Then deploy the finalize change: `up -d --build them-dag-worker -2 -3 -4 them-dag-worker-debug`, check `docker logs` shows polling.
-L3 check after deploy: start a canvas run (test-runner scenario 51), `temporal workflow cancel` it, expect run `failed` and its steps closed within seconds (finalize path, not the reconciler).
+Deployed 2026-11-01. Live check: a run answered to completion finishes `completed` with all steps `completed` (no regression). The close-children wiring is covered by `TestFinalizeRunActivity_ClosesChildren` (integration); a live run that ends through finalize with open steps could not be produced because cancel does not stop a waiting flow (F-134).
 
 ## P1 - runs always finish (F-122, F-124, F-133, F-123, known gap 4)
 | # | Fix | Tests | Deploy |
@@ -36,7 +36,7 @@ L3 check after deploy: start a canvas run (test-runner scenario 51), `temporal w
 | 1.1 | Reconciler also closes open children of runs that are already terminal; dedicated connection for the advisory lock (`pool.Acquire`) so sweeps are not skipped | L1 fakes for the new sweep query; L2 seed a `failed` run with a `working` task, sweep once, assert closed | bridge |
 | 1.2 | HIL timer firing writes `hil_approvals.timed_out` (needs `workflow.GetVersion` for in-flight workflows); decide a default timeout when `timeout_seconds=0` (product decision: use `appFlowHILTimeout` 24 h?) | Temporal test env (`workflow_temporal_test.go`) for timer vs signal; L2 for the DAL write; replay test for GetVersion | all dag workers |
 | 1.3 | `runs.completed_at` written with `ended_at`; `stopped` treated as terminal and guarded; recorder update guarded by `status='running'` | L1 on recorder and dag-worker updater; L2 on the SQL | bridge + dag workers |
-| 1.4 | Admin cancel also cancels the workflow (Temporal `CancelWorkflow` by ID `appflow:{tenant}:{run}` or `{tenant}:ctx-{ctx}`), releases gate/session, closes children | L1 with fake Temporal client; L3: cancel via admin API, workflow `Canceled`, tokens stop, run `canceled` | bridge |
+| 1.4 | (first fix F-134: a cancelled workflow waiting for input must actually stop; reproduce with scenario 51 + `temporal workflow cancel`) Admin cancel also cancels the workflow (Temporal `CancelWorkflow` by ID `appflow:{tenant}:{run}` or `{tenant}:ctx-{ctx}`), releases gate/session, closes children | L1 with fake Temporal client; L3: cancel via admin API, workflow `Canceled`, tokens stop, run `canceled` | bridge |
 | 1.5 | Orchestration path (WS/SSE): errors before `orchestrator.Run` update the run row and publish an `error` event; `OrchestrationWorkflow` finalizes | L1 on `RunOrchestratorActivity` failure paths; L3 with a bad EP config | go-worker(-2), bridge |
 Done when: L4 invariants hold after a mixed E2E session (complete, fail, cancel, HIL timeout, workflow timeout, worker killed mid-run).
 

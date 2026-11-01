@@ -3840,6 +3840,7 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | Test | Covers |
 |---|---|
 | `TestCloseRunChildren_FailedRunClosesOpenChildren` | failed run: open step → `failed` (reason stored), working task → `failed`, pending approval → `timed_out`; finished children and another run's children untouched; second call is a no-op |
+| `TestFinalizeRunActivity_ClosesChildren` | `FinalizeRunActivity` calls the status updater once, then closes the children (covers the wiring) |
 | `TestCloseRunChildren_CompletedRunCompletesOpenSteps` | completed run: open step/task → `completed`, no error added |
 
 ## Event-writer recovery tests need Redis (integration tag)

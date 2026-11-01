@@ -111,3 +111,35 @@ func TestCloseRunChildren_CompletedRunCompletesOpenSteps(t *testing.T) {
 		t.Errorf("completed run must not add an error: %v %v", stepErr, err)
 	}
 }
+
+type recordingStatusUpdater struct{ calls []string }
+
+func (r *recordingStatusUpdater) UpdateRunStatus(_ context.Context, runID string, status domain.RunStatus, errMsg string) error {
+	r.calls = append(r.calls, runID+"|"+string(status)+"|"+errMsg)
+	return nil
+}
+
+// FinalizeRunActivity itself (not just the helper) must close the children after the status update.
+func TestFinalizeRunActivity_ClosesChildren(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), integrationDSN())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	runID := seedRun(t, pool)
+	seedOpenChildren(t, pool, runID)
+
+	upd := &recordingStatusUpdater{}
+	a := &AppFlowActivities{DB: pool, StatusUpdater: upd}
+	if err := a.FinalizeRunActivity(context.Background(), FinalizeRunActivityInput{RunID: runID, Status: "failed", ErrMsg: "node exploded"}); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+
+	if len(upd.calls) != 1 || upd.calls[0] != runID+"|failed|node exploded" {
+		t.Errorf("status updater calls = %v", upd.calls)
+	}
+	steps, tasks, hil := childStates(t, pool, runID)
+	if steps != "n_done=completed,n_open=failed" || tasks != "completed,failed" || hil != "timed_out" {
+		t.Errorf("children not closed: %q %q %q", steps, tasks, hil)
+	}
+}
