@@ -3,6 +3,7 @@ package reconciler_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,24 @@ type fakeDB struct {
 
 	// execErr is returned by Exec if non-nil.
 	execErr error
+
+	// lockErr is returned by AcquireLock if non-nil; released counts release() calls.
+	lockErr  error
+	released int
+
+	// finishedRows are returned for the finished-runs query; finishedErr fails it;
+	// finishedArgs records its arguments.
+	finishedRows []finishedRow
+	finishedErr  error
+	finishedArgs []any
+
+	// childCloses records children-only closes (runclose.ChildrenQuery) issued via Exec.
+	childCloses []statusUpdate
+}
+
+type finishedRow struct {
+	id     string
+	status string
 }
 
 type statusUpdate struct {
@@ -58,25 +77,6 @@ type eligibleRow struct {
 	tenantID   string
 	contextIDs []string
 	pastGrace  bool
-}
-
-type fakeScanner struct{ val any }
-
-func (s *fakeScanner) Scan(dest ...any) error {
-	if len(dest) == 0 {
-		return nil
-	}
-	switch d := dest[0].(type) {
-	case *bool:
-		if b, ok := s.val.(bool); ok {
-			*d = b
-		}
-	case *string:
-		if str, ok := s.val.(string); ok {
-			*d = str
-		}
-	}
-	return nil
 }
 
 type fakeRows struct {
@@ -97,16 +97,46 @@ func (r *fakeRows) Scan(dest ...any) error {
 func (r *fakeRows) Err() error { return r.err }
 func (r *fakeRows) Close()     {}
 
-func (db *fakeDB) QueryRow(_ context.Context, sql string, args ...any) reconciler.PgxScanner {
+func (db *fakeDB) AcquireLock(_ context.Context, _ int64) (func(), bool, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	// advisory lock/unlock calls return lockGranted
-	return &fakeScanner{val: db.lockGranted}
+	if db.lockErr != nil {
+		return nil, false, db.lockErr
+	}
+	if !db.lockGranted {
+		return nil, false, nil
+	}
+	return func() {
+		db.mu.Lock()
+		db.released++
+		db.mu.Unlock()
+	}, true, nil
 }
+
+type fakeFinishedRows struct {
+	rows []finishedRow
+	pos  int
+}
+
+func (r *fakeFinishedRows) Next() bool { r.pos++; return r.pos <= len(r.rows) }
+func (r *fakeFinishedRows) Scan(dest ...any) error {
+	*dest[0].(*string) = r.rows[r.pos-1].id
+	*dest[1].(*string) = r.rows[r.pos-1].status
+	return nil
+}
+func (r *fakeFinishedRows) Err() error { return nil }
+func (r *fakeFinishedRows) Close()     {}
 
 func (db *fakeDB) Query(_ context.Context, sql string, args ...any) (reconciler.PgxRowsIterator, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	if strings.Contains(sql, "finished-children") {
+		db.finishedArgs = args
+		if db.finishedErr != nil {
+			return nil, db.finishedErr
+		}
+		return &fakeFinishedRows{rows: db.finishedRows}, nil
+	}
 	if db.queryErr != nil {
 		return nil, db.queryErr
 	}
@@ -127,9 +157,20 @@ func (db *fakeDB) Exec(_ context.Context, sql string, args ...any) (int64, error
 		runID, _ := args[0].(string)
 		st, _ := args[1].(string)
 		reason, _ := args[2].(string)
-		db.updates = append(db.updates, statusUpdate{runID: runID, status: st, reason: reason})
+		u := statusUpdate{runID: runID, status: st, reason: reason}
+		if strings.Contains(sql, "UPDATE them.runs") {
+			db.updates = append(db.updates, u) // run status change (closeRunQuery)
+		} else {
+			db.childCloses = append(db.childCloses, u) // children only (runclose.ChildrenQuery)
+		}
 	}
 	return 1, nil
+}
+
+func (db *fakeDB) recordedChildCloses() []statusUpdate {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return append([]statusUpdate(nil), db.childCloses...)
 }
 
 func (db *fakeDB) recordedUpdates() []statusUpdate {
@@ -504,6 +545,96 @@ func TestReconciler_DryRunOrphanNoWrites(t *testing.T) {
 	runOneSweep(t, db, newFakeTemporalClient(), cfg)
 
 	assert.Empty(t, db.recordedUpdates())
+}
+
+// ── Advisory lock handling ────────────────────────────────────────────────────
+
+// TestReconciler_LockReleasedAfterSweep verifies the lock is released on the same handle after a sweep.
+func TestReconciler_LockReleasedAfterSweep(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRunIDs: []string{"run-l1"}}
+	tc := newFakeTemporalClient()
+	tc.set("run-l1", enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING)
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	assert.Equal(t, 1, db.released, "lock must be released exactly once")
+}
+
+// TestReconciler_LockReleasedWhenQueryFails verifies an early return still releases the lock.
+func TestReconciler_LockReleasedWhenQueryFails(t *testing.T) {
+	db := &fakeDB{lockGranted: true, queryErr: errors.New("boom")}
+
+	runOneSweep(t, db, newFakeTemporalClient(), fastConfig())
+
+	assert.Equal(t, 1, db.released)
+}
+
+// TestReconciler_LockErrorSkipsSweep verifies a lock error runs nothing and releases nothing.
+func TestReconciler_LockErrorSkipsSweep(t *testing.T) {
+	db := &fakeDB{lockGranted: true, lockErr: errors.New("no connection"), eligibleRunIDs: []string{"run-l2"}, finishedRows: []finishedRow{{"run-f9", "failed"}}}
+	tc := newFakeTemporalClient()
+	tc.set("run-l2", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED)
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	assert.Empty(t, db.recordedUpdates())
+	assert.Empty(t, db.recordedChildCloses())
+	assert.Equal(t, 0, db.released)
+}
+
+// ── Finished runs with open children ──────────────────────────────────────────
+
+// TestReconciler_ClosesChildrenOfFinishedRuns verifies leftover children are closed with the run's own
+// status; a failure-type status carries a reason, completed does not.
+func TestReconciler_ClosesChildrenOfFinishedRuns(t *testing.T) {
+	db := &fakeDB{lockGranted: true, finishedRows: []finishedRow{{"run-f1", "failed"}, {"run-f2", "completed"}, {"run-f3", "canceled"}}}
+
+	runOneSweep(t, db, newFakeTemporalClient(), fastConfig())
+
+	closes := db.recordedChildCloses()
+	require.Len(t, closes, 3)
+	assert.Equal(t, statusUpdate{runID: "run-f1", status: "failed", reason: "reconciler: run finished with open steps/tasks/approvals"}, closes[0])
+	assert.Equal(t, statusUpdate{runID: "run-f2", status: "completed", reason: ""}, closes[1])
+	assert.Equal(t, "canceled", closes[2].status)
+	assert.Empty(t, db.recordedUpdates(), "the run rows themselves are never rewritten")
+}
+
+// TestReconciler_FinishedRunsDryRunNoWrites verifies dry-run only logs.
+func TestReconciler_FinishedRunsDryRunNoWrites(t *testing.T) {
+	db := &fakeDB{lockGranted: true, finishedRows: []finishedRow{{"run-f4", "failed"}}}
+	cfg := fastConfig()
+	cfg.DryRun = true
+
+	runOneSweep(t, db, newFakeTemporalClient(), cfg)
+
+	assert.Empty(t, db.recordedChildCloses())
+}
+
+// TestReconciler_FinishedRunsQueryErrorDoesNotBreakSweep verifies a failing finished-runs query is
+// isolated: the stuck-run pass still applied its update.
+func TestReconciler_FinishedRunsQueryErrorDoesNotBreakSweep(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRunIDs: []string{"run-f5"}, finishedErr: errors.New("boom")}
+	tc := newFakeTemporalClient()
+	tc.set("run-f5", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED)
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	require.Len(t, db.recordedUpdates(), 1)
+	assert.Equal(t, 1, db.released)
+}
+
+// TestReconciler_FinishedRunsUsesChildrenGraceAndBatch verifies the grace (seconds) and limit parameters.
+func TestReconciler_FinishedRunsUsesChildrenGraceAndBatch(t *testing.T) {
+	db := &fakeDB{lockGranted: true}
+	cfg := fastConfig()
+	cfg.ChildrenGrace = 90 * time.Second
+	cfg.BatchSize = 7
+
+	runOneSweep(t, db, newFakeTemporalClient(), cfg)
+
+	require.Len(t, db.finishedArgs, 2)
+	assert.Equal(t, 90, db.finishedArgs[0])
+	assert.Equal(t, 7, db.finishedArgs[1])
 }
 
 // ── MapTemporalStatus direct tests ────────────────────────────────────────────

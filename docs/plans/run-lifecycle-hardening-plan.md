@@ -33,7 +33,7 @@ Deployed 2026-11-01. Live check: a run answered to completion finishes `complete
 ## P1 - runs always finish (F-122, F-124, F-133, F-123, known gap 4)
 | # | Fix | Tests | Deploy |
 |---|---|---|---|
-| 1.1 | Reconciler also closes open children of runs that are already terminal; dedicated connection for the advisory lock (`pool.Acquire`) so sweeps are not skipped | L1 fakes for the new sweep query; L2 seed a `failed` run with a `working` task, sweep once, assert closed | bridge |
+| 1.1 | **Done 2026-11-01.** Reconciler also closes open children of runs that are already terminal; dedicated connection for the advisory lock (`pool.Acquire`) so sweeps are not skipped | L1 fakes for the new sweep query; L2 seed a `failed` run with a `working` task, sweep once, assert closed | bridge |
 | 1.2 | HIL timer firing writes `hil_approvals.timed_out` (needs `workflow.GetVersion` for in-flight workflows); decide a default timeout when `timeout_seconds=0` (product decision: use `appFlowHILTimeout` 24 h?) | Temporal test env (`workflow_temporal_test.go`) for timer vs signal; L2 for the DAL write; replay test for GetVersion | all dag workers |
 | 1.3 | `runs.completed_at` written with `ended_at`; `stopped` treated as terminal and guarded; recorder update guarded by `status='running'` | L1 on recorder and dag-worker updater; L2 on the SQL | bridge + dag workers |
 | 1.4 | **Done 2026-11-01** (F-134 + F-123). Admin cancel also cancels the workflow (Temporal `CancelWorkflow` by ID `appflow:{tenant}:{run}` or `{tenant}:ctx-{ctx}`), releases gate/session, closes children | L1 with fake Temporal client; L3: cancel via admin API, workflow `Canceled`, tokens stop, run `canceled` | bridge |

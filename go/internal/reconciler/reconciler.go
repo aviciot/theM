@@ -91,6 +91,10 @@ type Config struct {
 	// NotFoundGrace is how old a "running" row must be before NotFound from Temporal
 	// is treated as "orphaned" and the run is failed. Default: 2 hours.
 	NotFoundGrace time.Duration
+
+	// ChildrenGrace is how long a run must have been finished before its leftover open
+	// steps/tasks/approvals are closed. Default: 10 minutes.
+	ChildrenGrace time.Duration
 }
 
 func (c *Config) applyDefaults() {
@@ -111,6 +115,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.NotFoundGrace == 0 {
 		c.NotFoundGrace = 2 * time.Hour
+	}
+	if c.ChildrenGrace == 0 {
+		c.ChildrenGrace = 10 * time.Minute
 	}
 }
 
@@ -133,6 +140,10 @@ var (
 		Namespace: "them", Subsystem: "reconciler", Name: "notfound_total",
 		Help: "Rows where Temporal returned NotFound for every candidate workflow ID.",
 	})
+	metricChildrenClosed = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "them", Subsystem: "reconciler", Name: "children_closed_total",
+		Help: "Finished runs whose leftover open steps/tasks/approvals were closed.",
+	})
 	metricOrphaned = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "them", Subsystem: "reconciler", Name: "orphaned_total",
 		Help: "Old running rows failed because no Temporal workflow exists for them.",
@@ -150,14 +161,11 @@ var (
 // DBQuerier is the database interface used by the reconciler.
 // The production implementation wraps pgxpool.Pool; tests inject a fake.
 type DBQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) PgxScanner
+	// AcquireLock tries to take the cross-pod sweep lock on a dedicated connection.
+	// ok=false (err=nil) means another pod holds it. release must be called when ok.
+	AcquireLock(ctx context.Context, key int64) (release func(), ok bool, err error)
 	Query(ctx context.Context, sql string, args ...any) (PgxRowsIterator, error)
 	Exec(ctx context.Context, sql string, args ...any) (int64, error)
-}
-
-// PgxScanner is a minimal interface satisfied by pgx.Row. Exported for tests.
-type PgxScanner interface {
-	Scan(dest ...any) error
 }
 
 // PgxRowsIterator is a minimal interface satisfied by pgx.Rows. Exported for tests.
@@ -174,8 +182,35 @@ type PgxQuerier struct{ pool *pgxpool.Pool }
 // NewPgxQuerier wraps a pgxpool.Pool for use as a DBQuerier.
 func NewPgxQuerier(p *pgxpool.Pool) *PgxQuerier { return &PgxQuerier{pool: p} }
 
-func (q *PgxQuerier) QueryRow(ctx context.Context, sql string, args ...any) PgxScanner {
-	return q.pool.QueryRow(ctx, sql, args...)
+// AcquireLock takes a session-level advisory lock on one dedicated pool connection and
+// releases it on that same connection (a lock taken through the pool could be unlocked on a
+// different connection and stay held, making later sweeps skip). If the unlock fails the
+// connection is closed so PostgreSQL drops the lock instead of returning it to the pool.
+func (q *PgxQuerier) AcquireLock(ctx context.Context, key int64) (func(), bool, error) {
+	conn, err := q.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	var locked bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&locked); err != nil {
+		conn.Release()
+		return nil, false, err
+	}
+	if !locked {
+		conn.Release()
+		return nil, false, nil
+	}
+	release := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var unlocked bool
+		if err := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", key).Scan(&unlocked); err != nil || !unlocked {
+			_ = conn.Hijack().Close(ctx) // drops the session, and with it the lock
+			return
+		}
+		conn.Release()
+	}
+	return release, true, nil
 }
 
 func (q *PgxQuerier) Query(ctx context.Context, sql string, args ...any) (PgxRowsIterator, error) {
@@ -259,23 +294,18 @@ const eligibleQuery = `
 
 // sweep runs one reconciliation pass under an advisory lock.
 func (r *Reconciler) sweep(ctx context.Context) {
-	// Try to acquire advisory lock. Non-blocking — skip if another pod holds it.
-	var locked bool
-	if err := r.db.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey).Scan(&locked); err != nil {
-		r.logger.Warn("reconciler: advisory lock query failed", "error", err)
+	// Try to acquire the advisory lock. Non-blocking — skip if another pod holds it.
+	release, ok, err := r.db.AcquireLock(ctx, advisoryLockKey)
+	if err != nil {
+		r.logger.Warn("reconciler: advisory lock failed", "error", err)
 		metricErrors.Inc()
 		return
 	}
-	if !locked {
+	if !ok {
 		r.logger.Debug("reconciler: advisory lock held by another pod — skipping sweep")
 		return
 	}
-	defer func() {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		var released bool
-		_ = r.db.QueryRow(releaseCtx, "SELECT pg_advisory_unlock($1)", advisoryLockKey).Scan(&released)
-	}()
+	defer release()
 
 	staleSeconds := int(r.cfg.StaleAfter.Seconds())
 	rows, err := r.db.Query(ctx, eligibleQuery, staleSeconds, r.cfg.BatchSize, int(r.cfg.NotFoundGrace.Seconds()))
@@ -301,13 +331,13 @@ func (r *Reconciler) sweep(ctx context.Context) {
 		return
 	}
 
-	if len(runs) == 0 {
+	if len(runs) > 0 {
+		r.logger.Info("reconciler: sweep started", "eligible_count", len(runs), "dry_run", r.cfg.DryRun)
+		r.reconcileBatch(ctx, runs)
+	} else {
 		r.logger.Debug("reconciler: no eligible rows in this sweep")
-		return
 	}
-
-	r.logger.Info("reconciler: sweep started", "eligible_count", len(runs), "dry_run", r.cfg.DryRun)
-	r.reconcileBatch(ctx, runs)
+	r.closeFinishedRunChildren(ctx)
 }
 
 // reconcileBatch processes runs with bounded concurrency.

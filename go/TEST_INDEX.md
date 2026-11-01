@@ -1043,6 +1043,12 @@ Status mapping per ADR-002.
 | `TestReconciler_NotFoundWithoutTenantUnchanged` | No tenant → IDs cannot be built → never orphaned |
 | `TestReconciler_TemporalErrorOnLaterCandidateNoOrphan` | A transient error on any candidate is not read as NotFound |
 | `TestReconciler_DryRunOrphanNoWrites` | Dry-run never fails an orphan |
+| `TestReconciler_LockReleasedAfterSweep` / `_LockReleasedWhenQueryFails` | The lock is released exactly once, also on early return |
+| `TestReconciler_LockErrorSkipsSweep` | A lock error runs no pass and releases nothing |
+| `TestReconciler_ClosesChildrenOfFinishedRuns` | Open children of finished runs are closed with the run's status; reason only for non-completed; run rows untouched |
+| `TestReconciler_FinishedRunsDryRunNoWrites` | Dry-run only logs |
+| `TestReconciler_FinishedRunsQueryErrorDoesNotBreakSweep` | A failing finished-runs query does not undo the stuck-run pass |
+| `TestReconciler_FinishedRunsUsesChildrenGraceAndBatch` | Grace seconds and batch limit are passed to the query |
 | `TestReconciler_TemporalUnavailableNoDBUpdate` | Temporal transient error → no DB write |
 | `TestReconciler_AdvisoryLockPreventsDoubleSweep` | Second reconciler instance skips sweep when lock is held |
 | `TestReconciler_IdempotentUpdate` | Repeated reconciliation of same run writes same payload (DB idempotency via WHERE status='running') |
@@ -1057,6 +1063,7 @@ Status mapping per ADR-002.
 - `them_reconciler_updated_total`
 - `them_reconciler_notfound_total`
 - `them_reconciler_orphaned_total`
+- `them_reconciler_children_closed_total`
 - `them_reconciler_errors_total`
 - `them_reconciler_dryrun_total`
 
