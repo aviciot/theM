@@ -1,3 +1,7 @@
+//go:build integration
+
+// Needs a live Redis (REDIS_HOST, default localhost:6379; uses DB 1). Run: go test -tags=integration ./cmd/event-writer/...
+
 package main
 
 import (

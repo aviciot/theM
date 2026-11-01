@@ -26,7 +26,7 @@ Invariants (L4, must all return 0 rows): runs `running` older than 3 h with no l
 Every item also gets `go/TEST_INDEX.md`, the owning architecture doc, and the backlog entry updated in the same commit.
 
 ## P0 - unblock deploys (blocker)
-`them-dag-worker*` images run `go test ./...` during build; `cmd/event-writer/recovery_test.go` (3 tests) needs Redis on `localhost:6379` and has no `integration` tag, so the build fails and workers cannot be rebuilt. Options: tag them `integration` (repo convention) or skip when Redis is unreachable. Decision pending. Done when `up -d --build` for all five dag workers succeeds.
+`them-dag-worker*` images run `go test ./...` during build; `cmd/event-writer/recovery_test.go` (3 tests) needs Redis on `localhost:6379` and has no `integration` tag, so the build fails and workers cannot be rebuilt. Resolved 2026-11-01: tagged `integration` (repo convention), run with `-tags=integration` when event-writer/events code changes. Done when `up -d --build` for all five dag workers succeeds.
 Then deploy the finalize change: `up -d --build them-dag-worker -2 -3 -4 them-dag-worker-debug`, check `docker logs` shows polling.
 L3 check after deploy: start a canvas run (test-runner scenario 51), `temporal workflow cancel` it, expect run `failed` and its steps closed within seconds (finalize path, not the reconciler).
 
@@ -56,7 +56,7 @@ Tests: L1 on the retention SQL builders; L2 seed old and new rows, assert only o
 - F-132: per-activity start/finish/error logs with `run_id` (INFO). Test: L1 captures `slog`; L3 `docker logs` shows a run's lifecycle.
 
 ## Order and cadence
-P0 -> P1.1 -> P1.4 -> P1.3 -> P1.2 -> P1.5 -> P2 -> P3 -> P4. One item per commit; after each: full `go test ./...` (known pre-existing failure until P0: 3 event-writer tests), L3 for that item, L4, then update `docs/CURRENT.md`.
+P0 -> P1.1 -> P1.4 -> P1.3 -> P1.2 -> P1.5 -> P2 -> P3 -> P4. One item per commit; after each: full `go test ./...` (zero failures expected), L3 for that item, L4, then update `docs/CURRENT.md`.
 Rebuild rules: appflow/temporal changes -> all five dag workers; `cmd/worker` -> `them-go-worker` and `-2`; bridge-only changes -> `them-go-bridge`. `restart` does not pick up a new image; use `up -d --build`.
 
 ## Production notes

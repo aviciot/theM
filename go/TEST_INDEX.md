@@ -3842,3 +3842,7 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestCloseRunChildren_FailedRunClosesOpenChildren` | failed run: open step → `failed` (reason stored), working task → `failed`, pending approval → `timed_out`; finished children and another run's children untouched; second call is a no-op |
 | `TestCloseRunChildren_CompletedRunCompletesOpenSteps` | completed run: open step/task → `completed`, no error added |
 
+## Event-writer recovery tests need Redis (integration tag)
+`cmd/event-writer/recovery_test.go` (`TestRecoverPending_*`, 3 tests) talk to a real Redis (`REDIS_HOST`, default `localhost:6379`, DB 1), so they carry `//go:build integration` and are not part of `go test ./...` (the dag-worker image build runs that and has no Redis).
+**Run them whenever `cmd/event-writer/` or `internal/events/` changes:** `go test -tags=integration ./cmd/event-writer/...` with a Redis reachable.
+
