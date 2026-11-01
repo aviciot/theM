@@ -116,8 +116,8 @@ export function EPSections({
                             </div>
                           </div>
 
-                          {/* Required Role (only when canvas access mode is user_jwt) */}
-                          {(ep.access_policy as { mode?: string } | undefined)?.mode === 'user_jwt' && (
+                          {/* Required Role (only for external_jwt access mode) */}
+                          {(ep.access_policy as { mode?: string } | undefined)?.mode === 'external_jwt' && (
                             <EPRoleField appId={appId} epId={ep.id} role={ep.required_role ?? null} />
                           )}
 

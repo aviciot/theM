@@ -168,6 +168,9 @@ type RoleChecker interface {
 	// CheckGrant returns nil when the role has access to the application, or
 	// ErrRoleDenied when the app has grants configured but this role is not among them.
 	CheckGrant(ctx context.Context, applicationID, roleID string) error
+
+	// RoleName returns the tenant role name for a roleID ("" when unknown).
+	RoleName(ctx context.Context, roleID string) (string, error)
 }
 
 // WithRoleChecker attaches a RoleChecker to enable the application-level role gate.
@@ -504,6 +507,13 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 				"ep_slug", req.EPSlug,
 				"app_id", resolvedCfg.AppID,
 				"role_id", roleID)
+			return nil, admitErr(AdmitErrForbidden)
+		}
+	}
+
+	// ── 5d-2. Per-EP required tenant role (external_jwt) ──────────────────────
+	if resolvedCfg.AccessMode == epconfig.AccessModeExternal && resolvedCfg.RequiredRole != "" {
+		if !lc.externalCallerHasRole(ctx, resolvedCfg, req) {
 			return nil, admitErr(AdmitErrForbidden)
 		}
 	}

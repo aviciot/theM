@@ -11,7 +11,7 @@ owns:
   - go/internal/roles/
   - go/internal/execution/roles.go
   - go/internal/admin/middleware.go
-last_verified: 2026-10-24   # by reading code; nothing run live this session
+last_verified: 2026-11-01   # by reading code; nothing run live this session
 ---
 
 # Auth & Roles
@@ -53,8 +53,8 @@ Roles are read from `claims.Roles`, which is just the single `role` claim.
 ### Runtime authorization (`execution.Lifecycle.Admit`; see `run-lifecycle.md`)
 Per EP `access_mode`: token / user_jwt / external_jwt / public. Then `CheckAccess` (EP/app enabled, blocked token hashes and user IDs), `CheckPrincipal` (`allowed_principals`: internal|external|both vs `is_backend`), and the checks below. `validateEPAuthCombination` at publish rejects dead combos (external_jwt+internal, user_jwt+external, public+external).
 
-- **Platform role** (`auth_service.roles`, via `PlatformRoleChecker`): `required_role` on the EP (user_jwt only), per-user `rate_limit` rpm and `cost_limit_daily`.
-- **Tenant role gate** (`internal/roles`, external_jwt only): `tenant_role_mappings` map a JWT claim or header value → `tenant_roles`; `tenant_role_grants` list which roles may use an app. An app with **no grants is open**; a DB error also fails open.
+- **Platform role** (`auth_service.roles`, via `PlatformRoleChecker`): per-user `rate_limit` rpm and `cost_limit_daily`.
+- **Tenant role gate** (`internal/roles`, external_jwt only): `tenant_role_mappings` map a JWT claim or header value → `tenant_roles`; `tenant_role_grants` list which roles may use an app. An app with **no grants is open**; a DB error also fails open. A per-EP `required_role` (tenant role name) is enforced for external_jwt EPs against the mapped role, fail-closed.
 
 ### Two role systems (don't mix them up)
 | | Platform role | Membership role |

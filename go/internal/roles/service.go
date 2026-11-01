@@ -25,3 +25,8 @@ func (s *Service) ResolveRole(ctx context.Context, tenantID string, claims map[s
 func (s *Service) CheckGrant(ctx context.Context, applicationID, roleID string) error {
 	return CheckGrant(ctx, s.q, applicationID, roleID)
 }
+
+// RoleName returns the role's name for a resolved roleID.
+func (s *Service) RoleName(ctx context.Context, roleID string) (string, error) {
+	return s.q.RoleName(ctx, roleID)
+}

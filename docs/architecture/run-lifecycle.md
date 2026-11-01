@@ -18,7 +18,7 @@ owns:
   - go/internal/temporal/client.go
   - go/internal/temporal/signaler.go
   - go/cmd/worker/
-last_verified: 2026-10-31   # required_role now checks JWT roles array (tenant roles), not DB platform roles
+last_verified: 2026-11-01   # required_role now checks JWT roles array (tenant roles), not DB platform roles
 prev_verified: 2026-10-25 2026-10-25   # F-31 fixed (gate key tenant isolation); tests pending (Go not installed)
 ---
 
@@ -68,8 +68,8 @@ deferred Lifecycle.Release: if Start never succeeded mark run `failed`; session.
 ### Admission order (`execution/lifecycle.go` `Admit`)
 1. Validate token if present (failure is not fatal here; step 4 decides).
 2. `epLoader.Load(tenantID, appSlug, epSlug)` — cached in-process 30s, evicted on Redis channel `them:ep:config:changed`. Not found → 404, DB error → 503.
-3. Access mode: `user_jwt` (HS256 dashboard JWT, tenant must match the EP's tenant; then optional per-EP `required_role` checked against JWT `roles` array — tenant roles from `tenant_roles` table) · `external_jwt` (RS256 via tenant JWKS; sets `ExternalUserID` from `sub`) · `token` (opaque bearer, required) · `public`.
-4. `CheckAccess` (EP/app enabled, blocked tokens/users), `CheckPrincipal` (backend vs end-user tokens), role gate (external_jwt only).
+3. Access mode: `user_jwt` (HS256 dashboard JWT, tenant must match the EP's tenant; then optional per-EP `required_role` checked against the JWT `roles` array — which holds only the membership role `admin|member|viewer`, so a `tenant_roles` name never matches here; use external_jwt for tenant roles) · `external_jwt` (RS256 via tenant JWKS; sets `ExternalUserID` from `sub`) · `token` (opaque bearer, required) · `public`.
+4. `CheckAccess` (EP/app enabled, blocked tokens/users), `CheckPrincipal` (backend vs end-user tokens), role gate (external_jwt only): claims/headers → `tenant_role_mappings` → role; then app grants, then per-EP `required_role` (`execution/required_role.go`, matches the mapped role's name; fails closed on no mapping/lookup error).
 5. `quota.CheckQuota(billingTenantID)` — concurrent runs, runs/min, monthly runs, API rpm, monthly LLM tokens. Fail-open if no enforcer is wired.
 6. Generate run/context/session UUIDs. `gate.Check` → `session.Register` → `gate.Confirm` → `CreateRun`. Any failure after `Check` rolls the gate/session back.
 

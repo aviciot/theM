@@ -19,11 +19,12 @@ Canvas enables → Runtime configures → Debug shows
 - Runtime: "Required Tenant Role" dropdown per EP (`RuntimeEPRole.tsx`), saves via the PATCH endpoint, no publish needed.
 
 ### Decisions
+- **Scope changed (2026-11-01):** the JWT `roles` array of a the-M login holds only the membership role, so tenant roles can never match on `user_jwt`. The role requirement now applies to `external_jwt` EPs: mapped role (`tenant_role_mappings`) name must equal `required_role` (`execution/required_role.go`). Canvas checkbox + Runtime dropdown show only for `external_jwt`.
 - Runtime shows the dropdown for any `user_jwt` EP; it does not read the canvas checkbox (Runtime has no canvas config). The checkbox is currently informational.
 - Debug mode: skipped. Debug runs (`AppFlowDebugService.Start`) never go through the `lifecycle.go` role check, so a per-run override would do nothing.
 
 ### Still open
-- Live E2E: set role in Runtime, call EP with a JWT that has / lacks the role.
+- Live E2E via test-runner (Keycloak payops_ai: alice tier=premium → jwt-premium allowed, bob tier=standard denied) on `smart-refund-handler`; needs runner `expect: allow|deny`.
 - Make the checkbox meaningful (clear `required_role` when unchecked on publish).
 - Later idea: Debug "test as role" (needs `Start` to run the role check).
 

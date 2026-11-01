@@ -67,3 +67,13 @@ func (q *PgxQuerier) RoleHasGrant(ctx context.Context, roleID, applicationID str
 	}
 	return exists, err
 }
+
+// RoleName returns the tenant_roles.name for the role ID, or "" when it does not exist.
+func (q *PgxQuerier) RoleName(ctx context.Context, roleID string) (string, error) {
+	var name string
+	err := q.pool.QueryRow(ctx, `SELECT name FROM them.tenant_roles WHERE id = $1`, roleID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return name, err
+}

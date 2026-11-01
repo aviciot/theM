@@ -35,6 +35,9 @@ type Querier interface {
 
 	// RoleHasGrant returns true when the given role has a grant for the application.
 	RoleHasGrant(ctx context.Context, roleID, applicationID string) (bool, error)
+
+	// RoleName returns tenant_roles.name for a role ID ("" when not found).
+	RoleName(ctx context.Context, roleID string) (string, error)
 }
 
 // ResolveRole walks the tenant's mapping rules and returns the first matching

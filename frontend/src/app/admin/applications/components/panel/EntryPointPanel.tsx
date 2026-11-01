@@ -175,7 +175,7 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           </div>
         );
       })()}
-      {d.accessMode === 'user_jwt' && (
+      {d.accessMode === 'external_jwt' && (
         <div style={fieldWrap}>
           <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
             <input
