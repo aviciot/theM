@@ -30,8 +30,11 @@ type fakeDB struct {
 	// lockGranted controls pg_try_advisory_lock response.
 	lockGranted bool
 
-	// eligibleRunIDs are returned by the Query call.
+	// eligibleRunIDs are returned by the Query call as tenant-less rows.
 	eligibleRunIDs []string
+
+	// eligibleRows are returned by the Query call as-is (appended after eligibleRunIDs).
+	eligibleRows []eligibleRow
 
 	// queryErr is returned by Query if non-nil.
 	queryErr error
@@ -46,6 +49,15 @@ type fakeDB struct {
 type statusUpdate struct {
 	runID  string
 	status string
+	reason string
+}
+
+// eligibleRow mirrors one row of the reconciler's eligibility query.
+type eligibleRow struct {
+	id         string
+	tenantID   string
+	contextIDs []string
+	pastGrace  bool
 }
 
 type fakeScanner struct{ val any }
@@ -68,18 +80,18 @@ func (s *fakeScanner) Scan(dest ...any) error {
 }
 
 type fakeRows struct {
-	ids  []string
+	rows []eligibleRow
 	pos  int
 	err  error
 }
 
-func (r *fakeRows) Next() bool  { r.pos++; return r.pos <= len(r.ids) }
+func (r *fakeRows) Next() bool { r.pos++; return r.pos <= len(r.rows) }
 func (r *fakeRows) Scan(dest ...any) error {
-	if len(dest) > 0 {
-		if d, ok := dest[0].(*string); ok {
-			*d = r.ids[r.pos-1]
-		}
-	}
+	row := r.rows[r.pos-1]
+	*dest[0].(*string) = row.id
+	*dest[1].(*string) = row.tenantID
+	*dest[2].(*[]string) = row.contextIDs
+	*dest[3].(*bool) = row.pastGrace
 	return nil
 }
 func (r *fakeRows) Err() error { return r.err }
@@ -98,7 +110,11 @@ func (db *fakeDB) Query(_ context.Context, sql string, args ...any) (reconciler.
 	if db.queryErr != nil {
 		return nil, db.queryErr
 	}
-	return &fakeRows{ids: db.eligibleRunIDs}, nil
+	var rows []eligibleRow
+	for _, id := range db.eligibleRunIDs {
+		rows = append(rows, eligibleRow{id: id})
+	}
+	return &fakeRows{rows: append(rows, db.eligibleRows...)}, nil
 }
 
 func (db *fakeDB) Exec(_ context.Context, sql string, args ...any) (int64, error) {
@@ -107,10 +123,11 @@ func (db *fakeDB) Exec(_ context.Context, sql string, args ...any) (int64, error
 	if db.execErr != nil {
 		return 0, db.execErr
 	}
-	if len(args) >= 2 {
+	if len(args) >= 3 {
 		runID, _ := args[0].(string)
 		st, _ := args[1].(string)
-		db.updates = append(db.updates, statusUpdate{runID: runID, status: st})
+		reason, _ := args[2].(string)
+		db.updates = append(db.updates, statusUpdate{runID: runID, status: st, reason: reason})
 	}
 	return 1, nil
 }
@@ -302,7 +319,7 @@ func TestReconciler_TimedOutMapsToFailed(t *testing.T) {
 }
 
 // TestReconciler_NotFoundNoDestructiveUpdate verifies that NotFound from
-// Temporal produces no DB write (the row is left as "running").
+// Temporal produces no DB write for a run that is not past the grace period.
 func TestReconciler_NotFoundNoDestructiveUpdate(t *testing.T) {
 	db := &fakeDB{lockGranted: true, eligibleRunIDs: []string{"run-007"}}
 	tc := newFakeTemporalClient()
@@ -381,6 +398,110 @@ func TestReconciler_ContinuedAsNewNoUpdate(t *testing.T) {
 	tc.set("run-012", enumspb.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW)
 
 	runOneSweep(t, db, tc, fastConfig())
+
+	assert.Empty(t, db.recordedUpdates())
+}
+
+// ── Workflow ID lookup and orphan handling ────────────────────────────────────
+
+const tenantA = "tenant-a"
+
+// TestReconciler_AppflowWorkflowIDFound verifies the canvas workflow ID
+// "appflow:{tenant}:{runID}" is looked up (the bare run ID does not exist).
+func TestReconciler_AppflowWorkflowIDFound(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-a1", tenantID: tenantA}}}
+	tc := newFakeTemporalClient()
+	tc.set("appflow:tenant-a:run-a1", enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT)
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	updates := db.recordedUpdates()
+	require.Len(t, updates, 1)
+	assert.Equal(t, "run-a1", updates[0].runID)
+	assert.Equal(t, string(domain.RunFailed), updates[0].status)
+	assert.Contains(t, updates[0].reason, "TimedOut", "failure reason records the Temporal status")
+}
+
+// TestReconciler_ContextWorkflowIDFound verifies the orchestration workflow ID
+// "{tenant}:ctx-{contextID}" is tried when the canvas ID does not exist.
+func TestReconciler_ContextWorkflowIDFound(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-c1", tenantID: tenantA, contextIDs: []string{"ctx-1"}}}}
+	tc := newFakeTemporalClient()
+	tc.set("tenant-a:ctx-ctx-1", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED)
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	updates := db.recordedUpdates()
+	require.Len(t, updates, 1)
+	assert.Equal(t, string(domain.RunCompleted), updates[0].status)
+	assert.Empty(t, updates[0].reason, "completed runs carry no failure reason")
+}
+
+// TestReconciler_RunningWorkflowIDLeavesUnchanged verifies a live canvas workflow is never touched,
+// even for a run past the grace period.
+func TestReconciler_RunningWorkflowIDLeavesUnchanged(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-r1", tenantID: tenantA, pastGrace: true}}}
+	tc := newFakeTemporalClient()
+	tc.set("appflow:tenant-a:run-r1", enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING)
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	assert.Empty(t, db.recordedUpdates())
+}
+
+// TestReconciler_NotFoundPastGraceFailsOrphan verifies an old run with no workflow under any ID is failed.
+func TestReconciler_NotFoundPastGraceFailsOrphan(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-o1", tenantID: tenantA, contextIDs: []string{"c9"}, pastGrace: true}}}
+	tc := newFakeTemporalClient()
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	updates := db.recordedUpdates()
+	require.Len(t, updates, 1)
+	assert.Equal(t, "run-o1", updates[0].runID)
+	assert.Equal(t, string(domain.RunFailed), updates[0].status)
+	assert.Contains(t, updates[0].reason, "orphaned")
+}
+
+// TestReconciler_NotFoundWithinGraceUnchanged verifies a young run with no workflow yet is left alone
+// (the workflow may simply not have started).
+func TestReconciler_NotFoundWithinGraceUnchanged(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-o2", tenantID: tenantA, pastGrace: false}}}
+
+	runOneSweep(t, db, newFakeTemporalClient(), fastConfig())
+
+	assert.Empty(t, db.recordedUpdates())
+}
+
+// TestReconciler_NotFoundWithoutTenantUnchanged verifies a run with no tenant is never orphaned:
+// its workflow IDs cannot be built, so absence proves nothing.
+func TestReconciler_NotFoundWithoutTenantUnchanged(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-o3", tenantID: "", pastGrace: true}}}
+
+	runOneSweep(t, db, newFakeTemporalClient(), fastConfig())
+
+	assert.Empty(t, db.recordedUpdates())
+}
+
+// TestReconciler_TemporalErrorOnLaterCandidateNoOrphan verifies a transient error is not read as
+// NotFound: the run must not be failed when any lookup errored.
+func TestReconciler_TemporalErrorOnLaterCandidateNoOrphan(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-o4", tenantID: tenantA, contextIDs: []string{"c1"}, pastGrace: true}}}
+	tc := newFakeTemporalClient()
+	tc.setErr("tenant-a:ctx-c1", unavailableErr())
+
+	runOneSweep(t, db, tc, fastConfig())
+
+	assert.Empty(t, db.recordedUpdates())
+}
+
+// TestReconciler_DryRunOrphanNoWrites verifies dry-run logs but never fails an orphan.
+func TestReconciler_DryRunOrphanNoWrites(t *testing.T) {
+	db := &fakeDB{lockGranted: true, eligibleRows: []eligibleRow{{id: "run-o5", tenantID: tenantA, pastGrace: true}}}
+	cfg := fastConfig()
+	cfg.DryRun = true
+
+	runOneSweep(t, db, newFakeTemporalClient(), cfg)
 
 	assert.Empty(t, db.recordedUpdates())
 }

@@ -10,7 +10,7 @@ owns:
   - traefik/
   - go/cmd/them/main.go
   - go/internal/server/
-last_verified: 2026-10-24   # by reading compose (rendered with all profiles) + main.go; stack not started
+last_verified: 2026-11-01   # by reading compose (rendered with all profiles) + main.go; stack not started
 ---
 
 # Platform Overview & Container Map
@@ -89,7 +89,7 @@ which dispatches `/{tenant}/apps/*` (WS, SSE, voice) and `/{tenant}/a2a/*`.
 config → telemetry → Postgres + two RLS pools (`THEM_DB_URL_APP`, `THEM_DB_URL_ADMIN`, both required)
 → Redis → optional events Redis → in-process event bus → session store → run recorder → rate limiter →
 admission gate → agent registry → auth middleware → health + HTTP server → bearer-token cache →
-Temporal client (required in practice, see `run-lifecycle.md` gap 1) + run reconciler → entry-point config loader → execution
+Temporal client (required in practice, see `run-lifecycle.md` gap 1) + run reconciler (writes on in `docker-compose.dev.yml` via `RECONCILER_DRY_RUN=false`; code default and the Hetzner overlay stay dry-run) → entry-point config loader → execution
 lifecycle + quota/role enforcers → WS, SSE, dashboard WS → heartbeat/liveness loops → A2A → artifacts →
 admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful drain on SIGTERM).
 

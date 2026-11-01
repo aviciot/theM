@@ -1020,8 +1020,10 @@ Redis stream via XADD, verifies replay + live delivery + terminal close against 
 **Purpose:** Temporal-backed run reconciliation. Sweeps `them.runs` for rows stuck in
 `status='running'` and reconciles against Temporal's authoritative `DescribeWorkflowExecution`
 response. PostgreSQL advisory lock prevents duplicate concurrent sweeps. Dry-run mode emits
-no DB writes. Safe NotFound policy: no DB update on 404 (protects Python-native runs and
-history-expired rows). Status mapping per ADR-002.
+no DB writes. Workflow IDs: `appflow:{tenant}:{run}`, `{tenant}:ctx-{context}`, bare run ID.
+NotFound for every ID: run is failed (orphaned) only when older than NotFoundGrace and it has a
+tenant. A terminal status also closes run_steps/tasks/hil_approvals atomically (`close.go`).
+Status mapping per ADR-002.
 
 | Test | What it proves |
 |---|---|
@@ -1032,7 +1034,15 @@ history-expired rows). Status mapping per ADR-002.
 | `TestReconciler_CanceledUpdatesStatus` | CANCELED → `canceled` (single-L canonical spelling) |
 | `TestReconciler_TerminatedMapsToStopped` | TERMINATED → `stopped` (ADR-002: operator stop, not failure) |
 | `TestReconciler_TimedOutMapsToFailed` | TIMED_OUT → `failed` (ADR-002: no timed_out in schema) |
-| `TestReconciler_NotFoundNoDestructiveUpdate` | NotFound from Temporal → no DB write |
+| `TestReconciler_NotFoundNoDestructiveUpdate` | NotFound for a run not past the grace period → no DB write |
+| `TestReconciler_AppflowWorkflowIDFound` | Looks up `appflow:{tenant}:{run}`; failure reason records the Temporal status |
+| `TestReconciler_ContextWorkflowIDFound` | Falls back to `{tenant}:ctx-{contextID}`; completed carries no reason |
+| `TestReconciler_RunningWorkflowIDLeavesUnchanged` | Live workflow never touched, even past grace |
+| `TestReconciler_NotFoundPastGraceFailsOrphan` | Old run with no workflow under any ID → `failed` (orphaned) |
+| `TestReconciler_NotFoundWithinGraceUnchanged` | Young run with no workflow yet → unchanged |
+| `TestReconciler_NotFoundWithoutTenantUnchanged` | No tenant → IDs cannot be built → never orphaned |
+| `TestReconciler_TemporalErrorOnLaterCandidateNoOrphan` | A transient error on any candidate is not read as NotFound |
+| `TestReconciler_DryRunOrphanNoWrites` | Dry-run never fails an orphan |
 | `TestReconciler_TemporalUnavailableNoDBUpdate` | Temporal transient error → no DB write |
 | `TestReconciler_AdvisoryLockPreventsDoubleSweep` | Second reconciler instance skips sweep when lock is held |
 | `TestReconciler_IdempotentUpdate` | Repeated reconciliation of same run writes same payload (DB idempotency via WHERE status='running') |
@@ -1046,6 +1056,7 @@ history-expired rows). Status mapping per ADR-002.
 - `them_reconciler_unchanged_total`
 - `them_reconciler_updated_total`
 - `them_reconciler_notfound_total`
+- `them_reconciler_orphaned_total`
 - `them_reconciler_errors_total`
 - `them_reconciler_dryrun_total`
 

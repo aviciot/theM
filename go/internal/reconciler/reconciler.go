@@ -4,18 +4,11 @@
 //
 // # Identity contract
 //
-// On the Go path the Temporal Workflow ID is exactly the DB run ID (a UUID v4
-// string). The reconciler exploits this: for each eligible row it calls
-// DescribeWorkflowExecution(runID, "") and maps the returned status back to the
-// DB status.
-//
-// Python-native runs use a Temporal Workflow ID of the form "ctx-{context_id}",
-// which is structurally different from a plain UUID. The reconciler does not skip
-// these rows at query time — it cannot tell Go-path rows from Python-native rows
-// by column value alone. Instead it relies on the NotFound policy: when
-// DescribeWorkflowExecution(runID, "") returns NotFound for a Python-native row
-// (because the actual workflow ID is "ctx-{contextID}", not runID), the
-// reconciler leaves the DB unchanged. This is safe.
+// A run's Temporal Workflow ID is not its run ID. Canvas (AppFlow) runs use
+// "appflow:{tenant}:{runID}"; orchestration (WS/SSE) runs share one workflow per
+// session, "{tenant}:ctx-{contextID}", where contextID comes from the run's tasks.
+// For each eligible row the reconciler tries those IDs (see stuckRun.workflowIDs),
+// plus the bare run ID, and maps the first workflow it finds back to the DB status.
 //
 // # Status mapping
 //
@@ -30,11 +23,12 @@
 //
 // # NotFound policy
 //
-// A Temporal NotFound response does NOT directly imply the run failed. It may
-// mean history retention has expired, a wrong namespace, or a Python-native run
-// whose workflow ID does not match its DB id. The reconciler leaves the DB status
-// unchanged on NotFound, increments them_reconciler_notfound_total, and logs a
-// warning. See docs/architecture-v2/runbook-reconciler.md for operational guidance.
+// Temporal always finds a running workflow, and keeps closed ones only for the
+// namespace retention (24 h by default). So NotFound for every candidate ID means the
+// run has no live workflow. When the run is also older than Config.NotFoundGrace
+// (default 2 h, longer than the 1 h platform run timeout) and has a tenant (needed to
+// build the IDs), it is marked "failed" (orphaned). Younger runs, and runs without a
+// tenant, are left unchanged. A run's tasks, steps and HIL approvals are closed with it.
 //
 // # Multi-pod coordination
 //
@@ -93,6 +87,10 @@ type Config struct {
 	// Concurrency is the number of concurrent DescribeWorkflowExecution calls
 	// per sweep. Default: 5.
 	Concurrency int
+
+	// NotFoundGrace is how old a "running" row must be before NotFound from Temporal
+	// is treated as "orphaned" and the run is failed. Default: 2 hours.
+	NotFoundGrace time.Duration
 }
 
 func (c *Config) applyDefaults() {
@@ -110,6 +108,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Concurrency == 0 {
 		c.Concurrency = 5
+	}
+	if c.NotFoundGrace == 0 {
+		c.NotFoundGrace = 2 * time.Hour
 	}
 }
 
@@ -130,7 +131,11 @@ var (
 	})
 	metricNotFound = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "them", Subsystem: "reconciler", Name: "notfound_total",
-		Help: "Rows where Temporal returned NotFound — DB left unchanged.",
+		Help: "Rows where Temporal returned NotFound for every candidate workflow ID.",
+	})
+	metricOrphaned = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "them", Subsystem: "reconciler", Name: "orphaned_total",
+		Help: "Old running rows failed because no Temporal workflow exists for them.",
 	})
 	metricErrors = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "them", Subsystem: "reconciler", Name: "errors_total",
@@ -238,18 +243,19 @@ func (r *Reconciler) loop(ctx context.Context) {
 	}
 }
 
+// $1 stale seconds, $2 limit, $3 NotFoundGrace seconds.
 const eligibleQuery = `
-	SELECT id::text
-	FROM them.runs
-	WHERE status = 'running'
-	  AND started_at < now() - ($1 * interval '1 second')
-	ORDER BY started_at
+	SELECT r.id::text,
+	       COALESCE(r.tenant_id::text, ''),
+	       COALESCE((SELECT array_agg(DISTINCT t.context_id::text)
+	                 FROM them.tasks t
+	                 WHERE t.run_id = r.id AND t.context_id IS NOT NULL), '{}'::text[]),
+	       r.started_at < now() - ($3 * interval '1 second')
+	FROM them.runs r
+	WHERE r.status = 'running'
+	  AND r.started_at < now() - ($1 * interval '1 second')
+	ORDER BY r.started_at
 	LIMIT $2`
-
-const updateQuery = `
-	UPDATE them.runs
-	SET status = $2, updated_at = now()
-	WHERE id = $1 AND status = 'running'`
 
 // sweep runs one reconciliation pass under an advisory lock.
 func (r *Reconciler) sweep(ctx context.Context) {
@@ -272,7 +278,7 @@ func (r *Reconciler) sweep(ctx context.Context) {
 	}()
 
 	staleSeconds := int(r.cfg.StaleAfter.Seconds())
-	rows, err := r.db.Query(ctx, eligibleQuery, staleSeconds, r.cfg.BatchSize)
+	rows, err := r.db.Query(ctx, eligibleQuery, staleSeconds, r.cfg.BatchSize, int(r.cfg.NotFoundGrace.Seconds()))
 	if err != nil {
 		r.logger.Error("reconciler: failed to query eligible rows", "error", err)
 		metricErrors.Inc()
@@ -280,14 +286,14 @@ func (r *Reconciler) sweep(ctx context.Context) {
 	}
 	defer rows.Close()
 
-	var runIDs []string
+	var runs []stuckRun
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var run stuckRun
+		if err := rows.Scan(&run.ID, &run.TenantID, &run.ContextIDs, &run.PastGrace); err != nil {
 			r.logger.Warn("reconciler: scan error", "error", err)
 			continue
 		}
-		runIDs = append(runIDs, id)
+		runs = append(runs, run)
 	}
 	if err := rows.Err(); err != nil {
 		r.logger.Error("reconciler: rows iteration error", "error", err)
@@ -295,27 +301,27 @@ func (r *Reconciler) sweep(ctx context.Context) {
 		return
 	}
 
-	if len(runIDs) == 0 {
+	if len(runs) == 0 {
 		r.logger.Debug("reconciler: no eligible rows in this sweep")
 		return
 	}
 
-	r.logger.Info("reconciler: sweep started", "eligible_count", len(runIDs), "dry_run", r.cfg.DryRun)
-	r.reconcileBatch(ctx, runIDs)
+	r.logger.Info("reconciler: sweep started", "eligible_count", len(runs), "dry_run", r.cfg.DryRun)
+	r.reconcileBatch(ctx, runs)
 }
 
-// reconcileBatch processes run IDs with bounded concurrency.
-func (r *Reconciler) reconcileBatch(ctx context.Context, runIDs []string) {
+// reconcileBatch processes runs with bounded concurrency.
+func (r *Reconciler) reconcileBatch(ctx context.Context, runs []stuckRun) {
 	sem := make(chan struct{}, r.cfg.Concurrency)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for _, id := range runIDs {
+		for _, run := range runs {
 			sem <- struct{}{}
-			go func(runID string) {
+			go func(run stuckRun) {
 				defer func() { <-sem }()
-				r.reconcileOne(ctx, runID)
-			}(id)
+				r.reconcileOne(ctx, run)
+			}(run)
 		}
 		// Drain semaphore — wait for all goroutines.
 		for i := 0; i < cap(sem); i++ {
@@ -325,69 +331,105 @@ func (r *Reconciler) reconcileBatch(ctx context.Context, runIDs []string) {
 	<-done
 }
 
-// reconcileOne reconciles a single run against Temporal.
-func (r *Reconciler) reconcileOne(ctx context.Context, runID string) {
-	metricScanned.Inc()
-
-	resp, err := r.tc.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		if isNotFound(err) {
-			r.logger.Warn("reconciler: workflow not found in Temporal — leaving DB unchanged",
-				"run_id", runID,
-				"note", "may be history retention expiry, wrong namespace, or Python-native run",
-			)
-			metricNotFound.Inc()
-			return
+// describeRun returns the status of the first candidate workflow that exists.
+// found=false with err=nil means every candidate ID was NotFound.
+func (r *Reconciler) describeRun(ctx context.Context, run stuckRun) (st enumspb.WorkflowExecutionStatus, found bool, err error) {
+	for _, wfID := range run.workflowIDs() {
+		resp, derr := r.tc.DescribeWorkflowExecution(ctx, wfID, "")
+		if derr == nil {
+			return resp.WorkflowExecutionInfo.GetStatus(), true, nil
 		}
+		if !isNotFound(derr) {
+			return 0, false, derr
+		}
+	}
+	return 0, false, nil
+}
+
+// reconcileOne reconciles a single run against Temporal.
+func (r *Reconciler) reconcileOne(ctx context.Context, run stuckRun) {
+	metricScanned.Inc()
+	runID := run.ID
+
+	tStatus, found, err := r.describeRun(ctx, run)
+	if err != nil {
 		// Temporal unavailable or transient error — skip, do not update DB.
 		r.logger.Warn("reconciler: DescribeWorkflowExecution failed — skipping",
 			"run_id", runID, "error", err)
 		metricErrors.Inc()
 		return
 	}
+	if !found {
+		r.handleNotFound(ctx, run)
+		return
+	}
 
-	wfInfo := resp.WorkflowExecutionInfo
-	newStatus, shouldUpdate := mapTemporalStatus(wfInfo.GetStatus())
+	newStatus, shouldUpdate := mapTemporalStatus(tStatus)
 	if !shouldUpdate {
 		r.logger.Debug("reconciler: workflow still active — no update",
-			"run_id", runID, "temporal_status", wfInfo.GetStatus())
+			"run_id", runID, "temporal_status", tStatus)
 		metricUnchanged.Inc()
 		return
 	}
 
+	reason := ""
+	if newStatus != domain.RunCompleted {
+		reason = temporalReason(tStatus.String())
+	}
 	if r.cfg.DryRun {
 		r.logger.Info("reconciler: [dry-run] would update run",
-			"run_id", runID,
-			"new_status", string(newStatus),
-			"temporal_status", wfInfo.GetStatus().String(),
-		)
+			"run_id", runID, "new_status", string(newStatus), "temporal_status", tStatus.String())
 		metricDryRun.Inc()
 		return
 	}
-
-	if err := r.writeStatus(ctx, runID, newStatus); err != nil {
-		r.logger.Error("reconciler: failed to update run status",
-			"run_id", runID, "new_status", string(newStatus), "error", err)
-		metricErrors.Inc()
-		return
-	}
-
-	r.logger.Info("reconciler: updated run status",
-		"run_id", runID,
-		"new_status", string(newStatus),
-		"temporal_status", wfInfo.GetStatus().String(),
-	)
-	metricUpdated.Inc()
+	r.apply(ctx, runID, newStatus, reason, tStatus.String())
 }
 
-// writeStatus updates the DB. The WHERE status='running' clause makes it
-// idempotent — a concurrent update to a terminal state is a no-op.
-func (r *Reconciler) writeStatus(ctx context.Context, runID string, status domain.RunStatus) error {
-	_, err := r.db.Exec(ctx, updateQuery, runID, string(status))
-	if err != nil {
-		return fmt.Errorf("reconciler: update run %s to %s: %w", runID, status, err)
+// handleNotFound fails an old run that has no workflow under any candidate ID.
+func (r *Reconciler) handleNotFound(ctx context.Context, run stuckRun) {
+	metricNotFound.Inc()
+	if !run.PastGrace || run.TenantID == "" {
+		r.logger.Warn("reconciler: workflow not found — leaving run unchanged",
+			"run_id", run.ID, "past_grace", run.PastGrace, "has_tenant", run.TenantID != "")
+		return
 	}
-	return nil
+	if r.cfg.DryRun {
+		r.logger.Info("reconciler: [dry-run] would fail orphaned run", "run_id", run.ID)
+		metricDryRun.Inc()
+		return
+	}
+	if r.apply(ctx, run.ID, domain.RunFailed, orphanReason, "NotFound") {
+		metricOrphaned.Inc()
+	}
+}
+
+// apply writes the terminal status (and closes children). Returns true if the row changed.
+func (r *Reconciler) apply(ctx context.Context, runID string, status domain.RunStatus, reason, source string) bool {
+	n, err := r.writeStatus(ctx, runID, status, reason)
+	if err != nil {
+		r.logger.Error("reconciler: failed to update run status",
+			"run_id", runID, "new_status", string(status), "error", err)
+		metricErrors.Inc()
+		return false
+	}
+	if n == 0 {
+		r.logger.Debug("reconciler: run already finalized — no change", "run_id", runID)
+		return false
+	}
+	r.logger.Info("reconciler: updated run status",
+		"run_id", runID, "new_status", string(status), "source", source)
+	metricUpdated.Inc()
+	return true
+}
+
+// writeStatus closes the run and its children in one statement (see closeRunQuery).
+// The returned count is 0 when the run was no longer 'running'.
+func (r *Reconciler) writeStatus(ctx context.Context, runID string, status domain.RunStatus, reason string) (int64, error) {
+	n, err := r.db.Exec(ctx, closeRunQuery, runID, string(status), reason)
+	if err != nil {
+		return 0, fmt.Errorf("reconciler: update run %s to %s: %w", runID, status, err)
+	}
+	return n, nil
 }
 
 // MapTemporalStatus converts a Temporal workflow execution status to a DB

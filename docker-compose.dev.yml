@@ -83,6 +83,8 @@ services:
       - REDIS_EVENTS_HOST=them-redis-events
       - REDIS_EVENTS_PORT=6379
       - REDIS_EVENTS_PASSWORD=${THE_M_EVENTS_REDIS_PASSWORD:-}
+      # Run reconciler writes enabled locally (production overlay keeps dry-run on).
+      - RECONCILER_DRY_RUN=false
 
   # ── Auth Go: enable clickhouse mode for user activity events ─────────────────
   them-auth-go:
