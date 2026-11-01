@@ -40,6 +40,9 @@ Backend enforcement already done (Phase 1, commits 6761602b + bbfcd68a). Still n
 Done and verified live: external_jwt EPs enforce `required_role` (mapped tenant role); canvas checkbox + Runtime dropdown; test-runner scenarios 51/52 pass (`expect: allow|deny` added to the runner). Debug skipped (debug bypasses role check). Migration 126 applied. Plan/open items: `docs/plans/entry-point-role-requirement-plan.md`.
 Run data was purged 2026-11-01 (pg_dump kept in the session scratchpad only); see `docs/plans/e2e-clean-env-purge-investigation.md`.
 
+## Run lifecycle hardening (2026-11-01)
+Reconciler fixed (F-08); finalize closes children (F-122, committed, **not yet deployed**: dag-worker image build fails because 3 event-writer tests need Redis — decision pending). Plan with tests per item: `docs/plans/run-lifecycle-hardening-plan.md`.
+
 ## Next tasks (suggested order)
 1. Check the GitHub Actions tab for the `docs-lint` job. Exposed tokens (F-94, F-91, F-110): user decided not to rotate.
 2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.
