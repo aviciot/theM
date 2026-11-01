@@ -1250,6 +1250,12 @@ func (a *AppFlowActivities) FinalizeRunActivity(ctx context.Context, input Final
 		}
 	}
 
+	childReason := errMsg
+	if domainStatus != domain.RunCompleted && childReason == "" {
+		childReason = "run ended with status " + string(domainStatus)
+	}
+	a.closeRunChildren(ctx, input.RunID, domainStatus, childReason)
+
 	if a.StreamPub != nil {
 		key := fmt.Sprintf("them:dash:run:%s:stream", input.RunID)
 		var payload map[string]interface{}

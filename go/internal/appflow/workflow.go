@@ -442,14 +442,17 @@ func AppFlowWorkflow(ctx workflow.Context, input AppFlowWorkflowInput) (out AppF
 		dCtx, cancel := workflow.NewDisconnectedContext(ctx)
 		defer cancel()
 		fCtx := workflow.WithActivityOptions(dCtx, shortAO)
-		_ = workflow.ExecuteActivity(fCtx, AppFlowFinalizeRunActivityName, FinalizeRunActivityInput{
+		if ferr := workflow.ExecuteActivity(fCtx, AppFlowFinalizeRunActivityName, FinalizeRunActivityInput{
 			RunID:     input.RunID,
 			TenantID:  input.TenantID,
 			Status:    status,
 			FinalText: out.FinalText,
 			ErrMsg:    errMsg,
 			Debug:     input.Debug,
-		}).Get(fCtx, nil)
+		}).Get(fCtx, nil); ferr != nil {
+			workflow.GetLogger(ctx).Error("finalize run failed after retries — run row stays 'running' until the reconciler repairs it",
+				"run_id", input.RunID, "error", ferr)
+		}
 	}()
 
 	if input.Spec == nil {

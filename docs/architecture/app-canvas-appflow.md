@@ -10,7 +10,7 @@ owns:
   - go/internal/admin/service/appflow_debug.go
   - go/internal/admin/appflow_debug.go
   - go/cmd/dag-worker/main.go
-last_verified: 2026-10-24   # by reading code; nothing run live this session
+last_verified: 2026-11-01   # by reading code; nothing run live this session
 ---
 
 # App Canvas / AppFlow
@@ -41,7 +41,7 @@ ws/sse startAppFlow:  ResolveAgentByInstanceID → Compile → Validate → pick
 dag-worker (queue appflow-dag): AppFlowWorkflow walks the graph; each node = activity or in-workflow logic
    │  events → XADD them:dash:run:{runID}:stream ; per-node trace → them.run_steps
    ▼
-defer FinalizeRunActivity (disconnected ctx): UpdateRunStatus + terminal `done`/`error` event
+defer FinalizeRunActivity (disconnected ctx): UpdateRunStatus, best-effort close of the run's open `run_steps`/`tasks`/`hil_approvals` (`appflow/finalize_children.go`), then the terminal `done`/`error` event. A finalize failure after retries is logged by the workflow; runs whose workflow Temporal closed without running it (timeout/terminate) are repaired by the reconciler
 ```
 
 ### Definition JSON (what the compiler reads)

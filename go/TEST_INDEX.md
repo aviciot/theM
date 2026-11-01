@@ -3832,3 +3832,13 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | Test | Covers |
 |---|---|
 | `TestEntryPointJSON_IncludesAccessPolicy` | `access_policy` and `required_role` are serialised (Runtime/canvas UI reads `ep.access_policy.mode`) |
+
+## Finalize closes a finished run's children (F-122)
+**Purpose:** `FinalizeRunActivity` → `closeRunChildren` (`internal/appflow/finalize_children.go`) closes open `run_steps`, `tasks` and `hil_approvals` of a finished run (best-effort, idempotent).
+**Trigger:** any change to `finalize_children.go` or `FinalizeRunActivity`
+**Run:** `go test -tags=integration ./internal/appflow/ -run CloseRunChildren` against a TEST database (set `TEST_POSTGRES_DSN`; the tests clean up their own rows)
+| Test | Covers |
+|---|---|
+| `TestCloseRunChildren_FailedRunClosesOpenChildren` | failed run: open step → `failed` (reason stored), working task → `failed`, pending approval → `timed_out`; finished children and another run's children untouched; second call is a no-op |
+| `TestCloseRunChildren_CompletedRunCompletesOpenSteps` | completed run: open step/task → `completed`, no error added |
+
