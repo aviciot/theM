@@ -7,7 +7,7 @@ owns:
   - test-runner/frontend/app/
   - test-runner/docker-compose.yml
   - test-runner/docker-compose.dev.yml
-last_verified: 2026-10-25
+last_verified: 2026-11-01
 ---
 
 # Test Runner
@@ -21,6 +21,7 @@ A separate mini-app (own compose file, not part of the main stack) that simulate
 - **Backend routes** (no `/api` prefix; the Next proxy adds it): `/config` (GET/PUT, `/config/test`), `/tenants`, `/tenants/{slug}/apps`, `/apps/{id}/eps`, `/scenarios` CRUD, `POST /run`, `GET /run/{id}/stream` (SSE), `DELETE /run/{id}`, `/history` list/get/delete.
 - **Catalog** (`handler/catalog.go`) lists tenants/apps/entry points by reading Postgres directly with `DB_URL`.
 - **Run** (`scenario/run.go`): logs in as admin, creates one virtual user per `n_users`, and each sends the scenario `messages` in order. Runners in `them/`: websocket entry points (`runner.go`), A2A JSON-RPC (`a2a_runner.go`), gateway/LLM (`gateway_runner.go`). Auth modes include temporary access tokens per user (created and deleted via the admin API) and user JWTs.
+- **Expectations:** scenario field `expect` = `allow` (default) or `deny`. With `deny` a user passes only when the connect is rejected with HTTP 403 (`scenario/expect.go`); being admitted is a failure. Used by 51/52 (per-EP required tenant role; setup: `test-runner/scripts/setup_ep_role_scenario.py`, Keycloak `payops_ai` users alice=tier premium, bob=standard; `keycloak_url` must use the issuer host configured in the tenant runtime IdP).
 - **Scenarios** shipped in `data/scenarios/` (gateway PII/rate-limit/token/cost limits, perf with 50–400 users, A2A debator, event delivery). Their README lists what each checks.
 
 ## Key invariants
