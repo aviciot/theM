@@ -3840,6 +3840,8 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | Test | Covers |
 |---|---|
 | `TestCloseRunChildren_FailedRunClosesOpenChildren` | failed run: open step → `failed` (reason stored), working task → `failed`, pending approval → `timed_out`; finished children and another run's children untouched; second call is a no-op |
+| `TestWaitForInput_CancelEndsWorkflowAndFinalizes` (Temporal test env, `cancel_temporal_test.go`) | F-134: cancelling a run waiting for user input ends the workflow as canceled and finalize runs (status `failed`) — failed before the fix (hung until the env deadline) |
+| `TestWaitForInput_ReplyStillCompletes` | a user reply signal still releases the wait node; run `completed` |
 | `TestFinalizeRunActivity_ClosesChildren` | `FinalizeRunActivity` calls the status updater once, then closes the children (covers the wiring) |
 | `TestCloseRunChildren_CompletedRunCompletesOpenSteps` | completed run: open step/task → `completed`, no error added |
 

@@ -86,7 +86,9 @@ func execWaitForInputNode(
 	sigName := AppFlowSignalUserInput + ":" + node.ID
 	sigCh := workflow.GetSignalChannel(ctx, sigName)
 	var reply string
-	sigCh.Receive(ctx, &reply)
+	if err := receiveOrCancel(ctx, sigCh, &reply); err != nil {
+		return accumulated, vars, err
+	}
 
 	// Store the reply in the requested flow var.
 	vars[outputVar] = reply

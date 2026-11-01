@@ -130,8 +130,14 @@ func execHILNode(
 	if cfg.TimeoutSeconds > 0 {
 		timer := workflow.NewTimer(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 		sigCh := workflow.GetSignalChannel(ctx, signalName)
+		var cancelErr error
 		workflow.NewSelector(ctx).
 			AddFuture(timer, func(f workflow.Future) {
+				// A cancelled workflow cancels the timer: that is not a timeout (F-134).
+				if err := f.Get(ctx, nil); err != nil {
+					cancelErr = err
+					return
+				}
 				// Timer fired — apply the configured fallback.
 				switch cfg.FallbackAction {
 				case "approve":
@@ -146,9 +152,14 @@ func execHILNode(
 				ch.Receive(ctx, &approval)
 			}).
 			Select(ctx)
+		if cancelErr != nil {
+			return false, "", cancelErr
+		}
 	} else {
-		// Wait indefinitely.
-		workflow.GetSignalChannel(ctx, signalName).Receive(ctx, &approval)
+		// Wait indefinitely (but end when the workflow is cancelled — F-134).
+		if err := receiveOrCancel(ctx, workflow.GetSignalChannel(ctx, signalName), &approval); err != nil {
+			return false, "", err
+		}
 	}
 
 	// The approval decision (approved/rejected/timeout) is only known here, in
