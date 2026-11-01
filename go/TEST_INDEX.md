@@ -3946,3 +3946,14 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestReleaseStillWakesWaiter` | a released token still reaches a waiting session |
 | `TestRunStreamerWriter_XAdd_SetsAndRefreshesTTL` (integration) | a stream gets a TTL ≤ 24 h on first write; a second event refreshes it; both entries present |
 
+## Event stream robustness (F-128, plan P4)
+**Purpose:** DLQ entries keep the original event payload; a message pending for more than 6 h is moved to the DLQ (with payload) and ACKed so it cannot block trimming; producers cap the events stream (`MAXLEN ~ 200000`).
+**Trigger:** any change to `cmd/event-writer/main.go` (`moveToDLQ`, `RecoverPending`) or `internal/events/redis.go`
+**Run:** `go test ./cmd/event-writer/ -run MessageAge`; `go test -tags=integration ./cmd/event-writer/ ./internal/events/` with `REDIS_HOST` / `REDIS_ADDR` pointing at a test Redis (DB 1; the pre-existing recovery tests sleep ~30 s each)
+| Test | Covers |
+|---|---|
+| `TestMessageAge` | age from the stream ID; unparseable IDs never look stuck |
+| `TestMoveToDLQ_KeepsPayload` (integration) | DLQ entry has msg_id, reason and the original payload; still works when the source entry is gone |
+| `TestRecoverPending_StuckMessageGoesToDLQ_FreshOneIsProcessed` (integration) | a 1970-stamped pending message → DLQ with payload + ACK; a fresh one is processed into the sink; nothing left pending |
+| `TestRedisSink_WriteBatch_CapsStreamLength` (integration) | with a small cap the stream is trimmed; with the default cap 800 events are all kept |
+

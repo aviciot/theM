@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -41,6 +43,14 @@ const (
 	blockTimeout     = 2 * time.Second // XREADGROUP block time
 	maxRetries       = 3
 	pendingClaimIdle = 30 * time.Second // Messages idle >30s are claimed from dead consumers
+
+	// stuckPendingMaxAge: a message still unprocessed this long after it was written is moved to the DLQ
+	// (with its payload) instead of being retried forever, so one bad message cannot block trimming of
+	// the whole stream (backlog F-128).
+	stuckPendingMaxAge = 6 * time.Hour
+
+	// dlqMaxLen is the approximate MAXLEN of the DLQ stream (also trimmed by age).
+	dlqMaxLen = "10000"
 )
 
 func main() {
@@ -205,9 +215,11 @@ type EventConsumer struct {
 	consumerName  string
 	batchSize     int
 	batchTimeout  time.Duration
-	stopChan      chan struct{}
-	stopped       bool
-	mu            sync.Mutex
+	// claimIdle overrides pendingClaimIdle (zero = default); tests set it small to avoid sleeping.
+	claimIdle time.Duration
+	stopChan  chan struct{}
+	stopped   bool
+	mu        sync.Mutex
 
 	// Counters
 	processedCount uint64
@@ -219,7 +231,11 @@ type EventConsumer struct {
 // Processes reclaimed messages immediately through validation, persistence/DLQ, and ACK.
 // Paginates via cursor until cursor returns "0-0".
 func (c *EventConsumer) RecoverPending(ctx context.Context) error {
-	minIdleMs := fmt.Sprintf("%d", pendingClaimIdle.Milliseconds())
+	idle := c.claimIdle
+	if idle <= 0 {
+		idle = pendingClaimIdle
+	}
+	minIdleMs := fmt.Sprintf("%d", idle.Milliseconds())
 	cursor := "0-0"
 	totalRecovered := 0
 	totalPoison := 0
@@ -264,6 +280,23 @@ func (c *EventConsumer) RecoverPending(ctx context.Context) error {
 
 		// Process each reclaimed message immediately
 		for _, msg := range messages {
+			// A message stuck this long will not succeed on another retry: keep its payload in the DLQ and
+			// release it, so it stops blocking stream trimming.
+			if age := messageAge(msg.ID); age > stuckPendingMaxAge {
+				c.logger.Warn("stuck pending event moved to DLQ", "msg_id", msg.ID, "age", age.Round(time.Minute))
+				if err := c.moveToDLQ(ctx, msg.ID, fmt.Sprintf("stuck_pending_over_%s", stuckPendingMaxAge)); err != nil {
+					c.logger.Error("failed to move stuck event to DLQ", "error", err, "msg_id", msg.ID)
+					totalFailed++
+					continue
+				}
+				if err := c.ackMessages(ctx, []string{msg.ID}); err != nil {
+					c.logger.Error("failed to ACK stuck event", "error", err, "msg_id", msg.ID)
+					totalFailed++
+				} else {
+					totalPoison++
+				}
+				continue
+			}
 			// Parse event
 			eventData, ok := msg.FieldValues["event"]
 			if !ok {
@@ -684,19 +717,46 @@ func (c *EventConsumer) ackMessages(ctx context.Context, messageIDs []string) er
 	return c.redis.Do(ctx, cmd).Error()
 }
 
-// moveToDLQ writes poison event to DLQ stream before ACK.
+// messageAge returns how long ago a stream entry was written, from the millisecond timestamp in its ID
+// (0 when the ID cannot be parsed, so unknown IDs are never treated as stuck).
+func messageAge(id string) time.Duration {
+	ms, _, ok := strings.Cut(id, "-")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.ParseInt(ms, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return time.Since(time.UnixMilli(n))
+}
+
+// payloadOf returns the original "event" field of a stream entry ("" if the entry is gone or unreadable).
+func (c *EventConsumer) payloadOf(ctx context.Context, messageID string) string {
+	entries, err := c.redis.Do(ctx, c.redis.B().Xrange().Key(c.streamKey).Start(messageID).End(messageID).Build()).AsXRange()
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	return entries[0].FieldValues["event"]
+}
+
+// moveToDLQ writes a poison event to the DLQ stream before ACK. The original payload is copied into the
+// DLQ entry: the source entry is trimmed from the main stream after 24 h, so without it a rejected event
+// could never be inspected or replayed.
 func (c *EventConsumer) moveToDLQ(ctx context.Context, messageID, reason string) error {
-	// XADD them:events:dlq * msg_id <id> reason <reason> ts <timestamp>
-	cmd := c.redis.B().Xadd().
+	// XADD them:events:dlq MAXLEN ~ N * msg_id <id> reason <reason> ts <timestamp> [payload <event json>]
+	b := c.redis.B().Xadd().
 		Key(c.dlqStreamKey).
+		Maxlen().Almost().Threshold(dlqMaxLen).
 		Id("*").
 		FieldValue().
 		FieldValue("msg_id", messageID).
 		FieldValue("reason", reason).
-		FieldValue("ts", time.Now().UTC().Format(time.RFC3339)).
-		Build()
-
-	return c.redis.Do(ctx, cmd).Error()
+		FieldValue("ts", time.Now().UTC().Format(time.RFC3339))
+	if payload := c.payloadOf(ctx, messageID); payload != "" {
+		b = b.FieldValue("payload", payload)
+	}
+	return c.redis.Do(ctx, b.Build()).Error()
 }
 
 // StreamMessage represents a Redis Streams message.

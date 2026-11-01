@@ -39,10 +39,10 @@ ClickHouse `them_events`  (ReplacingMergeTree, dedup by event_id)
 - **Delivery is at-least-once.** A retried batch can re-insert events already written; ClickHouse
   collapses them by `event_id` at merge time (queries may briefly see duplicates).
 - **Recovery:** `RecoverPending` (XAUTOCLAIM, idle >30s) runs at startup and every 60s, pushing
-  reclaimed messages through the same validate → write/DLQ → ACK path.
+  reclaimed messages through the same validate → write/DLQ → ACK path. A reclaimed message written more than 6 h ago (`stuckPendingMaxAge`) is moved to the DLQ and ACKed instead of retried, so one bad message cannot block trimming forever.
 - **Retention:** `retention.go` trims `them:events` every 15 min, only up to the group's
   last-delivered id AND older than 24h, and never while any message is pending or no consumer
-  exists. DLQ is trimmed by age only (7 days). ClickHouse TTLs: gateway/tool 90d, user activity
+  exists. DLQ is trimmed by age (7 days) and capped at ≈10,000 entries; each DLQ entry now carries the original event JSON in `payload` (copied from the stream before it is trimmed), so a rejected event can be inspected and replayed. Producers `XADD` with an approximate `MAXLEN` of 200,000 (`events/redis.go` `streamMaxLen`): the events Redis is `noeviction`, so a stopped event-writer must not be able to fill its memory; past that lag the oldest unconsumed events are dropped. ClickHouse TTLs: gateway/tool 90d, user activity
   180d, audit 7y, bodies 30d (`db/clickhouse/001_events.sql`).
 - **Health:** event-writer serves `GET /health` on `:8080`; 503 when lag >1000 or pending >100.
 

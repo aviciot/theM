@@ -343,3 +343,118 @@ func (m *mockEventSink) Emit(ctx context.Context, event events.Event) error {
 func (m *mockEventSink) Close(ctx context.Context) error {
 	return nil
 }
+
+// ── F-128: DLQ keeps the payload; stuck messages are released ────────────────
+
+func newTestConsumer(t *testing.T, client rueidis.Client, stream, group, dlq string) *EventConsumer {
+	t.Helper()
+	return &EventConsumer{
+		redis: client, streamKey: stream, dlqStreamKey: dlq, consumerGroup: group, consumerName: "c2",
+		sink: &mockEventSink{events: make([]events.Event, 0)}, logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		batchSize: 10, batchTimeout: time.Second, claimIdle: time.Millisecond,
+	}
+}
+
+func testRedis(t *testing.T) rueidis.Client {
+	t.Helper()
+	addr := os.Getenv("REDIS_HOST")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{addr}, SelectDB: 1})
+	if err != nil {
+		t.Fatalf("failed to connect to redis: %v", err)
+	}
+	t.Cleanup(client.Close)
+	return client
+}
+
+func dlqEntries(t *testing.T, client rueidis.Client, dlq string) []rueidis.XRangeEntry {
+	t.Helper()
+	e, err := client.Do(context.Background(), client.B().Xrange().Key(dlq).Start("-").End("+").Build()).AsXRange()
+	if err != nil && !rueidis.IsRedisNil(err) {
+		t.Fatalf("XRANGE dlq: %v", err)
+	}
+	return e
+}
+
+// moveToDLQ copies the original event JSON into the DLQ entry (and still works if the entry is gone).
+func TestMoveToDLQ_KeepsPayload(t *testing.T) {
+	ctx := context.Background()
+	client := testRedis(t)
+	stream, dlq := "test:dlqpayload:stream", "test:dlqpayload:dlq"
+	client.Do(ctx, client.B().Del().Key(stream, dlq).Build())
+	t.Cleanup(func() { client.Do(ctx, client.B().Del().Key(stream, dlq).Build()) })
+
+	id, err := client.Do(ctx, client.B().Xadd().Key(stream).Id("*").FieldValue().FieldValue("event", `{"bad":true`).Build()).ToString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newTestConsumer(t, client, stream, "g", dlq)
+	if err := c.moveToDLQ(ctx, id, "invalid_json: test"); err != nil {
+		t.Fatalf("moveToDLQ: %v", err)
+	}
+	// a message whose source entry is already gone
+	if err := c.moveToDLQ(ctx, "1-1", "gone"); err != nil {
+		t.Fatalf("moveToDLQ without source: %v", err)
+	}
+
+	got := dlqEntries(t, client, dlq)
+	if len(got) != 2 {
+		t.Fatalf("dlq entries = %d, want 2", len(got))
+	}
+	if got[0].FieldValues["payload"] != `{"bad":true` || got[0].FieldValues["msg_id"] != id || got[0].FieldValues["reason"] != "invalid_json: test" {
+		t.Errorf("dlq entry must carry msg_id, reason and the original payload: %v", got[0].FieldValues)
+	}
+	if _, has := got[1].FieldValues["payload"]; has {
+		t.Errorf("no payload field expected when the source entry is gone: %v", got[1].FieldValues)
+	}
+}
+
+// A message that has been pending for hours goes to the DLQ with its payload and is ACKed (it no longer
+// blocks trimming); a fresh message is processed normally.
+func TestRecoverPending_StuckMessageGoesToDLQ_FreshOneIsProcessed(t *testing.T) {
+	ctx := context.Background()
+	client := testRedis(t)
+	stream, group, dlq := "test:stuck:stream", "g-stuck", "test:stuck:dlq"
+	client.Do(ctx, client.B().Del().Key(stream, dlq).Build())
+	t.Cleanup(func() { client.Do(ctx, client.B().Del().Key(stream, dlq).Build()) })
+	client.Do(ctx, client.B().XgroupCreate().Key(stream).Group(group).Id("0").Mkstream().Build())
+
+	valid, _ := json.Marshal(events.Event{EventID: "fresh-1", Kind: events.EventKindGatewayRequest, Timestamp: time.Now()})
+	// explicit ID with a 1970 timestamp = "written 56 years ago"
+	if _, err := client.Do(ctx, client.B().Xadd().Key(stream).Id("1000-0").FieldValue().FieldValue("event", string(valid)).Build()).ToString(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(ctx, client.B().Xadd().Key(stream).Id("*").FieldValue().FieldValue("event", string(valid)).Build()).ToString(); err != nil {
+		t.Fatal(err)
+	}
+	// consumer1 reads both and "crashes" before ACK
+	if _, err := client.Do(ctx, client.B().Xreadgroup().Group(group, "c1").Count(10).Block(100).Streams().Key(stream).Id(">").Build()).AsXRead(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	c := newTestConsumer(t, client, stream, group, dlq)
+	if err := c.RecoverPending(ctx); err != nil {
+		t.Fatalf("RecoverPending: %v", err)
+	}
+
+	got := dlqEntries(t, client, dlq)
+	if len(got) != 1 {
+		t.Fatalf("dlq entries = %d, want only the stuck message", len(got))
+	}
+	if r := got[0].FieldValues["reason"]; len(r) < 18 || r[:18] != "stuck_pending_over" {
+		t.Errorf("reason = %q, want stuck_pending_over_…", r)
+	}
+	if got[0].FieldValues["payload"] != string(valid) {
+		t.Errorf("stuck message must keep its payload in the DLQ: %v", got[0].FieldValues)
+	}
+	if n := len(c.sink.(*mockEventSink).events); n != 1 {
+		t.Errorf("sink events = %d, want 1 (only the fresh message)", n)
+	}
+	pend, err := client.Do(ctx, client.B().Xpending().Key(stream).Group(group).Start("-").End("+").Count(10).Build()).ToArray()
+	if err != nil || len(pend) != 0 {
+		t.Errorf("both messages must be ACKed: pending=%d err=%v", len(pend), err)
+	}
+}

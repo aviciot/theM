@@ -33,6 +33,8 @@ type RedisSink struct {
 	failedCtr   atomic.Int64 // Redis write failed after retries
 
 	closed      atomic.Bool
+
+	maxLen string // approximate MAXLEN for XADD (streamMaxLen; tests lower it)
 	mu          sync.Mutex
 }
 
@@ -57,6 +59,7 @@ func NewRedisSink(client rueidis.Client, streamKey string, bufferSize int, flush
 		flushEvery: flushEvery,
 		ctx:        ctx,
 		cancel:     cancel,
+		maxLen:     streamMaxLen,
 	}
 
 	// Start background flusher
@@ -203,6 +206,12 @@ func (r *RedisSink) writeBatchWithRetry(events []Event) error {
 	return fmt.Errorf("redis sink: write failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+// streamMaxLen is the approximate MAXLEN producers apply to the events stream. The events Redis is
+// noeviction: without a cap a stopped event-writer would let the stream fill memory until every write
+// fails. 200k events is a few tens of MB; if the consumer ever lags further than that the oldest
+// unconsumed events are dropped instead (backlog F-128).
+const streamMaxLen = "200000"
+
 // writeBatch writes a batch of events to Redis Streams using XADD (single attempt).
 func (r *RedisSink) writeBatch(ctx context.Context, events []Event) error {
 	for _, event := range events {
@@ -215,6 +224,7 @@ func (r *RedisSink) writeBatch(ctx context.Context, events []Event) error {
 		// XADD stream_key * event <json>
 		cmd := r.client.B().Xadd().
 			Key(r.streamKey).
+			Maxlen().Almost().Threshold(r.maxLen).
 			Id("*").
 			FieldValue().
 			FieldValue("event", string(data)).
