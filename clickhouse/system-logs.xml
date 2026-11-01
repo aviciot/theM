@@ -1,0 +1,31 @@
+<!--
+  ClickHouse system log retention (backlog F-130, plan P4).
+  The default system logs have no TTL: text_log + asynchronous_metric_log + metric_log were ~700 of 856 MB
+  while the event tables (them_events.*, which have their own TTLs in db/clickhouse/001_events.sql) were tiny.
+  Mounted as a single file into /etc/clickhouse-server/config.d/ (the image already ships config.d files).
+  Existing tables keep their old definition; docs/architecture/events-pipeline.md has the one-off ALTERs.
+-->
+<clickhouse>
+    <text_log>
+        <level>warning</level>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </text_log>
+    <query_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </part_log>
+    <error_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </error_log>
+    <metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </metric_log>
+    <asynchronous_metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+    <!-- profiling logs nothing in the platform reads -->
+    <trace_log remove="1"/>
+    <processors_profile_log remove="1"/>
+</clickhouse>

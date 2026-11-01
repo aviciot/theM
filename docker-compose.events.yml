@@ -36,6 +36,8 @@ services:
     volumes:
       - ./data/them-clickhouse:/var/lib/clickhouse
       - ./db/clickhouse:/docker-entrypoint-initdb.d:ro
+      # System log retention (F-130): a single file, the image already ships other config.d files.
+      - ./clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     ulimits:
       nofile:
         soft: 262144

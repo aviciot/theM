@@ -8,7 +8,7 @@ owns:
   - db/clickhouse/
   - docker-compose.events.yml
   - redis/config/redis-events.conf
-last_verified: 2026-10-24   # by reading code; not re-run live this session
+last_verified: 2026-11-01   # by reading code; not re-run live this session
 ---
 
 # Events Pipeline
@@ -74,6 +74,11 @@ Unknown values fail startup.
 | Process crash before flush | Buffered events lost (in-memory only) |
 | Writer crash mid-batch | Messages pending → reclaimed after 30s (duplicates possible, deduped by `event_id`) |
 | Poison message | Goes to DLQ with a reason; DLQ is not auto-replayed |
+
+## ClickHouse system logs (retention, 2026-11-01)
+ClickHouse writes its own diagnostics to `system.*_log` tables, which have no TTL by default (they were ~700 of 856 MB while the event tables were tiny). `clickhouse/system-logs.xml` (mounted as a single file into `config.d/` by `docker-compose.events.yml`) sets: `text_log` level `warning` + 7 d TTL, `query_log`/`part_log`/`error_log` 7 d, `metric_log`/`asynchronous_metric_log` 3 d, and removes `trace_log` and `processors_profile_log`.
+**On an existing install** ClickHouse does not alter old tables: on restart it renames each changed table to `<name>_0` (old data kept) and creates a new one. After the restart run once: `DROP TABLE IF EXISTS system.<name>_0 SYNC` for each `_0` table, `DROP TABLE IF EXISTS system.trace_log SYNC`, `DROP TABLE IF EXISTS system.processors_profile_log SYNC`, and `ALTER TABLE system.query_log MODIFY TTL event_date + INTERVAL 7 DAY` (same for `part_log`) if they were not recreated. Verified 2026-11-01: data dir 303 MB → 2.9 MB, events still ingested.
+The event tables (`them_events.*`) keep their own TTLs from `db/clickhouse/001_events.sql`.
 
 ## Known gaps (verified in code, 2026-10-24)
 - **Read side is unused.** `EventStore` implementations (`PostgresStore`, `ClickHouseStore`) have no
