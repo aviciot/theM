@@ -90,6 +90,21 @@ const (
 	RunStatusCancelled     = RunCanceled
 )
 
+// IsTerminal reports whether s is a final run status: the run never changes again, so status
+// writers must not overwrite it. "cancelled" (double l) is the legacy spelling still allowed
+// by the DB CHECK.
+func (s RunStatus) IsTerminal() bool {
+	switch s {
+	case RunCompleted, RunFailed, RunCanceled, RunStopped, "cancelled":
+		return true
+	}
+	return false
+}
+
+// TerminalRunStatusesSQL is the SQL list form of the terminal statuses, for
+// `status NOT IN (...)` guards that keep a finished run from being overwritten.
+const TerminalRunStatusesSQL = "'completed','failed','canceled','cancelled','stopped'"
+
 // ─── Message helpers ──────────────────────────────────────────────────────────
 
 // TextMessage creates a single-part text message with the given role.

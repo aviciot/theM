@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/aviciot/them/internal/domain"
 )
 
 // TestDBContextLoader_SQLContainsTenantScope verifies that every DB query in
@@ -47,5 +49,19 @@ func TestDBContextLoader_SQLContainsTenantScope(t *testing.T) {
 				t.Errorf("SQL for %q does not scope by tenant_id: %s", tc.name, tc.sql)
 			}
 		})
+	}
+}
+
+// F-133: the finalize status update sets ended_at for every terminal status (including stopped)
+// and never overwrites an already-terminal run; a non-terminal write is neither.
+func TestRunStatusUpdateQuery(t *testing.T) {
+	for _, st := range []domain.RunStatus{domain.RunCompleted, domain.RunFailed, domain.RunCanceled, domain.RunStopped} {
+		q := runStatusUpdateQuery(st)
+		if !strings.Contains(q, "ended_at=now()") || !strings.Contains(q, "status NOT IN (") || !strings.Contains(q, "'stopped'") {
+			t.Errorf("%s: terminal update must set ended_at and be guarded incl. stopped: %s", st, q)
+		}
+	}
+	if q := runStatusUpdateQuery(domain.RunRunning); strings.Contains(q, "ended_at") || strings.Contains(q, "NOT IN") {
+		t.Errorf("running update must be plain: %s", q)
 	}
 }

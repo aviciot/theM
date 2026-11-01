@@ -1436,20 +1436,20 @@ type pgxRunStatusUpdater struct {
 	pool *pgxpool.Pool
 }
 
-func (u *pgxRunStatusUpdater) UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error {
-	terminal := status == domain.RunCompleted || status == domain.RunFailed || status == domain.RunCanceled
-	var q string
-	if terminal {
-		// Idempotency guard: skip if run is already in a terminal state.
-		// This prevents a retried FinalizeRunActivity from overwriting a terminal status
-		// that was written by a previous attempt.
-		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,''), ended_at=now()
+// runStatusUpdateQuery builds the status UPDATE. A terminal status sets ended_at and is skipped when
+// the run is already terminal (idempotency: a retried FinalizeRunActivity, or a cancel/stop that won
+// the race, must not be overwritten).
+func runStatusUpdateQuery(status domain.RunStatus) string {
+	if status.IsTerminal() {
+		return `UPDATE them.runs SET status=$2, error=NULLIF($3,''), ended_at=now()
 		      WHERE id=$1::uuid
-		        AND status NOT IN ('completed','failed','canceled')`
-	} else {
-		q = `UPDATE them.runs SET status=$2, error=NULLIF($3,'') WHERE id=$1::uuid`
+		        AND status NOT IN (` + domain.TerminalRunStatusesSQL + `)`
 	}
-	_, err := u.pool.Exec(ctx, q, runID, string(status), errMsg)
+	return `UPDATE them.runs SET status=$2, error=NULLIF($3,'') WHERE id=$1::uuid`
+}
+
+func (u *pgxRunStatusUpdater) UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error {
+	_, err := u.pool.Exec(ctx, runStatusUpdateQuery(status), runID, string(status), errMsg)
 	if err != nil {
 		return fmt.Errorf("pgxRunStatusUpdater: update run %s: %w", runID, err)
 	}

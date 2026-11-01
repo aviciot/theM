@@ -746,3 +746,23 @@ func TestRecordTokensMetric_NoopWithoutRecorder(t *testing.T) {
 		rec.RecordTokensMetric(context.Background(), "t1", "a1", 100, 50)
 	})
 }
+
+// F-133: a terminal status sets ended_at and is guarded so it cannot overwrite a finished run.
+func TestUpdateRunStatus_TerminalIsGuardedAndSetsEndedAt(t *testing.T) {
+	for _, st := range []domain.RunStatus{domain.RunCompleted, domain.RunFailed, domain.RunCanceled, domain.RunStopped} {
+		db := &mockDB{}
+		require.NoError(t, New(db).UpdateRunStatus(context.Background(), "run-1", st, ""))
+		require.Len(t, db.calls, 1)
+		assert.Contains(t, db.calls[0].sql, "ended_at=now()", "%s must set ended_at", st)
+		assert.Contains(t, db.calls[0].sql, "status NOT IN (", "%s must not overwrite a finished run", st)
+		assert.Contains(t, db.calls[0].sql, "'stopped'", "stopped is terminal")
+	}
+}
+
+func TestUpdateRunStatus_NonTerminalIsNotGuarded(t *testing.T) {
+	db := &mockDB{}
+	require.NoError(t, New(db).UpdateRunStatus(context.Background(), "run-1", domain.RunRunning, ""))
+	require.Len(t, db.calls, 1)
+	assert.NotContains(t, db.calls[0].sql, "ended_at")
+	assert.NotContains(t, db.calls[0].sql, "NOT IN")
+}

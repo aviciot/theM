@@ -144,12 +144,14 @@ func (r *Recorder) UpdateRunGoal(ctx context.Context, runID, goal string) error 
 }
 
 // UpdateRunStatus sets the status and error for the given run.
-// Sets ended_at when the status is a terminal state (completed/failed/canceled).
+// A terminal status (completed/failed/canceled/stopped) also sets ended_at and is written only
+// while the run is not already terminal, so a late writer (e.g. a "startup failed" arriving after
+// the run finished or was canceled) cannot overwrite the final status.
 func (r *Recorder) UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error {
-	terminal := status == domain.RunCompleted || status == domain.RunFailed || status == domain.RunCanceled
 	var q string
-	if terminal {
-		q = `UPDATE them.runs SET status=$2, error=$3, ended_at=now() WHERE id=$1`
+	if status.IsTerminal() {
+		q = `UPDATE them.runs SET status=$2, error=$3, ended_at=now()
+		      WHERE id=$1 AND status NOT IN (` + domain.TerminalRunStatusesSQL + `)`
 	} else {
 		q = `UPDATE them.runs SET status=$2, error=$3 WHERE id=$1`
 	}

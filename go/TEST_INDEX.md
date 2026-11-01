@@ -3869,3 +3869,14 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestRunService_Cancel_DBFailure_DoesNotTouchWorkflow` | DB cancel fails → no workflow is cancelled |
 | `TestDAL_CancelRun_ClosesOpenChildren` (integration) | run → `canceled`; open step → `failed`, task → `canceled`, approval → `timed_out`; finished steps kept; second cancel → no rows |
 
+## Terminal run statuses are never overwritten (F-133)
+**Purpose:** `domain.RunStatus.IsTerminal` is the one definition of a finished run; the recorder (`runrecorder.UpdateRunStatus`) and the dag-worker status updater (`runStatusUpdateQuery`) set `ended_at` for every terminal status (incl. `stopped`) and skip runs that are already terminal.
+**Trigger:** any change to `domain.RunStatus`, `runrecorder/recorder.go` `UpdateRunStatus`, or `cmd/dag-worker/main.go` `runStatusUpdateQuery`
+**Run:** `go test ./internal/domain/ ./internal/runrecorder/ ./cmd/dag-worker/`; `go test -tags=integration ./internal/runrecorder/ -run RealDB` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestRunStatus_IsTerminal` / `TestTerminalRunStatusesSQL_MatchesIsTerminal` | every status classified; SQL guard list matches |
+| `TestUpdateRunStatus_TerminalIsGuardedAndSetsEndedAt` / `_NonTerminalIsNotGuarded` | recorder SQL for each terminal status vs `running` |
+| `TestRunStatusUpdateQuery` | dag-worker updater SQL: terminal guarded incl. `stopped`, running plain |
+| `TestUpdateRunStatus_RealDB_TerminalGuard` (integration) | stopped sets ended_at; a late `failed` cannot overwrite it; normal completion works |
+
