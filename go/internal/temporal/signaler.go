@@ -3,8 +3,10 @@ package temporal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/domain"
@@ -44,4 +46,18 @@ func (s *Signaler) SignalNamedWorkflow(ctx context.Context, workflowID, signalNa
 		return fmt.Errorf("temporal: signal %s → %s: %w", workflowID, signalName, err)
 	}
 	return nil
+}
+
+// CancelWorkflow requests cancellation of the workflow with the given ID. NotFound (never
+// started, or already closed) is reported as found=false, not as an error.
+func (s *Signaler) CancelWorkflow(ctx context.Context, workflowID string) (bool, error) {
+	err := s.client.CancelWorkflow(ctx, workflowID, "")
+	if err == nil {
+		return true, nil
+	}
+	var nf *serviceerror.NotFound
+	if errors.As(err, &nf) {
+		return false, nil
+	}
+	return false, fmt.Errorf("temporal: cancel workflow %s: %w", workflowID, err)
 }

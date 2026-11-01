@@ -41,7 +41,7 @@ ws/sse startAppFlow:  ResolveAgentByInstanceID → Compile → Validate → pick
 dag-worker (queue appflow-dag): AppFlowWorkflow walks the graph; each node = activity or in-workflow logic
    │  events → XADD them:dash:run:{runID}:stream ; per-node trace → them.run_steps
    ▼
-defer FinalizeRunActivity (disconnected ctx): UpdateRunStatus, best-effort close of the run's open `run_steps`/`tasks`/`hil_approvals` (`appflow/finalize_children.go`), then the terminal `done`/`error` event. Signal waits (wait_for_input, HIL without timeout) use `receiveOrCancel` (`appflow/signal_cancel.go`) so a cancelled workflow ends and finalizes — a plain `Receive` never wakes on cancellation (F-134). A finalize failure after retries is logged by the workflow; runs whose workflow Temporal closed without running it (timeout/terminate) are repaired by the reconciler
+defer FinalizeRunActivity (disconnected ctx): UpdateRunStatus, best-effort close of the run's open `run_steps`/`tasks`/`hil_approvals` (`appflow/finalize_children.go`, SQL shared in `internal/runclose`), then the terminal `done`/`error` event. Signal waits (wait_for_input, HIL without timeout) use `receiveOrCancel` (`appflow/signal_cancel.go`) so a cancelled workflow ends and finalizes — a plain `Receive` never wakes on cancellation (F-134). A finalize failure after retries is logged by the workflow; runs whose workflow Temporal closed without running it (timeout/terminate) are repaired by the reconciler
 ```
 
 ### Definition JSON (what the compiler reads)

@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
+
+	"github.com/aviciot/them/internal/runclose"
 )
 
 // runSelectCols is the column list shared by ListRuns and GetRun queries.
@@ -319,7 +322,16 @@ func (d *DB) CancelRun(ctx context.Context, tenantID, runID string) (Run, error)
 	      SET status = 'canceled', ended_at = now(), error = 'Canceled by user'
 	      WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = 'running'
 	      RETURNING ` + runSelectCols
-	return scanRun(d.q.QueryRow(ctx, q, runID, tenantID))
+	run, err := scanRun(d.q.QueryRow(ctx, q, runID, tenantID))
+	if err != nil {
+		return run, err
+	}
+	// The run row is already canceled; closing its steps/tasks/approvals is best-effort
+	// so a failure here cannot turn a successful cancel into an error.
+	if err := d.q.Exec(ctx, runclose.ChildrenQuery, runID, "canceled", "Canceled by user"); err != nil {
+		slog.Warn("admin: closing children of canceled run failed", "run_id", runID, "error", err)
+	}
+	return run, nil
 }
 
 // DeleteRun deletes a single run scoped to the tenant.

@@ -3849,3 +3849,16 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 `cmd/event-writer/recovery_test.go` (`TestRecoverPending_*`, 3 tests) talk to a real Redis (`REDIS_HOST`, default `localhost:6379`, DB 1), so they carry `//go:build integration` and are not part of `go test ./...` (the dag-worker image build runs that and has no Redis).
 **Run them whenever `cmd/event-writer/` or `internal/events/` changes:** `go test -tags=integration ./cmd/event-writer/...` with a Redis reachable.
 
+## Admin cancel run also cancels the workflow (F-123)
+**Purpose:** `RunService.Cancel` (`internal/admin/service/runs.go`) flips the run to `canceled`, then asks Temporal to cancel its workflow; `dal.CancelRun` also closes the run's open steps/tasks/approvals via `runclose.ChildrenQuery`.
+**Trigger:** any change to `service/runs.go`, `dal/runs.go` `CancelRun`, `internal/runclose/`, or `temporal/signaler.go`
+**Run:** `go test ./internal/admin/service/...`; `go test -tags=integration ./internal/admin/dal/ -run CancelRun` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestRunService_Cancel_CancelsCanvasWorkflow` | cancels `appflow:{tenant}:{run}` and stops once found |
+| `TestRunService_Cancel_FallsBackToSessionWorkflow` | tries `{tenant}:ctx-{context}` when the canvas workflow does not exist |
+| `TestRunService_Cancel_WorkflowErrorDoesNotFailCancel` | a Temporal error is logged, the cancel still succeeds |
+| `TestRunService_Cancel_TemporalNil_StillCancels` | no Temporal client (disabled) → DB cancel only |
+| `TestRunService_Cancel_DBFailure_DoesNotTouchWorkflow` | DB cancel fails → no workflow is cancelled |
+| `TestDAL_CancelRun_ClosesOpenChildren` (integration) | run → `canceled`; open step → `failed`, task → `canceled`, approval → `timed_out`; finished steps kept; second cancel → no rows |
+

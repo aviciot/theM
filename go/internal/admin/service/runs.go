@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/appflow"
 	"github.com/aviciot/them/internal/temporal"
 )
 
@@ -98,7 +100,33 @@ func (s *RunService) Cancel(ctx context.Context, tenantID, runID string) (dal.Ru
 		}
 		return dal.Run{}, err
 	}
+	s.cancelWorkflows(ctx, tenantID, runID)
 	return run, nil
+}
+
+// cancelWorkflows asks Temporal to cancel the run's workflow so it stops working and spending
+// tokens. Best-effort: the run row is already canceled, so a failure is logged and never
+// returned (the reconciler repairs anything left behind). The DB is updated first so the
+// workflow's own finalize cannot overwrite 'canceled' (its status update skips terminal rows).
+// Tries the canvas workflow ID, then the orchestration session ID (from the run's root task).
+func (s *RunService) cancelWorkflows(ctx context.Context, tenantID, runID string) {
+	if s.temporal == nil {
+		return
+	}
+	ids := []string{appflow.WorkflowIDForRun(tenantID, runID)}
+	if contextID, err := s.dal.GetRunContextID(ctx, tenantID, runID); err == nil && contextID != "" {
+		ids = append(ids, temporal.WorkflowIDForContext(tenantID, contextID))
+	}
+	for _, id := range ids {
+		found, err := s.temporal.CancelWorkflow(ctx, id)
+		if err != nil {
+			slog.Warn("admin: cancel workflow failed after run was canceled", "run_id", runID, "workflow_id", id, "error", err)
+			continue
+		}
+		if found {
+			return
+		}
+	}
 }
 
 // Delete removes a single run scoped to the tenant. Returns ErrNotFound when the run

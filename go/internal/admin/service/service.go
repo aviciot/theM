@@ -243,6 +243,9 @@ type Temporal interface {
 	// SignalNamedWorkflow delivers an arbitrary named signal to any Temporal workflow.
 	// Used by the HIL approval API to send hil_approval:<nodeID> signals to AppFlowWorkflow.
 	SignalNamedWorkflow(ctx context.Context, workflowID, signalName string, payload any) error
+	// CancelWorkflow requests cancellation of a workflow. found=false (err=nil) when no such
+	// running workflow exists (never started, or already closed).
+	CancelWorkflow(ctx context.Context, workflowID string) (found bool, err error)
 }
 
 // enabledOrDefault returns *b if non-nil, otherwise true.

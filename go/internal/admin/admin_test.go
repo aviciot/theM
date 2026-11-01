@@ -291,6 +291,8 @@ func (t *fakeTemporal) SignalRun(_ context.Context, runID string, _ []byte) erro
 	return nil
 }
 
+func (t *fakeTemporal) CancelWorkflow(_ context.Context, _ string) (bool, error) { return false, nil }
+
 func (t *fakeTemporal) SignalNamedWorkflow(_ context.Context, wfID, _ string, _ any) error {
 	if t.err != nil {
 		return t.err

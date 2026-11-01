@@ -729,6 +729,19 @@ func (c *fakeCache) Publish(_ context.Context, ch, msg string) error {
 type fakeTemporal struct {
 	signaled []string
 	err      error
+
+	// CancelWorkflow behaviour: IDs that "exist" (found=true), IDs attempted, optional error.
+	cancelExisting map[string]bool
+	cancelled      []string
+	cancelErr      error
+}
+
+func (t *fakeTemporal) CancelWorkflow(_ context.Context, wfID string) (bool, error) {
+	t.cancelled = append(t.cancelled, wfID)
+	if t.cancelErr != nil {
+		return false, t.cancelErr
+	}
+	return t.cancelExisting[wfID], nil
 }
 
 func (t *fakeTemporal) SignalRun(_ context.Context, wfID string, _ []byte) error {
@@ -1216,6 +1229,58 @@ func TestRunService_Signal_BuildsWorkflowID(t *testing.T) {
 	}
 	if len(temp.signaled) != 1 || temp.signaled[0] != "t1:ctx-abc-123" {
 		t.Errorf("want [t1:ctx-abc-123], got %v", temp.signaled)
+	}
+}
+
+// ── RunService.Cancel: also cancels the workflow ───────────────────────────────
+
+func TestRunService_Cancel_CancelsCanvasWorkflow(t *testing.T) {
+	temp := &fakeTemporal{cancelExisting: map[string]bool{"appflow:t1:run-1": true}}
+	svc := service.NewRunService(&fakeDal{contextID: "ctx-9"}, temp)
+	if _, err := svc.Cancel(context.Background(), "t1", "run-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(temp.cancelled) != 1 || temp.cancelled[0] != "appflow:t1:run-1" {
+		t.Errorf("want only the canvas workflow cancelled, got %v", temp.cancelled)
+	}
+}
+
+func TestRunService_Cancel_FallsBackToSessionWorkflow(t *testing.T) {
+	temp := &fakeTemporal{cancelExisting: map[string]bool{"t1:ctx-ctx-9": true}}
+	svc := service.NewRunService(&fakeDal{contextID: "ctx-9"}, temp)
+	if _, err := svc.Cancel(context.Background(), "t1", "run-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"appflow:t1:run-1", "t1:ctx-ctx-9"}
+	if len(temp.cancelled) != 2 || temp.cancelled[0] != want[0] || temp.cancelled[1] != want[1] {
+		t.Errorf("want %v, got %v", want, temp.cancelled)
+	}
+}
+
+func TestRunService_Cancel_WorkflowErrorDoesNotFailCancel(t *testing.T) {
+	temp := &fakeTemporal{cancelErr: errors.New("temporal down")}
+	svc := service.NewRunService(&fakeDal{}, temp)
+	if _, err := svc.Cancel(context.Background(), "t1", "run-1"); err != nil {
+		t.Fatalf("the run is already canceled in the DB; got error: %v", err)
+	}
+}
+
+func TestRunService_Cancel_TemporalNil_StillCancels(t *testing.T) {
+	svc := service.NewRunService(&fakeDal{}, nil)
+	if _, err := svc.Cancel(context.Background(), "t1", "run-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunService_Cancel_DBFailure_DoesNotTouchWorkflow(t *testing.T) {
+	temp := &fakeTemporal{}
+	svc := service.NewRunService(&fakeDal{getRunErr: errors.New("db down")}, temp)
+	_, err := svc.Cancel(context.Background(), "t1", "run-1")
+	if err == nil {
+		t.Fatal("expected the DB error")
+	}
+	if len(temp.cancelled) != 0 {
+		t.Errorf("no workflow may be cancelled when the DB cancel fails, got %v", temp.cancelled)
 	}
 }
 
