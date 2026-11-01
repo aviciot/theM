@@ -81,7 +81,7 @@ Policy doc (`governance_policies.doc`, schema_version 1): `limits.models.allow` 
 
 ## Known gaps (found while writing, 2026-10-24; code + live catalog; no gateway request was sent)
 See `docs/plans/code-findings-backlog.md` F-42…F-55. Highlights:
-1. **Schema mismatch:** `WriteRequest` inserts `user_id`, but the live `them.gateway_requests` has no such column (migration 125 not applied). On this database every usage write would fail.
+1. **Schema mismatch (fixed 2026-11-01):** `WriteRequest` inserts `user_id`, but migration 125 had never been applied to the dev database, so every usage write failed (logged only). Applied and recorded in `schema_migrations`; detecting an unapplied migration is still open (backlog F-135).
 2. **Profile-app path skips governance:** no model allow-list check, no API-RPM quota, no tenant run quotas or concurrency gate (it uses `AdmitDebug`). The caller's `model` string picks the provider.
 3. **Usage lost on client disconnect:** the deferred `WriteRequest` uses `r.Context()`, which is already cancelled when the client goes away.
 4. **Cost is a static rate card** with stale IDs (e.g. `claude-opus-5`); unknown Anthropic models are billed at Sonnet rates. DB `model_pricing` (`llmresolve`) is ignored, so budgets are inaccurate.
