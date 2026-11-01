@@ -131,6 +131,7 @@ func execHILNode(
 		timer := workflow.NewTimer(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 		sigCh := workflow.GetSignalChannel(ctx, signalName)
 		var cancelErr error
+		timedOut := false
 		workflow.NewSelector(ctx).
 			AddFuture(timer, func(f workflow.Future) {
 				// A cancelled workflow cancels the timer: that is not a timeout (F-134).
@@ -139,6 +140,7 @@ func execHILNode(
 					return
 				}
 				// Timer fired — apply the configured fallback.
+				timedOut = true
 				switch cfg.FallbackAction {
 				case "approve":
 					approval.Approved = true
@@ -154,6 +156,15 @@ func execHILNode(
 			Select(ctx)
 		if cancelErr != nil {
 			return false, "", cancelErr
+		}
+		if timedOut {
+			// Mark the approval timed_out so it stops showing as pending (F-124). A new command, so it
+			// is version-gated: workflows already past this point when it shipped replay without it.
+			if workflow.GetVersion(ctx, "hil-mark-timed-out", workflow.DefaultVersion, 1) >= 1 {
+				_ = workflow.ExecuteActivity(hilCtx, AppFlowMarkHILTimedOutActivityName, HILTimedOutInput{
+					RunID: input.RunID, NodeID: node.ID, Comment: approval.Comment,
+				}).Get(hilCtx, nil) // best-effort: Finalize closes any pending approval at the end of the run
+			}
 		}
 	} else {
 		// Wait indefinitely (but end when the workflow is cancelled — F-134).

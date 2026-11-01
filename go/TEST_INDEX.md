@@ -3880,3 +3880,15 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestRunStatusUpdateQuery` | dag-worker updater SQL: terminal guarded incl. `stopped`, running plain |
 | `TestUpdateRunStatus_RealDB_TerminalGuard` (integration) | stopped sets ended_at; a late `failed` cannot overwrite it; normal completion works |
 
+## HIL timer marks the approval timed_out (F-124)
+**Purpose:** when a HIL node's timer fires before a decision, `MarkHILTimedOutActivity` (`appflow/hil_timeout.go`) sets the pending approval `timed_out` (version-gated in `execHILNode`); a decision first, or a cancel, never marks it.
+**Trigger:** any change to `execHILNode` (`nodes.go`), `hil_timeout.go`, or the dag-worker registration
+**Run:** `go test ./internal/appflow/...`; `go test -tags=integration ./internal/appflow/ -run MarkHILTimedOut` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestHIL_TimerFires_MarksApprovalTimedOut` (Temporal test env) | reject fallback: activity called once with run/node/`timeout-rejected`; run ends rejected |
+| `TestHIL_TimerFires_ApproveFallbackContinues` | approve fallback: marked `timed_out`, run continues and completes |
+| `TestHIL_SignalBeforeTimer_DoesNotMarkTimedOut` | a human decision first → not marked |
+| `TestHIL_CancelDuringTimer_NotATimeout` | cancel while waiting → workflow canceled, not marked |
+| `TestMarkHILTimedOutActivity_RealDB` (integration) | only the pending approval of that node/run changes; decided and other-run rows untouched; repeat is a no-op |
+

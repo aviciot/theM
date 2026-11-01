@@ -83,6 +83,10 @@ const (
 	// knows to signal this workflow instead of ignoring subsequent messages.
 	AppFlowPendingWaitSetActivityName = "AppFlowPendingWaitSetActivity"
 
+	// AppFlowMarkHILTimedOutActivityName is the registered name for the activity that marks a
+	// pending HIL approval timed_out when the node's timer fires (F-124).
+	AppFlowMarkHILTimedOutActivityName = "AppFlowMarkHILTimedOutActivity"
+
 	// AppFlowSignalStep is the signal name for the debug "Step" control
 	// (docs/_archive/APP_CANVAS_DEBUG_PLAN.md Phase 6). One signal = one tick: every
 	// currently-paused node (including every node in every currently-active

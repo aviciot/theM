@@ -279,6 +279,9 @@ func run() error {
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.PendingWaitSetActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowPendingWaitSetActivityName,
 	})
+	appFlowWorker.RegisterActivityWithOptions(appFlowActs.MarkHILTimedOutActivity, temporalactivity.RegisterOptions{
+		Name: appflow.AppFlowMarkHILTimedOutActivityName,
+	})
 	appFlowWorker.RegisterActivityWithOptions(appFlowActs.HTTPActivity, temporalactivity.RegisterOptions{
 		Name: appflow.AppFlowHTTPActivityName,
 	})
