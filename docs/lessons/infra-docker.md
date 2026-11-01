@@ -7,6 +7,15 @@ last_verified: unverified
 
 > Append-only. Format: symptom → root cause → fix → watch for next time. Keep newest entries at the top of each area file. Split from the single LESSONS file in docs-reboot tracker #12; entries are verbatim.
 
+## 2026-11-01 — A long-running container hides a missing env var until you rebuild it
+
+**Symptom:** `up -d --build them-middleware-worker` replaced a healthy two-week-old container with one that crash-looped: `FATAL: config: THEM_DB_URL_APP is required but was not set`.
+**Root cause:** every Go binary now requires `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN`, but `them-middleware-worker` (defined only in `docker-compose.dev.yml`) never got them. The old container ran an older image from before that requirement, so nothing failed until the first rebuild. The same bug was fixed for another service on 2026-09-22 (comment in `docker-compose.yml`) but not here.
+**Fix:** add both variables to the service in `docker-compose.dev.yml` and `up -d` it. Down time was about 3 minutes.
+**Watch for:** before rebuilding a service that has been up for a long time, diff its env against a service that was rebuilt recently (`docker inspect <c> --format '{{json .Config.Env}}'`, keys only) and run its binary's config check; rebuild one service at a time, never in the same command as the one you are verifying. Services defined only in an overlay file are the ones that get missed.
+
+---
+
 ## 2026-10-05 — `docker restart` does NOT switch to a freshly built image
 
 **Symptom:** rebuilt all 3 dag-worker images (`docker compose build them-dag-worker them-dag-worker-2 them-dag-worker-debug`), then ran `docker compose restart` — containers still ran the old image. New code was not active, same errors persisted.
