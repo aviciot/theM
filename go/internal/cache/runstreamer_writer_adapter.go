@@ -24,6 +24,11 @@ func NewRunStreamerWriterRedisClient(c rueidis.Client) *RunStreamerWriterRedisCl
 // the read side so trimming behaviour is consistent across processes.
 const streamWriteMaxLen = "5000"
 
+// runStreamTTLSeconds is how long a run's stream outlives its last event. Every XADD refreshes it, so an
+// active run never loses its stream; a finished run's stream (used for reconnect/replay shortly after the
+// run) disappears a day later instead of living forever in an LRU Redis (backlog F-129).
+const runStreamTTLSeconds = 24 * 60 * 60
+
 // XAdd appends one entry to the named Redis Stream.
 //
 // The command issued is:
@@ -54,8 +59,9 @@ func (r *RunStreamerWriterRedisClient) XAdd(ctx context.Context, key string, fie
 		fvBuilder = fvBuilder.FieldValue(k, sv)
 	}
 
-	cmd := fvBuilder.Build()
-	return r.c.Do(ctx, cmd).Error()
+	// XADD and the TTL refresh go out together; the expiry is best-effort (the event is already written).
+	resps := r.c.DoMulti(ctx, fvBuilder.Build(), r.c.B().Expire().Key(key).Seconds(runStreamTTLSeconds).Build())
+	return resps[0].Error()
 }
 
 // compile-time interface check.

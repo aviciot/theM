@@ -3936,3 +3936,13 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestPurgeExpired_LoopsUntilBatchNotFull` / `_PassesGraceSecondsAndBatch` / `_ZeroGraceKeepsSessions` / `_ErrorStopsAndReports` / `_BoundedPerRun` / `TestRetentionConfigFromEnv_Defaults` | auth purge logic |
 | `TestPurgeExpired_RealDB` (integration) | old expired sessions purged; recently expired and valid kept; expired blacklist purged, active kept. **Purges every expired row of the DB it runs against (the purge is global): use a TEST database** |
 
+## Redis hygiene: gate wake-up tokens and run-stream expiry (F-129, plan P4)
+**Purpose:** `Gate.Release` pushes one bounded, expiring wake-up token (cap 100, 15 s) instead of an immortal one per released session; `RunStreamerWriterRedisClient.XAdd` refreshes a 24 h expiry on every event so finished runs' streams disappear.
+**Trigger:** any change to `internal/gate/gate.go` `Release`/`luaRelease` or `internal/cache/runstreamer_writer_adapter.go`
+**Run:** `go test ./internal/gate/`; `go test -tags=integration ./internal/cache/ -run RunStreamerWriter` with `REDIS_ADDR` pointing at a reachable (test) Redis
+| Test | Covers |
+|---|---|
+| `TestReleaseTokenIsBoundedAndExpires` | the release script gets the queue key, cap 100 and TTL 15 s |
+| `TestReleaseStillWakesWaiter` | a released token still reaches a waiting session |
+| `TestRunStreamerWriter_XAdd_SetsAndRefreshesTTL` (integration) | a stream gets a TTL ≤ 24 h on first write; a second event refreshes it; both entries present |
+

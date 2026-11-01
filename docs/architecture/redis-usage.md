@@ -11,7 +11,7 @@ owns:
   - go/internal/metrics/
   - go/internal/appliveness/
   - go/internal/debugcred/
-last_verified: 2026-10-31   # code read + gen_reference.py redis; per-user rate limit key documented
+last_verified: 2026-11-01   # code read + gen_reference.py redis; per-user rate limit key documented
 ---
 
 # Redis Usage
@@ -38,12 +38,12 @@ Everything uses Redis DB 0 on the main server; keys are namespaced by prefix. No
 ### 1. Admission and sessions — `them:ep:*`, `them:app:*`, `them:sess:*`, `them:pod*`, `rl:them:*:token:*`
 Concurrency caps and queueing for WebSocket/SSE sessions. Sets of live session IDs per entry point and per app plus a
 "shadow" key per session (TTL 90 s) used to prune ghosts; session Hash `them:sess:{id}` (90 s); gate queue list
-`them:ep:gate:queue:{slug}`; pod heartbeat `them:pod:{instance}` (30 s) and `them:pods`; per-token per-minute counter (90 s).
+`them:ep:gate:queue:{appID}:{slug}` (a pure wake-up signal channel: `Release` pushes one token, capped at 100 and expiring after 15 s, so unconsumed tokens never pile up — before 2026-11-01 they were immortal and grew by one per released session); pod heartbeat `them:pod:{instance}` (30 s) and `them:pods`; per-token per-minute counter (90 s).
 Owners: `internal/gate`, `internal/session`. Detail: `run-lifecycle.md`. **Keys use the EP slug only, not the tenant (backlog F-31).**
 
 ### 2. Run event delivery — `them:dash:run:{runID}:stream`
 A Redis Stream per run, written by workers (`runstream.PublishEvent`, AppFlow activities) and read by the bridge for
-WS/SSE with replay from `last_event_id` (capped ≈5000 entries, no time TTL). Also read by the dashboard WS. Owners:
+WS/SSE with replay from `last_event_id` (capped ≈5000 entries; since 2026-11-01 every XADD refreshes a 24 h expiry, so a finished run's stream disappears a day after its last event). Also read by the dashboard WS. Owners:
 `internal/runstream`, `internal/appflow`. Related: `them:wait:{runID}` (4 h) marks a run paused at `wait_for_input`;
 `them:run:*` pub/sub carries file-scan results from the middleware worker.
 

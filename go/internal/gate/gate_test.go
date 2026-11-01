@@ -29,6 +29,14 @@ type fakeRedis struct {
 	// blpopQueues: key → buffered channel of values. A BLPop call drains the
 	// channel; if empty it blocks until a value arrives or the context expires.
 	blpopQueues map[string]chan string
+
+	// releaseCalls records every release script run (KEYS[1] queue key, ARGV cap and ttl seconds).
+	releaseCalls []releaseCall
+}
+
+type releaseCall struct {
+	key        string
+	cap, ttlSc int
 }
 
 func newFakeRedis() *fakeRedis {
@@ -77,6 +85,16 @@ func (f *fakeRedis) ExecLua(_ context.Context, script string, keys []string, arg
 	defer f.mu.Unlock()
 
 	// Distinguish scripts by key count.
+	if len(keys) == 1 {
+		// Release script: LPUSH + LTRIM + EXPIRE on the queue list. The channel is the list; a full
+		// channel models the LTRIM cap dropping the oldest token.
+		f.releaseCalls = append(f.releaseCalls, releaseCall{key: keys[0], cap: toInt(args[0]), ttlSc: toInt(args[1])})
+		select {
+		case f.queue(keys[0]) <- "1":
+		default:
+		}
+		return int64(1), nil
+	}
 	if len(keys) == 4 {
 		// Rollback script: SREM ep_set + DEL ep_shadow + optionally app_set + app_shadow.
 		epSet := keys[0]
@@ -675,4 +693,36 @@ func TestRollbackWakesQueuedSession(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for sess-b after rollback")
 	}
+}
+
+// ── Release leaves no unbounded, immortal wake-up tokens (backlog F-129) ──────────
+
+// Release must push one bounded, expiring token: a cap and a short TTL. Before, it did a bare LPUSH, so
+// every released session left a token with no expiry (12 and 7 in the dev stack after a few test runs).
+func TestReleaseTokenIsBoundedAndExpires(t *testing.T) {
+	r := newFakeRedis()
+	g := gate.New(r)
+	cfg := baseConfig()
+
+	require.NoError(t, g.Release(context.Background(), cfg))
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	require.Len(t, r.releaseCalls, 1)
+	c := r.releaseCalls[0]
+	assert.Equal(t, "them:ep:gate:queue:app1:ep1", c.key)
+	assert.Equal(t, 100, c.cap, "the list must be capped")
+	assert.Equal(t, 15, c.ttlSc, "stale tokens must expire quickly")
+}
+
+// A queued waiter is still woken by Release (the token reaches it).
+func TestReleaseStillWakesWaiter(t *testing.T) {
+	r := newFakeRedis()
+	g := gate.New(r)
+	cfg := baseConfig()
+
+	require.NoError(t, g.Release(context.Background(), cfg))
+	v, err := r.BLPop(context.Background(), time.Second, "them:ep:gate:queue:app1:ep1")
+	require.NoError(t, err)
+	assert.Equal(t, "1", v)
 }

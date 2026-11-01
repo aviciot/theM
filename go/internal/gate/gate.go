@@ -480,14 +480,33 @@ return 1
 // waiter (if any) by pushing a token onto the queue list. Callers must invoke
 // Release after a session ends (alongside session.Store.End).
 //
-// Release is a no-op when no waiters are present; the push onto an un-watched
-// list is harmless — the value will expire naturally when the next LRem runs.
+// When nobody is waiting the token would sit in the list forever (one per released session) and later
+// wake a waiter for nothing, so the push is atomic with a length cap and a short expiry: tokens only
+// matter for a moment, and a waiter consumes a real one immediately.
 func (g *Gate) Release(ctx context.Context, cfg Config) error {
-	if err := g.redis.LPush(ctx, cfg.queueKey(), "1"); err != nil {
+	_, err := g.redis.ExecLua(ctx, luaRelease, []string{cfg.queueKey()},
+		[]interface{}{releaseSignalCap, int64(releaseSignalTTL / time.Second)})
+	if err != nil {
 		return fmt.Errorf("gate: release: %w", err)
 	}
 	return nil
 }
+
+const (
+	// releaseSignalCap bounds how many wake-up tokens the queue list can hold.
+	releaseSignalCap = 100
+	// releaseSignalTTL is how long an unconsumed wake-up token stays valid.
+	releaseSignalTTL = 15 * time.Second
+)
+
+// luaRelease pushes one wake-up token, trims the list to ARGV[1] entries and refreshes its expiry to
+// ARGV[2] seconds, atomically (KEYS[1] = queue list).
+const luaRelease = `
+redis.call('LPUSH', KEYS[1], '1')
+redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[1]) - 1)
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+return 1
+`
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
