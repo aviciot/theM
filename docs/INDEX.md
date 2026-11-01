@@ -47,6 +47,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [App Canvas Configuration Completeness Plan](plans/app-canvas-config-completeness-plan.md) | plan | current | 2026-10-25 |  |
 | [Code Findings Backlog (from the docs reboot)](plans/code-findings-backlog.md) | plan | current | 2026-10-24 |  |
 | [Docs Reboot Plan and Progress Tracker](plans/docs-reboot-plan.md) | plan | current | 2026-10-25 |  |
+| [Entry Point Role Requirement - Implementation Plan](plans/entry-point-role-requirement-plan.md) | plan | current | 2026-11-01 |  |
 | [Role-Based Authorization — Completion Plan](plans/role-based-auth-completion-plan.md) | plan | current | 2026-10-25 |  |
 | [Canvas Node Types (generated)](reference/node-types-generated.md) | reference | current | generated |  |
 | [Redis Keys and Channels (generated)](reference/redis-generated.md) | reference | current | generated |  |

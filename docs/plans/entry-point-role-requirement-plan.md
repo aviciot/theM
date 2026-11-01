@@ -1,7 +1,7 @@
 ---
 title: Entry Point Role Requirement - Implementation Plan
 type: plan
-status: in_progress
+status: current
 last_verified: 2026-11-01
 ---
 
