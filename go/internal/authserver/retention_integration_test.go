@@ -20,6 +20,9 @@ func retentionTestDSN() string {
 }
 
 // PurgeExpired against the real tables: only sessions past their grace and expired blacklist rows go.
+//
+// NOTE: PurgeExpired is global by design, so this test removes ALL expired rows of the database it runs
+// against (not only the ones it seeds). Run it against a TEST database.
 func TestPurgeExpired_RealDB(t *testing.T) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, retentionTestDSN())

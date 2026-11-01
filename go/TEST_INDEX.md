@@ -3934,5 +3934,5 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestConfigFromEnv` | defaults (only tokens on, dry-run on) and overrides |
 | `TestRetention_RealDB_AllPolicies` (integration) | each policy on the real tables with old/recent/ineligible rows: dry-run deletes nothing; real run removes only eligible rows; cascades (artifacts, messages, bodies) and the stored-file queue |
 | `TestPurgeExpired_LoopsUntilBatchNotFull` / `_PassesGraceSecondsAndBatch` / `_ZeroGraceKeepsSessions` / `_ErrorStopsAndReports` / `_BoundedPerRun` / `TestRetentionConfigFromEnv_Defaults` | auth purge logic |
-| `TestPurgeExpired_RealDB` (integration) | old expired sessions purged; recently expired and valid kept; expired blacklist purged, active kept |
+| `TestPurgeExpired_RealDB` (integration) | old expired sessions purged; recently expired and valid kept; expired blacklist purged, active kept. **Purges every expired row of the DB it runs against (the purge is global): use a TEST database** |
 
