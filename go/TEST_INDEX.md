@@ -3892,3 +3892,17 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestHIL_CancelDuringTimer_NotATimeout` | cancel while waiting → workflow canceled, not marked |
 | `TestMarkHILTimedOutActivity_RealDB` (integration) | only the pending approval of that node/run changes; decided and other-run rows untouched; repeat is a no-op |
 
+## Orchestration failures are reported (known gap 4 / plan 1.5)
+**Purpose:** a run that fails before `orchestrator.Run` (config load, build, invalid input) or whose activity ends abnormally (timeout, cancel) is marked `failed`, its root task closed and an `error` event published, via `RunFailer` / `ReportRunFailureActivity`.
+**Trigger:** any change to `internal/temporal/` (`runfailer.go`, `activities.go`, `workflow.go`) or the worker wiring in `cmd/worker/main.go`
+**Run:** `go test ./internal/temporal/...` (file `orchestration_failure_test.go`)
+| Test | Covers |
+|---|---|
+| `TestRunFailer_MarksFailedClosesTaskPublishesError` / `_StepsAreIndependent` / `_NilTaskCloser` | status + task + `error` event; one failing dependency does not stop the others |
+| `TestRunOrchestratorActivity_ConfigLoadError_ReportsFailure` | reported, generic message (no internal detail) |
+| `TestRunOrchestratorActivity_BuildError_ReportsFailure` | reported with the actionable build error |
+| `TestRunOrchestratorActivity_InvalidInput_ReportsWhenRunKnown` | reported only when a run id exists |
+| `TestReportRunFailureActivity_Delegates` | activity → reporter; nil reporter is a no-op |
+| `TestOrchestrationWorkflow_ActivityTimeout_ReportsRunFailure` / `_Cancelled_ReportsRunFailure` | workflow reports `run timed out` / `run canceled` (disconnected ctx) |
+| `TestOrchestrationWorkflow_ActivityReportedItself_NotReportedAgain` / `_Success_NoReport` | no duplicate report for activity errors; none on success |
+

@@ -132,7 +132,15 @@ func OrchestrationWorkflow(ctx workflow.Context, input WorkflowInput) (WorkflowR
 
 		// Check for HITL pause.
 		var appErr *temporal.ApplicationError
-		if !isTemporalAppErr(err, &appErr) || appErr.Type() != "TaskInputRequired" {
+		if !isTemporalAppErr(err, &appErr) {
+			// Not an application error: a timeout, a cancellation, or the activity could not run at
+			// all. The activity never reported this failure, so report it here.
+			reportAbnormalFailure(ctx, input, err)
+			return WorkflowResult{Status: domain.RunStatusFailed}, err
+		}
+		if appErr.Type() != "TaskInputRequired" {
+			// Failures raised by the activity itself (pre-run config errors, orchestrator errors)
+			// are reported where they happen.
 			return WorkflowResult{Status: domain.RunStatusFailed}, err
 		}
 
@@ -143,6 +151,35 @@ func OrchestrationWorkflow(ctx workflow.Context, input WorkflowInput) (WorkflowR
 		// Append human response to the history and re-run.
 		input.History = append(input.History, input.UserMessage, humanResponse)
 		input.UserMessage = humanResponse
+	}
+}
+
+// reportAbnormalFailure marks the run failed and tells the client when RunOrchestratorActivity ended
+// without reporting (timeout, cancellation, lost worker). Runs on a disconnected context so it also
+// works when the workflow itself was cancelled. Version-gated: it is a new command, so workflows that
+// already passed this point replay without it.
+func reportAbnormalFailure(ctx workflow.Context, input WorkflowInput, cause error) {
+	if workflow.GetVersion(ctx, "orch-report-failure", workflow.DefaultVersion, 1) < 1 {
+		return
+	}
+	msg := "run failed unexpectedly"
+	switch {
+	case temporal.IsTimeoutError(cause):
+		msg = "run timed out"
+	case temporal.IsCanceledError(cause):
+		msg = "run canceled"
+	}
+	dCtx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+	fCtx := workflow.WithActivityOptions(dCtx, workflow.ActivityOptions{
+		TaskQueue:           GoTaskQueue,
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
+	})
+	if err := workflow.ExecuteActivity(fCtx, ReportRunFailureActivityName, ReportRunFailureInput{
+		RunID: input.RunID, ContextID: input.ContextID, Message: msg,
+	}).Get(fCtx, nil); err != nil {
+		workflow.GetLogger(ctx).Error("could not report failed run", "run_id", input.RunID, "error", err)
 	}
 }
 

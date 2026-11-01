@@ -37,6 +37,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	temporalactivity "go.temporal.io/sdk/activity"
 	temporalworker "go.temporal.io/sdk/worker"
 
 	"github.com/aviciot/them/internal/agentregistry"
@@ -215,8 +216,10 @@ func run() error {
 		Runner:       factory.buildFallback(), // static fallback for legacy/test paths
 		ConfigLoader: cfgLoader,
 		Factory:      factory,
+		RunFailer:    temporal.NewRunFailer(recorder, recorder, bus),
 	}
 	goWorker.RegisterActivity(acts.RunOrchestratorActivity)
+	goWorker.RegisterActivityWithOptions(acts.ReportRunFailureActivity, temporalactivity.RegisterOptions{Name: temporal.ReportRunFailureActivityName})
 
 	if err := goWorker.Start(); err != nil {
 		return fmt.Errorf("startup: temporal worker: %w", err)

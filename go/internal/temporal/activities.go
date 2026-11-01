@@ -38,6 +38,33 @@ type Activities struct {
 	// Factory builds a per-run orchestrator from a loaded RunConfig. Optional.
 	// Only used when ConfigLoader is also set.
 	Factory OrchestratorFactory
+	// RunFailer reports runs that fail before orchestrator.Run starts (config load/build errors,
+	// invalid input) so the run row and the client are not left hanging. Optional.
+	RunFailer RunFailureReporter
+}
+
+// ReportRunFailureInput is the input to ReportRunFailureActivity.
+type ReportRunFailureInput struct {
+	RunID     string `json:"run_id"`
+	ContextID string `json:"context_id"`
+	Message   string `json:"message"`
+}
+
+// ReportRunFailureActivityName is the registered name for ReportRunFailureActivity.
+const ReportRunFailureActivityName = "ReportRunFailureActivity"
+
+// ReportRunFailureActivity is run by the workflow when RunOrchestratorActivity ended without
+// reporting its own failure (timeout, cancellation, lost worker). Best-effort and idempotent.
+func (a *Activities) ReportRunFailureActivity(ctx context.Context, in ReportRunFailureInput) error {
+	a.reportFailure(ctx, in.RunID, in.ContextID, in.Message)
+	return nil
+}
+
+func (a *Activities) reportFailure(ctx context.Context, runID, contextID, message string) {
+	if a.RunFailer == nil || runID == "" {
+		return
+	}
+	a.RunFailer.FailRun(ctx, runID, contextID, message)
 }
 
 // RunOrchestratorActivity calls the orchestrator agentic loop.
@@ -55,6 +82,7 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 	// Execution boundary validation (R-4d). Fail with a non-retryable error so
 	// the workflow surfaces the misconfiguration immediately.
 	if input.TenantID == "" {
+		a.reportFailure(ctx, input.RunID, input.ContextID, "run could not start: missing tenant")
 		return WorkflowResult{Status: domain.RunStatusFailed},
 			temporalerr.NewNonRetryableApplicationError(
 				"RunOrchestratorActivity: TenantID must not be empty",
@@ -62,6 +90,7 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 			)
 	}
 	if input.ApplicationID == "" {
+		a.reportFailure(ctx, input.RunID, input.ContextID, "run could not start: missing application")
 		return WorkflowResult{Status: domain.RunStatusFailed},
 			temporalerr.NewNonRetryableApplicationError(
 				"RunOrchestratorActivity: ApplicationID must not be empty",
@@ -96,6 +125,7 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 	if input.AppOrchestratorID != "" && a.ConfigLoader != nil && a.Factory != nil {
 		runCfg, cfgErr := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID, input.EntryPointID, input.TenantID)
 		if cfgErr != nil {
+			a.reportFailure(ctx, input.RunID, input.ContextID, "run could not start: failed to load orchestrator config")
 			return WorkflowResult{Status: domain.RunStatusFailed},
 				temporalerr.NewNonRetryableApplicationError(
 					"RunOrchestratorActivity: failed to load orchestrator config: "+cfgErr.Error(),
@@ -104,6 +134,7 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		}
 		built, buildErr := a.Factory.Build(runCfg)
 		if buildErr != nil {
+			a.reportFailure(ctx, input.RunID, input.ContextID, "run could not start: "+buildErr.Error())
 			return WorkflowResult{Status: domain.RunStatusFailed},
 				temporalerr.NewNonRetryableApplicationError(
 					"RunOrchestratorActivity: "+buildErr.Error(),
