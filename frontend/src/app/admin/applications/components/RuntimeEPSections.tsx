@@ -3,13 +3,14 @@ import { type EntryPoint } from '@/lib/api';
 import { C, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, ToggleBtn, type SaveBtn } from './RuntimeShared';
 import { VoicePanel, type VoiceDraft } from './RuntimeVoicePanel';
+import { EPRoleField } from './RuntimeEPRole';
 
 type OrchMeta = { id: string; name: string; displayName: string };
 type EPLLMDraft = { provider: string; model: string };
 type EPSummarizerDraft = { historyEnabled: boolean; memoryEnabled: boolean; historyWindow: number; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
 
 export function EPSections({
-  entryPoints, orchMetas, voiceDrafts, setVoiceDrafts,
+  appId, entryPoints, orchMetas, voiceDrafts, setVoiceDrafts,
   epLLMDrafts, setEPLLMDrafts, epSumDrafts, setEPSumDrafts,
   epSaving, epMsg, epToggling,
   setProviders,
@@ -19,6 +20,7 @@ export function EPSections({
   onSaveVoice, onTestSTT, onTestTTS,
   saveBtn,
 }: {
+  appId: string;
   entryPoints: EntryPoint[];
   orchMetas: OrchMeta[];
   voiceDrafts: Record<string, VoiceDraft>;
@@ -113,6 +115,11 @@ export function EPSections({
                               </select>
                             </div>
                           </div>
+
+                          {/* Required Role (only when canvas access mode is user_jwt) */}
+                          {(ep.access_policy as { mode?: string } | undefined)?.mode === 'user_jwt' && (
+                            <EPRoleField appId={appId} epId={ep.id} role={ep.required_role ?? null} />
+                          )}
 
                           {/* Memory & Summarizer */}
                           <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12 }}>

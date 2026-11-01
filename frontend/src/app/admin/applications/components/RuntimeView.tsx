@@ -346,7 +346,7 @@ export function RuntimeView({ app, onBack, onUpdate }: { app: Application; onBac
         {runtimeTab === 'log-verbosity' && <RuntimeLogVerbosityTab appId={app.id} />}
         {runtimeTab === 'general' && (<>
         <EPSections
-          entryPoints={entryPoints} orchMetas={orchMetas}
+          appId={app.id} entryPoints={entryPoints} orchMetas={orchMetas}
           voiceDrafts={voiceDrafts} setVoiceDrafts={setVoiceDrafts}
           epLLMDrafts={epLLMDrafts} setEPLLMDrafts={setEPLLMDrafts}
           epSumDrafts={epSumDrafts} setEPSumDrafts={setEPSumDrafts}

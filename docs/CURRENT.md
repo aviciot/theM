@@ -36,6 +36,9 @@ Role-based auth gaps 1, 2, 6, 7 complete (commits 823aeb37, 1454e5bb, 19925b3f, 
 - Redis key `rl:user:{id}:minute:{ts}` documented
 Backend enforcement already done (Phase 1, commits 6761602b + bbfcd68a). Still needed: E2E test, profile display, admin role mgmt UI (optional).
 
+## Entry point role requirement (2026-11-01)
+Canvas checkbox + Runtime dropdown done, not committed-tested live. Debug skipped (debug bypasses role check). Plan/open items: `docs/plans/entry-point-role-requirement-plan.md`.
+
 ## Next tasks (suggested order)
 1. Check the GitHub Actions tab for the `docs-lint` job. Exposed tokens (F-94, F-91, F-110): user decided not to rotate.
 2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.

@@ -219,6 +219,7 @@ export interface EntryPoint {
   llm_provider?: string | null;
   llm_model?: string | null;
   allowed_principals?: 'internal' | 'external' | 'both';
+  required_role?: string | null;
 }
 
 export interface CanvasLayout {

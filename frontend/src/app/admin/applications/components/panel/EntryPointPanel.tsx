@@ -20,10 +20,8 @@ interface Props {
 export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlugManualEdit, app, nodes, edges }: Props) {
   const d = selectedNode.data as EntryPointData;
   const [hasRuntimeIdp, setHasRuntimeIdp] = useState<boolean | null | 'error'>(null);
-  const [tenantRoles, setTenantRoles] = useState<Array<{ id: string; name: string; display_name: string }>>([]);
   useEffect(() => {
     themApi.getRuntimeIDP().then(cfg => setHasRuntimeIdp(cfg.configured)).catch(() => setHasRuntimeIdp('error'));
-    themApi.get('/admin/roles').then((r: any) => setTenantRoles(r || [])).catch(() => setTenantRoles([]));
   }, []);
   const orchEdge = edges.find((e: Edge) => e.source === selectedNode.id);
   const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
@@ -177,29 +175,19 @@ export function EntryPointPanel({ selectedNode, onUpdateNode, slugLocked, onSlug
           </div>
         );
       })()}
-      {((selectedNode.data as EntryPointData).accessMode === 'user_jwt') && (
+      {d.accessMode === 'user_jwt' && (
         <div style={fieldWrap}>
-          <label style={labelStyle}>Required Role <span style={{ fontSize: 10, color: '#64748b' }}>blank = any authenticated user</span></label>
-          <select
-            style={inputStyle}
-            value={d.requiredRole ?? ''}
-            onChange={e => onUpdateNode(selectedNode.id, { requiredRole: e.target.value || null })}
-          >
-            <option value="">No role requirement</option>
-            {tenantRoles.map(role => (
-              <option key={role.id} value={role.name}>{role.display_name || role.name}</option>
-            ))}
-          </select>
-          {d.requiredRole && (
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, lineHeight: 1.5 }}>
-              Only users with role <strong>{d.requiredRole}</strong> can access this entry point.
-            </div>
-          )}
-          {tenantRoles.length === 0 && (
-            <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 5, lineHeight: 1.5 }}>
-              No roles configured. Go to Settings → Roles to create roles for your tenant.
-            </div>
-          )}
+          <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={d.roleRequirementEnabled ?? false}
+              onChange={e => onUpdateNode(selectedNode.id, { roleRequirementEnabled: e.target.checked })}
+            />
+            Require tenant role
+          </label>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+            When enabled, pick the required role in the Runtime screen.
+          </div>
         </div>
       )}
       <div style={fieldWrap}>

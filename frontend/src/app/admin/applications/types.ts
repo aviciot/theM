@@ -29,6 +29,7 @@ export interface EntryPointData {
   accessMode: 'token' | 'public' | 'user_jwt' | 'external_jwt';
   allowedPrincipals: 'internal' | 'external' | 'both';
   requiredRole?: string | null;
+  roleRequirementEnabled?: boolean;
   slug: string;
   appName?: string;
   convTokenLimit?: string;
