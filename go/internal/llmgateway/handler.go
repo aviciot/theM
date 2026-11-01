@@ -237,6 +237,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if h.lc != nil {
 		ca, caErr := h.dal.LoadClientApp(r.Context(), gwClient.TokenHash)
 		if caErr == nil && ca != nil {
+			rec.ApplicationID = ca.AppID
 			if req.Stream {
 				h.dispatchAppFlowStream(w, r, start, req, &rec, tenantID, ca, logger)
 			} else {

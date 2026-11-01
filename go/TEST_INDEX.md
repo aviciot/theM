@@ -3957,3 +3957,13 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestRecoverPending_StuckMessageGoesToDLQ_FreshOneIsProcessed` (integration) | a 1970-stamped pending message → DLQ with payload + ACK; a fresh one is processed into the sink; nothing left pending |
 | `TestRedisSink_WriteBatch_CapsStreamLength` (integration) | with a small cap the stream is trimmed; with the default cap 800 events are all kept |
 
+## Gateway events are attributable and never phantom (F-127, plan P4)
+**Purpose:** `DAL.WriteRequest` emits the ClickHouse `gateway_request` event only after the Postgres insert succeeded, with the profile app and the user filled in.
+**Trigger:** any change to `llmgateway/dal.go` (`WriteRequest`, `gatewayRequestEvent`, `LoadClientApp`) or the `rec.ApplicationID` assignment in `handler.go`
+**Run:** `go test ./internal/llmgateway/`; `go test -tags=integration ./internal/llmgateway/ -run RealDB` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestGatewayRequestEvent_CarriesApplicationAndUser` | event has app, user, client, request id and metrics |
+| `TestGatewayRequestEvent_NoUserNoApp` | token auth / direct path leave user and app empty |
+| `TestWriteRequest_RealDB_EmitsAfterInsertOnly` (integration) | row stored and event emitted with the same request id and attribution; a failed insert emits nothing |
+

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,13 +69,14 @@ var ErrInvalidClientConfig = errors.New("invalid gateway client configuration")
 // RequestRecord is the data written to them.gateway_requests after each call.
 type RequestRecord struct {
 	TenantID       string
-	ClientID       string  // gateway_clients.id UUID; empty in Phase 1
-	TokenHash      string  // sha256-hex of bearer token for audit
-	UserID         int64   // the-M user ID from JWT (user_jwt mode); 0 if token-based auth
+	ApplicationID  string // profile app (gateway_clients.app_id) when the call ran through AppFlow; empty on the direct path
+	ClientID       string // gateway_clients.id UUID; empty in Phase 1
+	TokenHash      string // sha256-hex of bearer token for audit
+	UserID         int64  // the-M user ID from JWT (user_jwt mode); 0 if token-based auth
 	Provider       string
 	ModelRequested string
 	ModelServed    string
-	Status         string  // "ok" | "error" | "blocked" | "rate_limited"
+	Status         string // "ok" | "error" | "blocked" | "rate_limited"
 	HTTPStatus     int
 	ErrorCode      string
 	TokensIn       int
@@ -90,8 +92,8 @@ type RequestRecord struct {
 // isolation in the table itself.
 type DAL struct {
 	pool      *pgxpool.Pool
-	redis     rueidis.Client    // Redis for policy cache (optional - nil = no cache)
-	eventSink events.EventSink  // Event sink for observability (optional - nil = no events)
+	redis     rueidis.Client   // Redis for policy cache (optional - nil = no cache)
+	eventSink events.EventSink // Event sink for observability (optional - nil = no events)
 }
 
 // NewDAL creates a DAL backed by the given pool.
@@ -126,35 +128,6 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 	// Generate request ID for correlation (used by both Postgres and ClickHouse)
 	requestID := generateUUID()
 
-	// Emit event if sink is configured
-	if d.eventSink != nil {
-		event := events.Event{
-			EventID:       generateUUID(),
-			SchemaVersion: 1,
-			Timestamp:     time.Now().UTC(),
-			TenantID:      r.TenantID,
-			Kind:          events.EventKindGatewayRequest,
-			GatewayRequest: &events.GatewayRequestEvent{
-				RequestID:      requestID,
-				ClientID:       r.ClientID,
-				Provider:       r.Provider,
-				ModelRequested: r.ModelRequested,
-				ModelServed:    r.ModelServed,
-				Status:         r.Status,
-				HTTPStatus:     uint16(r.HTTPStatus),
-				ErrorCode:      r.ErrorCode,
-				TokensIn:       uint32(r.TokensIn),
-				TokensOut:      uint32(r.TokensOut),
-				CostUSD:        r.CostUSD,
-				LatencyMS:      uint32(r.LatencyMS),
-				TTFBMS:         uint32(r.TTFBMs),
-				Streamed:       r.Streamed,
-			},
-		}
-		// Best effort — don't fail request if event emission fails
-		_ = d.eventSink.Emit(ctx, event)
-	}
-
 	// Conditional Postgres write (based on mode env var)
 	// TODO: read from config instead of os.Getenv
 	mode := getEventsMode()
@@ -187,11 +160,60 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 			r.TokensIn, r.TokensOut, r.CostUSD,
 			r.LatencyMS, r.TTFBMs, r.Streamed,
 		).Scan(&dbRequestID)
-		return dbRequestID, err
+		if err != nil {
+			// The row was not recorded, so no event either: ClickHouse must not show a request Postgres
+			// (the authoritative store) does not have.
+			return dbRequestID, err
+		}
+		d.emitGatewayEvent(ctx, r, requestID)
+		return dbRequestID, nil
 	}
 
-	// ClickHouse-only mode: return the pre-generated request ID
+	// ClickHouse-only mode: the event is the record; return the pre-generated request ID.
+	d.emitGatewayEvent(ctx, r, requestID)
 	return requestID, nil
+}
+
+// emitGatewayEvent sends the observability event (best effort — a sink failure never fails the request).
+func (d *DAL) emitGatewayEvent(ctx context.Context, r RequestRecord, requestID string) {
+	if d.eventSink == nil {
+		return
+	}
+	_ = d.eventSink.Emit(ctx, gatewayRequestEvent(r, requestID))
+}
+
+// gatewayRequestEvent builds the ClickHouse event for one gateway call. ApplicationID is the profile app
+// (empty on the direct path) and UserID the the-M user from user_jwt mode (empty for token auth).
+func gatewayRequestEvent(r RequestRecord, requestID string) events.Event {
+	userID := ""
+	if r.UserID != 0 {
+		userID = strconv.FormatInt(r.UserID, 10)
+	}
+	return events.Event{
+		EventID:       generateUUID(),
+		SchemaVersion: 1,
+		Timestamp:     time.Now().UTC(),
+		TenantID:      r.TenantID,
+		Kind:          events.EventKindGatewayRequest,
+		GatewayRequest: &events.GatewayRequestEvent{
+			RequestID:      requestID,
+			ApplicationID:  r.ApplicationID,
+			ClientID:       r.ClientID,
+			UserID:         userID,
+			Provider:       r.Provider,
+			ModelRequested: r.ModelRequested,
+			ModelServed:    r.ModelServed,
+			Status:         r.Status,
+			HTTPStatus:     uint16(r.HTTPStatus),
+			ErrorCode:      r.ErrorCode,
+			TokensIn:       uint32(r.TokensIn),
+			TokensOut:      uint32(r.TokensOut),
+			CostUSD:        r.CostUSD,
+			LatencyMS:      uint32(r.LatencyMS),
+			TTFBMS:         uint32(r.TTFBMs),
+			Streamed:       r.Streamed,
+		},
+	}
 }
 
 // WriteRequestBodies inserts request/response bodies for DEBUG and AUDIT logging levels.
@@ -256,6 +278,7 @@ func (d *DAL) LookupClientTenant(ctx context.Context, tokenHash string) (clientI
 // that has been linked to an App Canvas application via app_id.
 type ClientApp struct {
 	ClientID string
+	AppID    string // applications.id UUID (for events)
 	AppSlug  string
 	EPSlug   string
 }
@@ -266,7 +289,7 @@ type ClientApp struct {
 // entry point — all treated as "no profile app, use direct LLM path".
 func (d *DAL) LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, error) {
 	const q = `
-		SELECT c.id::text, a.slug, ep.slug
+		SELECT c.id::text, a.id::text, a.slug, ep.slug
 		FROM them.gateway_clients c
 		JOIN them.applications a ON a.id = c.app_id
 		JOIN them.entry_points ep ON ep.application_id = a.id
@@ -276,7 +299,7 @@ func (d *DAL) LoadClientApp(ctx context.Context, tokenHash string) (*ClientApp, 
 		LIMIT 1`
 
 	var ca ClientApp
-	err := d.pool.QueryRow(ctx, q, tokenHash).Scan(&ca.ClientID, &ca.AppSlug, &ca.EPSlug)
+	err := d.pool.QueryRow(ctx, q, tokenHash).Scan(&ca.ClientID, &ca.AppID, &ca.AppSlug, &ca.EPSlug)
 	if err != nil {
 		return nil, nil // no row = no profile app
 	}
@@ -309,7 +332,7 @@ func (d *DAL) LoadPolicy(ctx context.Context, tenantID, clientID string) (*Polic
 	// Store in Redis for 15 minutes (best-effort, ignore errors)
 	if d.redis != nil && p != nil {
 		if data, jerr := json.Marshal(p); jerr == nil {
-			setCmd := d.redis.B().Set().Key("them:gateway:policy:v2:"+clientID).Value(string(data)).Ex(15*time.Minute).Build()
+			setCmd := d.redis.B().Set().Key("them:gateway:policy:v2:" + clientID).Value(string(data)).Ex(15 * time.Minute).Build()
 			_ = d.redis.Do(ctx, setCmd)
 		}
 	}
