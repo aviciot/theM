@@ -58,6 +58,9 @@ func run() error {
 	store := authserver.NewPgxStore(database.Pool())
 	svc := authserver.NewService(store, cfg, log)
 
+	// Purge expired sessions / blacklist rows (plan P3). Default on; THE_M_AUTH_RETENTION_ENABLED=false disables.
+	go authserver.RunRetention(ctx, authserver.PoolRetentionDB{Pool: database.Pool()}, authserver.RetentionConfigFromEnv(), log)
+
 	idpKey, err := idpcrypto.ParseKey(cfg.IDPEncryptionKey)
 	if err != nil {
 		return fmt.Errorf("IDP_ENCRYPTION_KEY: %w", err)

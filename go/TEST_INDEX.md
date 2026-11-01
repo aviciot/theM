@@ -3920,3 +3920,19 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestDAL_DeleteRun_ArtifactWithoutStoredFile_QueuesNothing` (integration) | Postgres-only artifact bytes → nothing queued |
 | `TestDAL_ForceDeleteTenant_RemovesRunDataAndChatHistory_QueuesFiles` (integration) | runs, artifacts, approvals, tasks and messages gone with the tenant; file queued |
 
+## Data retention (plan P3)
+**Purpose:** `internal/retention` (platform job: temporary tokens on by default; runs, chat, gateway, audit off until configured; dry-run by default) and `internal/authserver/retention.go` (expired sessions + blacklist).
+**Trigger:** any change to `internal/retention/`, `internal/authserver/retention.go`, the wiring in `cmd/them/main.go` / `cmd/auth-server/main.go`, or `db/128_*`
+**Run:** `go test ./internal/retention/ ./internal/authserver/ -run "Retention|PurgeExpired|RunOnce|PolicyFilters|ConfigFromEnv"`; `go test -tags=integration ./internal/retention/ ./internal/authserver/ -run RealDB` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestRunOnce_OnlyEnabledPoliciesRun` / `_LoopsUntilBatchNotFull_AndPassesParameters` / `_BoundedPerPolicy` | 0-day policies skipped; batch loop, parameters and per-run cap |
+| `TestRunOnce_DryRunOnlyCounts` | dry-run counts, never deletes |
+| `TestRunOnce_LockHeldElsewhere_DoesNothing` / `_LockErrorDoesNothing` / `_ReleasesLockOnce` | cross-pod lock behaviour |
+| `TestRunOnce_ErrorInOnePolicyDoesNotStopOthers` | isolation between policies |
+| `TestPolicyFilters` | filters pinned: temporary-token labels only, terminal run statuses only, finished chat tasks only |
+| `TestConfigFromEnv` | defaults (only tokens on, dry-run on) and overrides |
+| `TestRetention_RealDB_AllPolicies` (integration) | each policy on the real tables with old/recent/ineligible rows: dry-run deletes nothing; real run removes only eligible rows; cascades (artifacts, messages, bodies) and the stored-file queue |
+| `TestPurgeExpired_LoopsUntilBatchNotFull` / `_PassesGraceSecondsAndBatch` / `_ZeroGraceKeepsSessions` / `_ErrorStopsAndReports` / `_BoundedPerRun` / `TestRetentionConfigFromEnv_Defaults` | auth purge logic |
+| `TestPurgeExpired_RealDB` (integration) | old expired sessions purged; recently expired and valid kept; expired blacklist purged, active kept |
+

@@ -44,7 +44,7 @@ Done when: L4 invariants hold after a mixed E2E session (complete, fail, cancel,
 One migration `db/NNN_*.sql`: delete existing orphans; `run_artifacts.run_id` FK `ON DELETE CASCADE` (`NOT VALID` then `VALIDATE`) + index; `tasks.run_id` to `CASCADE`; `hil_approvals.run_id` FK CASCADE (and RLS later). Code: delete MinIO `storage_key` objects before deleting runs/tenant; add `tasks`/`hil_approvals` to `ForceDeleteTenant`.
 Tests: L2 delete a run with artifacts/tasks/approvals, assert nothing left; L2 `ForceDeleteTenant` on a throwaway tenant; L3 delete via admin API then L4. Apply migration by hand to the dev DB (`docker cp` + `psql -f`), regenerate `docs/reference/schema-generated.md`. Take a `pg_dump` first.
 
-## P3 - retention and hygiene (F-126, F-131)
+## P3 - retention and hygiene (F-126, F-131) — **done 2026-11-01** (platform job + auth purge; see `docs/architecture/data-retention.md`)
 Order: expired `auth_service.user_sessions`, expired `access_tokens` (fix Admin Playground to delete its token on close, F-131), then `runs`/`run_steps`/`tasks`/`task_messages` older than N days (config, default off), `gateway_requests`, `audit_logs`, `blacklisted_tokens`. A small scheduled job (in-process, advisory-locked like the reconciler) with per-table retention env vars, dry-run first.
 Tests: L1 on the retention SQL builders; L2 seed old and new rows, assert only old removed; never touches rows of running runs.
 

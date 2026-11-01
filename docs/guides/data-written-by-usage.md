@@ -94,8 +94,8 @@ Deleting a run (admin `DELETE /runs/{id}`, bulk delete) removes the `runs` row; 
 Deleting a tenant (`?force=true`) removes everything above including the chat history, and queues its stored files.
 Runs left in `running` after a crash used to keep counting against `max_concurrent_runs` (counted live from `runs`); since 2026-11-01 the reconciler closes them.
 
-## 6. Retention today
-None. Nothing expires `runs`, `run_steps`, `tasks`, `task_messages`, `gateway_requests`, bodies, `audit_logs`, `user_sessions` or `access_tokens`. ClickHouse event tables have TTLs (90 d / 180 d / 7 y / 30 d); ClickHouse system logs do not (backlog F-130). Run streams in Redis are not given a TTL and can be evicted. Plan item P3 covers retention.
+## 6. Retention
+Since 2026-11-01 (plan P3, `docs/architecture/data-retention.md`): expired auth sessions and blacklist rows are purged by the auth service, and the platform job removes expired Admin-Playground/test-runner tokens after 7 days. `runs`, chat history (`tasks`/`task_messages`), `gateway_requests` and `audit_logs` are kept until `THE_M_RETENTION_{RUNS,CHAT,GATEWAY,AUDIT}_DAYS` is set; the job is dry-run until `THE_M_RETENTION_DRY_RUN=false`. ClickHouse event tables have TTLs (90 d / 180 d / 7 y / 30 d); ClickHouse system logs do not (backlog F-130). Redis run streams have no TTL and can be evicted.
 
 ## Where to change things
 Gateway capture: `go/internal/llmgateway/handler.go` (body capture), `dal.go` (`WriteRequest`), `governance/resolve.go`. Canvas trace: `go/internal/appflow/activities.go` (`persistTrace`), `go/internal/admin/dal/log_verbosity.go`. Run rows: `go/internal/runrecorder/`. Delete paths: `go/internal/admin/dal/runs.go`, `tenants.go`.

@@ -46,6 +46,7 @@ import (
 	"github.com/aviciot/them/internal/quota"
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
+	"github.com/aviciot/them/internal/retention"
 	"github.com/aviciot/them/internal/roles"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/server"
@@ -236,6 +237,11 @@ func run() error {
 		go reconciler.Run(runCtx, recCfg, recDB, temporalCli, log)
 		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
 	}
+
+	// ── 13d. Start data retention (plan P3) ───────────────────────────────────
+	// Only expired temporary tokens are on by default; runs/chat/gateway/audit need THE_M_RETENTION_*_DAYS.
+	// THE_M_RETENTION_DRY_RUN defaults to true (count and log only).
+	go retention.Run(runCtx, retention.NewPgxDB(rlsPools.Admin), retention.ConfigFromEnv(), log)
 
 	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
 	epDB := epconfig.NewPgxQuerier(rlsPools.Admin)
