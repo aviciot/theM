@@ -29,7 +29,8 @@ type UserResult struct {
 	Steps      []StepResult `json:"steps"`
 	Error      string       `json:"error,omitempty"`
 	DurationMs int64        `json:"duration_ms"`
-	Status     string       `json:"status"` // "running" | "passed" | "failed"
+	Status     string       `json:"status"`                // "running" | "passed" | "failed"
+	HTTPStatus int          `json:"http_status,omitempty"` // set when the connect/upgrade is rejected
 }
 
 // RunUser connects as an end-user to the given WS EP and runs the message script.
@@ -62,8 +63,11 @@ func RunUser(ctx context.Context, baseURL, tenantSlug, appSlug, epSlug, bearerTo
 	}
 
 	dialer := websocket.DefaultDialer
-	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
+	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
+		if resp != nil {
+			result.HTTPStatus = resp.StatusCode
+		}
 		result.Error = fmt.Sprintf("connect: %v", err)
 		result.Status = "failed"
 		result.DurationMs = time.Since(start).Milliseconds()

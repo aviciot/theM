@@ -343,6 +343,8 @@ type EntryPoint struct {
 	LLMModel             *string `json:"llm_model,omitempty"`
 	AllowedPrincipals    string  `json:"allowed_principals"`
 	RequiredRole         *string `json:"required_role,omitempty"`
+	// AccessPolicy is entry_points.access_policy, e.g. {"mode":"external_jwt"}.
+	AccessPolicy json.RawMessage `json:"access_policy,omitempty"`
 }
 
 // ApplicationInput is the request body for application create/update.

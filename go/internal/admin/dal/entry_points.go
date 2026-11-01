@@ -23,7 +23,8 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 		       ep.llm_provider, ep.llm_model,
 		       COALESCE(t.slug, ''),
 		       COALESCE(ep.allowed_principals, 'internal'),
-		       ep.required_role
+		       ep.required_role,
+		       COALESCE(ep.access_policy, '{"mode":"token"}'::jsonb)
 		FROM them.entry_points ep
 		JOIN them.applications a ON a.id = ep.application_id
 		JOIN them.tenants t      ON t.id = a.tenant_id
@@ -47,6 +48,7 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 			&ep.TenantSlug,
 			&ep.AllowedPrincipals,
 			&ep.RequiredRole,
+			&ep.AccessPolicy,
 		); err != nil {
 			break
 		}

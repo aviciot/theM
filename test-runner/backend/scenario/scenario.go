@@ -49,6 +49,9 @@ type Scenario struct {
 	Stream       bool     `json:"stream,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	UserJWT      string   `json:"user_jwt,omitempty"`
+	// Expect is "allow" (default) or "deny". With "deny" a user passes only when the
+	// entry point rejects them (HTTP 403); being admitted counts as a failure.
+	Expect       string   `json:"expect,omitempty"`
 	NUsers       int      `json:"n_users"`
 	Messages     []string `json:"messages"`
 	CreatedAt            string         `json:"created_at"`

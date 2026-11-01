@@ -182,7 +182,9 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 	}
 
 	// Tally results.
-	for _, r := range summary.Results {
+	for i := range summary.Results {
+		applyExpect(sc.Expect, &summary.Results[i])
+		r := summary.Results[i]
 		if r.Status == "passed" {
 			summary.Passed++
 		} else {

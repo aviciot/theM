@@ -3814,3 +3814,10 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | Test | Covers |
 |---|---|
 | `TestExternalCallerHasRole` | matching role admitted; different role, no mapping, name-lookup error, and no checker all denied (fail closed) |
+
+## Entry point JSON contract (admin DAL)
+**Trigger:** any change to `internal/admin/dal/dal.go` `EntryPoint` or `ListEntryPoints`
+**Run:** `go test ./internal/admin/dal/...`
+| Test | Covers |
+|---|---|
+| `TestEntryPointJSON_IncludesAccessPolicy` | `access_policy` and `required_role` are serialised (Runtime/canvas UI reads `ep.access_policy.mode`) |

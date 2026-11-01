@@ -1,0 +1,30 @@
+{
+  "tenant_slug": "payops_ai",
+  "tenant_id": "ad7d567d-b222-40be-acb6-7929cf6ae168",
+  "app_id": "1a188f12-1296-4f51-9c46-7ee5c8d55699",
+  "app_slug": "smart-refund-handler-97f244",
+  "ep_slug": "smart-refund-ws",
+  "ep_type": "websocket",
+  "auth_mode": "external_jwt",
+  "keycloak_url": "http://10.55.125.43:8088/auth/keycloak",
+  "keycloak_realm": "payops_ai",
+  "keycloak_client_id": "them-m",
+  "keycloak_client_secret": "them-m-secret",
+  "n_users": 1,
+  "messages": [
+    "I want a refund for order 1234"
+  ],
+  "test_result_ai_analysis": "",
+  "created_at": "2026-11-01T00:00:00Z",
+  "updated_at": "2026-11-01T00:00:00Z",
+  "id": "51-ep-role-allow",
+  "name": "51 \u2014 EP Required Role: premium user admitted",
+  "description": "Per-EP required tenant role. Setup: python3.12 test-runner/scripts/setup_ep_role_scenario.py (EP -> external_jwt, required_role=jwt-premium; --reset to undo).\nRole jwt-premium is mapped from JWT claim tier=premium.\nalice (tier=premium \u2192 jwt-premium) must be admitted and get a reply.",
+  "expect": "allow",
+  "keycloak_users": [
+    {
+      "username": "alice",
+      "password": "alice123"
+    }
+  ]
+}
