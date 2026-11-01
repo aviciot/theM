@@ -54,7 +54,8 @@ def main():
 
     mode, principals, role = ("token", "internal", None) if a.reset else ("external_jwt", "both", ROLE)
     new = copy.deepcopy(doc)
-    cfg = next(e for e in new["entry_points"] if e["slug"] == EP_SLUG).setdefault("config", {})
+    ep_new = next(e for e in new["entry_points"] if e["slug"] == EP_SLUG)
+    cfg = ep_new["config"] = ep_new.get("config") or {}
     cfg["access_mode"], cfg["allowed_principals"] = mode, principals
     created = call(b, "POST", f"/api/v1/admin/applications/{app_id}/definitions", tok, {"definition": new})
     did = created["id"]
