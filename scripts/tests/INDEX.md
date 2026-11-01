@@ -25,6 +25,7 @@ Go unit/integration tests are indexed separately in `go/TEST_INDEX.md` (`cd go &
 | `test_40_appflow_canvas_e2e.py` | Full canvas run: create app + WS EP → publish (stamps `_resolved_agent_ids`) → WS message → workflow pauses at HIL → approve → run `completed` | `temporal` profile, `a2a-echo` agent |
 | `test_41_appflow_fork_join.py` | Fork/Join: both branch agents run, run `completed` | `temporal` profile, `a2a-echo` |
 | `test_42_appflow_inline_nodes.py` | Inline LLM (mock provider) + Condition node routing; negative validate cases (`condition_edge_count`, …) | `temporal` profile, `a2a-echo` |
+| `test_43_ep_required_role.py` | Per-EP required tenant role on an `external_jwt` EP, driven through the test-runner: premium user admitted, standard and no-claim users denied (403), role cleared → admitted, role changed → denied, switched back → admitted | `temporal` + `sso` profiles, test-runner up, `KEYCLOAK_URL` issuer host (see `docs/architecture/test-runner.md`); leaves the EP at `required_role=jwt-premium` |
 
 Run one: `python3.12 scripts/tests/test_40_appflow_canvas_e2e.py` (exit code 0 = pass).
 

@@ -27,6 +27,9 @@ Canvas enables → Runtime configures → Debug shows
 - Test-runner scenarios 51 (alice, tier=premium → admitted, got a reply) and 52 (bob, tier=standard → HTTP 403) both pass on payops_ai `smart-refund-handler-97f244` (EP set to external_jwt, required_role=jwt-premium via `test-runner/scripts/setup_ep_role_scenario.py`).
 - Found+fixed on the way: `access_policy` missing from EP API JSON; CHECK constraint on `required_role` (migration 126).
 
+### Full scenario set (2026-11-01)
+`scripts/tests/test_43_ep_required_role.py` (6/6 pass): premium admitted; standard and no-claim users denied; role cleared → admitted without republish; role changed to another role → denied; switched back → admitted.
+
 ### Still open
 - Make the checkbox meaningful (clear `required_role` when unchecked on publish).
 - Later idea: Debug "test as role" (needs `Start` to run the role check).
