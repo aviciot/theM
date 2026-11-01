@@ -37,7 +37,8 @@ Role-based auth gaps 1, 2, 6, 7 complete (commits 823aeb37, 1454e5bb, 19925b3f, 
 Backend enforcement already done (Phase 1, commits 6761602b + bbfcd68a). Still needed: E2E test, profile display, admin role mgmt UI (optional).
 
 ## Entry point role requirement (2026-11-01)
-Canvas checkbox + Runtime dropdown done, not committed-tested live. Debug skipped (debug bypasses role check). Plan/open items: `docs/plans/entry-point-role-requirement-plan.md`.
+Done and verified live: external_jwt EPs enforce `required_role` (mapped tenant role); canvas checkbox + Runtime dropdown; test-runner scenarios 51/52 pass (`expect: allow|deny` added to the runner). Debug skipped (debug bypasses role check). Migration 126 applied. Plan/open items: `docs/plans/entry-point-role-requirement-plan.md`.
+Run data was purged 2026-11-01 (pg_dump kept in the session scratchpad only); see `docs/plans/e2e-clean-env-purge-investigation.md`.
 
 ## Next tasks (suggested order)
 1. Check the GitHub Actions tab for the `docs-lint` job. Exposed tokens (F-94, F-91, F-110): user decided not to rotate.

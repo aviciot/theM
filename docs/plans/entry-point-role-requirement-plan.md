@@ -23,8 +23,11 @@ Canvas enables → Runtime configures → Debug shows
 - Runtime shows the dropdown for any `user_jwt` EP; it does not read the canvas checkbox (Runtime has no canvas config). The checkbox is currently informational.
 - Debug mode: skipped. Debug runs (`AppFlowDebugService.Start`) never go through the `lifecycle.go` role check, so a per-run override would do nothing.
 
+### Verified live (2026-11-01)
+- Test-runner scenarios 51 (alice, tier=premium → admitted, got a reply) and 52 (bob, tier=standard → HTTP 403) both pass on payops_ai `smart-refund-handler-97f244` (EP set to external_jwt, required_role=jwt-premium via `test-runner/scripts/setup_ep_role_scenario.py`).
+- Found+fixed on the way: `access_policy` missing from EP API JSON; CHECK constraint on `required_role` (migration 126).
+
 ### Still open
-- Live E2E via test-runner (Keycloak payops_ai: alice tier=premium → jwt-premium allowed, bob tier=standard denied) on `smart-refund-handler`; needs runner `expect: allow|deny`.
 - Make the checkbox meaningful (clear `required_role` when unchecked on publish).
 - Later idea: Debug "test as role" (needs `Start` to run the role check).
 
