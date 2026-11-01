@@ -8,7 +8,7 @@ owns:
   - go/internal/admin/middleware_wirings.go
   - go/internal/admin/security_config.go
   - go/internal/admin/scanjob.go
-last_verified: 2026-10-25
+last_verified: 2026-11-01
 ---
 
 # Security Scanning and Guards
@@ -35,6 +35,7 @@ Two separate things share the word "security":
 2. The file is fetched, stored in the object store as **quarantine**, and a row is added to `middleware_jobs`. The caller gets status `pending`.
 3. `them-middleware-worker` claims jobs with `FOR UPDATE SKIP LOCKED` (poll 500 ms, `MIDDLEWARE_POLL_INTERVAL_MS`), runs the pipeline, then releases or blocks the file. Attempts are counted; stuck `claimed` jobs are reset.
 4. A **reaper** (every 15 min, `REAPER_INTERVAL_MINUTES`) deletes expired quarantine objects and rows.
+5. An **object janitor** (every 5 min, `OBJECT_JANITOR_INTERVAL_MINUTES`; `middleware/object_janitor.go`) deletes the stored files of removed run artifacts: a trigger on `them.run_artifacts` (`db/127`) queues each deleted row's `storage_key` in `them.storage_deletions`, the janitor deletes the object then the queue row (failures are retried, 20 attempts, `last_error` kept).
 
 ClamAV socket: `CLAMAV_SOCKET` (default `/var/run/clamav/clamd.sock`). ClamAV scanner errors → outcome `error`, which **does not block**.
 

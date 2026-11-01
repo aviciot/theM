@@ -40,7 +40,7 @@ Deployed 2026-11-01. Live check: a run answered to completion finishes `complete
 | 1.5 | **Done 2026-11-01** (live: `scripts/tests/test_45_orchestration_pre_run_failure.py`). Orchestration path (WS/SSE): errors before `orchestrator.Run` update the run row and publish an `error` event; `OrchestrationWorkflow` finalizes | L1 on `RunOrchestratorActivity` failure paths; L3 with a bad EP config | go-worker(-2), bridge |
 Done when: L4 invariants hold after a mixed E2E session (complete, fail, cancel, HIL timeout, workflow timeout, worker killed mid-run).
 
-## P2 - orphans on delete (F-125)
+## P2 - orphans on delete (F-125) — **done 2026-11-01** (db/127; `tasks` deliberately kept: they are chat history)
 One migration `db/NNN_*.sql`: delete existing orphans; `run_artifacts.run_id` FK `ON DELETE CASCADE` (`NOT VALID` then `VALIDATE`) + index; `tasks.run_id` to `CASCADE`; `hil_approvals.run_id` FK CASCADE (and RLS later). Code: delete MinIO `storage_key` objects before deleting runs/tenant; add `tasks`/`hil_approvals` to `ForceDeleteTenant`.
 Tests: L2 delete a run with artifacts/tasks/approvals, assert nothing left; L2 `ForceDeleteTenant` on a throwaway tenant; L3 delete via admin API then L4. Apply migration by hand to the dev DB (`docker cp` + `psql -f`), regenerate `docs/reference/schema-generated.md`. Take a `pg_dump` first.
 

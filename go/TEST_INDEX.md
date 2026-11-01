@@ -3906,3 +3906,17 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestOrchestrationWorkflow_ActivityTimeout_ReportsRunFailure` / `_Cancelled_ReportsRunFailure` | workflow reports `run timed out` / `run canceled` (disconnected ctx) |
 | `TestOrchestrationWorkflow_ActivityReportedItself_NotReportedAgain` / `_Success_NoReport` | no duplicate report for activity errors; none on success |
 
+## Deleting a run cleans up its artifacts, approvals and stored files (F-125 / plan P2, db/127)
+**Purpose:** `run_artifacts` and `hil_approvals` cascade with their run; a trigger queues each deleted artifact's stored file in `them.storage_deletions` and the middleware-worker `ObjectJanitor` deletes the object. Chat history (`tasks`/`task_messages`) deliberately survives run deletion (`tasks.run_id` SET NULL); `ForceDeleteTenant` removes it with the tenant.
+**Trigger:** any change to `db/127_*`, `internal/middleware/object_janitor.go`, `dal/runs.go` delete paths, or `dal/tenants.go` `ForceDeleteTenant`
+**Run:** `go test ./internal/middleware/ -run ObjectJanitor`; `go test -tags=integration ./internal/admin/dal/ -run "DeleteRun|BulkDeleteRuns|ForceDeleteTenant"` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestObjectJanitor_DeletesObjectThenQueueRow` | object deleted, then its queue row |
+| `TestObjectJanitor_FailureIsRecordedAndKeepsRow` | a failed delete is recorded (attempts+1, error) and the row stays; others proceed |
+| `TestObjectJanitor_NilStoreDoesNothing` / `_QueryErrorIsHarmless` / `_QueryParameters` | no storage client = untouched; query error harmless; retry cap and batch size passed |
+| `TestDAL_DeleteRun_CascadesArtifactsAndApprovals_QueuesFile_KeepsHistory` (integration) | artifacts + approvals gone, file queued once for the tenant, chat task/messages survive with `run_id` NULL |
+| `TestDAL_BulkDeleteRuns_CascadesAndQueuesEachFile` (integration) | both deleted runs cascade and queue; an undeleted run is untouched |
+| `TestDAL_DeleteRun_ArtifactWithoutStoredFile_QueuesNothing` (integration) | Postgres-only artifact bytes → nothing queued |
+| `TestDAL_ForceDeleteTenant_RemovesRunDataAndChatHistory_QueuesFiles` (integration) | runs, artifacts, approvals, tasks and messages gone with the tenant; file queued |
+

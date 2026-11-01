@@ -82,16 +82,17 @@ In the current code the level only decides whether bodies are stored (`llmgatewa
 | MCP tool calls | ClickHouse `events_tool_call` |
 | Playground / test-runner | `access_tokens` (temporary tokens) |
 
-## 5. What "delete leaves junk behind" means
-Deleting a run (admin `DELETE /runs/{id}`, bulk delete, tenant delete) removes the `runs` row. Only some children follow automatically:
+## 5. What happens when a run is deleted
+Deleting a run (admin `DELETE /runs/{id}`, bulk delete) removes the `runs` row; since 2026-11-01 (db/127) this is what follows:
 | Child table | When its run is deleted |
 |---|---|
 | `run_steps`, `run_usage` | deleted too (cascade) |
-| `tasks` (+ `task_messages`, `artifacts` under them) | **kept**: `tasks.run_id` is set to NULL, so the conversation rows stay |
-| `run_artifacts` (+ `middleware_jobs`/`_audit`) | **kept**: no foreign key to runs (208 of 231 rows were already orphans); MinIO objects stay too |
-| `hil_approvals` | **kept**: no foreign key at all |
+| `run_artifacts` (+ `middleware_jobs`/`_audit`) | deleted too (cascade). If the artifact points at a stored file, a trigger queues the file in `storage_deletions` and the middleware-worker janitor deletes it within ~5 min |
+| `hil_approvals` | deleted too (cascade) |
+| `tasks` + `task_messages` (+ `artifacts` under them) | **kept on purpose**: `tasks.run_id` is set to NULL. These rows are the conversation history, so deleting a run record does not erase the user's chat memory |
 | `gateway_requests` | not tied to runs; removed with the tenant only |
-Runs left in `running` after a crash also keep counting against `max_concurrent_runs` (counted live from `runs`); since 2026-11-01 the reconciler closes them. The fix for the orphans is plan item P2.
+Deleting a tenant (`?force=true`) removes everything above including the chat history, and queues its stored files.
+Runs left in `running` after a crash used to keep counting against `max_concurrent_runs` (counted live from `runs`); since 2026-11-01 the reconciler closes them.
 
 ## 6. Retention today
 None. Nothing expires `runs`, `run_steps`, `tasks`, `task_messages`, `gateway_requests`, bodies, `audit_logs`, `user_sessions` or `access_tokens`. ClickHouse event tables have TTLs (90 d / 180 d / 7 y / 30 d); ClickHouse system logs do not (backlog F-130). Run streams in Redis are not given a TTL and can be evicted. Plan item P3 covers retention.

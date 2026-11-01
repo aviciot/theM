@@ -133,6 +133,13 @@ func run() error {
 	go reaper.Run(ctx, reaperInterval)
 	log.Info("quarantine reaper started", "interval", reaperInterval)
 
+	// ── Object janitor: stored files of deleted run artifacts (db/127 outbox) ─
+	if ad, ok := objStore.(middleware.ArtifactDeleter); ok && objStore != nil {
+		janitorInterval := time.Duration(envInt("OBJECT_JANITOR_INTERVAL_MINUTES", 5)) * time.Minute
+		go middleware.NewObjectJanitor(&pgxQuerier{pool: activePool}, ad, log).Run(ctx, janitorInterval)
+		log.Info("object janitor started", "interval", janitorInterval)
+	}
+
 	// ── Health heartbeat — writes them:dash:services:health (TTL 30s) every 10s ─
 	// The Services page reads this key on load and via pub/sub to show live
 	// worker status. If this process dies the key expires and the UI shows offline.

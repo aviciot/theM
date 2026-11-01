@@ -542,6 +542,10 @@ func (d *DB) ForceDeleteTenant(ctx context.Context, id string) error {
 	steps := []string{
 		// Leaf tables (no further dependents within the tenant)
 		`DELETE FROM them.run_artifacts           WHERE tenant_id = $1::uuid`,
+		// Chat history (tasks + task_messages + artifacts below them) has no foreign key to tenants and
+		// survives run deletion by design (tasks.run_id is SET NULL), so remove it with the tenant.
+		`DELETE FROM them.tasks                   WHERE tenant_id = $1::uuid`,
+		// runs CASCADE-deletes run_steps, run_usage, run_artifacts and hil_approvals (db/127).
 		`DELETE FROM them.runs                    WHERE tenant_id = $1::uuid`,
 		`DELETE FROM them.access_tokens           WHERE tenant_id = $1::uuid`,
 		`DELETE FROM them.orchestrators           WHERE tenant_id = $1::uuid`,
