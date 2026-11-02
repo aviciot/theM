@@ -21,12 +21,12 @@ const GLBViewer = dynamic(
 );
 
 const SAMPLE_MODELS = [
-  { name: 'Example Model', path: '/models/example.glb' },
-  { name: 'Logo 3D', path: '/models/logo.glb' },
+  { name: 'the-M Logo Premium', path: '/models/theM_logo_premium.glb' },
+  { name: 'the-M Logo AI Mesh', path: '/models/theM_logo_ai_mesh.glb' },
 ];
 
 export default function ThreeDLabPage() {
-  const [selectedModel, setSelectedModel] = useState('/models/example.glb');
+  const [selectedModel, setSelectedModel] = useState('/models/theM_logo_premium.glb');
   const [customPath, setCustomPath] = useState('');
 
   const handleLoadCustom = () => {
