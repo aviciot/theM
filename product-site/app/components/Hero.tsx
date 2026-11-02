@@ -44,6 +44,15 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: [0.4, 0.0, 0.2, 1] }}
         >
+          {/* Logo */}
+          <div className="mb-8 flex justify-center">
+            <img
+              src="/the_m_logo.svg"
+              alt="the-M"
+              className="h-20 md:h-24 w-auto"
+            />
+          </div>
+
           <h1 className="text-6xl md:text-8xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
             Ship AI Products
             <br />
