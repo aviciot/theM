@@ -138,6 +138,19 @@ func (m *Manager) execute(ctx context.Context, runID string, ar *activeRun, sc S
 					tokenID = tok.ID
 					defer client.DeleteToken(tokenID)
 
+				case "user_jwt":
+					if len(sc.LoginUsers) == 0 {
+						updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: "user_jwt: no login_users configured"}
+						return
+					}
+					lu := sc.LoginUsers[idx%len(sc.LoginUsers)]
+					uc, err := them.NewClient(client.BaseURL(), lu.Username, lu.Password)
+					if err != nil {
+						updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: fmt.Sprintf("the-M login (%s): %v", lu.Username, err)}
+						return
+					}
+					bearerToken = uc.JWT()
+
 				case "external_jwt":
 					if len(sc.KeycloakUsers) == 0 {
 						updates <- them.UserResult{UserIndex: idx, Status: "failed", Error: "external_jwt: no keycloak_users configured"}

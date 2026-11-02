@@ -40,6 +40,9 @@ type Scenario struct {
 	KeycloakClientID     string         `json:"keycloak_client_id,omitempty"`     // e.g. them-m
 	KeycloakClientSecret string         `json:"keycloak_client_secret,omitempty"` // e.g. them-m-secret
 	KeycloakUsers        []KeycloakUser `json:"keycloak_users,omitempty"`         // virtual user credentials
+	// LoginUsers — used when auth_mode == "user_jwt": each virtual user logs in to the-M auth
+	// with these credentials and uses the returned access token. Cycles like KeycloakUsers.
+	LoginUsers []KeycloakUser `json:"login_users,omitempty"`
 	// Gateway fields — only used when ep_type == "gateway".
 	// GatewayToken is the raw hex bearer token from them.gateway_clients.
 	// Stream controls whether to use SSE streaming (true) or a single JSON response (false).

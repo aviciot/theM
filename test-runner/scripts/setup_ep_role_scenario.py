@@ -1,11 +1,16 @@
 #!/usr/bin/env python3.12
 """Prepare payops_ai `smart-refund-handler` for the EP required-role scenarios (51-56).
 
-One app, four websocket entry points (all external_jwt, allowed_principals=both, same flow):
+One app, seven websocket entry points, all running the same flow.
+external_jwt (Keycloak token; the role is mapped from a claim):
   smart-refund-ws   needs role jwt-premium   (the original EP)
   role-premium-ws   needs role jwt-premium   (a second EP with the same rule)
   role-partner-ws   needs role m2m-partner   (a role nobody in the test realm has)
   role-open-ws      needs no role            (any valid login is admitted)
+user_jwt (the-M login; the role is the user's membership role, payops-test is `admin`):
+  role-user-admin-ws  needs role admin       (payops-test is admitted)
+  role-user-dev-ws    needs role developer   (payops-test is turned away)
+  role-user-open-ws   needs no role
 Idempotent. `--inspect` only prints the current state.
 `--reset` puts all of them back to token mode and clears the roles.
 
@@ -14,7 +19,15 @@ Usage: python3.12 test-runner/scripts/setup_ep_role_scenario.py [--inspect|--res
 import argparse, copy, json, sys, urllib.request, urllib.error
 
 APP_SLUG, EP_SLUG, ROLE = "smart-refund-handler-97f244", "smart-refund-ws", "jwt-premium"
-EXTRA_EPS = {"role-premium-ws": "jwt-premium", "role-partner-ws": "m2m-partner", "role-open-ws": None}
+# slug -> (access mode, allowed principals, required role)
+EXTRA_EPS = {
+    "role-premium-ws": ("external_jwt", "both", "jwt-premium"),
+    "role-partner-ws": ("external_jwt", "both", "m2m-partner"),
+    "role-open-ws": ("external_jwt", "both", None),
+    "role-user-admin-ws": ("user_jwt", "internal", "admin"),
+    "role-user-dev-ws": ("user_jwt", "internal", "developer"),
+    "role-user-open-ws": ("user_jwt", "internal", None),
+}
 USER, PASSWORD = "payops-test", "admin123"
 
 
@@ -57,11 +70,11 @@ def main():
     if a.inspect:
         return
 
-    mode, principals = ("token", "internal") if a.reset else ("external_jwt", "both")
-    wanted = {EP_SLUG: None if a.reset else ROLE}
-    wanted.update({k: None if a.reset else v for k, v in EXTRA_EPS.items()})
+    wanted = {EP_SLUG: ("external_jwt", "both", ROLE), **EXTRA_EPS}
+    if a.reset:
+        wanted = {k: ("token", "internal", None) for k in wanted}
     new = copy.deepcopy(doc)
-    for n, slug in enumerate(wanted):
+    for n, (slug, (mode, principals, _)) in enumerate(wanted.items()):
         ep_new = next((e for e in new["entry_points"] if e["slug"] == slug), None)
         if ep_new is None:
             ep_new = {"instance_id": f"ep_role_{n}", "slug": slug, "protocol": "websocket", "root": ep_def["root"], "config": {}}
@@ -80,7 +93,7 @@ def main():
     call(b, "POST", f"/api/v1/admin/applications/{app_id}/definitions/{did}/publish", tok)
     full = call(b, "GET", f"/api/v1/admin/applications/{app_id}", tok)
     ids = {e["slug"]: e["id"] for e in full["entry_points"]}
-    for slug, role in wanted.items():
+    for slug, (mode, principals, role) in wanted.items():
         call(b, "PATCH", f"/api/v1/admin/applications/{app_id}/entry-points/{ids[slug]}/required-role", tok, {"required_role": role})
         print(f"done: {slug} mode={mode} principals={principals} required_role={role}")
 

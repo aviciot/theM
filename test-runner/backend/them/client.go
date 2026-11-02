@@ -167,3 +167,6 @@ func (c *Client) DeleteToken(tokenID string) error {
 }
 
 func (c *Client) BaseURL() string { return c.baseURL }
+
+// JWT returns the access token obtained at login (used as the bearer for user_jwt entry points).
+func (c *Client) JWT() string { return c.jwt }
