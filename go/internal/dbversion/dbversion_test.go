@@ -52,6 +52,22 @@ func TestVerify_CheckFailureNeverBlocks(t *testing.T) {
 	_ = io.Discard
 }
 
+// A stale database only logs by default; THE_M_REQUIRE_MIGRATIONS=true turns it into a startup failure.
+func TestGate_RequireMigrationsSwitch(t *testing.T) {
+	behind := errors.New("behind")
+	t.Setenv("THE_M_REQUIRE_MIGRATIONS", "")
+	if gate(behind) != nil {
+		t.Error("default: a behind database must not stop the service")
+	}
+	t.Setenv("THE_M_REQUIRE_MIGRATIONS", "true")
+	if !errors.Is(gate(behind), behind) {
+		t.Error("THE_M_REQUIRE_MIGRATIONS=true: the service must refuse to start")
+	}
+	if gate(nil) != nil {
+		t.Error("a current database never fails")
+	}
+}
+
 // Expected must name the newest migration file (run from a full checkout; skipped when db/ is not around,
 // e.g. inside the Docker build context).
 func TestExpectedMatchesNewestMigration(t *testing.T) {

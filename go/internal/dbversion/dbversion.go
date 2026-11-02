@@ -53,6 +53,11 @@ func Enforce(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
 		e := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM them.schema_migrations WHERE version = $1)`, version).Scan(&ok)
 		return ok, e
 	}, log)
+	return gate(err)
+}
+
+// gate turns a "behind" result into a startup failure only when THE_M_REQUIRE_MIGRATIONS=true.
+func gate(err error) error {
 	if err != nil && strings.EqualFold(os.Getenv("THE_M_REQUIRE_MIGRATIONS"), "true") {
 		return err
 	}

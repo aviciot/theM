@@ -3985,5 +3985,6 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | Test | Covers |
 |---|---|
 | `TestVerify_CurrentSchema` / `_BehindIsAnErrorLogAndErrBehind` / `_CheckFailureNeverBlocks` | recorded → info; missing → ERROR log naming the file + `ErrBehind`; a failing check is only a warning |
+| `TestGate_RequireMigrationsSwitch` | a behind database stops startup only with `THE_M_REQUIRE_MIGRATIONS=true`; a current one never fails |
 | `TestExpectedMatchesNewestMigration` | fails when `Expected` lags the newest `db/NNN_*.sql` |
 
