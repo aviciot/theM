@@ -3998,6 +3998,7 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestActivityIC_CarriesRunID` | the id is copied into `ActivityIC`, survives JSON, omitted when empty |
 | `TestExecMCP_PutsRunIDInCallContext` | the MCP step hands the run id to the caller via the context |
 | `TestHTTPMCPCaller_SendsRunID` | the HTTP body has `run_id` only when the context carries one |
+| `TestSetInvocationHeaders` (dag-worker) | the AppFlow agent node's A2A call sends tenant, app, agent id (agent-runtime 401s without it) and run id; no binding id; run id omitted when there is none |
 | `TestParseInvocationContext_ReadsRunID` | `X-Them-Run-Id` becomes `InvocationContext.RunID` (optional) |
 | `TestEmitToolCallEvent_CarriesRunIDAsTrace` | tool-call event `RunID` and `TraceID` = run id; empty without one |
 | `TestGatewayRequestEvent_*` / `TestWriteRequest_RealDB_EmitsAfterInsertOnly` (integration) | gateway event `TraceID` = run id; row stores `run_id`; direct call → NULL and empty |

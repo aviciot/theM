@@ -1053,6 +1053,21 @@ type pgxAgentA2ACaller struct {
 	fileGateWaiter *appFlowFileGateWaitAdapter
 }
 
+// setInvocationHeaders adds the X-Them-* invocation context that canvas agents hosted by agent-runtime require
+// (it answers 401 when the agent id is missing; the AppFlow agent node used to omit it, so it could only call
+// external A2A agents) plus the run id, which lets the agent's tool calls be tied back to this run.
+// The binding id is omitted on purpose: the runtime then looks the binding up by application + agent.
+func setInvocationHeaders(req *http.Request, tenantID, applicationID, agentID, runID string) {
+	req.Header.Set("X-Them-Tenant-Id", tenantID)
+	req.Header.Set("X-Them-Application-Id", applicationID)
+	if agentID != "" {
+		req.Header.Set("X-Them-Agent-Id", agentID)
+	}
+	if runID != "" {
+		req.Header.Set("X-Them-Run-Id", runID)
+	}
+}
+
 // InvokeByID calls the A2A agent identified by agentID via A2A v1.0 SendMessage.
 // Uses protobuf-JSON wire format with "ROLE_USER" enum string and A2A-Version: 1.0
 // header required by the A2A SDK v1.1 version validator.
@@ -1116,11 +1131,7 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 	if authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
-	req.Header.Set("X-Them-Application-Id", applicationID)
-	req.Header.Set("X-Them-Tenant-Id", tenantID)
-	if runID != "" {
-		req.Header.Set("X-Them-Run-Id", runID) // lets the agent's tool calls be tied back to this run
-	}
+	setInvocationHeaders(req, tenantID, applicationID, agentID, runID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

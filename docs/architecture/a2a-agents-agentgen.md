@@ -85,6 +85,8 @@ Per-tenant L1 (in-process) + L2 Redis `them:agents:registry:{tenant}` (10 min), 
 | Spec edited | Up to 60 s of the old spec (cache) |
 | `human_wait` unanswered | Workflow times out after its `timeout_seconds` or 24 h; handle TTL 24 h |
 
+**AppFlow → canvas agent (fixed 2026-11-02):** the AppFlow agent node's A2A call (`pgxAgentA2ACaller.InvokeByID`) now sends `X-Them-Agent-Id` (via `setInvocationHeaders`); without it `agent-runtime` answered 401 to every call, so an AppFlow agent node could only reach external A2A agents. The binding id is left out: the runtime resolves it by application + agent (the agent must be bound to the app, else 404).
+
 **Run id as the trace key (2026-11-02):** an AppFlow `agent` node sends `X-Them-Run-Id` on its A2A call (`pgxAgentA2ACaller.InvokeByID`); `agent-runtime` reads it into `InvocationContext.RunID` → `ActivityIC.RunID` (in Temporal history, not a secret) → the `mcp_call` step puts it in the call context (`agentgen.WithRunID`) → `HTTPMCPCaller` sends `run_id` to `them-mcp-service` → the tool-call event carries it as `RunID` and `TraceID`. Direct A2A calls and the orchestrator (WS/SSE chat) path do not carry a run id yet.
 
 ## Known gaps (found while writing, 2026-10-24; from reading code; none reproduced live)

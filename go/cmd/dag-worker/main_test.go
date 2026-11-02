@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -63,5 +64,28 @@ func TestRunStatusUpdateQuery(t *testing.T) {
 	}
 	if q := runStatusUpdateQuery(domain.RunRunning); strings.Contains(q, "ended_at") || strings.Contains(q, "NOT IN") {
 		t.Errorf("running update must be plain: %s", q)
+	}
+}
+
+// The AppFlow agent node must send the invocation context agent-runtime requires (it answers 401 without the
+// agent id), plus the run id for tool-call tracing; the binding id stays unset so the runtime resolves it.
+func TestSetInvocationHeaders(t *testing.T) {
+	req := httptest.NewRequest("POST", "/", nil)
+	setInvocationHeaders(req, "tenant-1", "app-1", "agent-1", "run-1")
+	for h, want := range map[string]string{
+		"X-Them-Tenant-Id": "tenant-1", "X-Them-Application-Id": "app-1", "X-Them-Agent-Id": "agent-1", "X-Them-Run-Id": "run-1",
+	} {
+		if got := req.Header.Get(h); got != want {
+			t.Errorf("%s = %q, want %q", h, got, want)
+		}
+	}
+	if got := req.Header.Get("X-Them-Binding-Id"); got != "" {
+		t.Errorf("binding id must not be sent (the runtime looks it up by app + agent), got %q", got)
+	}
+
+	noRun := httptest.NewRequest("POST", "/", nil)
+	setInvocationHeaders(noRun, "t", "a", "g", "")
+	if _, has := noRun.Header["X-Them-Run-Id"]; has {
+		t.Error("X-Them-Run-Id must be omitted when there is no run")
 	}
 }
