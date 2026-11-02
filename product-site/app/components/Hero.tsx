@@ -45,13 +45,13 @@ export function Hero() {
           transition={{ duration: 0.8, ease: [0.4, 0.0, 0.2, 1] }}
         >
           <h1 className="text-6xl md:text-8xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-            Build AI Agents
+            Ship AI Products
             <br />
-            Without Code
+            <span className="text-5xl md:text-7xl">10x Faster</span>
           </h1>
 
           <p className="text-xl md:text-2xl text-gray-400 mb-12 max-w-2xl mx-auto">
-            Visual workflow builder with multi-tenant security and production-ready orchestration
+            Visual workflow builder that turns AI experiments into production systems — without writing code
           </p>
 
           <div className="flex gap-4 justify-center">
