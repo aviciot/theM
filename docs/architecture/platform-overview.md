@@ -10,7 +10,7 @@ owns:
   - traefik/
   - go/cmd/them/main.go
   - go/internal/server/
-last_verified: 2026-11-01   # by reading compose (rendered with all profiles) + main.go; stack not started
+last_verified: 2026-11-02   # added them-product-site container (dev only, marketing/landing page)
 ---
 
 # Platform Overview & Container Map
@@ -25,7 +25,8 @@ Subsystem detail lives in the other `docs/architecture/` docs.
 browser / API client / external agent
         │  :8088
    them-traefik  (path-based routing, Docker-label discovery)
-   ├─ /                         → them-frontend (Next.js)
+   ├─ /                         → them-frontend (Next.js Dashboard)
+   ├─ product.localhost         → them-product-site (Next.js Marketing, dev only)
    ├─ /auth                     → them-auth-go
    ├─ /api/v1 /ws /sse /health /static/tenants /ws/dashboard
    ├─ /{tenant}/apps /a2a /llm  → them-go-bridge  (single Go binary, :8002)
@@ -54,7 +55,8 @@ internal on `them-network`. The Python bridge and Python auth service are **gone
 | `them-go-bridge` | core | The API: admin, WS/SSE, A2A, LLM gateway, apps | `go/cmd/them/` |
 | `them-go-worker`, `-2` | core | Temporal worker, queue `them-orchestration-go` (orchestrator runs) | `go/cmd/worker/` |
 | `them-mcp-service` | core | MCP server supervisor/executor, internal only | `go/cmd/mcp-service/` |
-| `them-frontend` | core | Next.js UI (dev compose swaps in `Dockerfile.dev`) | `frontend/` |
+| `them-frontend` | core | Next.js UI Dashboard (dev compose swaps in `Dockerfile.dev`) | `frontend/` |
+| `them-product-site` | dev-only | Next.js marketing/product site (GSAP + Framer Motion; deployed to Vercel in production, not Docker) | `product-site/` |
 | `vision-agent` | core | Vision/maps A2A agent | `agents/vision_agent/` |
 | `temporal-frontend`, `temporal-ui`, `temporal-admin-tools` | temporal | Temporal server + UI | image |
 | `them-dag-worker`, `-2`, `-3`, `-4` | temporal | Temporal worker: canvas agent DAG steps (queue `canvas-dag-nodes`) and AppFlow (queue `appflow-dag`) | `go/cmd/dag-worker/` |
