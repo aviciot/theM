@@ -3978,3 +3978,12 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestCancellationIsNotAWarning` | cancellation is an info `activity canceled` |
 | `TestQuietActivitiesAreDebugOnly` | quiet activities log at debug only; others unaffected |
 
+## Startup schema-version check (F-135, plan P4)
+**Purpose:** `internal/dbversion` logs an ERROR at startup when the newest migration the code needs (`Expected`) is not recorded in `them.schema_migrations` (refuses to start only with `THE_M_REQUIRE_MIGRATIONS=true`); a check that cannot run never blocks. Wired in the bridge, auth service, dag workers and orchestrator worker.
+**Trigger:** any new `db/NNN_*.sql` (bump `Expected`), or a change to `internal/dbversion/` or its call sites in the `cmd/*/main.go` files
+**Run:** `cd /repo/go && go test ./internal/dbversion/` (needs the repo's `db/` next to `go/`; the newest-migration test skips otherwise)
+| Test | Covers |
+|---|---|
+| `TestVerify_CurrentSchema` / `_BehindIsAnErrorLogAndErrBehind` / `_CheckFailureNeverBlocks` | recorded → info; missing → ERROR log naming the file + `ErrBehind`; a failing check is only a warning |
+| `TestExpectedMatchesNewestMigration` | fails when `Expected` lags the newest `db/NNN_*.sql` |
+

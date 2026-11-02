@@ -19,6 +19,7 @@ import (
 
 	"github.com/aviciot/them/internal/authserver"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/dbversion"
 	"github.com/aviciot/them/internal/events"
 	"github.com/aviciot/them/internal/idpcrypto"
 	"github.com/aviciot/them/internal/telemetry"
@@ -53,6 +54,11 @@ func run() error {
 	}
 	defer database.Close()
 	log.Info("postgres connected", "host", cfg.DBHost, "dbname", cfg.DBName)
+
+	// Fail loudly (or, with THE_M_REQUIRE_MIGRATIONS=true, refuse to start) when the database is behind the code.
+	if err := dbversion.Enforce(ctx, database.Pool(), log); err != nil {
+		return fmt.Errorf("startup: %w", err)
+	}
 
 	// ── 4. Wire service + handlers + router ──────────────────────────────────
 	store := authserver.NewPgxStore(database.Pool())

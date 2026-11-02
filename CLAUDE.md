@@ -268,7 +268,7 @@ docker logs them-event-writer --tail 50
 
 # DB schema changes: add db/NNN_*.sql, then apply to the running DB by hand, e.g.
 #   docker cp db/NNN_x.sql them-postgres:/tmp/x.sql && docker exec them-postgres psql -U them -d them -f /tmp/x.sql
-# There is NO reliable fresh-install script today (db/001 is stale and the old init script was removed — backlog F-35/F-36). Never re-run db/001 against a live database.
+# After applying, run `python3.12 scripts/check_migrations.py` (drift) and bump `Expected` in `go/internal/dbversion/dbversion.go`; every migration from 127 must record itself in `them.schema_migrations` (lint-enforced). There is NO reliable fresh-install script today (db/001 is stale and the old init script was removed — backlog F-35/F-36). Never re-run db/001 against a live database.
 
 # DB access
 docker exec -it them-postgres psql -U them -d them

@@ -91,7 +91,7 @@ config → telemetry → Postgres + two RLS pools (`THEM_DB_URL_APP`, `THEM_DB_U
 admission gate → agent registry → auth middleware → health + HTTP server → bearer-token cache →
 Temporal client (required in practice, see `run-lifecycle.md` gap 1) + run reconciler + data retention job (`internal/retention`, dry-run by default, writes on in `docker-compose.dev.yml` via `THE_M_RETENTION_DRY_RUN=false`; see `data-retention.md`) (reconciler writes on in `docker-compose.dev.yml` via `RECONCILER_DRY_RUN=false`; code default and the Hetzner overlay stay dry-run) → entry-point config loader → execution
 lifecycle + quota/role enforcers → WS, SSE, dashboard WS → heartbeat/liveness loops → A2A → artifacts →
-admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful drain on SIGTERM).
+admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful drain on SIGTERM). Right after the RLS pools are up the bridge (like auth, the dag workers and the orchestrator worker) runs `dbversion.Enforce`: it logs an ERROR when the newest migration the code needs is not recorded in `them.schema_migrations` and refuses to start only with `THE_M_REQUIRE_MIGRATIONS=true`.
 
 ## Key invariants
 - Application is the tenant boundary; per-app state carries the app ID/slug in Redis keys and SQL.

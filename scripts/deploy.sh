@@ -78,8 +78,25 @@ cmd_build() {
     _compose --profile temporal build
 }
 
+# Warn (or, with THE_M_REQUIRE_MIGRATIONS=true, stop) when db/*.sql migrations are not applied to the database:
+# code that needs a missing column fails at runtime, often silently (backlog F-135, db/125).
+_check_migrations() {
+    local py
+    py="$(command -v python3.12 || command -v python3 || true)"
+    if [ -z "$py" ] || ! docker ps --format '{{.Names}}' | grep -qx them-postgres; then
+        echo "migration check skipped (needs python3 and a running them-postgres)" >&2
+        return 0
+    fi
+    if ! "$py" "$ROOT_DIR/scripts/check_migrations.py"; then
+        echo "WARNING: database is behind the code (see MISSING above) — apply the migrations (docs/guides/database-migrations.md)" >&2
+        [ "${THE_M_REQUIRE_MIGRATIONS:-false}" = "true" ] && exit 1
+    fi
+    return 0
+}
+
 cmd_up() {
     _preflight
+    _check_migrations
     _compose --profile temporal up -d --no-recreate
 }
 

@@ -2,7 +2,7 @@
 title: Production Deploy (Hetzner) and Environment Variables
 type: guide
 status: current
-last_verified: 2026-10-25   # compose files and deploy.sh read; nothing deployed or run on a server
+last_verified: 2026-11-01   # compose files and deploy.sh read; nothing deployed or run on a server
 ---
 
 # Production Deploy (Hetzner) and Environment Variables
@@ -21,7 +21,7 @@ Run from anywhere; it derives the repo root, then requires `.env` and `secrets.l
 |---|---|
 | `config` | renders the merged compose config (dry run; **prints secrets from `.env` — do not paste it anywhere**) |
 | `build` | builds all images, starts nothing |
-| `up` | `up -d --no-recreate` with `--profile temporal` — starts missing containers, **never recreates existing ones** |
+| `up` | first runs `scripts/check_migrations.py` (warns when `db/*.sql` migrations are missing from the database; `THE_M_REQUIRE_MIGRATIONS=true` makes it stop), then `up -d --no-recreate` with `--profile temporal` — starts missing containers, **never recreates existing ones** |
 | `status` | container states of the project |
 | `logs [svc]` | tail logs |
 | `restart <svc>` | restart one service (no rebuild) |
@@ -30,7 +30,7 @@ It never runs `down --volumes`.
 ## What `deploy.sh` does NOT do (important)
 - **It cannot roll out new code.** `up` uses `--no-recreate` and `restart` keeps the old image. To release: `git pull`, `deploy.sh build`, then recreate the changed services yourself, e.g. `docker compose --project-name them_gateway --project-directory <repo> --env-file .env -f docker-compose.yml -f docker-compose.hetzner.yml --profile temporal up -d --build <service>` (recreate **all** dag-worker variants together; see `docs/lessons/infra-docker.md`).
 - **It only enables the `temporal` profile.** `them-agent-runtime` (profile `agents`), the events pipeline (`events`: ClickHouse, events Redis, event-writer), security scanning (`security`), SSO (`sso`) and voice are not started unless you add their profiles/overlays by hand.
-- **No schema migration step.** Migrations are hand-applied `psql -f db/NNN_*.sql`; there is no fresh-install path (backlog F-35/F-36).
+- **No schema migration step.** Migrations are hand-applied `psql -f db/NNN_*.sql`; there is no fresh-install path (backlog F-35/F-36). `deploy.sh up` only *checks* for drift (see above); the services also check their newest required migration at startup.
 - **No rollback, backup or smoke test.** Rolling back means checking out the previous commit and rebuilding; take a Postgres backup yourself first.
 
 ## Suggested release checklist (derived; not an official procedure)

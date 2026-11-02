@@ -72,6 +72,8 @@ Per EP `access_mode`: token / user_jwt / external_jwt / public. Then `CheckAcces
 - Secrets (JWT secret, IdP client secret, API keys) never appear in logs; error bodies to clients are static strings.
 - Opaque-token revocation: admin revoke deletes the Redis L2 key and publishes the hash on `them:token:revoked`; every pod evicts L1.
 
+**Schema check (2026-11-01):** at startup the auth service verifies the newest required migration is recorded (`internal/dbversion`; ERROR log when behind, refuses to start only with `THE_M_REQUIRE_MIGRATIONS=true`).
+
 **Retention (2026-11-01):** `internal/authserver/retention.go` purges `user_sessions` rows expired more than 7 days ago (nothing reads them) and `blacklisted_tokens` rows once expired, hourly; details in `docs/architecture/data-retention.md`.
 
 ## Failure modes

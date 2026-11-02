@@ -1,0 +1,7 @@
+# Objects that migrations create but the live database deliberately does not have, with the reason.
+# scripts/check_migrations.py treats these as explained; anything else it reports is real drift.
+# Format:  <migration file> | table schema.name | reason      or      <migration file> | column schema.table.col | reason
+026_tenant_foundation.sql | column them.app_orchestrators.tenant_id | superseded design: app_orchestrators has no tenant_id, tenant safety goes through application_id (see go/internal/admin/dal/publish.go)
+055_managed_apps.sql | table them.managed_app_params | managed-apps feature tables are not in the live DB; no Go code reads them (only a comment in internal/temporal/workerconfig/loader.go)
+055_managed_apps.sql | table them.managed_app_bindings | same as managed_app_params
+055_managed_apps.sql | column them.applications.app_type | same as managed_app_params

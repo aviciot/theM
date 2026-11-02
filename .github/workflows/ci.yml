@@ -66,3 +66,19 @@ jobs:
       - name: Changed code has its owning doc updated (pull requests only)
         if: github.event_name == 'pull_request'
         run: python3 scripts/docs_lint.py changed "origin/${{ github.base_ref }}"
+
+  migrations-lint:
+    name: Migration lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Every migration from 127 records itself in schema_migrations
+        run: python3 scripts/check_migrations.py --lint
+
+      - name: check_migrations.py unit tests
+        run: python3 scripts/tests/test_46_check_migrations_unit.py

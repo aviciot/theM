@@ -3,4 +3,10 @@
 # Docs/markdown/tests/go.sum never require an update. Escape hatch for genuine no-doc changes (formatting,
 # comment-only, test-only): DOCS_UNCHANGED_OK=1 git commit ...  — and say why in the commit message.
 # Never use --no-verify. See docs/plans/docs-reboot-plan.md and .claude/skills/docs-update.md.
+# New migrations must record themselves in them.schema_migrations (backlog F-135): without it nothing can
+# tell whether the database is behind the code.
+new_migrations=$(git diff --cached --name-only --diff-filter=A -- 'db/[0-9]*.sql')
+if [ -n "$new_migrations" ]; then
+    python3.12 scripts/check_migrations.py --lint-new $new_migrations || exit 1
+fi
 exec python3.12 scripts/docs_lint.py staged

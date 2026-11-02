@@ -28,6 +28,7 @@ Go unit/integration tests are indexed separately in `go/TEST_INDEX.md` (`cd go &
 | `test_43_ep_required_role.py` | Per-EP required tenant role on an `external_jwt` EP, driven through the test-runner: premium user admitted, standard and no-claim users denied (403), role cleared → admitted, role changed → denied, switched back → admitted | `temporal` + `sso` profiles, test-runner up, `KEYCLOAK_URL` issuer host (see `docs/architecture/test-runner.md`); leaves the EP at `required_role=jwt-premium` |
 | `test_44_appflow_hil_timeout.py` | HIL timer (F-124), no agent needed: timer fires with nobody deciding → approval `timed_out`, run `completed` via the approve fallback, nothing left open; a human approving first → approval stays `approved` | `temporal` profile; admin login; builds and deletes its own apps and run rows |
 | `test_45_orchestration_pre_run_failure.py` | Orchestration path (WS EP on `debator-9f9480`): baseline run completes; with the EP LLM switched to a provider with no key the config load fails before the loop → client gets `run could not start …`, run row `failed` with reason and `ended_at`; EP LLM restored afterwards | `temporal` profile, test-runner up |
+| `test_46_check_migrations_unit.py` | Unit tests of `scripts/check_migrations.py` (no stack needed): a missing column like migration 125 is reported; objects dropped by a later migration or listed in `db/known_drift.txt` are not; migrations from 127 must self-record | none (`python3.12`, stdlib) |
 
 Run one: `python3.12 scripts/tests/test_40_appflow_canvas_e2e.py` (exit code 0 = pass).
 

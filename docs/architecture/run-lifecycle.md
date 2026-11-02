@@ -112,6 +112,8 @@ The admin run-signal endpoint calls `RunService.Signal`, which looks up the run'
 | Client disconnects | Streams stop; `Release` frees gate+session; workflow keeps running to completion |
 | Stream trimmed (>5000 entries) | `replay_unavailable`, replay from oldest retained |
 
+**Schema check (2026-11-01):** the orchestrator worker and the bridge verify at startup that the newest required migration is recorded (`internal/dbversion`).
+
 **Worker logs (2026-11-01):** `them-go-worker(-2)` and the dag workers log every activity through `internal/activitylog` (name, `workflow_id`, attempt, duration, error); filter by run id with `docker logs <worker> | grep <run-id>`.
 
 **Gate queue signal (2026-11-01):** `Gate.Release` pushes the wake-up token with one atomic script (LPUSH, LTRIM to 100, EXPIRE 15 s). The old bare LPUSH left an immortal token per released session and a stale one could wake a later waiter for nothing (it then lost the re-compete and got `cap exceeded` instead of waiting).

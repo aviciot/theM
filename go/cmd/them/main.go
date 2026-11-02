@@ -31,6 +31,7 @@ import (
 	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/dbversion"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/events"
@@ -108,6 +109,11 @@ func run() error {
 	}
 	log.Info("RLS pools connected (them_app + them_admin)")
 	defer rlsPools.Close()
+
+	// Fail loudly (or, with THE_M_REQUIRE_MIGRATIONS=true, refuse to start) when the database is behind the code.
+	if err := dbversion.Enforce(ctx, rlsPools.Admin, log); err != nil {
+		return fmt.Errorf("startup: %w", err)
+	}
 
 	// ── 4. Connect to Redis ───────────────────────────────────────────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
