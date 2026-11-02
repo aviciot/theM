@@ -11,14 +11,17 @@ cd /opt/docker/them
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-product-site
 
 # Check logs
-docker logs them-product-site -f
+docker logs them_gateway-them-product-site-1 -f
 ```
 
 ### 2. Access
 
-Open in browser: **http://product.localhost**
+**Two ways to access:**
 
-(Traefik routes `product.localhost` → product site container)
+1. **Direct port:** http://localhost:3001
+2. **Via Traefik:** http://localhost:8088/product
+
+(Same routing approach as the-M dashboard at :8088)
 
 ### 3. Hot Reload
 

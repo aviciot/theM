@@ -25,8 +25,8 @@ Subsystem detail lives in the other `docs/architecture/` docs.
 browser / API client / external agent
         │  :8088
    them-traefik  (path-based routing, Docker-label discovery)
+   ├─ /product                  → them-product-site (Next.js Marketing, dev only, also on :3001)
    ├─ /                         → them-frontend (Next.js Dashboard)
-   ├─ product.localhost         → them-product-site (Next.js Marketing, dev only)
    ├─ /auth                     → them-auth-go
    ├─ /api/v1 /ws /sse /health /static/tenants /ws/dashboard
    ├─ /{tenant}/apps /a2a /llm  → them-go-bridge  (single Go binary, :8002)
@@ -56,7 +56,7 @@ internal on `them-network`. The Python bridge and Python auth service are **gone
 | `them-go-worker`, `-2` | core | Temporal worker, queue `them-orchestration-go` (orchestrator runs) | `go/cmd/worker/` |
 | `them-mcp-service` | core | MCP server supervisor/executor, internal only | `go/cmd/mcp-service/` |
 | `them-frontend` | core | Next.js UI Dashboard (dev compose swaps in `Dockerfile.dev`) | `frontend/` |
-| `them-product-site` | dev-only | Next.js marketing/product site (GSAP + Framer Motion; deployed to Vercel in production, not Docker) | `product-site/` |
+| `them-product-site` | dev-only | Next.js marketing/product site (GSAP + Framer Motion; :3001 direct, :8088/product via Traefik; deployed to Vercel in production, not Docker) | `product-site/` |
 | `vision-agent` | core | Vision/maps A2A agent | `agents/vision_agent/` |
 | `temporal-frontend`, `temporal-ui`, `temporal-admin-tools` | temporal | Temporal server + UI | image |
 | `them-dag-worker`, `-2`, `-3`, `-4` | temporal | Temporal worker: canvas agent DAG steps (queue `canvas-dag-nodes`) and AppFlow (queue `appflow-dag`) | `go/cmd/dag-worker/` |
@@ -77,9 +77,9 @@ internal on `them-network`. The Python bridge and Python auth service are **gone
 
 ## Request entry points
 
-Traefik routes by label priority (higher wins): `/ws/dashboard` 150, `/temporal` 150, `/health` 130,
-`/auth` 120, `/ws` 120, `/static/tenants` 120, `/api/v1` 110, `/livekit` 100, frontend `/` = 1 (catch-all).
-Tenant-scoped routes are regex rules: `^/[^/]+/apps`, `^/[^/]+/a2a`, `^/[^/]+/llm`.
+Traefik routes by label priority (higher wins): `/product` 200 (dev-only product site), `/ws/dashboard` 150,
+`/temporal` 150, `/health` 130, `/auth` 120, `/ws` 120, `/static/tenants` 120, `/api/v1` 110, `/livekit` 100,
+frontend `/` = 10 (catch-all). Tenant-scoped routes are regex rules: `^/[^/]+/apps`, `^/[^/]+/a2a`, `^/[^/]+/llm`.
 
 Inside `them-go-bridge` (`internal/server/server.go`, wired in `cmd/them/main.go`):
 `/ws`, `/ws/dashboard`, `/sse`, `/api/v1` (admin + runs), artifacts, `/static/tenants/*`, the LLM

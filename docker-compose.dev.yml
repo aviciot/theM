@@ -55,7 +55,10 @@ services:
       context: ./product-site
       dockerfile: Dockerfile.dev
     command: ["npm", "run", "dev"]
+    ports:
+      - "3001:3000"
     networks:
+      - them-network
       - proxy-network
     volumes:
       - ./product-site:/app
@@ -65,9 +68,13 @@ services:
       NODE_ENV: development
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.product-site.rule=Host(`product.localhost`)"
-      - "traefik.http.routers.product-site.entrypoints=web"
-      - "traefik.http.services.product-site.loadbalancer.server.port=3000"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-product.rule=PathPrefix(`/product`)"
+      - "traefik.http.routers.them-product.entrypoints=web"
+      - "traefik.http.routers.them-product.priority=200"
+      - "traefik.http.routers.them-product.service=them-product-svc"
+      - "traefik.http.services.them-product-svc.loadbalancer.server.port=3000"
 
   # ── Temporal UI ───────────────────────────────────────────────────────────────
   temporal-ui:
