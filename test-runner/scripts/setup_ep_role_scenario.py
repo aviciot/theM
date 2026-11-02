@@ -1,15 +1,20 @@
 #!/usr/bin/env python3.12
-"""Prepare payops_ai `smart-refund-handler` for the EP required-role scenarios (51/52).
+"""Prepare payops_ai `smart-refund-handler` for the EP required-role scenarios (51-56).
 
-Sets the websocket EP to access_mode=external_jwt (allowed_principals=both), publishes,
-then sets required_role=jwt-premium. Idempotent. `--inspect` only prints the current state.
-`--reset` puts the EP back to token mode and clears the role.
+One app, four websocket entry points (all external_jwt, allowed_principals=both, same flow):
+  smart-refund-ws   needs role jwt-premium   (the original EP)
+  role-premium-ws   needs role jwt-premium   (a second EP with the same rule)
+  role-partner-ws   needs role m2m-partner   (a role nobody in the test realm has)
+  role-open-ws      needs no role            (any valid login is admitted)
+Idempotent. `--inspect` only prints the current state.
+`--reset` puts all of them back to token mode and clears the roles.
 
 Usage: python3.12 test-runner/scripts/setup_ep_role_scenario.py [--inspect|--reset] [--base-url URL]
 """
 import argparse, copy, json, sys, urllib.request, urllib.error
 
 APP_SLUG, EP_SLUG, ROLE = "smart-refund-handler-97f244", "smart-refund-ws", "jwt-premium"
+EXTRA_EPS = {"role-premium-ws": "jwt-premium", "role-partner-ws": "m2m-partner", "role-open-ws": None}
 USER, PASSWORD = "payops-test", "admin123"
 
 
@@ -52,18 +57,32 @@ def main():
     if a.inspect:
         return
 
-    mode, principals, role = ("token", "internal", None) if a.reset else ("external_jwt", "both", ROLE)
+    mode, principals = ("token", "internal") if a.reset else ("external_jwt", "both")
+    wanted = {EP_SLUG: None if a.reset else ROLE}
+    wanted.update({k: None if a.reset else v for k, v in EXTRA_EPS.items()})
     new = copy.deepcopy(doc)
-    ep_new = next(e for e in new["entry_points"] if e["slug"] == EP_SLUG)
-    cfg = ep_new["config"] = ep_new.get("config") or {}
-    cfg["access_mode"], cfg["allowed_principals"] = mode, principals
+    for n, slug in enumerate(wanted):
+        ep_new = next((e for e in new["entry_points"] if e["slug"] == slug), None)
+        if ep_new is None:
+            ep_new = {"instance_id": f"ep_role_{n}", "slug": slug, "protocol": "websocket", "root": ep_def["root"], "config": {}}
+            new["entry_points"].append(ep_new)
+        cfg = ep_new["config"] = ep_new.get("config") or {}
+        cfg["access_mode"], cfg["allowed_principals"] = mode, principals
+    have = {e["slug"] for e in full["entry_points"]}
+    for slug in wanted:
+        if slug not in have:
+            call(b, "POST", f"/api/v1/admin/applications/{app_id}/entry-points", tok,
+                 {"slug": slug, "entry_point_type": "websocket", "enabled": True})
     created = call(b, "POST", f"/api/v1/admin/applications/{app_id}/definitions", tok, {"definition": new})
     did = created["id"]
     v = call(b, "POST", f"/api/v1/admin/applications/{app_id}/definitions/{did}/validate", tok)
     print("validate:", json.dumps(v)[:200])
     call(b, "POST", f"/api/v1/admin/applications/{app_id}/definitions/{did}/publish", tok)
-    call(b, "PATCH", f"/api/v1/admin/applications/{app_id}/entry-points/{ep['id']}/required-role", tok, {"required_role": role})
-    print(f"done: mode={mode} principals={principals} required_role={role}")
+    full = call(b, "GET", f"/api/v1/admin/applications/{app_id}", tok)
+    ids = {e["slug"]: e["id"] for e in full["entry_points"]}
+    for slug, role in wanted.items():
+        call(b, "PATCH", f"/api/v1/admin/applications/{app_id}/entry-points/{ids[slug]}/required-role", tok, {"required_role": role})
+        print(f"done: {slug} mode={mode} principals={principals} required_role={role}")
 
 
 main()

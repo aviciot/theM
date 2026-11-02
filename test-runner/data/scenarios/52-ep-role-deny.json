@@ -18,8 +18,8 @@
   "created_at": "2026-11-01T00:00:00Z",
   "updated_at": "2026-11-01T00:00:00Z",
   "id": "52-ep-role-deny",
-  "name": "52 \u2014 EP Required Role: standard user denied",
-  "description": "Per-EP required tenant role. Setup: python3.12 test-runner/scripts/setup_ep_role_scenario.py (EP -> external_jwt, required_role=jwt-premium; --reset to undo).\nRole jwt-premium is mapped from JWT claim tier=premium.\nbob (tier=standard \u2192 no mapped role) must be rejected with HTTP 403.",
+  "name": "52 — Standard member is turned away",
+  "description": "The door is marked: 'premium members only'.\nBob is a standard member, so he must be stopped at the door (HTTP 403).\nWhat we check: Bob cannot connect.\nSetup: python3.12 test-runner/scripts/setup_ep_role_scenario.py (creates the 4 doors; --reset undoes).",
   "expect": "deny",
   "keycloak_users": [
     {

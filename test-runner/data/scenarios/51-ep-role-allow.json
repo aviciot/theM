@@ -18,8 +18,8 @@
   "created_at": "2026-11-01T00:00:00Z",
   "updated_at": "2026-11-01T00:00:00Z",
   "id": "51-ep-role-allow",
-  "name": "51 \u2014 EP Required Role: premium user admitted",
-  "description": "Per-EP required tenant role. Setup: python3.12 test-runner/scripts/setup_ep_role_scenario.py (EP -> external_jwt, required_role=jwt-premium; --reset to undo).\nRole jwt-premium is mapped from JWT claim tier=premium.\nalice (tier=premium \u2192 jwt-premium) must be admitted and get a reply.",
+  "name": "51 — Premium member gets in",
+  "description": "The door of this entry point is marked: 'premium members only'.\nAlice is a premium member, so the door opens for her.\nWhat we check: she connects and chats normally.\nSetup: python3.12 test-runner/scripts/setup_ep_role_scenario.py (creates the 4 doors; --reset undoes).",
   "expect": "allow",
   "keycloak_users": [
     {
