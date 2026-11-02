@@ -2,7 +2,7 @@
 title: Production Deploy (Hetzner) and Environment Variables
 type: guide
 status: current
-last_verified: 2026-11-01   # compose files and deploy.sh read; nothing deployed or run on a server
+last_verified: 2026-11-02   # compose overlay rendered and checked for the DSN keys; production host not inspected
 ---
 
 # Production Deploy (Hetzner) and Environment Variables
@@ -80,7 +80,7 @@ Values come from `.env` (derived by `generate-env.sh` from `secrets.local`) thro
 
 ## Known gaps (found while writing, 2026-10-25)
 See backlog F-103…F-104.
-1. `THEM_DB_URL_APP/ADMIN` are defined for `them-go-worker` and `them-dag-worker` only in `docker-compose.dev.yml`, not in the base or production overlay; if the workers require them, a `deploy.sh` stack would not start them. Verify on the server.
+1. **(fixed in the repo 2026-11-02, F-103)** `THEM_DB_URL_APP/ADMIN` were defined for the workers and `them-go-bridge-2` only in `docker-compose.dev.yml`, not in the production overlay, so rebuilding those containers with current code would crash-loop them ("THEM_DB_URL_APP is required but was not set"; the same thing happened to `them-middleware-worker` in dev). `docker-compose.hetzner.yml` now sets both for `them-go-bridge-2`, `them-go-worker(-2)` and `them-dag-worker(-2,-debug)`. Containers already running on the server may still lack them until recreated: check before any rebuild (`docs/plans/production-rollout-2026-11.md`).
 2. `deploy.sh` cannot deploy (no recreate), skips four profiles, has no migration/backup/rollback/smoke step, and `config` prints secrets.
 3. `docker-compose.hetzner.yml`'s header still describes merged files that no longer exist (`linux`, `integration`, `soak`, `traefik`, `cloudflare`) and a Python/Go route split that is gone; `version:` keys are obsolete.
 

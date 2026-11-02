@@ -46,6 +46,9 @@ Reconciler fixed (F-08); finalize closes children (F-122, committed, **not yet d
 ## Data written by usage (2026-11-01)
 Guide with measured per-path tables and the logging levels: `docs/guides/data-written-by-usage.md`. Migration 125 applied (gateway Postgres writes were failing, F-135).
 
+## Production rollout (2026-11-02)
+Checklist with pre-flight, migration order, rolling recreate, dry-run flips and rollback: `docs/plans/production-rollout-2026-11.md` (production host not inspected yet). Hetzner overlay now sets `THEM_DB_URL_APP/ADMIN` for all Go services (F-103).
+
 ## Next tasks (suggested order)
 1. Check the GitHub Actions tab for the `docs-lint` job. Exposed tokens (F-94, F-91, F-110): user decided not to rotate.
 2. Finish doc stabilisation: strays, comment-path sweep, remaining coverage gaps.

@@ -10,7 +10,7 @@ owns:
   - traefik/
   - go/cmd/them/main.go
   - go/internal/server/
-last_verified: 2026-11-02   # added them-product-site container (dev only, marketing/landing page)
+last_verified: 2026-11-02   # hetzner overlay DB DSN env (F-103)
 ---
 
 # Platform Overview & Container Map
@@ -73,7 +73,9 @@ internal on `them-network`. The Python bridge and Python auth service are **gone
 
 `docker-compose.hetzner.yml` is the production variant: it defines `them-go-bridge-2` (second replica,
 `THE_M_INSTANCE_ID=go-bridge-2`, profile `temporal`) and only `them-dag-worker`, `-2`, `-debug`
-(no `-3/-4`), and omits Keycloak, test-agents, debate, docu and voice services.
+(no `-3/-4`), and omits Keycloak, test-agents, debate, docu and voice services. It passes `THEM_DB_URL_APP` and
+`THEM_DB_URL_ADMIN` to every Go service that needs them (bridge-2, both go-workers, all dag workers; fixed 2026-11-02,
+F-103): a container recreated without them crash-loops. Rollout steps: `docs/plans/production-rollout-2026-11.md`.
 
 ## Request entry points
 
