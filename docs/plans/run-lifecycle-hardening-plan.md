@@ -64,3 +64,6 @@ Rebuild rules: appflow/temporal changes -> all five dag workers; `cmd/worker` ->
 
 ## F-135 - unapplied migrations (done 2026-11-02)
 Drift check made trustworthy (`scripts/check_migrations.py`, `db/known_drift.txt`), run by `deploy.sh up`; startup check `internal/dbversion` in the bridge, auth service and workers; self-recording lint in pre-commit and CI. Tests: `test_46_check_migrations_unit.py`, `internal/dbversion` unit tests.
+
+## Follow-up (2026-11-02): HIL default and run-id links
+New HIL canvas nodes default to a 300 s timeout (existing nodes unchanged). The run id is the trace key: `gateway_requests.run_id` + gateway/tool event `TraceID` (db/129), propagated A2A-side via `X-Them-Run-Id`. Remaining: chat/orchestrator path and direct gateway calls carry no run id; audit/body event producers need a decision.

@@ -32,6 +32,9 @@ type InvocationContext struct {
 	ApplicationID   string
 	AgentID         string
 	BindingID       string
+	// RunID is the App Canvas (AppFlow) run that invoked this agent, from the X-Them-Run-Id header; empty for
+	// direct calls. Not a secret. Used as the trace key on tool-call events.
+	RunID string
 	// InvocationID is a UUID assigned once at the request boundary. It is used as
 	// the stable component of the Temporal workflow ID so retries of the same
 	// logical call re-attach to the existing workflow rather than creating a duplicate.

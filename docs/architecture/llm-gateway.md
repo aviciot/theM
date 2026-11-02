@@ -9,7 +9,7 @@ owns:
   - go/internal/llm/
   - go/internal/admin/gateway.go
   - go/internal/admin/policy_cache.go
-last_verified: 2026-11-01   # code read + live read-only catalog queries; no gateway request sent
+last_verified: 2026-11-02   # code read + live read-only catalog queries; no gateway request sent
 ---
 
 # LLM Gateway, Governance & Provider Resolution
@@ -107,5 +107,7 @@ Tests: `go test ./internal/llmgateway/... ./internal/governance/... ./internal/l
 - `events-pipeline.md` — `gateway_request` events and dual mode
 - `multi-tenancy-rls.md`, `auth-and-roles.md`
 - Old design notes: `docs/_archive/LLM_GATEWAY_DESIGN.md`, `GOVERNANCE_POLICY_DESIGN.md` (history only)
+
+**Run link (2026-11-02, db/129):** `gateway_requests.run_id` (nullable, indexed) stores the AppFlow run a profile-app call started (`RequestRecord.RunID`, set after `admitAndStartAppFlow`); the ClickHouse event carries it as `TraceID`. Direct calls (no profile app) have no run, so both stay empty.
 
 **Events (2026-11-01):** `DAL.WriteRequest` inserts the `gateway_requests` row first and emits the ClickHouse `gateway_request` event only if the insert succeeded (best effort); the event carries `ApplicationID` (profile app via `ClientApp.AppID`) and `UserID`. Details: `docs/architecture/events-pipeline.md`.

@@ -25,6 +25,7 @@ type mcpExecuteRequest struct {
 	MCPServerSlug string         `json:"mcp_server_slug"`
 	ToolName      string         `json:"tool_name"`
 	Arguments     map[string]any `json:"arguments"`
+	RunID         string         `json:"run_id,omitempty"` // from the context; tool-call events use it as the trace key
 }
 
 type mcpExecuteResponse struct {
@@ -43,6 +44,7 @@ func (c *HTTPMCPCaller) Call(ctx context.Context, applicationID, mcpServerSlug, 
 		MCPServerSlug: mcpServerSlug,
 		ToolName:      toolName,
 		Arguments:     args,
+		RunID:         RunIDFromContext(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

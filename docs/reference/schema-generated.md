@@ -12,7 +12,7 @@ generated: true
 
 Schemas `them` and `auth_service`. `RLS` = row-level security enabled, `FORCE` = forced for the table owner. Defaults are abbreviated. Source of truth is the running database, **not** `db/001_schema.sql`.
 
-59 tables.
+60 tables.
 
 ## auth_service.auth_audit
 
@@ -642,6 +642,8 @@ Owner `them` · RLS+FORCE
 | `ttfb_ms` | integer | yes |  |
 | `streamed` | boolean | no | `false` |
 | `created_at` | timestamp with time zone | no | `now()` |
+| `user_id` | integer | yes |  |
+| `run_id` | uuid | yes |  |
 
 Policy: gw_req_tenant_isolation (ALL, {them_app})
 
@@ -1016,6 +1018,20 @@ Owner `them_owner` · no RLS
 | `description` | text | no | `''::text` |
 | `applied_at` | timestamp with time zone | no | `now()` |
 | `checksum` | text | yes |  |
+
+## them.storage_deletions
+
+Owner `them_owner` · RLS+FORCE
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | bigint | no | `nextval('storage_deletions_id_seq'::regc…` |
+| `tenant_id` | uuid | yes |  |
+| `bucket` | text | no |  |
+| `storage_key` | text | no |  |
+| `created_at` | timestamp with time zone | no | `now()` |
+| `attempts` | integer | no | `0` |
+| `last_error` | text | yes |  |
 
 ## them.task_messages
 

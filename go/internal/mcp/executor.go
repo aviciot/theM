@@ -24,6 +24,7 @@ type ExecuteRequest struct {
 	ToolName       string         `json:"tool_name"`
 	Arguments      map[string]any `json:"arguments"`
 	TestCredential string         `json:"test_credential,omitempty"` // canvas test only
+	RunID          string         `json:"run_id,omitempty"`          // App Canvas run that made the call; the trace key on the event
 }
 
 // ExecuteResponse is returned by POST /internal/execute.
@@ -216,6 +217,8 @@ func (e *Executor) emitToolCallEvent(ctx context.Context, req ExecuteRequest, te
 		Kind:          events.EventKindToolCall,
 		ToolCall: &events.ToolCallEvent{
 			ApplicationID: req.ApplicationID,
+			RunID:         req.RunID,
+			TraceID:       req.RunID, // the run id is the trace key
 			ToolName:      req.ToolName,
 			MCPServer:     mcpServer,
 			Status:        status,

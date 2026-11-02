@@ -12,7 +12,7 @@ owns:
   - go/internal/temporal/temporal_executor.go
   - go/internal/admin/canvas_tasks.go
   - go/internal/admin/service/agent_definitions_publish.go
-last_verified: 2026-10-30   # F-68 fixed + test failure fixed (malformed JSON handling)
+last_verified: 2026-11-02   # F-68 fixed + test failure fixed (malformed JSON handling)
 ---
 
 # A2A Agents & Agent Builder
@@ -84,6 +84,8 @@ Per-tenant L1 (in-process) + L2 Redis `them:agents:registry:{tenant}` (10 min), 
 | Binding missing or stale | 404 / 409 from the runtime |
 | Spec edited | Up to 60 s of the old spec (cache) |
 | `human_wait` unanswered | Workflow times out after its `timeout_seconds` or 24 h; handle TTL 24 h |
+
+**Run id as the trace key (2026-11-02):** an AppFlow `agent` node sends `X-Them-Run-Id` on its A2A call (`pgxAgentA2ACaller.InvokeByID`); `agent-runtime` reads it into `InvocationContext.RunID` → `ActivityIC.RunID` (in Temporal history, not a secret) → the `mcp_call` step puts it in the call context (`agentgen.WithRunID`) → `HTTPMCPCaller` sends `run_id` to `them-mcp-service` → the tool-call event carries it as `RunID` and `TraceID`. Direct A2A calls and the orchestrator (WS/SSE chat) path do not carry a run id yet.
 
 ## Known gaps (found while writing, 2026-10-24; from reading code; none reproduced live)
 See `docs/plans/code-findings-backlog.md` F-67…F-77. Highlights:

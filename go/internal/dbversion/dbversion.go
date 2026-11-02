@@ -19,7 +19,7 @@ import (
 
 // Expected is the newest migration this code requires (the file name without .sql). Bump it with every new
 // db/NNN_*.sql; TestExpectedMatchesNewestMigration fails when it lags the newest file.
-const Expected = "128_retention_grants"
+const Expected = "129_gateway_requests_run_id"
 
 // ErrBehind is returned (by Enforce, only when THE_M_REQUIRE_MIGRATIONS=true) when Expected is not recorded.
 var ErrBehind = errors.New("database schema is behind the code")

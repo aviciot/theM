@@ -3988,3 +3988,17 @@ graph, inline), `internal/admin/service/publish.go`, or `cmd/dag-worker/main.go`
 | `TestGate_RequireMigrationsSwitch` | a behind database stops startup only with `THE_M_REQUIRE_MIGRATIONS=true`; a current one never fails |
 | `TestExpectedMatchesNewestMigration` | fails when `Expected` lags the newest `db/NNN_*.sql` |
 
+## Run id as the trace key (F-127, plan P4 follow-up)
+**Purpose:** the App Canvas run id links records: `gateway_requests.run_id` + gateway event `TraceID` (profile-app calls), and tool-call events (`RunID`, `TraceID`) via the chain AppFlow agent node → `X-Them-Run-Id` → agent-runtime → `ActivityIC.RunID` → `agentgen.WithRunID` → `HTTPMCPCaller` → `mcp.ExecuteRequest.RunID`.
+**Trigger:** any change to `agentgen/runid.go`, `nodes_exec.go` (`execMCP`), `mcp_caller.go`, `ActivityIC`, `agent-runtime` `parseInvocationContext`, `mcp/executor.go` events, or the gateway `RequestRecord.RunID`
+**Run:** `go test ./internal/agentgen/ ./internal/mcp/ ./internal/llmgateway/ ./cmd/agent-runtime/`; `go test -tags=integration ./internal/llmgateway/ -run RealDB` against a TEST database
+| Test | Covers |
+|---|---|
+| `TestRunIDContext` | `WithRunID`/`RunIDFromContext`; an empty id leaves the context alone |
+| `TestActivityIC_CarriesRunID` | the id is copied into `ActivityIC`, survives JSON, omitted when empty |
+| `TestExecMCP_PutsRunIDInCallContext` | the MCP step hands the run id to the caller via the context |
+| `TestHTTPMCPCaller_SendsRunID` | the HTTP body has `run_id` only when the context carries one |
+| `TestParseInvocationContext_ReadsRunID` | `X-Them-Run-Id` becomes `InvocationContext.RunID` (optional) |
+| `TestEmitToolCallEvent_CarriesRunIDAsTrace` | tool-call event `RunID` and `TraceID` = run id; empty without one |
+| `TestGatewayRequestEvent_*` / `TestWriteRequest_RealDB_EmitsAfterInsertOnly` (integration) | gateway event `TraceID` = run id; row stores `run_id`; direct call → NULL and empty |
+

@@ -70,6 +70,7 @@ var ErrInvalidClientConfig = errors.New("invalid gateway client configuration")
 type RequestRecord struct {
 	TenantID       string
 	ApplicationID  string // profile app (gateway_clients.app_id) when the call ran through AppFlow; empty on the direct path
+	RunID          string // the AppFlow run started for this call (profile app); empty on the direct path
 	ClientID       string // gateway_clients.id UUID; empty in Phase 1
 	TokenHash      string // sha256-hex of bearer token for audit
 	UserID         int64  // the-M user ID from JWT (user_jwt mode); 0 if token-based auth
@@ -136,7 +137,7 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 			INSERT INTO them.gateway_requests
 				(id, tenant_id, client_id, token_hash, user_id, provider, model_requested, model_served,
 				 status, http_status, error_code, tokens_in, tokens_out, cost_usd,
-				 latency_ms, ttfb_ms, streamed)
+				 latency_ms, ttfb_ms, streamed, run_id)
 			VALUES
 				($1::uuid, $2::uuid,
 				 NULLIF($3,'')::uuid,
@@ -145,7 +146,8 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 				 NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
 				 $9, NULLIF($10,0), NULLIF($11,''),
 				 $12, $13, $14,
-				 NULLIF($15,0), NULLIF($16,0), $17)
+				 NULLIF($15,0), NULLIF($16,0), $17,
+				 NULLIF($18,'')::uuid)
 			RETURNING id::text`
 
 		var dbRequestID string
@@ -159,6 +161,7 @@ func (d *DAL) WriteRequest(ctx context.Context, r RequestRecord) (string, error)
 			r.Status, r.HTTPStatus, r.ErrorCode,
 			r.TokensIn, r.TokensOut, r.CostUSD,
 			r.LatencyMS, r.TTFBMs, r.Streamed,
+			r.RunID,
 		).Scan(&dbRequestID)
 		if err != nil {
 			// The row was not recorded, so no event either: ClickHouse must not show a request Postgres
@@ -183,7 +186,8 @@ func (d *DAL) emitGatewayEvent(ctx context.Context, r RequestRecord, requestID s
 }
 
 // gatewayRequestEvent builds the ClickHouse event for one gateway call. ApplicationID is the profile app
-// (empty on the direct path) and UserID the the-M user from user_jwt mode (empty for token auth).
+// (empty on the direct path), UserID the the-M user from user_jwt mode (empty for token auth) and TraceID the
+// AppFlow run id (empty on the direct path, which has no run).
 func gatewayRequestEvent(r RequestRecord, requestID string) events.Event {
 	userID := ""
 	if r.UserID != 0 {
@@ -200,6 +204,7 @@ func gatewayRequestEvent(r RequestRecord, requestID string) events.Event {
 			ApplicationID:  r.ApplicationID,
 			ClientID:       r.ClientID,
 			UserID:         userID,
+			TraceID:        r.RunID, // the run id is the trace key: gateway, tool and run records for one run share it
 			Provider:       r.Provider,
 			ModelRequested: r.ModelRequested,
 			ModelServed:    r.ModelServed,

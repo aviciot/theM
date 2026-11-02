@@ -8,7 +8,7 @@ owns:
   - db/clickhouse/
   - docker-compose.events.yml
   - redis/config/redis-events.conf
-last_verified: 2026-11-01   # by reading code; not re-run live this session
+last_verified: 2026-11-02   # by reading code; not re-run live this session
 ---
 
 # Events Pipeline
@@ -88,7 +88,7 @@ The event tables (`them_events.*`) keep their own TTLs from `db/clickhouse/001_e
 - (fixed) `them:events` / `them:events:dlq` are now found by the generated Redis reference `docs/reference/redis-generated.md`.
 - The ClickHouse sink inserts one row per event (the "batch" is a loop, not a bulk insert).
 - `retention_test.go.disabled` — retention has no active unit test.
-- (fixed 2026-11-01) `WriteRequest` now sets `ApplicationID` (the profile app, empty on the direct path) and `UserID` (user_jwt mode) on the gateway event, and emits it only after the Postgres insert succeeded (a failed insert no longer leaves a phantom ClickHouse row). Still open: `TraceID` is never set, and tool-call events have no `RunID` (`mcp.ExecuteRequest` carries no run id; callers would have to pass it); `events_audit` and `events_bodies` still have no producer.
+- (fixed 2026-11-01) `WriteRequest` now sets `ApplicationID` (the profile app, empty on the direct path) and `UserID` (user_jwt mode) on the gateway event, and emits it only after the Postgres insert succeeded (a failed insert no longer leaves a phantom ClickHouse row). Since 2026-11-02 the run id is the trace key: gateway events (profile-app calls) and tool-call events from canvas agents carry it as `TraceID` (tool events also as `RunID`; see `a2a-agents-agentgen.md`). Still open: the orchestrator (chat) path and direct gateway calls have no run id on events; `events_audit` and `events_bodies` have no producer.
 
 ## Where to change things
 | To… | Edit |

@@ -130,6 +130,8 @@ type ActivityIC struct {
 	ApplicationID string `json:"application_id"`
 	AgentID       string `json:"agent_id"`
 	BindingID     string `json:"binding_id"`
+	// RunID is the App Canvas run that invoked this agent (empty for direct calls); not a secret.
+	RunID string `json:"run_id,omitempty"`
 	// A2ACallDepth is the nesting level of this workflow invocation.
 	// 0 = top-level; incremented by HTTPA2ACaller before forwarding.
 	// Not a secret — safe to store in Temporal history.
@@ -159,6 +161,7 @@ func ActivityICFromInvocationContext(ic *InvocationContext) ActivityIC {
 		ApplicationID: ic.ApplicationID,
 		AgentID:       ic.AgentID,
 		BindingID:     ic.BindingID,
+		RunID:         ic.RunID,
 		A2ACallDepth:  ic.A2ACallDepth,
 	}
 }

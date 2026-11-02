@@ -9,7 +9,7 @@ owns:
   - go/internal/admin/mcp_servers.go
   - go/internal/admin/service/mcp_servers.go
   - go/internal/admin/dal/mcp_servers.go
-last_verified: 2026-10-24   # code read + live read-only DB query; no MCP call made
+last_verified: 2026-11-02   # code read + live read-only DB query; no MCP call made
 ---
 
 # MCP Service
@@ -64,6 +64,8 @@ Hand-written MCP streamable-HTTP client (protocol `2024-11-05`): JSON-RPC over P
 | `them-mcp-service` down | Orchestrator `mcp__` calls return errors to the LLM; rest of the run continues |
 | No credential for app+server | 422 "no credential configured … set one in Application settings" |
 | Server removes >20% of tools | `degraded` forever until counts recover; manifest stays stale |
+
+**Tool-call events (2026-11-02):** `POST /internal/execute` accepts an optional `run_id` (the App Canvas run that made the call); the `tool_call` event carries it as `RunID` and `TraceID`, so ClickHouse tool calls can be tied to a run. Callers without a run leave it empty.
 
 ## Known gaps (found while writing, 2026-10-24; from reading code + live DB; no MCP call made)
 See `docs/plans/code-findings-backlog.md` F-56…F-66. Highlights:

@@ -153,7 +153,7 @@ var appCanvasNodeRegistry = []AppCanvasNodeInfo{
 			ConfigFields: []nodedefs.ConfigFieldDoc{
 				{Key: "approver_role", Type: "string", Required: false, Description: "Minimum RBAC role required to approve. Defaults to \"admin\".", Example: "admin"},
 				{Key: "prompt", Type: "string", Required: false, Description: "Message shown to the human approver.", Example: "Approve this refund request?"},
-				{Key: "timeout_seconds", Type: "int", Required: false, Description: "How long to wait before applying fallback_action. 0 or absent waits indefinitely.", Example: "3600"},
+				{Key: "timeout_seconds", Type: "int", Required: false, Description: "How long to wait before applying fallback_action. 0 or absent waits indefinitely. The canvas pre-fills 300 on newly added HIL nodes.", Example: "300"},
 				{Key: "fallback_action", Type: "string", Required: false, Description: "What happens on timeout: \"reject\" (default), \"approve\", or \"abort\".", Example: "reject"},
 			},
 			UsageNotes: "Optionally wire an \"approved\" edge (green) and/or a \"rejected\" edge (red). If a rejection edge is wired, the flow continues on that branch instead of terminating; if no rejection edge is wired, the run ends with status \"rejected\". The unlabelled edge (or the \"approved\" edge) is taken on approval.",

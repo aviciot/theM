@@ -328,6 +328,7 @@ func (h *Handler) dispatchAppFlowSync(w http.ResponseWriter, r *http.Request, st
 		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
 		return
 	}
+	rec.RunID = handle.RunID // links this gateway call to the run it started
 	defer h.lc.Release(handle)
 
 	var output appflow.AppFlowWorkflowOutput
@@ -466,6 +467,7 @@ func (h *Handler) dispatchAppFlowStream(w http.ResponseWriter, r *http.Request, 
 		writeGatewayErrorWithID(w, requestID, http.StatusBadGateway, "provider_error", "profile workflow failed to start")
 		return
 	}
+	rec.RunID = handle.RunID // links this gateway call to the run it started
 	defer h.lc.Release(handle)
 
 	var output appflow.AppFlowWorkflowOutput

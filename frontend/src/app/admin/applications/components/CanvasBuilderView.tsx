@@ -58,6 +58,13 @@ const APPFLOW_NODE_DEFAULTS: Record<string, Record<string, unknown>> = {
   transform: { functions: [] },
 };
 
+// Defaults for newly dropped flow-control nodes. A HIL gate gets a visible 300 s timeout (then the fallback
+// applies) so an unanswered approval does not wait forever; set 0 on the node to wait indefinitely. Existing
+// nodes are untouched: a HIL node saved without timeout_seconds keeps waiting.
+const FLOW_CONTROL_DEFAULTS: Record<string, Record<string, unknown>> = {
+  hil: { approver_role: 'admin', timeout_seconds: 300, fallback_action: 'reject' },
+};
+
 // ── CanvasBuilderView (V2) ────────────────────────────────────────────────────
 export function CanvasBuilderView({
   app,
@@ -510,7 +517,7 @@ export function CanvasBuilderView({
       const nt = payload.node_type;
       const id = genInstanceId('flow_control', nt, existingIds);
       const displayName = getNodeDef(nt, 'appflow').label || nt;
-      const newNode: Node = { id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: id, node_type: nt, display_name: displayName, config: {} } as unknown as Record<string, unknown> };
+      const newNode: Node = { id, type: 'flowControl', position: pos, data: { _kind: 'flow_control', instance_id: id, node_type: nt, display_name: displayName, config: { ...(FLOW_CONTROL_DEFAULTS[nt] ?? {}) } } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'inline' && payload.node_type) {
       const nt = payload.node_type;

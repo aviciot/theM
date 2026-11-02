@@ -28,7 +28,8 @@ func execMCP(ctx context.Context, interp *Interpreter, ic *InvocationContext, st
 		return fmt.Errorf("mcp_call step %q: args_template render failed: %w", step.ID, err)
 	}
 
-	result, err := interp.mcpCaller.Call(ctx, ic.ApplicationID, cfg.MCPServerSlug, cfg.ToolName, args)
+	// The run id travels in the context so the MCPCaller interface (and its fakes) stay unchanged.
+	result, err := interp.mcpCaller.Call(WithRunID(ctx, ic.RunID), ic.ApplicationID, cfg.MCPServerSlug, cfg.ToolName, args)
 	if err != nil {
 		return fmt.Errorf("mcp_call step %q (%s/%s): %w", step.ID, cfg.MCPServerSlug, cfg.ToolName, err)
 	}

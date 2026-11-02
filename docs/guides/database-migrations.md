@@ -8,7 +8,7 @@ last_verified: 2026-11-02   # drift check run live; guards unit/integration test
 # Database Migrations
 
 ## How it works today
-- Migrations are plain SQL files `db/NNN_name.sql` (`001`…`128`), applied **by hand** with `psql -f`. There is **no migration runner**, no CI step, and no automatic fresh-install path.
+- Migrations are plain SQL files `db/NNN_name.sql` (`001`…`129`), applied **by hand** with `psql -f`. There is **no migration runner**, no CI step, and no automatic fresh-install path.
 - `them.schema_migrations` (columns `version`, `description`, `applied_at`) is advisory: only some files insert themselves into it (22 of 122; 52 rows, last 2026-09-24), so it cannot tell you what is applied.
 - Other files in `db/`: `002_seed.sql` / `003_users_seed.sql` (seed data), `validate_r4a.sql` (one-off RLS validation), `110_platform_as_bootstrap_tenant_DOWN.sql` (the only rollback script), `clickhouse/` (events store, see `docs/architecture/events-pipeline.md`), `README.md` (stale, Python-era).
 - The live database is the source of truth, not the files: `db/001_schema.sql` lacks many tables, and a few migrations describe objects the live DB does not have (migration 026's `app_orchestrators.tenant_id`, 055's managed-app tables). Replaying all files will **not** rebuild the live schema (backlog F-35/F-36/F-105).
@@ -22,7 +22,7 @@ Migration `125` was committed with the code that needs it and never applied, so 
 `scripts/tests/test_46_check_migrations_unit.py` unit-tests the checker (no stack). Status 2026-11-02: the drift check reports no unexplained drift.
 
 ## Add a migration (checklist)
-1. **Number:** next free number (currently `129`). Never reuse a number — five numbers are already duplicated (003, 010, 025, 032, 110) and `060`–`069` and `093` are unused.
+1. **Number:** next free number (currently `130`). Never reuse a number — five numbers are already duplicated (003, 010, 025, 032, 110) and `060`–`069` and `093` are unused.
 2. **Write it idempotent and transactional:** `BEGIN; … COMMIT;`, `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`, and end with `INSERT INTO them.schema_migrations (version, description, applied_at) VALUES ('NNN_name', '…', NOW()) ON CONFLICT (version) DO NOTHING;`.
 3. **New tenant-scoped table** (see `docs/architecture/multi-tenancy-rls.md`): `tenant_id` (or a parent FK), `ENABLE` + `FORCE ROW LEVEL SECURITY`, a `them_app` policy using `NULLIF(current_setting('app.tenant_id', true), '')::uuid`, `GRANT`s to **both** `them_app` and `them_admin` (BYPASSRLS does not replace GRANT), and an explicit `GRANT USAGE, SELECT ON SEQUENCE` for any serial column. Owner should be `them_owner`.
 4. **Per-application config table:** also register it in `appScopedConfigTables` (`go/internal/admin/dal/app_deploy.go`) so export/import and deploy carry it (`docs/architecture/app-export-import-deploy.md`).

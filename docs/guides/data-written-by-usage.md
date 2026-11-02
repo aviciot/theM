@@ -2,7 +2,7 @@
 title: What data the-M writes while it is used
 type: guide
 status: current
-last_verified: 2026-11-01   # row counts measured live (before/after one run); code-only items marked "from code"
+last_verified: 2026-11-02   # row counts measured live (before/after one run); code-only items marked "from code"
 ---
 
 # What data the-M writes while it is used
@@ -67,6 +67,8 @@ Measured (migration 125 applied): every call writes one `gateway_requests` row; 
 | `debug` | yes | **yes** | yes | requests +300, bodies +300 |
 | `audit` | yes | **yes** | yes | requests +300, bodies +300 (**same as debug**) |
 In the current code the level only decides whether bodies are stored (`llmgateway/handler.go`: `debug`/`audit`). `minimal` = `metrics` and `debug` = `audit` in behaviour. The other logging fields a policy can carry (`sample_rate`, `capture_bodies`, `capture_pii_decisions`, `capture_file_guard`, `retention_days`) are resolved by `governance/resolve.go` but nothing applies them yet (backlog F-136).
+
+**Linking records (2026-11-02):** `gateway_requests.run_id` and the ClickHouse `trace_id` of gateway and tool-call events hold the App Canvas run id (profile-app calls and canvas-agent tool calls), so "everything for run X" can be queried across them; direct gateway calls and the chat path have none.
 
 **Events mode** (`THE_M_EVENTS_GATEWAY`): `postgres` = Postgres only; `dual` (dev default) = Postgres **and** ClickHouse; `clickhouse` is blocked. ClickHouse `events_gateway_request` has no bodies.
 

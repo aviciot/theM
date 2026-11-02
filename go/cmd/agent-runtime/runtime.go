@@ -357,6 +357,7 @@ func (rt *Runtime) parseInvocationContext(r *http.Request) (*agentgen.Invocation
 	appID := r.Header.Get("X-Them-Application-Id")
 	agentID := r.Header.Get("X-Them-Agent-Id")
 	bindingID := r.Header.Get("X-Them-Binding-Id")
+	runID := r.Header.Get("X-Them-Run-Id") // set when an AppFlow agent node invoked this agent; optional
 	if tenantID == "" || appID == "" || agentID == "" {
 		return nil, fmt.Errorf("missing required invocation context headers")
 	}
@@ -372,6 +373,7 @@ func (rt *Runtime) parseInvocationContext(r *http.Request) (*agentgen.Invocation
 		ApplicationID: appID,
 		AgentID:       agentID,
 		BindingID:     bindingID,
+		RunID:         runID,
 		A2ACallDepth:  depth,
 	}, nil
 }

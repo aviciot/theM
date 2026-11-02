@@ -119,7 +119,7 @@ func (m *mockEventSink) Close(ctx context.Context) error {
 // F-127: gateway events carry the profile app and the user, so ClickHouse rows are attributable.
 func TestGatewayRequestEvent_CarriesApplicationAndUser(t *testing.T) {
 	ev := gatewayRequestEvent(RequestRecord{
-		TenantID: "t1", ApplicationID: "app-uuid", ClientID: "client-uuid", UserID: 42,
+		TenantID: "t1", ApplicationID: "app-uuid", RunID: "run-uuid", ClientID: "client-uuid", UserID: 42,
 		Provider: "mock", ModelRequested: "fast", ModelServed: "mock-model-v1", Status: "ok",
 		HTTPStatus: 200, TokensIn: 3, TokensOut: 5, CostUSD: 0.5, LatencyMS: 120, TTFBMs: 40, Streamed: true,
 	}, "req-1")
@@ -128,7 +128,7 @@ func TestGatewayRequestEvent_CarriesApplicationAndUser(t *testing.T) {
 	if ev.Kind != events.EventKindGatewayRequest || ev.TenantID != "t1" || g == nil {
 		t.Fatalf("wrong envelope: %+v", ev)
 	}
-	if g.ApplicationID != "app-uuid" || g.UserID != "42" || g.ClientID != "client-uuid" || g.RequestID != "req-1" {
+	if g.ApplicationID != "app-uuid" || g.UserID != "42" || g.ClientID != "client-uuid" || g.RequestID != "req-1" || g.TraceID != "run-uuid" {
 		t.Errorf("identity fields wrong: %+v", g)
 	}
 	if g.TokensIn != 3 || g.TokensOut != 5 || g.LatencyMS != 120 || g.TTFBMS != 40 || !g.Streamed || g.HTTPStatus != 200 {
@@ -139,7 +139,7 @@ func TestGatewayRequestEvent_CarriesApplicationAndUser(t *testing.T) {
 // Token-auth calls have no the-M user and direct-path calls have no profile app: both stay empty.
 func TestGatewayRequestEvent_NoUserNoApp(t *testing.T) {
 	g := gatewayRequestEvent(RequestRecord{TenantID: "t1", Status: "ok"}, "req-2").GatewayRequest
-	if g.UserID != "" || g.ApplicationID != "" {
-		t.Errorf("want empty user/app for token auth on the direct path, got user=%q app=%q", g.UserID, g.ApplicationID)
+	if g.UserID != "" || g.ApplicationID != "" || g.TraceID != "" {
+		t.Errorf("want empty user/app/trace for token auth on the direct path, got user=%q app=%q trace=%q", g.UserID, g.ApplicationID, g.TraceID)
 	}
 }

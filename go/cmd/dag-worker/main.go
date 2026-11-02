@@ -337,6 +337,7 @@ func (l *dbContextLoader) Load(ctx context.Context, ic agentgen.ActivityIC) (*ag
 		ApplicationID: ic.ApplicationID,
 		AgentID:       ic.AgentID,
 		BindingID:     ic.BindingID,
+		RunID:         ic.RunID,
 		A2ACallDepth:  ic.A2ACallDepth,
 	}
 
@@ -1117,6 +1118,9 @@ func (c *pgxAgentA2ACaller) InvokeByID(ctx context.Context, tenantID, applicatio
 	}
 	req.Header.Set("X-Them-Application-Id", applicationID)
 	req.Header.Set("X-Them-Tenant-Id", tenantID)
+	if runID != "" {
+		req.Header.Set("X-Them-Run-Id", runID) // lets the agent's tool calls be tied back to this run
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

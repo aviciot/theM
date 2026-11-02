@@ -48,7 +48,8 @@ func TestWriteRequest_RealDB_EmitsAfterInsertOnly(t *testing.T) {
 	sink := &recordingSink{}
 	d := NewDAL(pool).WithEventSink(sink)
 
-	id, err := d.WriteRequest(ctx, RequestRecord{TenantID: tenant, ApplicationID: "11111111-1111-1111-1111-111111111111", UserID: userID, Provider: provider, Status: "ok"})
+	const runID = "22222222-2222-2222-2222-222222222222"
+	id, err := d.WriteRequest(ctx, RequestRecord{TenantID: tenant, ApplicationID: "11111111-1111-1111-1111-111111111111", RunID: runID, UserID: userID, Provider: provider, Status: "ok"})
 	if err != nil {
 		t.Fatalf("WriteRequest: %v", err)
 	}
@@ -61,8 +62,25 @@ func TestWriteRequest_RealDB_EmitsAfterInsertOnly(t *testing.T) {
 		t.Fatalf("events after a successful insert = %d, want 1", len(sink.got))
 	}
 	g := sink.got[0].GatewayRequest
+	var storedRun string
+	pool.QueryRow(ctx, `SELECT COALESCE(run_id::text, '') FROM them.gateway_requests WHERE id = $1::uuid`, id).Scan(&storedRun)
+	if storedRun != runID || g.TraceID != runID {
+		t.Errorf("run id must be stored on the row and used as the event TraceID: row=%q trace=%q", storedRun, g.TraceID)
+	}
 	if g.RequestID != id || g.ApplicationID != "11111111-1111-1111-1111-111111111111" || g.UserID == "" {
 		t.Errorf("event not attributable / not correlated with the row: %+v (row id %s)", g, id)
+	}
+
+	// A direct call (no profile app, no run) stores NULL and an empty TraceID.
+	sink.got = nil
+	id2, err := d.WriteRequest(ctx, RequestRecord{TenantID: tenant, Provider: provider, Status: "ok"})
+	if err != nil {
+		t.Fatalf("WriteRequest (direct): %v", err)
+	}
+	var isNull bool
+	pool.QueryRow(ctx, `SELECT run_id IS NULL FROM them.gateway_requests WHERE id = $1::uuid`, id2).Scan(&isNull)
+	if !isNull || len(sink.got) != 1 || sink.got[0].GatewayRequest.TraceID != "" {
+		t.Errorf("direct call: run_id must be NULL and TraceID empty (null=%v events=%d)", isNull, len(sink.got))
 	}
 
 	// An insert that fails (invalid tenant id) must not produce an event.
