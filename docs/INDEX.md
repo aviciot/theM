@@ -55,6 +55,7 @@ Code beats docs. Find the doc that `owns` the code you touch.
 | [Production rollout checklist (November 2026 release)](plans/production-rollout-2026-11.md) | plan | draft | 2026-11-02 |  |
 | [Role-Based Authorization — Completion Plan](plans/role-based-auth-completion-plan.md) | plan | current | 2026-10-25 |  |
 | [Run lifecycle hardening - fix and test plan](plans/run-lifecycle-hardening-plan.md) | plan | draft | 2026-11-01 |  |
+| [the-M Slim — AI Control Tower Edition](plans/slim-edition-plan.md) | plan | draft | 2026-11-04 |  |
 | [Canvas Node Types (generated)](reference/node-types-generated.md) | reference | current | generated |  |
 | [Redis Keys and Channels (generated)](reference/redis-generated.md) | reference | current | generated |  |
 | [HTTP Route Registrations (generated)](reference/routes-generated.md) | reference | current | generated |  |
