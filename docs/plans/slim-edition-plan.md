@@ -104,3 +104,15 @@ Shipping a package to customer machines creates ongoing duties: release/versioni
 - PII scanner exists but is not wired into `llmgateway/`.
 - Events: `postgres` default, `dual` live, `clickhouse` blocked for gateway; nothing reads ClickHouse; audit/bodies have no producer.
 - Not verified: frontend dependence on App Canvas/Temporal endpoints; effort of auto-migrate; RAM of the slim set.
+
+## 10. Phase 0 spike results (2026-11-04, partial)
+Isolated stack `slim_spike` (pg, redis, auth, bridge; own network, localhost ports 18xxx, throwaway secrets; dev stack untouched).
+- **Bridge with `TEMPORAL_ENABLED=false` panics at startup** (`execution.NewLifecycle: temporal must not be nil`, `lifecycle.go:131`). The "Go-inline orchestration path" log line is stale. The rest of the code is already nil-safe (`lifecycle.go:763,841` check; `main.go` guards `temporalCli != nil`). A scratch patch removing that one panic made the bridge start and mount the LLM gateway. **Real fix = remove the panic and return `module_disabled` for run entry points** (Phase 2).
+- **Fresh install is impossible today**, confirmed: a new Postgres is empty; roles `them_app`, `them_admin` and `them_owner` exist only by hand (init script only grants on DB); no admin/tenant bootstrap exists; `auth_service.roles` and `them.schema_migrations` hold reference data that must be seeded. Spike worked around it with a read-only `pg_dump --schema-only` of the live DB + copied `roles`/`schema_migrations` rows.
+- Bridge also logs ERROR "schema BEHIND the code" when `schema_migrations` is empty (log-only unless `THE_M_REQUIRE_MIGRATIONS=true`).
+- **Gateway works with Temporal off (verified 2026-11-04, patched bridge):** login into the bootstrap tenant, create gateway client, `POST /{tenant}/llm/v1/chat/completions` with `mock-model-v1` returned 200 and wrote a `gateway_requests` row (200, status ok; mock reports 0 tokens). `GET /admin/applications` still answers 200 with the module off (no `module_disabled` yet).
+- **New bug F-138:** a client created through the API stays `config_status='unknown'` and the gateway rejects it (403). Spike set it `valid` by SQL.
+- **More install gaps (F-139):** login needs a tenant membership even for super_admin, and the `default` bootstrap tenant row comes from migration data, not schema.
+- **RAM (idle):** pg 55 MB, redis 4 MB, auth 6 MB, bridge 9 MB = ~74 MB for the 4 backend containers. Frontend + Traefik not measured yet.
+- **PII:** not wired into the gateway (confirmed by design; the spike prompt contained a fake card number and passed through untouched).
+- **Verdict: GO** for the slim container set on the backend side. Remaining unknowns: frontend dependence on App Canvas/Temporal endpoints, and RAM with frontend + Traefik.
