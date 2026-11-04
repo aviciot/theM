@@ -52,10 +52,13 @@ func (db *DB) ListGatewayClients(ctx context.Context, tenantID string) ([]Gatewa
 }
 
 // CreateGatewayClient inserts a new client row and returns the created record.
+// The row is created with config_status='valid': the gateway rejects any other
+// status (llmgateway.LookupClientTenant), and the old trigger that derived it from
+// a policy profile no longer exists. Limits come from the resolved governance policy.
 func (db *DB) CreateGatewayClient(ctx context.Context, tenantID, tokenHash, label string) (GatewayClient, error) {
 	const q = `
-		INSERT INTO them.gateway_clients (tenant_id, token_hash, label)
-		VALUES ($1::uuid, $2, $3)
+		INSERT INTO them.gateway_clients (tenant_id, token_hash, label, config_status)
+		VALUES ($1::uuid, $2, $3, 'valid')
 		RETURNING id::text, tenant_id::text, token_hash, label,
 		          profile_id::text, app_id::text, governance_profile_id::text,
 		          to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),

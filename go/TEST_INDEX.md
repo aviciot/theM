@@ -3410,6 +3410,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/llmresolve/` (any file) | S1-118 + S2-11 (integration) |
 | `internal/llmgateway/` (any file), `cmd/them/main.go` (gateway wiring), `db/100_llm_gateway.sql` | S1-119 + S1-120 |
 | `internal/admin/gateway.go`, `internal/admin/dal/gateway.go` | S1-121 |
+| GW-CLIENT-01 | `TestCreateGatewayClient_InsertsValidStatus` (`internal/admin/dal/gateway_client_test.go`): new gateway client INSERT sets `config_status='valid'` (F-138) | 1 |
 | `internal/admin/llm_providers.go` (TenantScopedRoutes, ListMine, UpsertMine) | S1-127 |
 | `internal/appflow/workflow.go` (`AppFlowDebugTaskQueue`, `activityTaskQueueFor`) | S1-128 |
 | `internal/execution/lifecycle.go` (`StartAppFlow` debug-queue routing) | S1-129 |

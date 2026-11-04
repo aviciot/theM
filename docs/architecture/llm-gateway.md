@@ -89,7 +89,8 @@ See `docs/plans/code-findings-backlog.md` F-42…F-55. Highlights:
 6. **SSRF:** a tenant admin can set any `base_url` on a provider; the bridge/workers will call it. No validation.
 7. OpenAI compatibility: `system` messages are rewritten to `user`; array content parts, `tools`, `n`, `stop`, `top_p` are unsupported (400 or silently dropped); no request-size cap.
 8. `X-User-JWT` tenant is not checked against the client's tenant.
-9. `gateway_clients` has no expiry/revoked/enabled flag; `last_seen` is never updated; no throttling on bad tokens.
+9. (fixed 2026-11-04, F-138) New clients were created `config_status='unknown'` and the gateway rejected them with 403; the trigger that used to derive the status from a policy profile no longer exists. `CreateGatewayClient` now inserts `'valid'`. Existing rows are untouched; nothing re-validates `config_status` afterwards.
+10. `gateway_clients` has no expiry/revoked/enabled flag; `last_seen` is never updated; no throttling on bad tokens.
 
 ## Where to change things
 | To… | Edit |
