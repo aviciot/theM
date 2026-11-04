@@ -116,3 +116,11 @@ Isolated stack `slim_spike` (pg, redis, auth, bridge; own network, localhost por
 - **RAM (idle):** pg 55 MB, redis 4 MB, auth 6 MB, bridge 9 MB = ~74 MB for the 4 backend containers. Frontend + Traefik not measured yet.
 - **PII:** not wired into the gateway (confirmed by design; the spike prompt contained a fake card number and passed through untouched).
 - **Verdict: GO** for the slim container set on the backend side. Remaining unknowns: frontend dependence on App Canvas/Temporal endpoints, and RAM with frontend + Traefik.
+
+## 11. Phase 1 progress (2026-11-04)
+Done and verified on an empty Postgres (bridge started with `THE_M_REQUIRE_MIGRATIONS=true`, `TEMPORAL_ENABLED=false`):
+- `scripts/gen_baseline.sh` writes `deploy/slim/db/` (100_schema.sql from the live DB, 200_seed.sql with only the global reference rows, `BASELINE_VERSION` = 129). Re-run it when the baseline should move forward.
+- `deploy/slim/migrate.sh` (runs in a `postgres:16-alpine` one-shot): creates roles `them_owner/them_app/them_admin`, applies the baseline to an empty DB, applies `db/NNN_*.sql` newer than the baseline and not yet in `schema_migrations`, creates the first admin (+ membership in the bootstrap tenant) when `ADMIN_PASSWORD` is set. Idempotent: second run changes nothing.
+- Fixed: F-138 (new gateway clients valid), F-140 (bridge without Temporal).
+- Result: login -> create client -> gateway call with the new token -> `gateway_requests` row, with no manual SQL.
+Still to do in phase 1: `deploy/slim/docker-compose.yml` (core + `migrate` service), `install.sh` (secrets, .env, pull, up, print URL + admin login), Traefik/TLS, pre-built images in CI, backup/upgrade scripts, a CI check that the baseline + newer migrations still equals the live schema.
