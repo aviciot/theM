@@ -10,7 +10,7 @@ owns:
   - traefik/
   - go/cmd/them/main.go
   - go/internal/server/
-last_verified: 2026-11-02   # hetzner overlay DB DSN env (F-103)
+last_verified: 2026-11-04   # bridge runs with TEMPORAL_ENABLED=false (F-140); hetzner overlay DB DSN env (F-103)
 ---
 
 # Platform Overview & Container Map
@@ -93,7 +93,7 @@ which dispatches `/{tenant}/apps/*` (WS, SSE, voice) and `/{tenant}/a2a/*`.
 config → telemetry → Postgres + two RLS pools (`THEM_DB_URL_APP`, `THEM_DB_URL_ADMIN`, both required)
 → Redis → optional events Redis → in-process event bus → session store → run recorder → rate limiter →
 admission gate → agent registry → auth middleware → health + HTTP server → bearer-token cache →
-Temporal client (required in practice, see `run-lifecycle.md` gap 1) + run reconciler + data retention job (`internal/retention`, dry-run by default, writes on in `docker-compose.dev.yml` via `THE_M_RETENTION_DRY_RUN=false`; see `data-retention.md`) (reconciler writes on in `docker-compose.dev.yml` via `RECONCILER_DRY_RUN=false`; code default and the Hetzner overlay stay dry-run) → entry-point config loader → execution
+Temporal client (optional: with `TEMPORAL_ENABLED=false` the gateway-only mode runs, see `run-lifecycle.md` gap 1) + run reconciler + data retention job (`internal/retention`, dry-run by default, writes on in `docker-compose.dev.yml` via `THE_M_RETENTION_DRY_RUN=false`; see `data-retention.md`) (reconciler writes on in `docker-compose.dev.yml` via `RECONCILER_DRY_RUN=false`; code default and the Hetzner overlay stay dry-run) → entry-point config loader → execution
 lifecycle + quota/role enforcers → WS, SSE, dashboard WS → heartbeat/liveness loops → A2A → artifacts →
 admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful drain on SIGTERM). Right after the RLS pools are up the bridge (like auth, the dag workers and the orchestrator worker) runs `dbversion.Enforce`: it logs an ERROR when the newest migration the code needs is not recorded in `them.schema_migrations` and refuses to start only with `THE_M_REQUIRE_MIGRATIONS=true`.
 
@@ -107,7 +107,7 @@ admin API → LLM gateway → apps dispatcher → `ListenAndServe` (graceful dra
 | Down | Effect |
 |---|---|
 | Postgres / Redis | Bridge cannot start (required at startup); health endpoints fail |
-| Temporal server | Bridge cannot start (`client.Dial` at startup) |
+| Temporal server | If `TEMPORAL_ENABLED=true`, bridge cannot start (`client.Dial` at startup); if `false`, bridge runs without orchestrated runs |
 | Workers only | Bridge runs, but orchestrated/AppFlow runs do not progress |
 | `them-mcp-service` | MCP tool calls fail; rest of the platform unaffected |
 | Event Redis / ClickHouse | See `events-pipeline.md`; never blocks requests |

@@ -706,7 +706,8 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestLifecycle_Release_MarksRunFailed_WhenStartNeverCalled` | R-5.1: Admit creates run as "admitted"; Release without Start → UpdateRunStatus(failed) |
 | `TestLifecycle_Release_DoesNotMarkFailed_AfterSuccessfulStart` | R-5.1: Start sets startedOK=true → Release skips the failed update |
 | `TestLifecycle_ConfirmFatal_SessionCleanedUp` | R-5.1: gate.Confirm failure → session.End + gate.Release called; CreateRun skipped |
-| `TestNewLifecycle_PanicsOnNilDeps` | R-5.1: NewLifecycle panics when epLoader/gate/sessions/recorder/temporal are nil |
+| `TestNewLifecycle_PanicsOnNilDeps` | R-5.1: NewLifecycle panics when epLoader/gate/sessions/recorder are nil (temporal no longer required) |
+| `TestNewLifecycle_NilTemporalAllowed` | Slim edition: NewLifecycle with nil temporal does not panic; `Start` returns a `StartError` ("temporal client not configured") |
 | `TestLifecycle_AdmitCleanup_BothFailPathsCleanUp` | R-5.2: admitCleanup covers both Confirm-fail and CreateRun-fail paths (session+gate released in both) |
 | `TestLifecycle_Start_UpdateRunStatus_AllRetriesExhausted_StartedOKSet` | R-5.2: all 3 UpdateRunStatus retries fail → startedOK=true; Release skips failed update (workflow is executing) |
 | `TestLifecycle_QuotaConcurrentRunsExceeded` | LC-QE-01: QuotaEnforcer returns ErrQuotaConcurrentRuns → AdmitErrQuotaConcurrentRuns (429); gate.Check never called |

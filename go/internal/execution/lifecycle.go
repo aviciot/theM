@@ -105,9 +105,11 @@ type Lifecycle struct {
 	logger             *slog.Logger
 }
 
-// NewLifecycle constructs a production Lifecycle. epLoader, gateStore, sessions,
-// recorder, and temporal are required and must not be nil; the function panics if
-// any of them is nil. auth may be nil only if all entry points are public-mode.
+// NewLifecycle constructs a production Lifecycle. epLoader, gateStore, sessions
+// and recorder are required and must not be nil; the function panics if any of
+// them is nil. temporal may be nil (Slim edition, TEMPORAL_ENABLED=false): Start
+// then returns a start error instead of running a workflow.
+// auth may be nil only if all entry points are public-mode.
 // logger may be nil (falls back to slog.Default()).
 func NewLifecycle(
 	auth transport.Authenticator,
@@ -127,8 +129,6 @@ func NewLifecycle(
 		panic("execution.NewLifecycle: sessions must not be nil")
 	case recorder == nil:
 		panic("execution.NewLifecycle: recorder must not be nil")
-	case temporal == nil:
-		panic("execution.NewLifecycle: temporal must not be nil")
 	}
 	return newLifecycle(auth, epLoader, gateStore, sessions, recorder, temporal, logger)
 }

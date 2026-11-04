@@ -21,6 +21,7 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
+	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/transport"
@@ -691,10 +692,20 @@ func TestNewLifecycle_PanicsOnNilDeps(t *testing.T) {
 	assert.Panics(t, func() {
 		NewLifecycle(a, ep, g, s, nil, tc, devLogger)
 	}, "nil recorder must panic")
-	// temporal is an interface — nil interface value satisfies == nil.
-	assert.Panics(t, func() {
-		NewLifecycle(a, ep, g, s, nil, nil, devLogger)
-	}, "nil temporal must panic (reached only if recorder panic removed)")
+}
+
+// Slim edition runs without Temporal: construction must not panic and Start
+// must fail with a start error rather than a nil-pointer crash.
+func TestNewLifecycle_NilTemporalAllowed(t *testing.T) {
+	ep := &fakeEPLoader{cfg: publicEP("slug")}
+	var lc *Lifecycle
+	require.NotPanics(t, func() {
+		lc = NewLifecycle(&fakeAuth{info: validToken()}, ep, &fakeGate{}, &fakeSession{}, &runrecorder.Recorder{}, nil, devLogger)
+	})
+	_, err := lc.Start(context.Background(), &ExecutionHandle{}, temporal.WorkflowInput{})
+	var se *StartError
+	require.ErrorAs(t, err, &se)
+	assert.Contains(t, se.Cause(), "temporal client not configured")
 }
 
 // ── fakeQuotaEnforcer ─────────────────────────────────────────────────────────

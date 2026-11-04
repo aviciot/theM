@@ -231,7 +231,7 @@ func run() error {
 		defer temporalCli.Close()
 		log.Info("Temporal client connected", "host_port", cfg.TemporalHostPort)
 	} else {
-		log.Info("Temporal disabled — using Go-inline orchestration path")
+		log.Info("Temporal disabled — orchestrated runs are unavailable (gateway-only mode)")
 	}
 
 	// ── 13c. Start run reconciler (Temporal path only) ───────────────────────
