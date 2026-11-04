@@ -64,7 +64,7 @@ internal on `them-network`. The Python bridge and Python auth service are **gone
 | `them-agent-runtime` | agents | Generic A2A server for canvas-built agents (reads AgentSpec from Postgres); `docker-compose.temporal.yml` sets `TEMPORAL_ENABLED=true` | `go/cmd/agent-runtime/` |
 | `them-clickhouse`, `them-redis-events`, `them-event-writer` | events | See `events-pipeline.md` | — |
 | `them-middleware-worker`, `them-minio`, `them-minio-init`, `them-clamd`, `them-security-agent` | security | Artifact scan jobs, the quarantine reaper and the object janitor (stored files of deleted run artifacts; `OBJECT_JANITOR_INTERVAL_MINUTES`); needs `THEM_DB_URL_APP/ADMIN` like every Go binary (polls `them.middleware_jobs`), ClamAV, object store, security scanner A2A agent | `go/cmd/middleware-worker/` |
-| `them-keycloak` | sso | SSO | `keycloak/` |
+| `them-keycloak` | sso | Test-only fake customer IdP (realms `payops_ai`, `bank`, `rnd`, `them`); not a product component. See `keycloak/README.md` | `keycloak/` |
 | `livekit`, `livekit-agent` | voice | Voice | `livekit/` |
 | `a2a-echo`, `a2a-slow`, `a2a-stream` | test-agents | A2A test agents | `agents/` |
 | `agent-evidence/-logic/-creative/-judge` | debate | Debate demo agents | `agents/debate/` |

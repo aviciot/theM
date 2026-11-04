@@ -11,7 +11,7 @@ owns:
   - go/internal/roles/
   - go/internal/execution/roles.go
   - go/internal/admin/middleware.go
-last_verified: 2026-11-01   # by reading code; nothing run live this session
+last_verified: 2026-11-04   # by reading code; nothing run live this session
 ---
 
 # Auth & Roles
@@ -85,6 +85,11 @@ Per EP `access_mode`: token / user_jwt / external_jwt / public. Then `CheckAcces
 | IdP JWKS unreachable | OIDC login fails (502); external_jwt EPs reject (401) |
 | `JWT_SECRET` differs between auth service and bridge | Every dashboard token is rejected |
 | Role gate DB error | App treated as open (fail-open) |
+
+## Customer IdP support and Keycloak
+- Supported: **OIDC** only (SSO login + `external_jwt`). Any OIDC IdP (Okta, Entra ID, Google Workspace, Auth0, Ping…) connects directly via the tenant IdP settings — no middle layer.
+- Not supported (no code found): direct **SAML**, **LDAP**, SCIM. A SAML/LDAP-only customer would need a bridge such as Keycloak (User Federation / SAML broker) in front, translating to OIDC. Not built.
+- `them-keycloak` (profile `sso`) is a **test-only fake customer IdP** with realms `payops_ai`, `bank`, `rnd`, `them`; see `keycloak/README.md`.
 
 ## Known gaps (found while writing, 2026-10-24; from reading code, not reproduced live)
 See `docs/plans/code-findings-backlog.md` F-18…F-30. Highlights:
